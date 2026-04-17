@@ -25,8 +25,8 @@ cp Backend/config.env.example Backend/config.env
 ### Required env vars (Backend will not work without these)
 | Variable | Purpose |
 |---|---|
-| `HPA_MODEL` | Model ID passed to the LLM provider. Throws on startup if missing. |
-| `LLM_PROVIDER` | `openai` \| `gemini` \| `anthropic` \| `openrouter` |
+| `HPA_MODEL` | Model ID passed to the LLM provider. **Recommended: `gpt-4.1-mini-2025-04-14`** (what we run in production). Throws on startup if missing. |
+| `LLM_PROVIDER` | `openai` \| `gemini` \| `anthropic` \| `openrouter`. **Recommended: `openai`** (paired with the model above). |
 | `OPENAI_API_KEY` (or matching provider key) | API key for the chosen provider |
 | `HPA_TBL_COOKIES`, `HPA_TBL_CONVERSATIONS`, `HPA_TBL_MESSAGES` | SQL table names — referenced even when using the in-memory store |
 | `HPA_CORS_ORIGINS` | Comma-separated allow-list. Include the frontend URL (`http://localhost:8010` for local dev) |

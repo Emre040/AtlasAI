@@ -28,7 +28,9 @@ cp Backend/config.env.example Backend/config.env
 | `HPA_MODEL` | Model ID passed to the LLM provider. **Recommended: `gpt-4.1-mini-2025-04-14`**. Throws on startup if missing. |
 | `LLM_PROVIDER` | `openai` \| `gemini` \| `anthropic` \| `openrouter`. **Recommended: `openai`**. |
 | `OPENAI_API_KEY` (or matching provider key) | API key for the chosen provider |
-| `HPA_TBL_COOKIES`, `HPA_TBL_CONVERSATIONS`, `HPA_TBL_MESSAGES` | MySQL table names — `hpa_cookies` (visitor sessions), `hpa_conversations` (chat threads), `hpa_messages` (individual messages). Use the defaults from the example file unless you've renamed the tables in your DB. Required even with the in-memory fallback. |
+| `HPA_TBL_COOKIES` | Set to `hpa_cookies` |
+| `HPA_TBL_CONVERSATIONS` | Set to `hpa_conversations` |
+| `HPA_TBL_MESSAGES` | Set to `hpa_messages` |
 | `HPA_CORS_ORIGINS` | Comma-separated allow-list. Include the frontend URL (`http://localhost:8010` for local dev) |
 
 ### Recommended (for persistence)

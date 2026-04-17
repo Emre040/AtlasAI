@@ -1,6 +1,6 @@
-# HPA Agent
+# AtlasAI
 
-Monorepo containing the HPA Agent backend (Node/Express) and frontend (React).
+Monorepo containing the AtlasAI backend (Node/Express) and frontend (React).
 
 ```
 Repo/

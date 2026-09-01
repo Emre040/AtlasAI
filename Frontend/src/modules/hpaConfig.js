@@ -3,7 +3,7 @@ const apiBaseOverride = process.env.REACT_APP_HPA_API_BASE;
 
 const hpaConfig = {
   api: {
-    baseUrl: apiBaseOverride || 'https://servicewsvarxomics.szapfs.org',
+    baseUrl: apiBaseOverride || 'https://p9000.greenaurem.org',
 
     endpoints: {
       webserverCookie: '/auth/cookie',           

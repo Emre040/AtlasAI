@@ -1,6 +1,4 @@
-'use strict';
-
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import './HPA.css';
 import ReactMarkdown from 'react-markdown';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -17,9 +15,7 @@ import {
   faCubes,
   faBrain,
   faFileCode,
-  faCheck,
   faChevronDown,
-  faChevronUp,
   faChevronRight,
   faSpinner,
   faReply,
@@ -187,9 +183,6 @@ function HPA() {
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [collapsedRuns, setCollapsedRuns] = useState({}); // Track collapsed state per runId
-  const [runTimers, setRunTimers] = useState({}); // Track elapsed time per runId
-  const [transitioningRuns, setTransitioningRuns] = useState({}); // Track runs in collapse/expand transition
-  const [lastSearchUrl, setLastSearchUrl] = useState(null); // Store the last search URL from deep research
   const [searchResults, setSearchResults] = useState({}); // Map of searchUrl -> { rows, loading, error, currentPage }
   const [replyTo, setReplyTo] = useState(null); // { ensg, geneName } for reply context
   const messagesEndRef = useRef(null);
@@ -201,7 +194,6 @@ function HPA() {
   const artifactLeaveTimer = useRef(null);
   const apiBaseUrl = getApiBaseUrl();
   const resolvedEnv = (process.env.REACT_APP_HPA_ENV || (apiBaseUrl.includes('localhost') ? 'local' : 'prod')).toLowerCase();
-  const envLabel = resolvedEnv.toUpperCase();
   const isLocalEnv = resolvedEnv === 'local';
   const maxConversationTitleLength = getUiConfig()?.maxConversationTitleLength || 50;
 
@@ -250,7 +242,6 @@ function HPA() {
 
   const REPLY_MARKER_NEW = /^⟪HPA▸GENE:(ENSG\d+):([^⟫]+)⟫\s*/;
   const REPLY_MARKER_OLD = /^\[\[REPLY:(ENSG\d+):([^\]]+)\]\]\s*/;
-  const hasReplyMarker = (t = '') => REPLY_MARKER_NEW.test(t) || REPLY_MARKER_OLD.test(t);
   const extractReplyContext = (t = '') => {
     let match = t.match(REPLY_MARKER_NEW);
     let regex = REPLY_MARKER_NEW;
@@ -551,25 +542,6 @@ function HPA() {
     return groups;
   };
 
-  // Calculate progress percentage for a tool run (caps at 90% until complete)
-  const calculateRunProgress = (run) => {
-    if (!run || !run.messages) return 0;
-    const stepCount = run.messages.length;
-    const maxSteps = 70; // Assume 70 steps = 100%
-    let progress = Math.min((stepCount / maxSteps) * 100, 90);
-    if (run.isComplete) progress = 100;
-    return Math.round(progress);
-  };
-
-  // Format elapsed time as mm:ss
-  const formatElapsedTime = (startTime) => {
-    if (!startTime) return '00:00';
-    const elapsed = Math.floor((Date.now() - startTime) / 1000);
-    const mins = Math.floor(elapsed / 60);
-    const secs = elapsed % 60;
-    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-  };
-
   // Artifact preview popover handlers
   const handleArtifactChipEnter = async (e, chip, workspaceUuid) => {
     if (!chip.artifactId || !workspaceUuid) return;
@@ -649,20 +621,12 @@ function HPA() {
     );
   };
 
-  // Toggle collapsed state for a run (with transition tracking)
+  // Toggle collapsed state for a run
   const toggleRunCollapsed = (runId) => {
-    // Mark as transitioning
-    setTransitioningRuns(prev => ({ ...prev, [runId]: true }));
-
     setCollapsedRuns(prev => ({
       ...prev,
       [runId]: prev[runId] === false ? true : false
     }));
-
-    // Clear transitioning state after animation completes (400ms)
-    setTimeout(() => {
-      setTransitioningRuns(prev => ({ ...prev, [runId]: false }));
-    }, 400);
   };
 
   // Extract HPA URLs from message text
@@ -934,7 +898,7 @@ function HPA() {
         const geneIds = visibleRows.map(r => r.Ensembl || r.Gene).filter(Boolean);
         fetchThumbnails(searchUrl, geneIds);
       }
-    }, [searchUrl, data?.currentPage, data?.rows?.length]);
+    }, [searchUrl, data?.currentPage, data?.loading, data?.rows]);
 
     if (!data || data.loading) {
       return (
@@ -1213,34 +1177,20 @@ function HPA() {
         }
       } catch (e) { console.error('messages load failed', e); }
     })();
+  // Message hydration is intentionally keyed only by the selected conversation.
+  // Including conversations would retrigger this effect after it hydrates the state.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConversation]);
 
-  const currentMessages = conversations.find(c => c.id === selectedConversation)?.messages || [];
+  const currentMessages = useMemo(
+    () => conversations.find(c => c.id === selectedConversation)?.messages || [],
+    [conversations, selectedConversation]
+  );
   const messageGroups = groupMessagesIntoRuns(currentMessages);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [currentMessages]);
-
-  // Timer update effect for active runs
-  useEffect(() => {
-    const activeRuns = messageGroups.filter(g => g.type === 'run' && !g.isComplete);
-    if (activeRuns.length === 0) return;
-
-    const interval = setInterval(() => {
-      setRunTimers(prev => {
-        const next = { ...prev };
-        activeRuns.forEach(run => {
-          if (!next[run.runId]) {
-            next[run.runId] = { startTime: Date.now() };
-          }
-        });
-        return { ...next, _tick: Date.now() }; // Force re-render
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [messageGroups.length, isLoading]);
 
   // Auto-scroll within tool run containers when expanded
   useEffect(() => {
@@ -1255,6 +1205,9 @@ function HPA() {
         }
       }
     });
+  // Scroll only when the selected conversation receives a message. Collapse
+  // toggles already trigger their own render and should not restart this effect.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentMessages.length]);
 
   const appendToAI = (aiId, extraText, targetConvId) => {
@@ -1484,12 +1437,13 @@ function HPA() {
 
           if (payload.search_url) {
             console.log('[FE] Received search_url:', payload.search_url);
+            const targetAiMessageId = currentAiMessageId;
             setConversations(convs => convs.map(conv => {
               if (conv.id !== conversationId) return conv;
               return {
                 ...conv,
                 messages: conv.messages.map(m =>
-                  m.id === currentAiMessageId ? { ...m, searchUrl: payload.search_url } : m
+                  m.id === targetAiMessageId ? { ...m, searchUrl: payload.search_url } : m
                 )
               };
             }));
@@ -1503,12 +1457,13 @@ function HPA() {
               pendingResources = payload.resources;
               console.log('[FE] Storing pending resources for final answer bubble');
             } else {
+              const targetAiMessageId = currentAiMessageId;
               setConversations(convs => convs.map(conv => {
                 if (conv.id !== conversationId) return conv;
                 return {
                   ...conv,
                   messages: conv.messages.map(m =>
-                    m.id === currentAiMessageId ? { ...m, resources: payload.resources } : m
+                    m.id === targetAiMessageId ? { ...m, resources: payload.resources } : m
                   )
                 };
               }));
@@ -1519,12 +1474,13 @@ function HPA() {
           // Handle dictionary images (sent before synthesis starts)
           if (payload.dictionary_images) {
             console.log('[FE] Received dictionary_images:', payload.dictionary_images);
+            const targetAiMessageId = currentAiMessageId;
             setConversations(convs => convs.map(conv => {
               if (conv.id !== conversationId) return conv;
               return {
                 ...conv,
                 messages: conv.messages.map(m =>
-                  m.id === currentAiMessageId ? { ...m, dictionaryImages: payload.dictionary_images } : m
+                  m.id === targetAiMessageId ? { ...m, dictionaryImages: payload.dictionary_images } : m
                 )
               };
             }));
@@ -1657,13 +1613,6 @@ function HPA() {
               messageGroups.map((group, groupIndex) => {
                 if (group.type === 'run') {
                   // Render a collapsible tool run container - starts collapsed by default
-                  const isCollapsed = collapsedRuns[group.runId] ?? true;
-                  const progress = calculateRunProgress(group);
-                  // Only show timer for active runs with tracked time (not persisted/guessed)
-                  const timerData = runTimers[group.runId];
-                  const showTimer = !group.isComplete && timerData?.startTime;
-                  const elapsed = showTimer ? formatElapsedTime(timerData.startTime) : null;
-
                   // Detect run type from first message tool name
                   const firstToolEvent = group.messages[0]?.toolEvent;
                   const isInvestigatorRun = firstToolEvent?.toolName === 'investigator_hpa';

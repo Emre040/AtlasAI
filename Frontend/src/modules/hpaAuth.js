@@ -1,5 +1,3 @@
-'use strict';
-
 import { getApiEndpoint } from './hpaConfig';
 
 const COOKIE_NAME = 'hpacookie';

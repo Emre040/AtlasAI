@@ -65,17 +65,27 @@ jobs:
           DEPLOY_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          # The API restarts while the release switches, so a poll can briefly get a 502 from
+          # Cloudflare; that is not a verdict. Only a 200 body decides, and only its state.
           for _ in $(seq 1 90); do
-            body="$(curl --silent --show-error --fail-with-body \
+            body="$(curl --silent --output - --write-out '\n%{http_code}' \
               --header "x-deploy-secret: ${DEPLOY_SECRET}" \
-              "https://p9000.greenaurem.org/deploy/github/${DEPLOY_SHA}")"
-            state="$(node -e 'const value = JSON.parse(process.argv[1]); if (typeof value.state !== "string") process.exit(1); process.stdout.write(value.state);' "${body}")"
-            if [[ "${state}" == 'succeeded' ]]; then
-              exit 0
-            fi
-            if [[ "${state}" == 'failed' ]]; then
-              exit 1
+              "https://p9000.greenaurem.org/deploy/github/${DEPLOY_SHA}" || true)"
+            code="${body##*$'\n'}"
+            payload="${body%$'\n'*}"
+            if [[ "${code}" == '200' ]]; then
+              state="$(node -e 'try { const value = JSON.parse(process.argv[1]); process.stdout.write(typeof value.state === "string" ? value.state : ""); } catch { process.stdout.write(""); }' "${payload}")"
+              if [[ "${state}" == 'succeeded' ]]; then
+                exit 0
+              fi
+              if [[ "${state}" == 'failed' ]]; then
+                echo "release reported failed: ${payload}"
+                exit 1
+              fi
+            else
+              echo "status endpoint returned HTTP ${code:-none}; retrying"
             fi
             sleep 10
           done
+          echo "release did not report success within 15 minutes"
           exit 1

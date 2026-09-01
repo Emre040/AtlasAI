@@ -1,142 +1,148 @@
 'use strict';
-const path = require('path');
-const zlib = require('zlib');
-const fs = require('fs');
-const tarfs = require('tar-fs');
-require('dotenv').config({ path: path.join(__dirname, 'config.env') });
+
+const path = require('node:path');
+require('dotenv').config({ path: path.join(__dirname, '.env'), quiet: true });
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
-const { createDbClient } = require('./modules/dbClient');
-const { createRouter: createAuthRouter } = require('./modules/auth');
-const { createRouter: createQueryRouter } = require('./modules/query');
-const { createRouter: createConversationRouter } = require('./modules/conversation');
-const { createRouter: createAnalyticsRouter } = require('./modules/adminAnalytics');
-const { createRouter: createHpaProxyRouter } = require('./modules/hpaProxy');
-const { createRouter: createBatchRouter } = require('./modules/batch');
-const { BlocklistService } = require('./modules/blocklist');
-const { resolveWorkspaceRoot } = require('./modules/aso/workspaceStore');
-const { createRouter: createHpmRouter } = require('./modules/hpmSummaries');
+
+const { loadRuntimeConfig } = require('./src/config/runtime');
+const { createDatabaseClient } = require('./src/database/client');
+const { AccessRuleRepository } = require('./src/database/repositories/accessRules');
+const { AdminAnalyticsRepository } = require('./src/database/repositories/adminAnalytics');
+const { BatchRepository } = require('./src/database/repositories/batches');
+const { ConversationRepository } = require('./src/database/repositories/conversations');
+const { RequestEventRepository } = require('./src/database/repositories/requestEvents');
+const { WorkspaceRepository } = require('./src/database/repositories/workspaces');
+const {
+  createActiveModelMiddleware,
+  initializeInferenceGateway,
+  resolveActiveModel
+} = require('./src/inference/gateway');
+const { loadSessionConfig } = require('./src/security/config');
+const { SessionService } = require('./src/security/sessionService');
+const { configureWorkspaceRoot } = require('./src/system/aso/workspaceStore');
+const { DeploymentService } = require('./src/system/deployment/service');
+const { createAccessControlMiddleware } = require('./src/http/middleware/accessControl');
+const { createAuthenticationMiddleware } = require('./src/http/middleware/authenticate');
+const { createCorsOptions } = require('./src/http/middleware/cors');
+const { errorHandler } = require('./src/http/middleware/errorHandler');
+const { createGlobalRateLimit } = require('./src/http/middleware/globalRateLimit');
+const { createRequestEventMiddleware } = require('./src/http/middleware/requestEvents');
+const { createRouter: createAdminRouter } = require('./src/http/routes/adminAnalytics');
+const { createRouter: createAuthRouter } = require('./src/http/routes/auth');
+const { createRouter: createBatchRouter } = require('./src/http/routes/batch');
+const { createRouter: createConversationsRouter } = require('./src/http/routes/conversations');
+const { createRouter: createDeployRouter } = require('./src/http/routes/deploy');
+const { createRouter: createHpaProxyRouter } = require('./src/http/routes/hpaProxy');
+const { createRouter: createHpmRouter } = require('./src/http/routes/hpmSummaries');
+const { createRouter: createQueryRouter } = require('./src/http/routes/query');
+const { createRouter: createWorkspaceRouter } = require('./src/http/routes/workspaces');
+
 async function bootstrap() {
-  const db = await createDbClient();
+  const runtime = loadRuntimeConfig(__dirname);
+  const sessionConfig = loadSessionConfig();
+  const db = await createDatabaseClient();
+  await initializeInferenceGateway(db);
+  configureWorkspaceRoot(runtime.workspaceRoot);
+
+  const accessRules = new AccessRuleRepository(db);
+  const analytics = new AdminAnalyticsRepository(db);
+  const batches = new BatchRepository(db);
+  const conversations = new ConversationRepository(db);
+  const requestEvents = new RequestEventRepository(db);
+  const workspaces = new WorkspaceRepository(db);
+  const sessionService = new SessionService(db, sessionConfig);
+  const deploymentService = new DeploymentService({
+    ...runtime.deployment,
+    scriptPath: path.join(__dirname, 'deploy', 'production', 'deploy.sh')
+  });
+  const {
+    optionalAuthentication,
+    requireAuthentication,
+    requireCsrf
+  } = createAuthenticationMiddleware(sessionService, sessionConfig);
+
   const app = express();
-
-  const authRouter = createAuthRouter(db);
-  const queryRouter = createQueryRouter(db);
-  const conversationRouter = createConversationRouter(db);
-  const analyticsRouter = createAnalyticsRouter(db);
-  const blocklistService = new BlocklistService(db);
-
-  // Debug: Log CORS config
-  const corsOriginsRaw = process.env.HPA_CORS_ORIGINS;
-  console.log('[CORS] Raw HPA_CORS_ORIGINS:', corsOriginsRaw);
-  
-  if (!corsOriginsRaw) {
-    console.error('[CORS] WARNING: HPA_CORS_ORIGINS is undefined!');
-  }
-  
-  const corsOrigins = corsOriginsRaw ? corsOriginsRaw.split(',').map(o => o.trim()) : ['*'];
-  console.log('[CORS] Parsed origins:', corsOrigins);
-
-  const corsOptions = {
-    origin: (origin, callback) => {
-      console.log('[CORS] Incoming request origin:', origin);
-      // Allow requests with no origin (mobile apps, Postman, etc.)
-      if (!origin) {
-        console.log('[CORS] No origin header - allowing');
-        return callback(null, true);
-      }
-      if (corsOrigins.includes('*') || corsOrigins.includes(origin)) {
-        console.log('[CORS] Origin allowed:', origin);
-        return callback(null, true);
-      }
-      console.log('[CORS] Origin BLOCKED:', origin, '| Allowed:', corsOrigins);
-      callback(new Error('CORS not allowed'));
-    },
-    credentials: true
-  };
-
-  if (process.env.TRUST_PROXY === 'true') app.set('trust proxy', 1);
-
+  app.disable('x-powered-by');
+  app.set('trust proxy', runtime.trustProxy);
   app.use(helmet());
-  app.use(cors(corsOptions));
-  app.use(express.json({ limit: process.env.HPA_JSON_LIMIT }));
-  app.use(blocklistService.middleware());
+  app.use(createRequestEventMiddleware(requestEvents, runtime.cloudflare));
+  app.use(cors(createCorsOptions(runtime.corsOrigins)));
+  app.use(createGlobalRateLimit(runtime.globalRateLimit));
 
-  app.use('/auth', authRouter);
-  app.use('/query', queryRouter);
-  app.use('/conversations', conversationRouter);
-  app.use('/hpa-admin', analyticsRouter);
-  app.use('/hpa-proxy', createHpaProxyRouter());
-  app.use('/batch', createBatchRouter(db));
-  app.use('/hpm', createHpmRouter());
-
-  // Serve ASO workspace artifacts (chart PNGs, reports)
-  const workspaceRoot = resolveWorkspaceRoot();
-  app.get('/workspaces/:uuid/artifacts/:filename', (req, res) => {
-    const { uuid, filename } = req.params;
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(uuid)) {
-      return res.status(400).json({ error: 'Invalid workspace ID' });
+  app.get('/healthz', async (req, res, next) => {
+    try {
+      const model = await resolveActiveModel();
+      res.json({
+        ok: true,
+        app: runtime.appName,
+        database: db.mode,
+        inferenceModel: model.configKey,
+        inferenceProvider: model.providerKey
+      });
+    } catch (error) {
+      next(error);
     }
-    if (!/^[\w.-]+$/.test(filename)) {
-      return res.status(400).json({ error: 'Invalid filename' });
-    }
-    const filePath = path.join(workspaceRoot, uuid, 'artifacts', filename);
-    res.sendFile(filePath, (err) => {
-      if (err && !res.headersSent) res.status(404).json({ error: 'Artifact not found' });
-    });
   });
 
-  // Download entire workspace as tar.gz
-  app.get('/workspaces/:uuid/download', (req, res) => {
-    const { uuid } = req.params;
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(uuid)) {
-      return res.status(400).json({ error: 'Invalid workspace ID' });
-    }
-    const wsDir = path.join(workspaceRoot, uuid);
-    if (!fs.existsSync(wsDir)) {
-      return res.status(404).json({ error: 'Workspace not found' });
-    }
-    res.setHeader('Content-Type', 'application/gzip');
-    res.setHeader('Content-Disposition', `attachment; filename="workspace-${uuid}.tar.gz"`);
-    const pack = tarfs.pack(wsDir, {
-      ignore: (name) => {
-        const rel = path.relative(wsDir, name);
-        return rel === 'scratch' || rel.startsWith('scratch/');
+  app.use(express.json({ limit: runtime.jsonLimit, strict: true }));
+  app.use('/deploy', createDeployRouter({ deploymentService }));
+  app.use(optionalAuthentication);
+  app.use(createAccessControlMiddleware(accessRules));
+
+  app.use('/auth', createAuthRouter({
+    sessionService,
+    requireAuthentication,
+    requireCsrf,
+    config: sessionConfig
+  }));
+  app.use('/hpa-admin', createAdminRouter({ analytics, accessRules, admin: runtime.admin }));
+
+  const bindActiveModel = createActiveModelMiddleware();
+  app.use('/conversations', requireAuthentication, requireCsrf, createConversationsRouter({ conversations }));
+  app.use('/query', requireAuthentication, requireCsrf, bindActiveModel, createQueryRouter({ db, conversations }));
+  app.use('/batch', requireAuthentication, requireCsrf, bindActiveModel, createBatchRouter({
+    db,
+    batches,
+    batchSecret: runtime.batchSecret
+  }));
+  app.use('/workspaces', requireAuthentication, requireCsrf, createWorkspaceRouter({ workspaces }));
+  app.use('/hpa-proxy', requireAuthentication, requireCsrf, createHpaProxyRouter());
+  app.use('/hpm', requireAuthentication, requireCsrf, createHpmRouter({ filePath: runtime.hpmSummariesPath }));
+
+  app.use((req, res) => res.status(404).json({ error: 'not_found' }));
+  app.use(errorHandler);
+
+  const server = app.listen(runtime.port, runtime.host, () => {
+    console.log(`[SERVER] ${runtime.appName} listening on ${runtime.host}:${runtime.port}.`);
+  });
+
+  let shuttingDown = false;
+  async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[SERVER] ${signal} received; shutting down.`);
+    server.close(async error => {
+      try {
+        await db.end();
+      } finally {
+        process.exit(error ? 1 : 0);
       }
     });
-    const gzip = zlib.createGzip();
-    pack.pipe(gzip).pipe(res);
-    pack.on('error', (err) => {
-      console.error(`[ERROR] Workspace download pack error for ${uuid}:`, err.message);
-      if (!res.headersSent) res.status(500).json({ error: 'Archive failed' });
-    });
-    gzip.on('error', (err) => {
-      console.error(`[ERROR] Workspace download gzip error for ${uuid}:`, err.message);
-      if (!res.headersSent) res.status(500).json({ error: 'Compression failed' });
-    });
-  });
+  }
+  process.once('SIGTERM', () => void shutdown('SIGTERM'));
+  process.once('SIGINT', () => void shutdown('SIGINT'));
 
-  app.get('/healthz', (req, res) => res.json({
-    ok: true,
-    app: process.env.HPA_APP_NAME,
-    dbMode: db.mode
-  }));
+  return { app, server, db };
+}
 
-  app.use((err, req, res, next) => {
-    console.error(`[ERROR] ${req.method} ${req.path}:`, err.message);
-    if (process.env.NODE_ENV !== 'production') console.error(err.stack);
-    if (!res.headersSent) res.status(500).json({ error: 'Internal Server Error' });
-  });
-
-  const port = parseInt(process.env.HPA_PORT, 10) || 9012;
-  const host = process.env.HPA_HOST || '0.0.0.0';
-  app.listen(port, host, () => {
-    console.log(`[SERVER] ${process.env.HPA_APP_NAME} listening on ${host}:${port} (db: ${db.mode})`);
+if (require.main === module) {
+  bootstrap().catch(error => {
+    console.error('[FATAL] AtlasAI failed to start:', error?.message || error);
+    process.exit(1);
   });
 }
 
-bootstrap().catch(err => {
-  console.error('[FATAL] HPA Agent failed to start.', err);
-  process.exit(1);
-});
+module.exports = { bootstrap };

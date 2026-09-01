@@ -1,0 +1,81 @@
+name: Backend deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - Backend/**
+      - .github/workflows/backend-deploy.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-backend-production
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Backend/package-lock.json
+      - run: npm ci
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+      - run: npm test
+      - name: Check JavaScript syntax
+        run: |
+          while IFS= read -r -d '' file; do
+            node --check "$file"
+          done < <(find . -path './node_modules' -prune -o -type f \( -name '*.js' -o -name '*.cjs' \) -print0)
+
+  deploy:
+    needs: test
+    if: ${{ vars.ATLAS_BACKEND_AUTO_DEPLOY == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Queue exact backend release
+        env:
+          DEPLOY_SECRET: ${{ secrets.ATLAS_DEPLOY_WEBHOOK_SECRET }}
+          DEPLOY_REPOSITORY: ${{ github.repository }}
+          DEPLOY_REF: ${{ github.ref }}
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          payload="$(node -e 'process.stdout.write(JSON.stringify({repository: process.env.DEPLOY_REPOSITORY, ref: process.env.DEPLOY_REF, sha: process.env.DEPLOY_SHA}))')"
+          curl --silent --show-error --fail-with-body \
+            --request POST \
+            --header 'content-type: application/json' \
+            --header "x-deploy-secret: ${DEPLOY_SECRET}" \
+            --data "${payload}" \
+            'https://p9000.greenaurem.org/deploy/github'
+
+      - name: Wait for production health verification
+        env:
+          DEPLOY_SECRET: ${{ secrets.ATLAS_DEPLOY_WEBHOOK_SECRET }}
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 90); do
+            body="$(curl --silent --show-error --fail-with-body \
+              --header "x-deploy-secret: ${DEPLOY_SECRET}" \
+              "https://p9000.greenaurem.org/deploy/github/${DEPLOY_SHA}")"
+            state="$(node -e 'const value = JSON.parse(process.argv[1]); if (typeof value.state !== "string") process.exit(1); process.stdout.write(value.state);' "${body}")"
+            if [[ "${state}" == 'succeeded' ]]; then
+              exit 0
+            fi
+            if [[ "${state}" == 'failed' ]]; then
+              exit 1
+            fi
+            sleep 10
+          done
+          exit 1

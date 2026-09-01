@@ -108,6 +108,9 @@ fi
 
 cd "${backend_root}"
 PUPPETEER_SKIP_DOWNLOAD=true npm ci
+# The dictionary agent and ASO renderer drive Chrome through Puppeteer. The browser lives in the
+# shared ~/.cache/puppeteer, so this is a no-op unless the locked Puppeteer wants a new build.
+npx puppeteer browsers install chrome
 npm test
 while IFS= read -r -d '' javascript_file; do
   node --check "${javascript_file}"

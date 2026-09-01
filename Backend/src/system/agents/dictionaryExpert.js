@@ -478,6 +478,8 @@ If truly no match exists, reply: []`
  */
 async function extractAnnotations(page) {
   const annotations = await page.evaluate(() => {
+    // This callback runs inside Chrome, where the module's debugLog does not exist.
+    const debugLog = (...args) => console.debug(...args);
     const results = [];
 
     // First, try to extract hierarchy from annot_div.seadragonMeta
@@ -489,12 +491,12 @@ async function extractAnnotations(page) {
                     document.querySelector('.annot_div') ||
                     document.querySelector('#annotations');
 
-    debugLog('[extractAnnotations] metaDiv found:', !!metaDiv, metaDiv?.className);
+    console.debug('[extractAnnotations] metaDiv found:', !!metaDiv, metaDiv?.className);
 
     if (metaDiv) {
       // Debug: log the structure
-      debugLog('[extractAnnotations] metaDiv children:', metaDiv.children.length);
-      debugLog('[extractAnnotations] metaDiv HTML preview:', metaDiv.innerHTML?.slice(0, 500));
+      console.debug('[extractAnnotations] metaDiv children:', metaDiv.children.length);
+      console.debug('[extractAnnotations] metaDiv HTML preview:', metaDiv.innerHTML?.slice(0, 500));
 
       // The metaDiv contains .example and .annotation divs that show hierarchy
       const processMetaDiv = (container, parentText = null, depth = 0) => {
@@ -521,7 +523,7 @@ async function extractAnnotations(page) {
             }
 
             if (labelText && labelText.length > 1 && labelText.length < 100) {
-              debugLog('[hierarchy]', '  '.repeat(depth), labelText, '(parent:', parentText, ')');
+              console.debug('[hierarchy]', '  '.repeat(depth), labelText, '(parent:', parentText, ')');
 
               if (!hierarchyMap.has(labelText)) {
                 hierarchyMap.set(labelText, { parentText, children: [] });
@@ -543,10 +545,10 @@ async function extractAnnotations(page) {
       };
 
       processMetaDiv(metaDiv);
-      debugLog('[extractAnnotations] Hierarchy from metaDiv:', hierarchyMap.size, 'entries');
+      console.debug('[extractAnnotations] Hierarchy from metaDiv:', hierarchyMap.size, 'entries');
       hierarchyMap.forEach((v, k) => {
         if (v.children.length > 0) {
-          debugLog('[hierarchy] Parent:', k, '-> Children:', v.children);
+          console.debug('[hierarchy] Parent:', k, '-> Children:', v.children);
         }
       });
     }
@@ -1012,6 +1014,8 @@ async function scrapeDictionaryPage(url, onStep) {
 
     // Extract page structure
     const pageData = await page.evaluate(() => {
+      // This callback runs inside Chrome, where the module's debugLog does not exist.
+      const debugLog = (...args) => console.debug(...args);
       const result = {
         title: document.querySelector('h1, h2')?.textContent?.trim() || '',
         description: '',
@@ -1021,7 +1025,7 @@ async function scrapeDictionaryPage(url, onStep) {
       };
 
       // Debug: Log what elements exist on the page
-      debugLog('[textContent] ===== DEBUG TEXT EXTRACTION =====');
+      console.debug('[textContent] ===== DEBUG TEXT EXTRACTION =====');
 
       // Try various selectors used on HPA pages
       const selectors = [
@@ -1041,22 +1045,22 @@ async function scrapeDictionaryPage(url, onStep) {
         const el = document.querySelector(sel);
         if (el) {
           const preview = el.textContent?.replace(/\s+/g, ' ').trim().slice(0, 200);
-          debugLog(`[textContent] Found "${sel}": length=${el.textContent?.length}, preview="${preview}"`);
+          console.debug(`[textContent] Found "${sel}": length=${el.textContent?.length}, preview="${preview}"`);
         }
       });
 
       // Also check all direct children of body for content
       const bodyChildren = document.body?.children;
       if (bodyChildren) {
-        debugLog('[textContent] Body children:', Array.from(bodyChildren).map(c => `${c.tagName}.${c.className}`).join(', '));
+        console.debug('[textContent] Body children:', Array.from(bodyChildren).map(c => `${c.tagName}.${c.className}`).join(', '));
       }
 
       // Try to find paragraphs with substantial content
       const allParagraphs = document.querySelectorAll('p');
       const contentParagraphs = Array.from(allParagraphs).filter(p => p.textContent?.trim().length > 50);
-      debugLog(`[textContent] Found ${contentParagraphs.length} substantial paragraphs`);
+      console.debug(`[textContent] Found ${contentParagraphs.length} substantial paragraphs`);
       contentParagraphs.slice(0, 3).forEach((p, i) => {
-        debugLog(`[textContent] Paragraph ${i}: parent=${p.parentElement?.className}, text="${p.textContent?.slice(0, 150)}..."`);
+        console.debug(`[textContent] Paragraph ${i}: parent=${p.parentElement?.className}, text="${p.textContent?.slice(0, 150)}..."`);
       });
 
       // Get main text content - try HPA-specific selectors first
@@ -1067,16 +1071,16 @@ async function scrapeDictionaryPage(url, onStep) {
         // Find the parent of content paragraphs
         if (contentParagraphs.length > 0) {
           mainContent = contentParagraphs[0].parentElement;
-          debugLog(`[textContent] Using paragraph parent: ${mainContent?.tagName}.${mainContent?.className}`);
+          console.debug(`[textContent] Using paragraph parent: ${mainContent?.tagName}.${mainContent?.className}`);
         }
       }
 
       if (mainContent && mainContent.textContent?.trim().length > 100) {
         result.textContent = mainContent.textContent?.replace(/\s+/g, ' ').trim().slice(0, 4000) || '';
-        debugLog(`[textContent] Using container: ${mainContent.tagName}.${mainContent.className}, length: ${result.textContent.length}`);
+        console.debug(`[textContent] Using container: ${mainContent.tagName}.${mainContent.className}, length: ${result.textContent.length}`);
       } else {
         // Fallback: concatenate all substantial paragraphs
-        debugLog('[textContent] Container approach failed, using paragraph fallback');
+        console.debug('[textContent] Container approach failed, using paragraph fallback');
         const paragraphs = Array.from(document.querySelectorAll('p'))
           .filter(p => {
             const text = p.textContent?.trim();
@@ -1091,10 +1095,10 @@ async function scrapeDictionaryPage(url, onStep) {
 
         if (paragraphs.length > 0) {
           result.textContent = paragraphs.join(' ').replace(/\s+/g, ' ').trim().slice(0, 4000);
-          debugLog(`[textContent] Using ${paragraphs.length} paragraphs, total length: ${result.textContent.length}`);
+          console.debug(`[textContent] Using ${paragraphs.length} paragraphs, total length: ${result.textContent.length}`);
         } else {
           // Last resort: look for text in any div/span with educational content
-          debugLog('[textContent] No paragraphs found, trying divs/spans');
+          console.debug('[textContent] No paragraphs found, trying divs/spans');
           const textElements = Array.from(document.querySelectorAll('div, span'))
             .filter(el => {
               // Skip elements with many children (containers)

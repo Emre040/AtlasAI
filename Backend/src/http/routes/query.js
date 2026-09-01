@@ -81,18 +81,39 @@ async function streamChatCompletion(request = {}, { onToken } = {}) {
 
   let fullText = '';
   let totalTokens = null;
+  let cutAtMarkup = false;
 
   for await (const part of stream) {
     const delta = part?.choices?.[0]?.delta?.content || '';
-    if (delta) {
-      fullText += delta;
-      onToken?.(delta);
+    if (delta && !cutAtMarkup) {
+      const candidate = fullText + delta;
+      const markupIndex = findToolCallMarkup(candidate);
+      if (markupIndex === -1) {
+        fullText = candidate;
+        onToken?.(delta);
+      } else {
+        // The model started writing a tool call as text; keep only what came before it.
+        const keep = candidate.slice(0, markupIndex);
+        const newText = keep.slice(fullText.length);
+        fullText = keep;
+        if (newText) onToken?.(newText);
+        cutAtMarkup = true;
+        console.warn('[STREAM] Dropped tool-call markup emitted as text by', getActiveModel().configKey);
+      }
     }
     const usageTokens = part?.usage?.total_tokens;
     if (typeof usageTokens === 'number') totalTokens = usageTokens;
   }
 
   return { text: fullText, totalTokens };
+}
+
+// DeepSeek models on the Chat Completions API sometimes emit their native tool-call markup
+// inside `content` when no tools are offered. It is never user-facing text.
+const TOOL_CALL_MARKUP = /<[｜|]{1,2}DSML[｜|]{1,2}|<tool_call>|<\|tool_calls?_begin\|>/i;
+function findToolCallMarkup(text) {
+  const match = TOOL_CALL_MARKUP.exec(text);
+  return match ? match.index : -1;
 }
 
 const SSE_DEBUG = requireBoolean('HPA_SSE_DEBUG');
@@ -191,7 +212,8 @@ async function streamPrefaceStrict({ baseMessages, res, toolName }) {
     "Examples: 'Of course, I'll start analyzing that.' or 'Certainly, let me begin the research process.'\n" +
     "- Do NOT use the word 'PLAN'.\n" +
     "- Do NOT use markdown or greetings.\n" +
-    "- Do NOT provide the final answer.";
+    "- Do NOT provide the final answer.\n" +
+    "- Do NOT call or invoke the tool in this reply; it is called for you after this sentence.";
 
   debugLog('[PRE] streaming strict preface for tool:', toolName);
 
@@ -248,6 +270,9 @@ async function runSingleToolAndStream({
   sse(res, { tool: { name, status: 'started', run_id: run.publicId } });
   await persistEvent({ eventKind: 'started', stage: 'start' });
 
+  // Long tool phases (ASO investigator batches, chart rendering) can stay silent for minutes;
+  // Cloudflare closes a response that sends nothing for 100 s, so keep the stream warm.
+  const keepalive = setInterval(() => ssePing(res), 20_000);
   let execRes;
   try {
     execRes = await inference.withContext(
@@ -274,12 +299,14 @@ async function runSingleToolAndStream({
       })
     );
   } catch (error) {
+    clearInterval(keepalive);
     const errorMessage = String(error?.message || error).slice(0, 65535);
     await persistEvent({ eventKind: 'failed', stage: 'error', label: 'Error', message: errorMessage });
     await runs.complete(run.id, { status: 'failed', stepCount: Math.max(sequence - 2, 0), errorMessage });
     sse(res, { tool: { name, status: 'failed', run_id: run.publicId, error: errorMessage } });
     throw error;
   }
+  clearInterval(keepalive);
 
   const toolResult = execRes.result && typeof execRes.result === 'object' ? execRes.result : {};
   const failed = toolResult.status === 'error';

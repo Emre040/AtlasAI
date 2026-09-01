@@ -10,7 +10,7 @@ const AdminAnalytics = () => {
   const [authHeader, setAuthHeader] = useState('');
   const [summary, setSummary] = useState(null);
   const [geo, setGeo] = useState([]);
-  const [cookies, setCookies] = useState([]);
+  const [visitors, setVisitors] = useState([]);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState('');
   const [error, setError] = useState('');
@@ -60,10 +60,10 @@ const AdminAnalytics = () => {
   const fetchAnalytics = async (credsHeader) => {
     const summaryJson = await fetchJsonWithAuth('adminSummary', credsHeader, 'Failed to fetch summary analytics.');
     const geoJson = await fetchJsonWithAuth('adminGeo', credsHeader, 'Failed to fetch geo analytics.');
-    const cookiesJson = await fetchJsonWithAuth('adminCookies', credsHeader, 'Failed to fetch sessions.');
+    const visitorsJson = await fetchJsonWithAuth('adminVisitors', credsHeader, 'Failed to fetch visitors.');
     setSummary(summaryJson);
     setGeo(geoJson?.points || []);
-    setCookies(cookiesJson?.cookies || []);
+    setVisitors(visitorsJson?.visitors || []);
   };
 
   const handleLogin = async (event) => {
@@ -98,13 +98,13 @@ const AdminAnalytics = () => {
     }
   };
 
-  const handleBlock = async (cookieId, action) => {
-    if (!authHeader || !cookieId) return;
+  const handleBlock = async (visitorId, action) => {
+    if (!authHeader || !visitorId) return;
     setError('');
     setNotice('');
-    setActionLoading(`${cookieId}:${action}`);
+    setActionLoading(`${visitorId}:${action}`);
     try {
-      await postWithAuth('adminBlock', authHeader, { cookieId, action }, 'Failed to update block status.');
+      await postWithAuth('adminBlock', authHeader, { visitorId, action }, 'Failed to update block status.');
       setNotice(
         action.startsWith('unblock')
           ? 'Access restored for the selected visitor.'
@@ -160,11 +160,11 @@ const AdminAnalytics = () => {
     }
   };
 
-  const filteredCookies = cookies.filter(row => {
+  const filteredVisitors = visitors.filter(row => {
     if (!filter) return true;
     const needle = filter.toLowerCase();
     return [
-      row.cookie_value,
+      row.visitor_id,
       row.country,
       row.last_ip,
       row.last_user_agent
@@ -223,8 +223,8 @@ const AdminAnalytics = () => {
           <>
             <div className="HPAA-stats">
               <div className="HPAA-card">
-                <p className="HPAA-statt-label">Unique Cookies</p>
-                <p className="HPAA-statt-value">{summary.cookies}</p>
+                <p className="HPAA-statt-label">Unique Visitors</p>
+                <p className="HPAA-statt-value">{summary.visitors}</p>
               </div>
               <div className="HPAA-card">
                 <p className="HPAA-statt-label">Conversations</p>
@@ -260,7 +260,7 @@ const AdminAnalytics = () => {
                 </div>
                 <input
                   type="text"
-                  placeholder="Filter by cookie, IP, or country"
+                  placeholder="Filter by visitor, IP, or country"
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
                 />
@@ -269,7 +269,7 @@ const AdminAnalytics = () => {
                 <table className="HPAA-table">
                   <thead>
                     <tr>
-                      <th>Cookie ID</th>
+                      <th>Visitor ID</th>
                       <th>Country</th>
                       <th>IP</th>
                       <th>Accesses</th>
@@ -279,22 +279,22 @@ const AdminAnalytics = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredCookies.length === 0 && (
+                    {filteredVisitors.length === 0 && (
                       <tr>
                         <td colSpan={7} className="HPAA-empty-row">No sessions match your filter.</td>
                       </tr>
                     )}
-                    {filteredCookies.map(row => {
+                    {filteredVisitors.map(row => {
                       const fpBlocked = row.block_fingerprint === 1;
                       const ipBlocked = row.block_ip === 1;
                       const fingerprintAction = fpBlocked ? 'unblock_fingerprint' : 'block_fingerprint';
                       const ipAction = ipBlocked ? 'unblock_ip' : 'block_ip';
-                      const isFpLoading = actionLoading === `${row.cookie_value}:${fingerprintAction}`;
-                      const isIpLoading = actionLoading === `${row.cookie_value}:${ipAction}`;
+                      const isFpLoading = actionLoading === `${row.visitor_id}:${fingerprintAction}`;
+                      const isIpLoading = actionLoading === `${row.visitor_id}:${ipAction}`;
                       return (
-                        <tr key={row.cookie_value}>
+                        <tr key={row.visitor_id}>
                           <td>
-                            <code>{row.cookie_value}</code>
+                            <code>{row.visitor_id}</code>
                             <div className="HPAA-subtext">{row.last_user_agent || '—'}</div>
                           </td>
                           <td>{row.country || 'UNKNOWN'}</td>
@@ -314,14 +314,14 @@ const AdminAnalytics = () => {
                           <td className="HPAA-actions">
                             <button
                               className="HPAA-action-btn"
-                              onClick={() => handleBlock(row.cookie_value, fingerprintAction)}
+                              onClick={() => handleBlock(row.visitor_id, fingerprintAction)}
                               disabled={isFpLoading}
                             >
                               {isFpLoading ? 'Updating…' : fpBlocked ? 'Unblock FP' : 'Block FP'}
                             </button>
                             <button
                               className="HPAA-action-btn"
-                              onClick={() => handleBlock(row.cookie_value, ipAction)}
+                              onClick={() => handleBlock(row.visitor_id, ipAction)}
                               disabled={isIpLoading}
                             >
                               {isIpLoading ? 'Updating…' : ipBlocked ? 'Unblock IP' : 'Block IP'}

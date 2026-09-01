@@ -1,12 +1,33 @@
+const apiBaseValue = process.env.REACT_APP_HPA_API_BASE?.trim();
+if (!apiBaseValue) {
+  throw new Error('REACT_APP_HPA_API_BASE is required.');
+}
 
-const apiBaseOverride = process.env.REACT_APP_HPA_API_BASE;
+let apiUrl;
+try {
+  apiUrl = new URL(apiBaseValue);
+} catch {
+  throw new Error('REACT_APP_HPA_API_BASE must be a valid URL origin.');
+}
+if (apiUrl.origin !== apiBaseValue || apiUrl.username || apiUrl.password) {
+  throw new Error('REACT_APP_HPA_API_BASE must be an origin without credentials, path, query, or fragment.');
+}
 
-const hpaConfig = {
-  api: {
-    baseUrl: apiBaseOverride || 'https://p9000.greenaurem.org',
+const localHostnames = new Set(['localhost', '127.0.0.1', '[::1]']);
+const isLocal = localHostnames.has(apiUrl.hostname);
+if (!isLocal && apiUrl.protocol !== 'https:') {
+  throw new Error('REACT_APP_HPA_API_BASE must use HTTPS outside localhost.');
+}
 
-    endpoints: {
-      webserverCookie: '/auth/cookie',           
+const hpaConfig = Object.freeze({
+  runtime: Object.freeze({ isLocal }),
+  api: Object.freeze({
+    baseUrl: apiUrl.origin,
+
+    endpoints: Object.freeze({
+      authSession: '/auth/session',
+      authRefresh: '/auth/refresh',
+      authLogout: '/auth/logout',
       query: '/query',                            
       createConversation: '/conversations',      
       listConversations: '/conversations',        
@@ -14,22 +35,22 @@ const hpaConfig = {
       queryStream: '/query/stream',               
       adminSummary: '/hpa-admin/summary',
       adminGeo: '/hpa-admin/geo',
-      adminCookies: '/hpa-admin/cookies',
+      adminVisitors: '/hpa-admin/visitors',
       adminBlock: '/hpa-admin/block',
-      authCheck: '/auth/check',
       hpaSearchResults: '/hpa-proxy/search-results',
       hpaGeneThumbnails: '/hpa-proxy/gene-thumbnails-batch'
-    }
-  },
+    })
+  }),
 
-  ui: {
+  ui: Object.freeze({
+    blockPollIntervalMs: 10_000,
     maxConversationTitleLength: 50,
-    messageTimestampFormat: {
+    messageTimestampFormat: Object.freeze({
       hour: 'numeric',
       minute: '2-digit'
-    }
-  }
-};
+    })
+  })
+});
 
 
 export function getApiBaseUrl() {
@@ -41,8 +62,7 @@ export function getApiEndpoint(endpointKey) {
   const baseUrl = hpaConfig.api.baseUrl;
   const path = hpaConfig.api.endpoints[endpointKey];
   if (!path) {
-    console.error(`API endpoint key "${endpointKey}" not found in hpaConfig.`);
-    return baseUrl; // Return a sensible default
+    throw new Error(`API endpoint key "${endpointKey}" is not configured.`);
   }
   return `${baseUrl}${path}`;
 }
@@ -50,6 +70,10 @@ export function getApiEndpoint(endpointKey) {
 
 export function getUiConfig() {
   return hpaConfig.ui;
+}
+
+export function getRuntimeConfig() {
+  return hpaConfig.runtime;
 }
 
 export default hpaConfig;

@@ -31,11 +31,20 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import createPlotlyComponent from 'react-plotly.js/factory';
 import Plotly from 'plotly.js-dist-min';
-import { initializeHPACookie, getCookieId } from './hpaAuth';
-import { getApiBaseUrl, getApiEndpoint, getUiConfig } from './hpaConfig';
+import {
+  authenticatedDownload,
+  authenticatedFetch,
+  getVisitorId,
+  initializeHPAAuth
+} from './hpaAuth';
+import { getApiBaseUrl, getApiEndpoint, getRuntimeConfig, getUiConfig } from './hpaConfig';
 import DictionaryCarousel from './DictionaryCarousel';
 
-const BLOCK_POLL_INTERVAL_MS = parseInt(process.env.REACT_APP_HPA_BLOCK_POLL_MS || '10000', 10);
+const RUNTIME_CONFIG = getRuntimeConfig();
+const UI_CONFIG = getUiConfig();
+const debugLog = (...args) => {
+  if (RUNTIME_CONFIG.isLocal) console.log(...args);
+};
 
 const Plot = createPlotlyComponent(Plotly);
 
@@ -145,7 +154,7 @@ function AsoChart({ apiBaseUrl, workspaceUuid, artifactId, title, sourceDatasetI
   useEffect(() => {
     if (!workspaceUuid || !artifactId) return;
     let cancelled = false;
-    fetch(`${apiBaseUrl}/workspaces/${workspaceUuid}/artifacts/${artifactId}.json`)
+    authenticatedFetch(`${apiBaseUrl}/workspaces/${workspaceUuid}/artifacts/${artifactId}.json`)
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(json => { if (!cancelled) setSpec(json); })
       .catch(err => { if (!cancelled) setError(err.message); });
@@ -193,9 +202,8 @@ function HPA() {
   const [artifactPreview, setArtifactPreview] = useState(null);
   const artifactLeaveTimer = useRef(null);
   const apiBaseUrl = getApiBaseUrl();
-  const resolvedEnv = (process.env.REACT_APP_HPA_ENV || (apiBaseUrl.includes('localhost') ? 'local' : 'prod')).toLowerCase();
-  const isLocalEnv = resolvedEnv === 'local';
-  const maxConversationTitleLength = getUiConfig()?.maxConversationTitleLength || 50;
+  const isLocalEnv = RUNTIME_CONFIG.isLocal;
+  const maxConversationTitleLength = UI_CONFIG.maxConversationTitleLength;
 
   const isToolish = (t = '') => /^\s*(TOOL_(START|STEP|DONE|EVENT)|DETAIL\s)/i.test(t);
 
@@ -212,8 +220,8 @@ function HPA() {
         return url ? String(url).trim() : null;
       } catch {}
     }
-    const legacy = raw.match(/^(\S+)(?:\s*\[FOR:.*)?$/i);
-    return legacy ? legacy[1].trim() : null;
+    const textFormat = raw.match(/^(\S+)(?:\s*\[FOR:.*)?$/i);
+    return textFormat ? textFormat[1].trim() : null;
   };
 
   const isResourcesMarker = (t = '') => /^\s*RESOURCES:\s*/i.test(t);
@@ -241,13 +249,13 @@ function HPA() {
   };
 
   const REPLY_MARKER_NEW = /^⟪HPA▸GENE:(ENSG\d+):([^⟫]+)⟫\s*/;
-  const REPLY_MARKER_OLD = /^\[\[REPLY:(ENSG\d+):([^\]]+)\]\]\s*/;
+  const REPLY_MARKER_COMPAT = /^\[\[REPLY:(ENSG\d+):([^\]]+)\]\]\s*/;
   const extractReplyContext = (t = '') => {
     let match = t.match(REPLY_MARKER_NEW);
     let regex = REPLY_MARKER_NEW;
     if (!match) {
-      match = t.match(REPLY_MARKER_OLD);
-      regex = REPLY_MARKER_OLD;
+      match = t.match(REPLY_MARKER_COMPAT);
+      regex = REPLY_MARKER_COMPAT;
     }
     if (match) {
       return { ensg: match[1], geneName: match[2], textWithoutReply: t.replace(regex, '') };
@@ -552,7 +560,7 @@ function HPA() {
       const ext = chip.format || 'json';
       const filename = `${chip.artifactId}.${ext}`;
       const url = `${apiBaseUrl}/workspaces/${workspaceUuid}/artifacts/${filename}`;
-      const resp = await fetch(url);
+      const resp = await authenticatedFetch(url);
       if (!resp.ok) throw new Error(`${resp.status}`);
       let data;
       if (ext === 'png') {
@@ -586,6 +594,29 @@ function HPA() {
 
   const toggleArtifactRawView = () => {
     setArtifactPreview(prev => prev ? { ...prev, showRaw: !prev.showRaw } : null);
+  };
+
+  const downloadWorkspace = async (workspaceUuid) => {
+    try {
+      await authenticatedDownload(
+        `${apiBaseUrl}/workspaces/${workspaceUuid}/download`,
+        `workspace-${workspaceUuid}.tar.gz`
+      );
+    } catch (error) {
+      console.error('[FE] Workspace download failed:', error.message);
+    }
+  };
+
+  const downloadArtifact = async (preview) => {
+    const filename = `${preview.artifactId}.${preview.format}`;
+    try {
+      await authenticatedDownload(
+        `${apiBaseUrl}/workspaces/${preview.workspaceUuid}/artifacts/${filename}`,
+        filename
+      );
+    } catch (error) {
+      console.error('[FE] Artifact download failed:', error.message);
+    }
   };
 
   const renderArtifactTable = (json) => {
@@ -765,7 +796,7 @@ function HPA() {
       timestamp: ts,
       toolEvent
     };
-    console.log('[FE normalize]', { raw: row, classified: ui });
+    debugLog('[FE normalize]', { raw: row, classified: ui });
     return ui;
   };
 
@@ -779,7 +810,7 @@ function HPA() {
     }));
 
     try {
-      const response = await fetch(
+      const response = await authenticatedFetch(
         `${getApiEndpoint('hpaSearchResults')}?url=${encodeURIComponent(searchUrl)}`
       );
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -824,7 +855,7 @@ function HPA() {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
 
-      const response = await fetch(
+      const response = await authenticatedFetch(
         `${getApiEndpoint('hpaGeneThumbnails')}?genes=${encodeURIComponent(toFetch.join(','))}`,
         { signal: controller.signal }
       );
@@ -1066,14 +1097,15 @@ function HPA() {
     }
   }, [showModelDropdown]);
 
-  // init cookie + conversations
+  // Initialize the anonymous server-issued session and load its conversations.
   useEffect(() => {
-    const cookieId = initializeHPACookie();
+    let cancelled = false;
     (async () => {
       try {
-        console.log('[FE] load conversations…');
-        const response = await fetch(`${getApiEndpoint('listConversations')}?cookieId=${cookieId}`);
-        if (response.ok) {
+        await initializeHPAAuth();
+        debugLog('[FE] load conversations…');
+        const response = await authenticatedFetch(getApiEndpoint('listConversations'));
+        if (response.ok && !cancelled) {
           const data = await response.json();
           const withMessages = data.map(conv => ({ ...conv, messages: [] }));
           setConversations(withMessages);
@@ -1084,17 +1116,16 @@ function HPA() {
         }
       } catch (e) { console.error('conv load failed', e); }
     })();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
-    const cookieId = getCookieId();
-    if (!cookieId) return;
     let cancelled = false;
 
     const checkBlockStatus = async () => {
       if (cancelled) return;
       try {
-        const resp = await fetch(`${getApiEndpoint('authCheck')}?cookieId=${encodeURIComponent(cookieId)}`, {
+        const resp = await authenticatedFetch(getApiEndpoint('authSession'), {
           method: 'GET',
           headers: { 'Cache-Control': 'no-cache' }
         });
@@ -1109,7 +1140,7 @@ function HPA() {
     };
 
     checkBlockStatus();
-    const timer = setInterval(checkBlockStatus, BLOCK_POLL_INTERVAL_MS);
+    const timer = setInterval(checkBlockStatus, UI_CONFIG.blockPollIntervalMs);
     return () => {
       cancelled = true;
       clearInterval(timer);
@@ -1124,9 +1155,8 @@ function HPA() {
 
     (async () => {
       try {
-        const cookieId = getCookieId();
-        console.log('[FE] load messages…', selectedConversation);
-        const response = await fetch(`${getApiEndpoint('getMessages')}?cookieId=${cookieId}&conversationId=${selectedConversation}`);
+        debugLog('[FE] load messages…', selectedConversation);
+        const response = await authenticatedFetch(`${getApiEndpoint('getMessages')}?conversationId=${selectedConversation}`);
         if (response.ok) {
           const rows = await response.json();
           const normalized = Array.isArray(rows) ? rows.map(toUiMsg) : [];
@@ -1237,7 +1267,7 @@ function HPA() {
 
   const handleNewChat = () => {
 
-    console.log('[FE] New chat - resetting to blank slate');
+    debugLog('[FE] New chat - resetting to blank slate');
     setSelectedConversation(null);
     setInputValue('');
   };
@@ -1246,19 +1276,17 @@ function HPA() {
     if (inputValue.trim() === '' || isLoading) return;
 
     const now = () => new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-    const cookieId = getCookieId();
-
     let conversationId = selectedConversation;
     const draftTitle = buildTitleFromText(inputValue) || 'New Conversation';
 
     // If no conversation exists, create one now
     if (!conversationId) {
       try {
-        console.log('[FE] No conversation exists, creating one…');
-        const response = await fetch(getApiEndpoint('createConversation'), {
+        debugLog('[FE] No conversation exists, creating one…');
+        const response = await authenticatedFetch(getApiEndpoint('createConversation'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cookieId, title: draftTitle })
+          body: JSON.stringify({ title: draftTitle })
         });
         if (response.ok) {
           const newConv = await response.json();
@@ -1271,7 +1299,7 @@ function HPA() {
           };
           setConversations([row, ...conversations]);
           setSelectedConversation(conversationId);
-          console.log('[FE] Created conversation:', conversationId);
+          debugLog('[FE] Created conversation:', conversationId);
         } else {
           console.error('[FE] Failed to create conversation:', response.status);
           return;
@@ -1318,11 +1346,11 @@ function HPA() {
       let activeToolRunId = null;
       let pendingResources = null; // Store resources until final answer bubble is created
 
-      console.log(`[FE] POST queryStream… Initial AI bubble ID: ${currentAiMessageId}`);
-      const response = await fetch(getApiEndpoint('queryStream'), {
+      debugLog(`[FE] POST queryStream… Initial AI bubble ID: ${currentAiMessageId}`);
+      const response = await authenticatedFetch(getApiEndpoint('queryStream'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cookieId, query: queryText, conversationId })
+        body: JSON.stringify({ query: queryText, conversationId })
       });
       if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
 
@@ -1332,7 +1360,7 @@ function HPA() {
 
       while (true) {
         const { value, done } = await reader.read();
-        if (done) { console.log('[FE] stream done'); break; }
+        if (done) { debugLog('[FE] stream done'); break; }
 
         buffer += decoder.decode(value, { stream: true });
         const parts = buffer.split('\n\n');
@@ -1345,7 +1373,7 @@ function HPA() {
           if (!line) continue;
           let payload = null;
           try { payload = JSON.parse(line.slice(5).trim()); } catch { continue; }
-          console.log('[FE] SSE frame:', payload);
+          debugLog('[FE] SSE frame:', payload);
 
           if (payload.error) { appendToAI(currentAiMessageId, `\n\n❌ ${payload.error}`, conversationId); continue; }
 
@@ -1410,13 +1438,13 @@ function HPA() {
 
           if (payload.token) {
             if (toolHasRun && !finalAnswerBubbleCreated) {
-              console.log('[FE] First token after tool run. Creating new AI bubble.');
+              debugLog('[FE] First token after tool run. Creating new AI bubble.');
               const finalAnswerId = Date.now() + Math.random();
 
               const newMessage = { id: finalAnswerId, type: 'ai', text: '', timestamp: now() };
               if (pendingResources) {
                 newMessage.resources = pendingResources;
-                console.log('[FE] Attaching pending resources to final answer bubble');
+                debugLog('[FE] Attaching pending resources to final answer bubble');
                 pendingResources = null;
               }
 
@@ -1428,7 +1456,7 @@ function HPA() {
 
               currentAiMessageId = finalAnswerId; // Switch target to the new bubble
               finalAnswerBubbleCreated = true;
-              console.log(`[FE] Switched streaming target to new bubble ID: ${currentAiMessageId}`);
+              debugLog(`[FE] Switched streaming target to new bubble ID: ${currentAiMessageId}`);
             }
 
             appendToAI(currentAiMessageId, payload.token, conversationId);
@@ -1436,7 +1464,7 @@ function HPA() {
           }
 
           if (payload.search_url) {
-            console.log('[FE] Received search_url:', payload.search_url);
+            debugLog('[FE] Received search_url:', payload.search_url);
             const targetAiMessageId = currentAiMessageId;
             setConversations(convs => convs.map(conv => {
               if (conv.id !== conversationId) return conv;
@@ -1451,11 +1479,11 @@ function HPA() {
           }
 
           if (payload.resources) {
-            console.log('[FE] Received resources:', payload.resources);
+            debugLog('[FE] Received resources:', payload.resources);
             // Store resources to attach to final answer bubble (created on first token)
             if (toolHasRun && !finalAnswerBubbleCreated) {
               pendingResources = payload.resources;
-              console.log('[FE] Storing pending resources for final answer bubble');
+              debugLog('[FE] Storing pending resources for final answer bubble');
             } else {
               const targetAiMessageId = currentAiMessageId;
               setConversations(convs => convs.map(conv => {
@@ -1473,7 +1501,7 @@ function HPA() {
 
           // Handle dictionary images (sent before synthesis starts)
           if (payload.dictionary_images) {
-            console.log('[FE] Received dictionary_images:', payload.dictionary_images);
+            debugLog('[FE] Received dictionary_images:', payload.dictionary_images);
             const targetAiMessageId = currentAiMessageId;
             setConversations(convs => convs.map(conv => {
               if (conv.id !== conversationId) return conv;
@@ -1593,7 +1621,7 @@ function HPA() {
                   </div>
                   <div className="HPAG-account-modal-item">
                     <div className="HPAG-account-modal-label">SESSION ID</div>
-                    <div className="HPAG-account-modal-value">{getCookieId()}</div>
+                    <div className="HPAG-account-modal-value">{getVisitorId() || 'Session unavailable'}</div>
                   </div>
                 </div>
               )}
@@ -2055,13 +2083,13 @@ function HPA() {
                             </div>
                           )}
                           {group.isComplete && runWorkspaceUuid && (
-                            <a
-                              href={`${apiBaseUrl}/workspaces/${runWorkspaceUuid}/download`}
+                            <button
+                              type="button"
+                              onClick={() => downloadWorkspace(runWorkspaceUuid)}
                               className="HPAG-tool-run-download"
-                              download
                             >
                               <FontAwesomeIcon icon={faDownload} /> Download Workspace
-                            </a>
+                            </button>
                           )}
                         </>
                       );
@@ -2234,14 +2262,14 @@ function HPA() {
                   {artifactPreview.showRaw ? 'Pretty' : 'Raw'}
                 </button>
               )}
-              <a
-                href={`${apiBaseUrl}/workspaces/${artifactPreview.workspaceUuid}/artifacts/${artifactPreview.artifactId}.${artifactPreview.format}`}
-                download
+              <button
+                type="button"
+                onClick={() => downloadArtifact(artifactPreview)}
                 className="HPAG-artifact-popover-download"
                 title="Download artifact"
               >
                 <FontAwesomeIcon icon={faDownload} />
-              </a>
+              </button>
             </div>
           </div>
           <div className="HPAG-artifact-popover-body">

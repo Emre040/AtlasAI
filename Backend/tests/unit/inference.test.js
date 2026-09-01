@@ -9,7 +9,7 @@ const {
   normalizeStream
 } = require('../../src/inference/adapters/anthropicMessages');
 const { OpenAIChatCompletionsAdapter } = require('../../src/inference/adapters/openaiChatCompletions');
-const { InferenceGateway } = require('../../src/inference/gateway');
+const { InferenceGateway, costMicroUsd } = require('../../src/inference/gateway');
 
 const anthropicModel = Object.freeze({
   configKey: 'anthropic-claude-sonnet-5',
@@ -109,10 +109,11 @@ test('Anthropic native responses normalize to the internal chat-completion contr
     type: 'function',
     function: { name: 'search_hpa', arguments: '{"gene":"TP53"}' }
   });
+  // Anthropic's input_tokens exclude cache reads; the internal contract counts the whole prompt.
   assert.deepEqual(response.usage, {
-    prompt_tokens: 11,
+    prompt_tokens: 14,
     completion_tokens: 7,
-    total_tokens: 18,
+    total_tokens: 21,
     prompt_tokens_details: { cached_tokens: 3 }
   });
 });
@@ -256,22 +257,60 @@ test('gateway resolves and binds exactly one database model for a complete HTTP 
   });
   await gateway.initialize();
 
-  await new Promise((resolve, reject) => {
-    const middleware = gateway.createActiveModelMiddleware();
-    middleware({}, {}, async error => {
-      if (error) return reject(error);
-      try {
-        assert.equal(gateway.getActiveModel().configKey, 'groq-gpt-oss-120b');
-        await gateway.createChatCompletion({ messages: [{ role: 'user', content: 'One.' }] });
-        await gateway.createChatCompletion({ messages: [{ role: 'user', content: 'Two.' }] });
-        resolve();
-      } catch (caught) {
-        reject(caught);
-      }
-    });
+  // The policy middleware resolves the model once per request and binds it for the whole
+  // async scope; every completion inside reuses that binding without another database read.
+  const { model } = await gateway.resolveActiveModel();
+  await gateway.runWithActiveModel(model, async () => {
+    assert.equal(gateway.getActiveModel().configKey, 'groq-gpt-oss-120b');
+    assert.equal(gateway.getBinding().credentialSource, 'platform');
+    assert.equal(gateway.getBinding().modelSelection, 'auto');
+    await gateway.createChatCompletion({ messages: [{ role: 'user', content: 'One.' }] });
+    await gateway.createChatCompletion({ messages: [{ role: 'user', content: 'Two.' }] });
   });
 
   assert.equal(databaseReads, 2);
   assert.deepEqual(calls, ['groq-gpt-oss-120b', 'groq-gpt-oss-120b']);
+  delete process.env.ATLAS_TEST_PROVIDER_KEY;
+});
+
+test('gateway prices completed calls from the bound model and stamps the binding on the row', async () => {
+  process.env.ATLAS_TEST_PROVIDER_KEY = 'test-only-key';
+  const row = activeRow({
+    input_price_microusd_per_million_tokens: 440000,
+    cached_input_price_microusd_per_million_tokens: 14000,
+    output_price_microusd_per_million_tokens: 1320000
+  });
+  const db = { async execute() { return [[row]]; } };
+  const recorded = [];
+  const gateway = new InferenceGateway(db, {
+    adapterFactory() {
+      return {
+        async create() {
+          return {
+            id: 'resp-1',
+            choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1000, completion_tokens: 500, total_tokens: 1500, prompt_tokens_details: { cached_tokens: 200 } }
+          };
+        }
+      };
+    },
+    callRepository: { async record(fields) { recorded.push(fields); return { id: recorded.length, publicId: `call-${recorded.length}` }; } }
+  });
+  await gateway.initialize();
+  const { model } = await gateway.resolveActiveModel();
+
+  await gateway.runWithBinding({ model, apiKey: 'visitor-key', credentialSource: 'visitor', modelSelection: 'visitor' }, () => (
+    gateway.withContext({ visitorId: '42', purpose: 'answer' }, () => (
+      gateway.createChatCompletion({ messages: [{ role: 'user', content: 'Price me.' }] })
+    ))
+  ));
+
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].visitor_id, 42);
+  assert.equal(recorded[0].credential_source, 'visitor');
+  assert.equal(recorded[0].model_selection, 'visitor');
+  // 800 uncached x 0.44 + 200 cached x 0.014 + 500 output x 1.32 = 352 + 2.8 + 660 micro-USD
+  assert.equal(recorded[0].cost_microusd, 1015);
+  assert.equal(costMicroUsd(model, { input_tokens: null, output_tokens: 5, cached_input_tokens: null }), null);
   delete process.env.ATLAS_TEST_PROVIDER_KEY;
 });

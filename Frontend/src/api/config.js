@@ -33,6 +33,8 @@ const hpaConfig = Object.freeze({
       listConversations: '/conversations',        
       getMessages: '/conversations/messages',      
       queryStream: '/query/stream',
+      models: '/models',
+      providerKeys: '/keys',
       hpaSearchResults: '/hpa-proxy/search-results',
       hpaGeneThumbnails: '/hpa-proxy/gene-thumbnails-batch'
     })

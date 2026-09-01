@@ -7,7 +7,7 @@ const { inference, getActiveModel } = require('../../inference/gateway');
 const { requireBoolean } = require('../../config/runtime');
 const { buildModelHistory } = require('../timeline');
 
-const MAX_QUERY_CHARACTERS = 20_000;
+const { platformConfig } = require('../../policy/config');
 const VERBOSE_DIAGNOSTICS = requireBoolean('ATLAS_VERBOSE_DIAGNOSTICS');
 const debugLog = (...args) => {
   if (VERBOSE_DIAGNOSTICS) console.log(...args);
@@ -347,8 +347,9 @@ exports.createRouter = function({ db, conversations, runs }) {
       if (!conversationId || typeof query !== 'string' || !query.trim()) {
         return res.status(400).json({ error: 'conversation_id_and_query_required' });
       }
-      if (query.length > MAX_QUERY_CHARACTERS) {
-        return res.status(413).json({ error: 'query_too_large' });
+      const config = platformConfig();
+      if (query.length > config.queryMaxCharacters) {
+        return res.status(413).json({ error: 'query_too_large', limit: config.queryMaxCharacters });
       }
 
       const conversation = await conversations.findOwned(conversationId, req.auth.visitorId);
@@ -366,11 +367,12 @@ exports.createRouter = function({ db, conversations, runs }) {
 
       // Context before this turn, then the user message itself.
       const [historyRows, conversationRuns] = await Promise.all([
-        conversations.history(conversation.id),
+        conversations.history(conversation.id, config.modelHistoryMessages),
         runs.listForConversation(conversation.id)
       ]);
       const userMessage = await conversations.addMessage(conversation.id, 'user', query.trim());
       const callContext = {
+        visitorId: req.auth.visitorId,
         conversationId: conversation.id,
         requestEventId: Number.isInteger(req.requestEventId) ? req.requestEventId : null,
         callIds: []

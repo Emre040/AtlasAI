@@ -5,10 +5,7 @@ const express = require('express');
 const crypto = require('crypto');
 const orchestrator = require('../../system/orchestrator');
 const { inference, getActiveModel } = require('../../inference/gateway');
-
-const MAX_QUERIES = 50;
-const MAX_QUERY_CHARACTERS = 20_000;
-const CONCURRENCY = 2; // run 2 queries at a time to avoid hammering the API
+const { platformConfig } = require('../../policy/config');
 
 /* ---- helpers ---- */
 
@@ -240,14 +237,15 @@ exports.createRouter = function({ db, batches, batchSecret }) {
       if (!Array.isArray(queries) || queries.length === 0) {
         return res.status(400).json({ error: 'queries must be a non-empty array of strings' });
       }
-      if (queries.length > MAX_QUERIES) {
-        return res.status(400).json({ error: `Max ${MAX_QUERIES} queries per batch` });
+      const config = platformConfig();
+      if (queries.length > config.batchMaxQueries) {
+        return res.status(400).json({ error: `Max ${config.batchMaxQueries} queries per batch` });
       }
       for (let i = 0; i < queries.length; i++) {
         if (typeof queries[i] !== 'string' || !queries[i].trim()) {
           return res.status(400).json({ error: `queries[${i}] must be a non-empty string` });
         }
-        if (queries[i].length > MAX_QUERY_CHARACTERS) {
+        if (queries[i].length > config.queryMaxCharacters) {
           return res.status(413).json({ error: `queries[${i}] exceeds the character limit` });
         }
       }
@@ -326,9 +324,10 @@ exports.createRouter = function({ db, batches, batchSecret }) {
 /* ---- background processing ---- */
 
 async function processJob({ db, batches, job, queries, auth }) {
-  // Process in batches of CONCURRENCY
-  for (let i = 0; i < queries.length; i += CONCURRENCY) {
-    const chunk = queries.slice(i, i + CONCURRENCY);
+  // Process a few queries at a time so one job cannot flood the provider.
+  const concurrency = platformConfig().batchConcurrency;
+  for (let i = 0; i < queries.length; i += concurrency) {
+    const chunk = queries.slice(i, i + concurrency);
     const promises = chunk.map((query, offset) => processOneQuery({
       db,
       batches,

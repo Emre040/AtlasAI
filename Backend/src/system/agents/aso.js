@@ -2,6 +2,7 @@
 
 const { inference, getActiveModel } = require('../../inference/gateway');
 const { requireBoolean } = require('../../config/runtime');
+const { platformConfig } = require('../../policy/config');
 const path = require('path');
 const deepResearch = require('./deepResearch');
 const investigationAgent = require('./investigation');
@@ -1237,10 +1238,15 @@ const TOOL_HANDLERS = {
 // MAIN ORCHESTRATOR
 // =============================================================================
 
-async function aso_hpa({ goal, max_steps = 20, top_x = DEFAULT_TOP_X, parallel_limit = 3, chart_requests = [], allow_search = true }, ctx = {}) {
+async function aso_hpa({ goal, max_steps, top_x, parallel_limit, chart_requests = [], allow_search = true }, ctx = {}) {
   const db = ctx.db;
   if (!db) throw new Error('ASO requires db in context.');
   getActiveModel();
+  // Operator defaults live in platform_config; the orchestrator may still pass explicit values.
+  const config = platformConfig();
+  max_steps = max_steps ?? config.asoMaxSteps;
+  parallel_limit = parallel_limit ?? config.asoParallelLimit;
+  top_x = top_x ?? (config.asoTopX || DEFAULT_TOP_X);
 
   const requestText = goal || ctx.rawQuery || '';
   const outerOnStep = ctx.onStep;  // Forward progress to the outer query.js SSE stream

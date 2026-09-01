@@ -9,6 +9,7 @@
 
 const { inference } = require('../../inference/gateway');
 const { requireBoolean } = require('../../config/runtime');
+const { platformConfig } = require('../../policy/config');
 const https = require('https');
 
 const { detailedSearchOptions } = require('../../hpa/searchOptions.js');
@@ -1462,9 +1463,8 @@ const failedPaths = previousAttempts.map(a => ({
 // -----------------------------
 // Main
 // -----------------------------
-const MAX_RETRIES = 2;
-
 async function deepResearch({ goal }, { onStep } = {}) {
+  const MAX_RETRIES = platformConfig().deepResearchMaxRetries;
   const startedAt = Date.now();
   const stats = { promptTokens: 0, completionTokens: 0, totalTokens: 0, perStep: {} };
   let searchUrl = null;

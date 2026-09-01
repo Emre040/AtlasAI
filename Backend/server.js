@@ -14,12 +14,12 @@ const { ConversationRepository } = require('./src/database/repositories/conversa
 const { RequestEventRepository } = require('./src/database/repositories/requestEvents');
 const { RunRepository } = require('./src/database/repositories/runs');
 const { WorkspaceRepository } = require('./src/database/repositories/workspaces');
-const {
-  createActiveModelMiddleware,
-  initializeInferenceGateway,
-  resolveActiveModel
-} = require('./src/inference/gateway');
+const { initializeInferenceGateway, resolveActiveModel } = require('./src/inference/gateway');
+const { initializePlatformConfig } = require('./src/policy/config');
+const { PolicyEngine } = require('./src/policy/limits');
+const { createPolicyMiddleware } = require('./src/policy/middleware');
 const { loadSessionConfig } = require('./src/security/config');
+const { VisitorProviderKeyRepository, encryptionKeyFromHex } = require('./src/security/providerKeys');
 const { SessionService } = require('./src/security/sessionService');
 const { configureWorkspaceRoot } = require('./src/system/aso/workspaceStore');
 const { DeploymentService } = require('./src/system/deployment/service');
@@ -34,6 +34,8 @@ const { createRouter: createConversationsRouter } = require('./src/http/routes/c
 const { createRouter: createDeployRouter } = require('./src/http/routes/deploy');
 const { createRouter: createHpaProxyRouter } = require('./src/http/routes/hpaProxy');
 const { createRouter: createHpmRouter } = require('./src/http/routes/hpmSummaries');
+const { createRouter: createModelsRouter } = require('./src/http/routes/models');
+const { createRouter: createProviderKeysRouter } = require('./src/http/routes/providerKeys');
 const { createRouter: createQueryRouter } = require('./src/http/routes/query');
 const { createRouter: createWorkspaceRouter } = require('./src/http/routes/workspaces');
 
@@ -41,7 +43,8 @@ async function bootstrap() {
   const runtime = loadRuntimeConfig(__dirname);
   const sessionConfig = loadSessionConfig();
   const db = await createDatabaseClient();
-  await initializeInferenceGateway(db);
+  const gateway = await initializeInferenceGateway(db);
+  const platformConfig = await initializePlatformConfig(db);
   configureWorkspaceRoot(runtime.workspaceRoot);
 
   const batches = new BatchRepository(db);
@@ -49,6 +52,8 @@ async function bootstrap() {
   const requestEvents = new RequestEventRepository(db);
   const runs = new RunRepository(db);
   const workspaces = new WorkspaceRepository(db);
+  const providerKeys = new VisitorProviderKeyRepository(db, encryptionKeyFromHex(runtime.providerKeySecret));
+  const policyEngine = new PolicyEngine(db, platformConfig);
   const sessionService = new SessionService(db, sessionConfig);
   const deploymentService = new DeploymentService({
     ...runtime.deployment,
@@ -93,10 +98,27 @@ async function bootstrap() {
     requireCsrf,
     config: sessionConfig
   }));
-  const bindActiveModel = createActiveModelMiddleware();
+  const admitQuery = createPolicyMiddleware({
+    gateway, platformConfig, policyEngine, providerKeys, requestEvents, routeKind: 'query'
+  });
+  const admitBatch = createPolicyMiddleware({
+    gateway,
+    platformConfig,
+    policyEngine,
+    providerKeys,
+    requestEvents,
+    routeKind: 'batch',
+    batchQueryCount: req => (Array.isArray(req.body?.queries) ? req.body.queries.length : 0)
+  });
   app.use('/conversations', requireAuthentication, requireCsrf, createConversationsRouter({ conversations, runs }));
-  app.use('/query', requireAuthentication, requireCsrf, bindActiveModel, createQueryRouter({ db, conversations, runs }));
-  app.use('/batch', requireAuthentication, requireCsrf, bindActiveModel, createBatchRouter({
+  app.use('/models', requireAuthentication, requireCsrf, createModelsRouter({ gateway, platformConfig, providerKeys }));
+  app.use('/keys', requireAuthentication, requireCsrf, createProviderKeysRouter({ providerKeys, platformConfig }));
+  app.use('/query', requireAuthentication, requireCsrf, admitQuery, createQueryRouter({ db, conversations, runs }));
+  // Only submissions are admitted by policy; status polls never touch a model.
+  const admitBatchSubmission = (req, res, next) => (
+    req.method === 'POST' && req.path === '/' ? admitBatch(req, res, next) : next()
+  );
+  app.use('/batch', requireAuthentication, requireCsrf, admitBatchSubmission, createBatchRouter({
     db,
     batches,
     batchSecret: runtime.batchSecret
@@ -117,6 +139,7 @@ async function bootstrap() {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`[SERVER] ${signal} received; shutting down.`);
+    platformConfig.stopRefreshing();
     server.close(async error => {
       try {
         await db.end();

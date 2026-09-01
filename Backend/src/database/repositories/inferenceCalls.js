@@ -6,11 +6,15 @@ const CALLS = '`atlasai`.`inference_calls`';
 
 const COLUMNS = [
   'inference_model_id',
+  'visitor_id',
   'request_event_id',
   'conversation_id',
   'run_id',
   'batch_query_id',
   'workspace_id',
+  'credential_source',
+  'model_selection',
+  'cost_microusd',
   'purpose',
   'agent_key',
   'status',

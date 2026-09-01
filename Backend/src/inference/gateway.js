@@ -5,12 +5,15 @@ const { AsyncLocalStorage } = require('node:async_hooks');
 const { createInferenceAdapter, isSupportedAdapter } = require('./adapters');
 const { InferenceCallRepository } = require('../database/repositories/inferenceCalls');
 
-const ACTIVE_MODEL_SQL = `
+const MODEL_SELECT = `
   SELECT
     m.id,
     m.provider_id,
     m.config_key,
+    m.display_name,
     m.model_id,
+    m.status AS model_status,
+    m.visitor_selectable,
     m.supports_streaming,
     m.supports_tools,
     m.supports_json_mode,
@@ -23,8 +26,12 @@ const ACTIVE_MODEL_SQL = `
     m.default_output_tokens,
     m.request_timeout_ms,
     m.max_retries,
+    m.input_price_microusd_per_million_tokens,
+    m.cached_input_price_microusd_per_million_tokens,
+    m.output_price_microusd_per_million_tokens,
     m.revision AS model_revision,
     p.provider_key,
+    p.display_name AS provider_display_name,
     p.adapter_key,
     p.api_base_url,
     p.credential_env_key,
@@ -32,41 +39,59 @@ const ACTIVE_MODEL_SQL = `
     p.revision AS provider_revision
   FROM \`atlasai\`.\`inference_models\` m
   JOIN \`atlasai\`.\`inference_providers\` p ON p.id = m.provider_id
-  WHERE m.active_singleton = 1
-  ORDER BY m.id
-  LIMIT 2
+`;
+const ACTIVE_MODEL_SQL = `${MODEL_SELECT} WHERE m.active_singleton = 1 ORDER BY m.id LIMIT 2`;
+const MODEL_BY_CONFIG_KEY_SQL = `${MODEL_SELECT} WHERE m.config_key = ? LIMIT 1`;
+const MODEL_BY_ID_SQL = `${MODEL_SELECT} WHERE m.id = ? LIMIT 1`;
+const SELECTABLE_MODELS_SQL = `${MODEL_SELECT}
+  WHERE m.visitor_selectable = 1 AND m.status <> 'disabled' AND p.status = 'enabled'
+  ORDER BY p.id, m.id`;
+const ENABLED_PROVIDERS_SQL = `
+  SELECT id, provider_key, display_name, adapter_key, api_base_url
+    FROM \`atlasai\`.\`inference_providers\`
+   WHERE status = 'enabled'
+   ORDER BY id
 `;
 
 const PURPOSES = new Set(['router', 'preface', 'synthesis', 'answer', 'agent', 'batch', 'manual']);
+const CREDENTIAL_SOURCES = new Set(['platform', 'visitor']);
+const MODEL_SELECTIONS = new Set(['auto', 'visitor', 'fallback']);
 
 function asBoolean(value) {
   return Number(value) === 1;
 }
 
-function validateProvider(row) {
+function priceNumber(value) {
+  return value === null || value === undefined ? null : Number(value);
+}
+
+function validateProviderRow(row) {
   if (row.provider_status !== 'enabled') {
-    throw new Error(`Active model provider '${row.provider_key}' is disabled.`);
+    throw new Error(`Provider '${row.provider_key}' is disabled.`);
   }
   if (!isSupportedAdapter(row.adapter_key)) {
     throw new Error(`Unsupported inference adapter '${row.adapter_key}'.`);
   }
   if (!/^[A-Z][A-Z0-9_]*$/.test(row.credential_env_key)) {
-    throw new Error('The active provider has an invalid credential_env_key.');
+    throw new Error(`Provider '${row.provider_key}' has an invalid credential_env_key.`);
   }
 
   let apiUrl;
   try {
     apiUrl = new URL(row.api_base_url);
   } catch {
-    throw new Error('The active provider has an invalid API base URL.');
+    throw new Error(`Provider '${row.provider_key}' has an invalid API base URL.`);
   }
   if (apiUrl.protocol !== 'https:') {
-    throw new Error('The active provider API base URL must use HTTPS.');
+    throw new Error(`Provider '${row.provider_key}' API base URL must use HTTPS.`);
   }
+}
 
-  const apiKey = process.env[row.credential_env_key];
+// The platform's own key for a model's provider, from the environment.
+function platformCredential(model) {
+  const apiKey = process.env[model.credentialEnvKey];
   if (!apiKey) {
-    throw new Error(`Missing credential required by the active provider: ${row.credential_env_key}.`);
+    throw new Error(`Missing credential required by provider '${model.providerKey}': ${model.credentialEnvKey}.`);
   }
   return apiKey;
 }
@@ -76,8 +101,12 @@ function rowToModel(row) {
     id: row.id,
     providerId: row.provider_id,
     configKey: row.config_key,
+    displayName: row.display_name,
     modelId: row.model_id,
+    status: row.model_status,
+    visitorSelectable: asBoolean(row.visitor_selectable),
     providerKey: row.provider_key,
+    providerDisplayName: row.provider_display_name,
     adapterKey: row.adapter_key,
     apiBaseUrl: row.api_base_url,
     credentialEnvKey: row.credential_env_key,
@@ -86,6 +115,9 @@ function rowToModel(row) {
     maxContextTokens: row.max_context_tokens === null ? null : Number(row.max_context_tokens),
     maxOutputTokens: row.max_output_tokens === null ? null : Number(row.max_output_tokens),
     defaultOutputTokens: Number(row.default_output_tokens),
+    inputPriceMicroUsdPerMillion: priceNumber(row.input_price_microusd_per_million_tokens),
+    cachedInputPriceMicroUsdPerMillion: priceNumber(row.cached_input_price_microusd_per_million_tokens),
+    outputPriceMicroUsdPerMillion: priceNumber(row.output_price_microusd_per_million_tokens),
     modelRevision: Number(row.model_revision),
     providerRevision: Number(row.provider_revision),
     supportsStreaming: asBoolean(row.supports_streaming),
@@ -96,6 +128,22 @@ function rowToModel(row) {
     supportsReasoning: asBoolean(row.supports_reasoning),
     reasoningEffort: row.reasoning_effort ?? null
   });
+}
+
+// Cost of one call in micro-USD from the model's list prices. Prompt tokens include the cached
+// subset, which is billed at the cached rate when the provider publishes one.
+function costMicroUsd(model, usage) {
+  if (model.inputPriceMicroUsdPerMillion === null || model.outputPriceMicroUsdPerMillion === null) return null;
+  if (usage.input_tokens === null || usage.output_tokens === null) return null;
+  const cached = Math.min(usage.cached_input_tokens ?? 0, usage.input_tokens);
+  const uncached = usage.input_tokens - cached;
+  const cachedPrice = model.cachedInputPriceMicroUsdPerMillion ?? model.inputPriceMicroUsdPerMillion;
+  const micro = (
+    uncached * model.inputPriceMicroUsdPerMillion
+    + cached * cachedPrice
+    + usage.output_tokens * model.outputPriceMicroUsdPerMillion
+  ) / 1_000_000;
+  return Math.round(micro);
 }
 
 function validateModel(model) {
@@ -126,7 +174,7 @@ function validateRequest(request, model) {
   }
 }
 
-const CONTEXT_ID_KEYS = ['requestEventId', 'conversationId', 'runId', 'batchQueryId', 'workspaceId'];
+const CONTEXT_ID_KEYS = ['visitorId', 'requestEventId', 'conversationId', 'runId', 'batchQueryId', 'workspaceId'];
 
 // Row ids arrive as numbers (insertId) or digit strings (BIGINT columns); store them as numbers.
 function contextId(value, key) {
@@ -192,31 +240,41 @@ function providerRequestId(value) {
   return text.length > 255 ? text.slice(0, 255) : text;
 }
 
+// A binding is the model plus the credential paying for it, fixed for one async scope (a request,
+// a batch query, a manual script).
+function validateBinding(binding) {
+  if (!binding || typeof binding !== 'object' || !binding.model) throw new TypeError('A model binding requires a model.');
+  if (typeof binding.apiKey !== 'string' || binding.apiKey.length === 0) throw new TypeError('A model binding requires an API key.');
+  if (!CREDENTIAL_SOURCES.has(binding.credentialSource)) throw new TypeError(`Unknown credential source '${binding.credentialSource}'.`);
+  if (!MODEL_SELECTIONS.has(binding.modelSelection)) throw new TypeError(`Unknown model selection '${binding.modelSelection}'.`);
+  return Object.freeze({ ...binding });
+}
+
 class InferenceGateway {
   constructor(db, { adapterFactory = createInferenceAdapter, callRepository = null } = {}) {
     this.db = db;
     this.adapterFactory = adapterFactory;
     this.adapters = new Map();
-    this.modelContext = new AsyncLocalStorage();
+    this.bindingContext = new AsyncLocalStorage();
     this.callContext = new AsyncLocalStorage();
     this.calls = callRepository || new InferenceCallRepository(db);
     this.model = null;
   }
 
-  adapterCacheKey(model) {
+  adapterCacheKey(model, apiKey) {
     return [
       model.providerId,
       model.providerRevision,
       model.adapterKey,
       model.apiBaseUrl,
-      model.credentialEnvKey,
+      crypto.createHash('sha256').update(apiKey, 'utf8').digest('hex').slice(0, 24),
       model.requestTimeoutMs,
       model.maxRetries
     ].join(':');
   }
 
   getAdapter(model, apiKey) {
-    const key = this.adapterCacheKey(model);
+    const key = this.adapterCacheKey(model, apiKey);
     let adapter = this.adapters.get(key);
     if (!adapter) {
       adapter = this.adapterFactory(model.adapterKey, {
@@ -237,12 +295,49 @@ class InferenceGateway {
     }
 
     const row = rows[0];
-    const apiKey = validateProvider(row);
+    validateProviderRow(row);
     const model = rowToModel(row);
     validateModel(model);
-    const adapter = this.getAdapter(model, apiKey);
+    const adapter = this.getAdapter(model, platformCredential(model));
     this.model = model;
     return { model, adapter };
+  }
+
+  async loadModelRow(sql, params) {
+    const [rows] = await this.db.execute(sql, params);
+    if (!rows[0]) return null;
+    validateProviderRow(rows[0]);
+    const model = rowToModel(rows[0]);
+    validateModel(model);
+    return model;
+  }
+
+  loadModel(configKey) {
+    return this.loadModelRow(MODEL_BY_CONFIG_KEY_SQL, [configKey]);
+  }
+
+  loadModelById(id) {
+    return this.loadModelRow(MODEL_BY_ID_SQL, [id]);
+  }
+
+  async listSelectableModels() {
+    const [rows] = await this.db.execute(SELECTABLE_MODELS_SQL);
+    return rows.map(rowToModel);
+  }
+
+  async listEnabledProviders() {
+    const [rows] = await this.db.execute(ENABLED_PROVIDERS_SQL);
+    return rows.map(row => Object.freeze({
+      id: row.id,
+      providerKey: row.provider_key,
+      displayName: row.display_name,
+      adapterKey: row.adapter_key,
+      apiBaseUrl: row.api_base_url
+    }));
+  }
+
+  platformCredential(model) {
+    return platformCredential(model);
   }
 
   async initialize() {
@@ -252,14 +347,28 @@ class InferenceGateway {
   }
 
   getActiveModel() {
-    const contextualModel = this.modelContext.getStore();
-    if (contextualModel) return contextualModel;
+    const binding = this.bindingContext.getStore();
+    if (binding) return binding.model;
     if (!this.model) throw new Error('Inference gateway is not initialized.');
     return this.model;
   }
 
+  getBinding() {
+    return this.bindingContext.getStore() || null;
+  }
+
+  runWithBinding(binding, callback) {
+    return this.bindingContext.run(validateBinding(binding), callback);
+  }
+
+  // Platform-paid binding for a model, used by scripts and batch workers.
   runWithActiveModel(model, callback) {
-    return this.modelContext.run(model, callback);
+    return this.runWithBinding({
+      model,
+      apiKey: platformCredential(model),
+      credentialSource: 'platform',
+      modelSelection: 'auto'
+    }, callback);
   }
 
   // Call context: what a model request is for and which records it belongs to. Nested contexts
@@ -286,15 +395,13 @@ class InferenceGateway {
   }
 
   async createChatCompletion(request) {
-    const contextualModel = this.modelContext.getStore();
+    const binding = this.bindingContext.getStore();
     let model;
     let adapter;
 
-    if (contextualModel) {
-      model = contextualModel;
-      const apiKey = process.env[model.credentialEnvKey];
-      if (!apiKey) throw new Error(`Missing credential required by the active provider: ${model.credentialEnvKey}.`);
-      adapter = this.getAdapter(model, apiKey);
+    if (binding) {
+      model = binding.model;
+      adapter = this.getAdapter(model, binding.apiKey);
     } else {
       ({ model, adapter } = await this.resolveActiveModel());
     }
@@ -304,11 +411,14 @@ class InferenceGateway {
     const context = this.callContext.getStore() || {};
     const record = {
       inference_model_id: model.id,
+      visitor_id: context.visitorId ?? null,
       request_event_id: context.requestEventId ?? null,
       conversation_id: context.conversationId ?? null,
       run_id: context.runId ?? null,
       batch_query_id: context.batchQueryId ?? null,
       workspace_id: context.workspaceId ?? null,
+      credential_source: binding?.credentialSource ?? 'platform',
+      model_selection: binding?.modelSelection ?? 'auto',
       purpose: context.purpose ?? 'manual',
       agent_key: context.agentKey ?? null,
       streamed: request.stream ? 1 : 0,
@@ -398,9 +508,12 @@ class InferenceGateway {
 
   async recordCompletion(record, context, { startedAt, firstTokenAt, providerRequestId: requestId, finishReason, toolCallCount, responseText, usage }) {
     const finishedAt = process.hrtime.bigint();
+    const tokens = usageFields(usage);
+    const model = this.bindingContext.getStore()?.model ?? this.model;
     const row = {
       ...record,
-      ...usageFields(usage),
+      ...tokens,
+      cost_microusd: model && model.id === record.inference_model_id ? costMicroUsd(model, tokens) : null,
       status: 'completed',
       provider_request_id: providerRequestId(requestId),
       finish_reason: finishReason ? String(finishReason).slice(0, 32) : null,
@@ -433,16 +546,6 @@ class InferenceGateway {
     return saved;
   }
 
-  createActiveModelMiddleware() {
-    return async (req, res, next) => {
-      try {
-        const { model } = await this.resolveActiveModel();
-        this.runWithActiveModel(model, next);
-      } catch (error) {
-        next(error);
-      }
-    };
-  }
 }
 
 let gateway = null;
@@ -486,14 +589,11 @@ function resolveActiveModel() {
   return getInferenceGateway().resolveActiveModel().then(({ model }) => model);
 }
 
-function createActiveModelMiddleware() {
-  return getInferenceGateway().createActiveModelMiddleware();
-}
-
 module.exports = {
   InferenceGateway,
-  createActiveModelMiddleware,
+  costMicroUsd,
   getActiveModel,
+  getInferenceGateway,
   inference,
   initializeInferenceGateway,
   resolveActiveModel

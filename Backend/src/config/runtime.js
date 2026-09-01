@@ -141,6 +141,7 @@ function loadRuntimeConfig(backendRoot) {
       repository: requireString('ATLAS_DEPLOY_GITHUB_REPOSITORY'),
       repositoryRoot: requireAbsolutePath('ATLAS_DEPLOY_REPOSITORY_ROOT')
     }),
+    providerKeySecret: requireSecretFile('ATLAS_PROVIDER_KEY_SECRET_FILE'),
     cloudflare: Object.freeze({
       enrichedHeaders: cloudflareEnrichedHeaders,
       metadataSecret: cloudflareMetadataSecret

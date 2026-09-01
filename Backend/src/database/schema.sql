@@ -49,13 +49,18 @@ CREATE TABLE `atlasai`.`inference_models` (
   `request_timeout_ms` INT UNSIGNED NOT NULL DEFAULT 120000,
   `max_retries` TINYINT UNSIGNED NOT NULL DEFAULT 2,
   `input_price_microusd_per_million_tokens` BIGINT UNSIGNED NULL,
+  `cached_input_price_microusd_per_million_tokens` BIGINT UNSIGNED NULL COMMENT 'Price of prompt tokens served from the provider cache',
   `output_price_microusd_per_million_tokens` BIGINT UNSIGNED NULL,
+  `price_source_url` VARCHAR(2048) NULL,
+  `price_verified_unix_ms` BIGINT UNSIGNED NULL,
+  `visitor_selectable` TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Offered in the visitor model picker',
   `catalog_verified_unix_ms` BIGINT UNSIGNED NOT NULL,
   `created_unix_ms` BIGINT UNSIGNED NOT NULL,
   `updated_unix_ms` BIGINT UNSIGNED NOT NULL,
   `revision` BIGINT UNSIGNED NOT NULL DEFAULT 1,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_inference_models_config_key` (`config_key`),
+  KEY `idx_inference_models_selectable` (`visitor_selectable`, `status`, `id`),
   UNIQUE KEY `uq_inference_models_provider_model` (`provider_id`, `model_id`),
   UNIQUE KEY `uq_inference_models_one_active` (`active_singleton`),
   KEY `idx_inference_models_status_provider` (`status`, `provider_id`, `id`),
@@ -69,6 +74,11 @@ CREATE TABLE `atlasai`.`inference_models` (
   CONSTRAINT `chk_inference_models_vision` CHECK (`supports_vision` IN (0, 1)),
   CONSTRAINT `chk_inference_models_reasoning` CHECK (`supports_reasoning` IN (0, 1)),
   CONSTRAINT `chk_inference_models_reasoning_effort` CHECK (`reasoning_effort` IS NULL OR `reasoning_effort` IN ('none', 'minimal', 'low', 'medium', 'high', 'xhigh')),
+  CONSTRAINT `chk_inference_models_selectable` CHECK (`visitor_selectable` IN (0, 1)),
+  CONSTRAINT `chk_inference_models_prices` CHECK (
+    (`input_price_microusd_per_million_tokens` IS NULL AND `output_price_microusd_per_million_tokens` IS NULL AND `cached_input_price_microusd_per_million_tokens` IS NULL AND `price_verified_unix_ms` IS NULL)
+    OR (`input_price_microusd_per_million_tokens` IS NOT NULL AND `output_price_microusd_per_million_tokens` IS NOT NULL AND `price_verified_unix_ms` IS NOT NULL)
+  ),
   CONSTRAINT `chk_inference_models_output_tokens` CHECK (
     `default_output_tokens` > 0
     AND (`max_output_tokens` IS NULL OR `default_output_tokens` <= `max_output_tokens`)
@@ -693,11 +703,15 @@ CREATE TABLE `atlasai`.`inference_calls` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `public_id` BINARY(16) NOT NULL COMMENT 'UUIDv7 bytes',
   `inference_model_id` BIGINT UNSIGNED NOT NULL,
+  `visitor_id` BIGINT UNSIGNED NULL,
   `request_event_id` BIGINT UNSIGNED NULL,
   `conversation_id` BIGINT UNSIGNED NULL,
   `run_id` BIGINT UNSIGNED NULL,
   `batch_query_id` BIGINT UNSIGNED NULL,
   `workspace_id` BIGINT UNSIGNED NULL,
+  `credential_source` ENUM('platform','visitor') NOT NULL DEFAULT 'platform' COMMENT 'Whose provider key paid for the call',
+  `model_selection` ENUM('auto','visitor','fallback') NOT NULL DEFAULT 'auto' COMMENT 'How the model was chosen for the request',
+  `cost_microusd` BIGINT UNSIGNED NULL COMMENT 'Priced from the model row at record time; NULL when the model has no price',
   `purpose` ENUM('router','preface','synthesis','answer','agent','batch','manual') NOT NULL,
   `agent_key` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL COMMENT 'Tool whose agent issued the call',
   `status` ENUM('completed','failed') NOT NULL,
@@ -734,6 +748,8 @@ CREATE TABLE `atlasai`.`inference_calls` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_inference_calls_public_id` (`public_id`),
   KEY `idx_inference_calls_model_time` (`inference_model_id`, `started_unix_ms`, `id`),
+  KEY `idx_inference_calls_visitor_time` (`visitor_id`, `credential_source`, `started_unix_ms`, `id`),
+  KEY `idx_inference_calls_source_time` (`credential_source`, `started_unix_ms`, `id`),
   KEY `idx_inference_calls_conversation_time` (`conversation_id`, `started_unix_ms`, `id`),
   KEY `idx_inference_calls_run` (`run_id`, `id`),
   KEY `idx_inference_calls_request_event` (`request_event_id`, `id`),
@@ -743,6 +759,9 @@ CREATE TABLE `atlasai`.`inference_calls` (
   KEY `idx_inference_calls_purpose_time` (`purpose`, `started_unix_ms`, `id`),
   CONSTRAINT `fk_inference_calls_model`
     FOREIGN KEY (`inference_model_id`) REFERENCES `atlasai`.`inference_models` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `fk_inference_calls_visitor`
+    FOREIGN KEY (`visitor_id`) REFERENCES `atlasai`.`visitors` (`id`)
     ON UPDATE RESTRICT ON DELETE RESTRICT,
   CONSTRAINT `fk_inference_calls_request_event`
     FOREIGN KEY (`request_event_id`) REFERENCES `atlasai`.`request_events` (`id`)
@@ -771,6 +790,137 @@ ALTER TABLE `atlasai`.`messages`
   ADD CONSTRAINT `fk_messages_inference_call`
     FOREIGN KEY (`inference_call_id`) REFERENCES `atlasai`.`inference_calls` (`id`)
     ON UPDATE RESTRICT ON DELETE RESTRICT;
+
+-- Platform policy: spend budgets, per-visitor and global limits, model selection, visitor keys,
+-- agent behaviour, and the active HPA data release. Exactly one row is active; edit it in place
+-- or insert a new row and flip status. NULL on a limit means "not enforced".
+CREATE TABLE `atlasai`.`platform_config` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `label` VARCHAR(128) NOT NULL,
+  `status` ENUM('inactive','active') NOT NULL DEFAULT 'inactive',
+  `active_singleton` TINYINT UNSIGNED GENERATED ALWAYS AS (
+    CASE WHEN `status` = 'active' THEN 1 ELSE NULL END
+  ) STORED,
+  `active_hpa_version` VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT 'hpa_datasets rows with this version are kept locally and used offline',
+  `offline_agents_enabled` TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  `budget_window_mode` ENUM('rolling','calendar_utc') NOT NULL DEFAULT 'rolling' COMMENT 'rolling = last 24 h / 7 d / 30 d; calendar_utc = current UTC day / ISO week / month',
+  `platform_budget_usd_per_day` DECIMAL(12,2) UNSIGNED NULL,
+  `platform_budget_usd_per_week` DECIMAL(12,2) UNSIGNED NULL,
+  `platform_budget_usd_per_month` DECIMAL(12,2) UNSIGNED NULL,
+  `over_budget_behaviour` ENUM('block','fallback_model') NOT NULL DEFAULT 'block',
+  `fallback_inference_model_id` BIGINT UNSIGNED NULL,
+  `unpriced_model_behaviour` ENUM('allow','block') NOT NULL DEFAULT 'allow' COMMENT 'What to do when the selected model has no price and a budget is set',
+  `visitor_budget_usd_per_day` DECIMAL(12,2) UNSIGNED NULL,
+  `visitor_budget_usd_per_week` DECIMAL(12,2) UNSIGNED NULL,
+  `visitor_budget_usd_per_month` DECIMAL(12,2) UNSIGNED NULL,
+  `visitor_requests_per_minute` INT UNSIGNED NULL,
+  `visitor_requests_per_hour` INT UNSIGNED NULL,
+  `visitor_requests_per_day` INT UNSIGNED NULL,
+  `visitor_tokens_per_day` BIGINT UNSIGNED NULL,
+  `visitor_runs_per_day` INT UNSIGNED NULL,
+  `visitor_aso_runs_per_day` INT UNSIGNED NULL,
+  `visitor_concurrent_runs` SMALLINT UNSIGNED NULL,
+  `visitor_batch_queries_per_day` INT UNSIGNED NULL,
+  `global_requests_per_minute` INT UNSIGNED NULL,
+  `global_concurrent_runs` SMALLINT UNSIGNED NULL,
+  `visitor_model_selection_enabled` TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  `visitor_provider_keys_enabled` TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  `visitor_keys_bypass_spend_limits` TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  `visitor_keys_bypass_volume_limits` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `query_max_characters` INT UNSIGNED NOT NULL DEFAULT 20000,
+  `model_history_messages` SMALLINT UNSIGNED NOT NULL DEFAULT 100,
+  `batch_max_queries` SMALLINT UNSIGNED NOT NULL DEFAULT 50,
+  `batch_concurrency` TINYINT UNSIGNED NOT NULL DEFAULT 2,
+  `deep_research_max_retries` TINYINT UNSIGNED NOT NULL DEFAULT 2,
+  `aso_max_steps` SMALLINT UNSIGNED NOT NULL DEFAULT 20,
+  `aso_parallel_limit` TINYINT UNSIGNED NOT NULL DEFAULT 3,
+  `aso_top_x` SMALLINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '0 keeps every gene the search returns',
+  `created_unix_ms` BIGINT UNSIGNED NOT NULL,
+  `updated_unix_ms` BIGINT UNSIGNED NOT NULL,
+  `revision` BIGINT UNSIGNED NOT NULL DEFAULT 1,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_platform_config_one_active` (`active_singleton`),
+  CONSTRAINT `fk_platform_config_fallback_model`
+    FOREIGN KEY (`fallback_inference_model_id`) REFERENCES `atlasai`.`inference_models` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `chk_platform_config_flags` CHECK (
+    `offline_agents_enabled` IN (0, 1) AND `visitor_model_selection_enabled` IN (0, 1)
+    AND `visitor_provider_keys_enabled` IN (0, 1) AND `visitor_keys_bypass_spend_limits` IN (0, 1)
+    AND `visitor_keys_bypass_volume_limits` IN (0, 1)
+  ),
+  CONSTRAINT `chk_platform_config_fallback` CHECK (`over_budget_behaviour` <> 'fallback_model' OR `fallback_inference_model_id` IS NOT NULL),
+  CONSTRAINT `chk_platform_config_positive` CHECK (
+    `query_max_characters` > 0 AND `model_history_messages` > 0 AND `batch_max_queries` > 0
+    AND `batch_concurrency` > 0 AND `aso_max_steps` > 0 AND `aso_parallel_limit` > 0
+  ),
+  CONSTRAINT `chk_platform_config_time_order` CHECK (`updated_unix_ms` >= `created_unix_ms`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
+
+-- A visitor's own provider API key, AES-256-GCM encrypted with the server secret. One row per
+-- visitor and provider; saving again replaces it, removing deletes it. Only the hash and the
+-- last characters are ever shown back.
+CREATE TABLE `atlasai`.`visitor_provider_keys` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `public_id` BINARY(16) NOT NULL COMMENT 'UUIDv7 bytes',
+  `visitor_id` BIGINT UNSIGNED NOT NULL,
+  `provider_id` BIGINT UNSIGNED NOT NULL,
+  `key_ciphertext` VARBINARY(2048) NOT NULL,
+  `key_nonce` BINARY(12) NOT NULL,
+  `key_tag` BINARY(16) NOT NULL,
+  `key_sha256` BINARY(32) NOT NULL,
+  `key_suffix` VARCHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT 'Last characters, for display only',
+  `verified_unix_ms` BIGINT UNSIGNED NOT NULL COMMENT 'When the key last passed a live provider check',
+  `use_count` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `last_used_unix_ms` BIGINT UNSIGNED NULL,
+  `created_unix_ms` BIGINT UNSIGNED NOT NULL,
+  `updated_unix_ms` BIGINT UNSIGNED NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_visitor_provider_keys_public_id` (`public_id`),
+  UNIQUE KEY `uq_visitor_provider_keys_pair` (`visitor_id`, `provider_id`),
+  KEY `idx_visitor_provider_keys_provider` (`provider_id`, `id`),
+  CONSTRAINT `fk_visitor_provider_keys_visitor`
+    FOREIGN KEY (`visitor_id`) REFERENCES `atlasai`.`visitors` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `fk_visitor_provider_keys_provider`
+    FOREIGN KEY (`provider_id`) REFERENCES `atlasai`.`inference_providers` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `chk_visitor_provider_keys_time_order` CHECK (`updated_unix_ms` >= `created_unix_ms`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
+
+-- Every refusal or forced fallback the policy layer makes, with the measured value and the
+-- limit it hit. Allowed requests need no row: they show up in inference_calls.
+CREATE TABLE `atlasai`.`policy_decisions` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `visitor_id` BIGINT UNSIGNED NOT NULL,
+  `request_event_id` BIGINT UNSIGNED NULL,
+  `inference_model_id` BIGINT UNSIGNED NULL COMMENT 'The model the request asked for',
+  `decision` ENUM('blocked','fallback') NOT NULL,
+  `reason` ENUM(
+    'platform_budget_day','platform_budget_week','platform_budget_month',
+    'visitor_budget_day','visitor_budget_week','visitor_budget_month',
+    'visitor_requests_minute','visitor_requests_hour','visitor_requests_day',
+    'visitor_tokens_day','visitor_runs_day','visitor_aso_runs_day','visitor_concurrent_runs',
+    'visitor_batch_queries_day','global_requests_minute','global_concurrent_runs',
+    'unpriced_model','model_selection_disabled','model_not_selectable'
+  ) NOT NULL,
+  `measured_value` DECIMAL(18,4) NOT NULL,
+  `limit_value` DECIMAL(18,4) NOT NULL,
+  `route_kind` ENUM('query','batch') NOT NULL,
+  `created_unix_ms` BIGINT UNSIGNED NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_policy_decisions_visitor_time` (`visitor_id`, `created_unix_ms`, `id`),
+  KEY `idx_policy_decisions_reason_time` (`reason`, `created_unix_ms`, `id`),
+  KEY `idx_policy_decisions_request_event` (`request_event_id`),
+  CONSTRAINT `fk_policy_decisions_visitor`
+    FOREIGN KEY (`visitor_id`) REFERENCES `atlasai`.`visitors` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `fk_policy_decisions_request_event`
+    FOREIGN KEY (`request_event_id`) REFERENCES `atlasai`.`request_events` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `fk_policy_decisions_model`
+    FOREIGN KEY (`inference_model_id`) REFERENCES `atlasai`.`inference_models` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
 
 SET @atlasai_seed_unix_ms = CAST(
   FLOOR(UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3)) * 1000)
@@ -970,3 +1120,64 @@ INSERT INTO `atlasai`.`inference_models` (
   ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'openai'), 'openai-gpt-5.6-terra', 'gpt-5.6-terra',           'GPT-5.6 Terra',             'inactive', 1, 1, 1, 1, 1, 1, 'none', @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
   ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'openai'), 'openai-gpt-5.4-mini',  'gpt-5.4-mini-2026-03-17', 'GPT-5.4 mini (2026-03-17)', 'inactive', 1, 1, 1, 1, 1, 1, NULL,   @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
   ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'openai'), 'openai-gpt-5.4-nano',  'gpt-5.4-nano-2026-03-17', 'GPT-5.4 nano (2026-03-17)', 'inactive', 1, 1, 1, 1, 1, 1, NULL,   @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms);
+
+-- List prices verified 2026-09-02 (USD per million tokens x 1e6) and the visitor picker allow-list.
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 2000000, `cached_input_price_microusd_per_million_tokens` = 500000, `output_price_microusd_per_million_tokens` = 8000000, `price_source_url` = 'https://developers.openai.com/api/docs/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'openai-gpt-4.1-2025-04-14';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 400000, `cached_input_price_microusd_per_million_tokens` = 100000, `output_price_microusd_per_million_tokens` = 1600000, `price_source_url` = 'https://developers.openai.com/api/docs/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'openai-gpt-4.1-mini-2025-04-14';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 100000, `cached_input_price_microusd_per_million_tokens` = 25000, `output_price_microusd_per_million_tokens` = 400000, `price_source_url` = 'https://developers.openai.com/api/docs/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'openai-gpt-4.1-nano-2025-04-14';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 200000, `cached_input_price_microusd_per_million_tokens` = 20000, `output_price_microusd_per_million_tokens` = 1200000, `price_source_url` = 'https://developers.openai.com/api/docs/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'openai-gpt-5.6-luna';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 4000000, `cached_input_price_microusd_per_million_tokens` = 400000, `output_price_microusd_per_million_tokens` = 20000000, `price_source_url` = 'https://developers.openai.com/api/docs/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'openai-gpt-5.6-sol';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 2000000, `cached_input_price_microusd_per_million_tokens` = 200000, `output_price_microusd_per_million_tokens` = 12000000, `price_source_url` = 'https://developers.openai.com/api/docs/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'openai-gpt-5.6-terra';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 750000, `cached_input_price_microusd_per_million_tokens` = 75000, `output_price_microusd_per_million_tokens` = 4500000, `price_source_url` = 'https://developers.openai.com/api/docs/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'openai-gpt-5.4-mini';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 200000, `cached_input_price_microusd_per_million_tokens` = 20000, `output_price_microusd_per_million_tokens` = 1250000, `price_source_url` = 'https://developers.openai.com/api/docs/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'openai-gpt-5.4-nano';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 750000, `cached_input_price_microusd_per_million_tokens` = 75000, `output_price_microusd_per_million_tokens` = 3750000, `price_source_url` = 'https://ai.google.dev/gemini-api/docs/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'gemini-3.7-flash';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 1500000, `cached_input_price_microusd_per_million_tokens` = 150000, `output_price_microusd_per_million_tokens` = 9000000, `price_source_url` = 'https://ai.google.dev/gemini-api/docs/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'gemini-3.5-flash';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 2000000, `cached_input_price_microusd_per_million_tokens` = 200000, `output_price_microusd_per_million_tokens` = 12000000, `price_source_url` = 'https://ai.google.dev/gemini-api/docs/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'gemini-3.1-pro-preview';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 1400000, `cached_input_price_microusd_per_million_tokens` = 260000, `output_price_microusd_per_million_tokens` = 4400000, `price_source_url` = 'https://docs.z.ai/guides/overview/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'glm-5.2';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 1000000, `cached_input_price_microusd_per_million_tokens` = 200000, `output_price_microusd_per_million_tokens` = 3200000, `price_source_url` = 'https://docs.z.ai/guides/overview/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'glm-5';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 600000, `cached_input_price_microusd_per_million_tokens` = 110000, `output_price_microusd_per_million_tokens` = 2200000, `price_source_url` = 'https://docs.z.ai/guides/overview/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'glm-4.7';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 150000, `cached_input_price_microusd_per_million_tokens` = NULL, `output_price_microusd_per_million_tokens` = 600000, `price_source_url` = 'https://groq.com/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 0, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'groq-gpt-oss-120b';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 75000, `cached_input_price_microusd_per_million_tokens` = NULL, `output_price_microusd_per_million_tokens` = 300000, `price_source_url` = 'https://groq.com/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 0, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'groq-gpt-oss-20b';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 600000, `cached_input_price_microusd_per_million_tokens` = NULL, `output_price_microusd_per_million_tokens` = 3000000, `price_source_url` = 'https://groq.com/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 0, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'groq-qwen-3.6-27b';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 800000, `cached_input_price_microusd_per_million_tokens` = NULL, `output_price_microusd_per_million_tokens` = 4000000, `price_source_url` = 'https://groq.com/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 0, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'groq-qwen-3.8-27b';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 5000000, `cached_input_price_microusd_per_million_tokens` = 500000, `output_price_microusd_per_million_tokens` = 25000000, `price_source_url` = 'https://www.anthropic.com/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'anthropic-claude-opus-5';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 2000000, `cached_input_price_microusd_per_million_tokens` = 200000, `output_price_microusd_per_million_tokens` = 10000000, `price_source_url` = 'https://www.anthropic.com/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'anthropic-claude-sonnet-5';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 1000000, `cached_input_price_microusd_per_million_tokens` = 100000, `output_price_microusd_per_million_tokens` = 5000000, `price_source_url` = 'https://www.anthropic.com/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'anthropic-claude-haiku-4-5';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 500000, `cached_input_price_microusd_per_million_tokens` = NULL, `output_price_microusd_per_million_tokens` = 3000000, `price_source_url` = 'https://www.alibabacloud.com/help/en/model-studio/model-pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'alibaba-qwen3.8-27b';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 2000000, `cached_input_price_microusd_per_million_tokens` = NULL, `output_price_microusd_per_million_tokens` = 6000000, `price_source_url` = 'https://www.alibabacloud.com/help/en/model-studio/model-pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'alibaba-qwen3.8-2.4t-a95b';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 600000, `cached_input_price_microusd_per_million_tokens` = NULL, `output_price_microusd_per_million_tokens` = 3600000, `price_source_url` = 'https://www.alibabacloud.com/help/en/model-studio/model-pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'alibaba-qwen3.5-397b-a17b';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 150000, `cached_input_price_microusd_per_million_tokens` = NULL, `output_price_microusd_per_million_tokens` = 470000, `price_source_url` = 'https://www.alibabacloud.com/help/en/model-studio/model-pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'alibaba-qwen3.8-flash';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 1320000, `cached_input_price_microusd_per_million_tokens` = NULL, `output_price_microusd_per_million_tokens` = 3960000, `price_source_url` = 'https://www.alibabacloud.com/help/en/model-studio/model-pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'alibaba-deepseek-v4-pro';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 200000, `cached_input_price_microusd_per_million_tokens` = NULL, `output_price_microusd_per_million_tokens` = 400000, `price_source_url` = 'https://www.alibabacloud.com/help/en/model-studio/model-pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'alibaba-deepseek-v4-flash';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 3000000, `cached_input_price_microusd_per_million_tokens` = NULL, `output_price_microusd_per_million_tokens` = 15000000, `price_source_url` = 'https://www.alibabacloud.com/help/en/model-studio/model-pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'alibaba-kimi-k3';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 1320000, `cached_input_price_microusd_per_million_tokens` = 44000, `output_price_microusd_per_million_tokens` = 3960000, `price_source_url` = 'https://api-docs.deepseek.com/quick_start/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'deepseek-v4-pro';
+UPDATE `atlasai`.`inference_models` SET `input_price_microusd_per_million_tokens` = 440000, `cached_input_price_microusd_per_million_tokens` = 14000, `output_price_microusd_per_million_tokens` = 1320000, `price_source_url` = 'https://api-docs.deepseek.com/quick_start/pricing', `price_verified_unix_ms` = @atlasai_seed_unix_ms, `visitor_selectable` = 1, `updated_unix_ms` = @atlasai_seed_unix_ms, `revision` = `revision` + 1 WHERE `config_key` = 'deepseek-v4-flash';
+
+-- The single active platform policy. Limits are NULL when not enforced; edit in place or insert a new row and flip status.
+INSERT INTO `atlasai`.`platform_config` (
+  `label`, `status`, `active_hpa_version`, `offline_agents_enabled`, `budget_window_mode`,
+  `platform_budget_usd_per_day`, `platform_budget_usd_per_week`, `platform_budget_usd_per_month`,
+  `over_budget_behaviour`, `fallback_inference_model_id`, `unpriced_model_behaviour`,
+  `visitor_budget_usd_per_day`, `visitor_budget_usd_per_week`, `visitor_budget_usd_per_month`,
+  `visitor_requests_per_minute`, `visitor_requests_per_hour`, `visitor_requests_per_day`,
+  `visitor_tokens_per_day`, `visitor_runs_per_day`, `visitor_aso_runs_per_day`, `visitor_concurrent_runs`,
+  `visitor_batch_queries_per_day`, `global_requests_per_minute`, `global_concurrent_runs`,
+  `visitor_model_selection_enabled`, `visitor_provider_keys_enabled`,
+  `visitor_keys_bypass_spend_limits`, `visitor_keys_bypass_volume_limits`,
+  `query_max_characters`, `model_history_messages`, `batch_max_queries`, `batch_concurrency`,
+  `deep_research_max_retries`, `aso_max_steps`, `aso_parallel_limit`, `aso_top_x`,
+  `created_unix_ms`, `updated_unix_ms`
+) VALUES (
+  'Production defaults', 'active', '25.1', 1, 'rolling',
+  25.00, 100.00, 300.00,
+  'block', NULL, 'allow',
+  5.00, 20.00, 50.00,
+  20, 200, 1000,
+  5000000, 200, 50, 3,
+  500, 120, 12,
+  1, 1,
+  1, 0,
+  20000, 100, 50, 2,
+  2, 20, 3, 0,
+  @atlasai_seed_unix_ms, @atlasai_seed_unix_ms
+);

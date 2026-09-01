@@ -140,6 +140,42 @@ timeline the frontend renders (`type: 'message' | 'run'`), built by
   before application routes.
 - Workspace downloads reject symlinks and paths outside the owned workspace.
 
+## Platform policy, prices, model selection, and visitor keys
+
+`platform_config` is the operator's control panel: exactly one row is active (`status = 'active'`).
+It holds spending budgets (platform and per visitor, per day/week/month, USD), volume limits
+(requests per minute/hour/day, tokens, runs, ASO runs, concurrent runs, batch queries, global
+caps), what happens over budget (`block` or `fallback_model` with `fallback_inference_model_id`),
+whether visitors may pick a model or bring their own provider keys, request shaping
+(`query_max_characters`, `model_history_messages`, batch size and concurrency), agent defaults
+(deep research retries, ASO steps, parallelism, top-x) and the active HPA data release. A limit
+set to `NULL` is not enforced. `budget_window_mode` chooses rolling windows (last 24 h / 7 d /
+30 d) or UTC calendar periods. Edits are picked up within five seconds; no restart.
+
+Prices live on `inference_models`: input, cached-input and output price in micro-USD per million
+tokens, plus `price_source_url` and `price_verified_unix_ms`. Every completed call in
+`inference_calls` gets `cost_microusd` from the bound model (uncached prompt tokens at the input
+price, cached tokens at the cached price when published, output tokens at the output price), and
+carries `visitor_id`, `credential_source` (`platform` or `visitor`) and `model_selection`
+(`auto`, `visitor`, `fallback`).
+
+Admission runs in `src/policy/` before `POST /query/stream` and `POST /batch`. The middleware
+resolves the model (`model` in the body names a `visitor_selectable` config key, otherwise the
+active model), picks the credential (the visitor's stored key for that provider when present and
+enabled, otherwise the platform key from the environment), then checks volume limits and spend
+budgets against `request_events`, `runs`, `batch_jobs` and `inference_calls`. A refusal answers
+HTTP 429 with `{ "error": "policy_refused", "reason", "scope", "measured", "limit",
+"retry_after_seconds" }` and writes a `policy_decisions` row; a budget fallback swaps the model
+and records a `fallback` decision. Requests paid with a visitor key bypass spend budgets when
+`visitor_keys_bypass_spend_limits` is set, and volume limits only when
+`visitor_keys_bypass_volume_limits` is set.
+
+Routes: `GET /models` returns the active model, the selectable catalog with prices, and the
+providers the visitor has keys for. `GET /keys` lists the visitor's keys (suffix and usage only),
+`PUT /keys/:provider` with `{ "api_key" }` checks the key against the provider's model-list
+endpoint and stores it AES-256-GCM encrypted with the secret in `ATLAS_PROVIDER_KEY_SECRET_FILE`,
+and `DELETE /keys/:provider` removes it. Keys are decrypted only for the request that uses them.
+
 ## Cloudflare metadata
 
 `request_events` stores request and Cloudflare fields in explicit typed

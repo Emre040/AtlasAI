@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import './Chat.css';
 import ReactMarkdown from 'react-markdown';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -38,6 +38,8 @@ import {
   initializeHPAAuth
 } from '../api/auth';
 import { getApiBaseUrl, getApiEndpoint, getRuntimeConfig, getUiConfig } from '../api/config';
+import { AUTO_MODEL, describeRefusal, loadSelectedModel, storeSelectedModel } from '../api/models';
+import ModelMenu from './ModelMenu';
 import { liveToolEventFromSse, timelineToUiMessages } from '../api/timeline';
 import DictionaryCarousel from './DictionaryCarousel';
 
@@ -191,13 +193,17 @@ function HPA() {
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showAccountModal, setShowAccountModal] = useState(false);
-  const [showModelDropdown, setShowModelDropdown] = useState(false);
+  // 'auto' follows the platform's active model; anything else is an inference_models config_key.
+  const [selectedModel, setSelectedModel] = useState(loadSelectedModel);
+  const chooseModel = useCallback(configKey => {
+    setSelectedModel(configKey);
+    storeSelectedModel(configKey);
+  }, []);
   const [collapsedRuns, setCollapsedRuns] = useState({}); // Track collapsed state per runId
   const [searchResults, setSearchResults] = useState({}); // Map of searchUrl -> { rows, loading, error, currentPage }
   const [replyTo, setReplyTo] = useState(null); // { ensg, geneName } for reply context
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
-  const modelDropdownRef = useRef(null);
   const toolRunRefs = useRef({}); // Refs for auto-scroll within each run container
   const [artifactPreview, setArtifactPreview] = useState(null);
   const artifactLeaveTimer = useRef(null);
@@ -936,18 +942,6 @@ function HPA() {
     if (!isLoading && inputRef.current) inputRef.current.focus();
   }, [isLoading, selectedConversation]);
 
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (modelDropdownRef.current && !modelDropdownRef.current.contains(event.target)) {
-        setShowModelDropdown(false);
-      }
-    };
-    if (showModelDropdown) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-    }
-  }, [showModelDropdown]);
-
   // Initialize the anonymous server-issued session and load its conversations.
   useEffect(() => {
     let cancelled = false;
@@ -1134,9 +1128,18 @@ function HPA() {
       const response = await authenticatedFetch(getApiEndpoint('queryStream'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: queryText, conversationId })
+        body: JSON.stringify({
+          query: queryText,
+          conversationId,
+          ...(selectedModel !== AUTO_MODEL ? { model: selectedModel } : {})
+        })
       });
-      if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+      if (!response.ok) {
+        // Policy refusals arrive as JSON before any stream starts; show their message verbatim.
+        const refusal = await describeRefusal(response);
+        throw Object.assign(new Error(refusal ? refusal.message : `HTTP ${response.status}`), { userMessage: refusal?.message || null });
+      }
+      if (!response.body) throw new Error('The response had no body.');
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -1262,7 +1265,7 @@ function HPA() {
       const errorMessage = {
         id: Date.now() + 2,
         type: 'ai',
-        text: 'Sorry, there was an error connecting to the server. Please try again.',
+        text: err?.userMessage || 'Sorry, there was an error connecting to the server. Please try again.',
         timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
       };
       setConversations(convs => convs.map(conv =>
@@ -1305,26 +1308,7 @@ function HPA() {
 
       <div className="HPAG-chat-area">
         <div className="HPAG-chat-header">
-          <div className="HPAG-model-selector" ref={modelDropdownRef}>
-            <button
-              className="HPAG-model-button"
-              onClick={() => setShowModelDropdown(!showModelDropdown)}
-            >
-              <span className="HPAG-model-name">AtlasAI</span>
-              <span className="HPAG-model-version">1.47</span>
-              <i className="fas fa-chevron-down"></i>
-            </button>
-            {showModelDropdown && (
-              <div className="HPAG-model-dropdown">
-                <div className="HPAG-model-item HPAG-model-active">
-                  <div className="HPAG-model-item-name">AtlasAI 1.47</div>
-                  <div className="HPAG-model-item-desc">
-                    Specialized agent for Human Protein Atlas data analysis and research
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          <ModelMenu selectedModel={selectedModel} onSelectModel={chooseModel} />
           <div className="HPAG-header-actions">
             {isLocalEnv && (
               <div className="HPAG-env-indicator" title={`Connected to ${apiBaseUrl}`}>

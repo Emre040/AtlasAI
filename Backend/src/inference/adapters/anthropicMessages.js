@@ -156,10 +156,15 @@ function mapFinishReason(reason) {
   return reason;
 }
 
+// Anthropic reports uncached input, cache reads, and cache writes separately; the internal
+// contract follows the OpenAI shape where prompt_tokens is the whole prompt and
+// prompt_tokens_details.cached_tokens is the cached subset.
 function normalizeUsage(usage = {}) {
-  const promptTokens = Number(usage.input_tokens || 0);
-  const completionTokens = Number(usage.output_tokens || 0);
+  const uncachedTokens = Number(usage.input_tokens || 0);
   const cachedTokens = Number(usage.cache_read_input_tokens || 0);
+  const cacheWriteTokens = Number(usage.cache_creation_input_tokens || 0);
+  const promptTokens = uncachedTokens + cachedTokens + cacheWriteTokens;
+  const completionTokens = Number(usage.output_tokens || 0);
   return {
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,

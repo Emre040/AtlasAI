@@ -54,6 +54,15 @@ class RequestEventRepository {
     });
   }
 
+  // The policy layer counts a visitor's requests while they are still in flight, so the visitor
+  // is attached as soon as authentication has resolved rather than only at finish.
+  async attachVisitor(requestEventId, visitorId) {
+    await this.db.execute(
+      `UPDATE ${REQUEST_EVENTS} SET visitor_id = ? WHERE id = ? AND visitor_id IS NULL`,
+      [visitorId, requestEventId]
+    );
+  }
+
   async finish(requestEventId, context, auth = null) {
     const values = context.values;
     return this.db.transaction(async tx => {

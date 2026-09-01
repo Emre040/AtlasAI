@@ -338,9 +338,11 @@ class InferenceGateway {
 
     const choice = result?.choices?.[0];
     const text = typeof choice?.message?.content === 'string' ? choice.message.content : '';
+    // Time to first token only exists for streams; a whole-response call reports NULL and its
+    // tokens-per-second is then plain throughput over the full latency.
     await this.recordCompletion(record, context, {
       startedAt,
-      firstTokenAt: process.hrtime.bigint(),
+      firstTokenAt: null,
       providerRequestId: result?.id,
       finishReason: choice?.finish_reason ?? null,
       toolCallCount: Array.isArray(choice?.message?.tool_calls) ? choice.message.tool_calls.length : 0,

@@ -114,7 +114,9 @@ in `detail_json` next to the text.
 recorded whoever made it: purpose (`router`, `preface`, `synthesis`, `answer`,
 `agent`, `batch`, `manual`), the run, conversation, request event, batch query,
 or workspace it served, provider request id, finish reason, token counts, time
-to first token, total latency, and a stored `output_tokens_per_second`. Prompts
+to first token (streamed calls only), total latency, and a stored
+`output_tokens_per_second` (output tokens over the time after the first token,
+or over the full latency for whole-response calls). Prompts
 and responses are hashed, not copied. Callers describe the request with
 `inference.withContext({ purpose, conversationId, runId, ... }, fn)`; nested
 contexts inherit the outer ids, and `context.callIds` returns the recorded ids.

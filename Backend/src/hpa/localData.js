@@ -61,6 +61,7 @@ class LocalData {
     this.refreshing = null;
     this.tables = new Map();
     this.indexes = new Map();
+    this.unreachable = new Set();
   }
 
   configure({ root, db }) {
@@ -81,7 +82,20 @@ class LocalData {
       const version = platformConfig().activeHpaVersion;
       const ready = await this.datasets.listReady(version);
       const next = new Map();
-      for (const dataset of ready) next.set(dataset.localPath, dataset);
+      // A row is only usable when its file is actually reachable from this process (the data
+      // directory is shared between releases through a link); otherwise the agents stay online.
+      for (const dataset of ready) {
+        try {
+          await fsp.access(this.filePath(dataset.localPath));
+          next.set(dataset.localPath, dataset);
+          this.unreachable.delete(dataset.localPath);
+        } catch {
+          if (!this.unreachable.has(dataset.localPath)) {
+            this.unreachable.add(dataset.localPath);
+            console.error('[HPA_LOCAL_DATA_UNREACHABLE]', this.filePath(dataset.localPath));
+          }
+        }
+      }
       this.registry = next;
       this.registryLoadedAt = Date.now();
       return next;

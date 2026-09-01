@@ -48,7 +48,8 @@ handle_exit() {
   fi
   if (( exit_code != 0 )); then
     if [[ "${switched}" == true && -n "${previous_ecosystem}" ]]; then
-      pm2 startOrReload "${previous_ecosystem}" --only atlas-api --update-env >/dev/null 2>&1
+      pm2 delete atlas-api >/dev/null 2>&1 || true
+      pm2 start "${previous_ecosystem}" --only atlas-api >/dev/null 2>&1
     fi
     write_status failed
   fi
@@ -152,7 +153,8 @@ if [[ ! -f "${previous_ecosystem}" || ! -f "${next_ecosystem}" ]]; then
 fi
 
 switched=true
-pm2 startOrReload "${next_ecosystem}" --only atlas-api --update-env
+pm2 delete atlas-api
+pm2 start "${next_ecosystem}" --only atlas-api
 deployed_cwd="$(pm2 jlist | node -e '
 let input = "";
 process.stdin.on("data", chunk => { input += chunk; });

@@ -140,6 +140,6 @@ calls the deployment endpoint when the repository variable
 `ATLAS_BACKEND_AUTO_DEPLOY` is exactly `true`. Each deployment fetches the exact
 requested commit into a retained detached worktree, installs locked
 dependencies, runs tests and syntax checks, and boots a private canary on port
-19012. Only then does PM2 reload `atlas-api`. A failed production health check
-reloads the previously running release. The development checkout is never
+19012. Only then does PM2 replace `atlas-api`. A failed production health check
+restores the previously running release. The development checkout is never
 reset, cleaned, or used as the deployed release.

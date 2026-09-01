@@ -16,7 +16,7 @@ const { createRouter: createHpaProxyRouter } = require('./modules/hpaProxy');
 const { createRouter: createBatchRouter } = require('./modules/batch');
 const { BlocklistService } = require('./modules/blocklist');
 const { resolveWorkspaceRoot } = require('./modules/aso/workspaceStore');
-
+const { createRouter: createHpmRouter } = require('./modules/hpmSummaries');
 async function bootstrap() {
   const db = await createDbClient();
   const app = express();
@@ -69,6 +69,7 @@ async function bootstrap() {
   app.use('/hpa-admin', analyticsRouter);
   app.use('/hpa-proxy', createHpaProxyRouter());
   app.use('/batch', createBatchRouter(db));
+  app.use('/hpm', createHpmRouter());
 
   // Serve ASO workspace artifacts (chart PNGs, reports)
   const workspaceRoot = resolveWorkspaceRoot();
@@ -129,8 +130,9 @@ async function bootstrap() {
   });
 
   const port = parseInt(process.env.HPA_PORT, 10) || 9012;
-  app.listen(port, () => {
-    console.log(`[SERVER] ${process.env.HPA_APP_NAME} listening on port ${port} (db: ${db.mode})`);
+  const host = process.env.HPA_HOST || '0.0.0.0';
+  app.listen(port, host, () => {
+    console.log(`[SERVER] ${process.env.HPA_APP_NAME} listening on ${host}:${port} (db: ${db.mode})`);
   });
 }
 

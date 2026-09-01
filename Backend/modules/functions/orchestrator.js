@@ -124,9 +124,7 @@ const defs = [
       '(A) Histology/pathology: tissue histology, cancer pathology, cell structures ' +
       '(e.g., "show me liver histology", "neuroendocrine tumors", "mitochondria"). ' +
       '(B) About HPA: questions about the project, its history, team, publications, downloads, releases, funding, data licensing ' +
-      '(e.g., "what is HPA?", "who runs the Human Protein Atlas?", "how do I download data?", "what changed in the latest release?", "how do I cite HPA?"). ' +
-      '(C) Atlas overviews: questions about what the different HPA atlases contain, their methodology, and scope ' +
-      '(e.g., "what is the subcellular atlas?", "tell me about the tissue atlas", "what does the blood atlas measure?", "how does the single cell atlas work?").',
+      '(e.g., "what is HPA?", "who runs the Human Protein Atlas?", "how do I download data?", "what changed in the latest release?", "how do I cite HPA?").',
     parameters: {
       type: 'object',
       properties: {

@@ -3,20 +3,26 @@
 const path = require('path');
 const express = require('express');
 const crypto = require('crypto');
-const { client, MODEL, PROVIDER } = require('./llm');
+const OpenAI = require('openai');
 const orchestrator = require('./functions/orchestrator');
 const { resolveWorkspaceRoot } = require('./aso/workspaceStore');
 
+const MODEL = process.env.HPA_MODEL;
 const BATCH_SECRET = process.env.HPA_BATCH_SECRET;
 const MAX_QUERIES = 50;
 const CONCURRENCY = 2; // run 2 queries at a time to avoid hammering the API
+
+const apiKey = process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY;
+const BASE_URL = process.env.GEMINI_BASE_URL || process.env.OPENAI_BASE_URL;
+const openai = BASE_URL ? new OpenAI({ apiKey, baseURL: BASE_URL }) : new OpenAI({ apiKey });
+const USING_GEMINI = Boolean(BASE_URL && BASE_URL.includes('generativelanguage.googleapis.com'));
 
 /* ---- helpers ---- */
 
 function uuid() { return crypto.randomUUID(); }
 
 async function chatCompletion(messages) {
-  const stream = await client.chat.completions.create({
+  const stream = await openai.chat.completions.create({
     model: MODEL,
     messages,
     stream: true,
@@ -48,7 +54,7 @@ function initToolCallCollector() {
 
 async function proposeTools(messages) {
   const coll = initToolCallCollector();
-  const stream = await client.chat.completions.create({
+  const stream = await openai.chat.completions.create({
     model: MODEL,
     messages: [
       ...messages,
@@ -187,7 +193,7 @@ CRITICAL RULES:
     // Synthesize
     const stylePrompt = getSynthesisPrompt(toolName, toolResult);
     let finalMessages;
-    if (PROVIDER === 'gemini') {
+    if (USING_GEMINI) {
       const payload = toolResult?.summary_md || JSON.stringify(toolResult.result || { status: 'ok' });
       finalMessages = [...base, { role: 'system', content: stylePrompt }, { role: 'user', content: `Tool output:\n${payload}` }];
     } else {

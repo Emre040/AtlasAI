@@ -3,11 +3,19 @@
 const path = require('path');
 const express = require('express');
 const rateLimit = require('express-rate-limit');
-const { client, MODEL, PROVIDER } = require('./llm');
+const OpenAI = require('openai');
 const orchestrator = require('./functions/orchestrator');
 
 const TBL_CONV = process.env.HPA_TBL_CONVERSATIONS;
 const TBL_MSG  = process.env.HPA_TBL_MESSAGES;
+
+const MODEL      = process.env.HPA_MODEL;
+if (!MODEL) throw new Error('HPA_MODEL environment variable is required');
+
+const apiKey = process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY;
+const BASE_URL = process.env.GEMINI_BASE_URL || process.env.OPENAI_BASE_URL;
+const openai = BASE_URL ? new OpenAI({ apiKey, baseURL: BASE_URL }) : new OpenAI({ apiKey });
+const USING_GEMINI = Boolean(BASE_URL && BASE_URL.includes('generativelanguage.googleapis.com'));
 
 /* ---------------- helpers + logging ---------------- */
 
@@ -120,7 +128,7 @@ function parseReplyContext(text = '') {
 
 async function streamChatCompletion(request = {}, { onToken } = {}) {
   const { stream_options, ...rest } = request || {};
-  const stream = await client.chat.completions.create({
+  const stream = await openai.chat.completions.create({
     ...rest,
     stream: true,
     stream_options: { include_usage: true, ...(stream_options || {}) }
@@ -199,7 +207,7 @@ async function proposeTools({ messages }) {
   console.log('[TOOLS] propose → model');
   const coll = initToolCallCollector();
 
-  const stream = await client.chat.completions.create({
+  const stream = await openai.chat.completions.create({
     model: MODEL,
     messages: [
       ...messages,
@@ -399,8 +407,7 @@ TOOL USAGE RULES:
    - Cancer/pathology topics ("neuroendocrine tumors", "lung cancer histology")
    - Cell biology terms ("mitochondria", "golgi apparatus", "endoplasmic reticulum")
    - About HPA itself: "what is HPA?", "who runs HPA?", "how to download data?", "latest release?", "how to cite?"
-   - Atlas overviews: "what is the subcellular atlas?", "tell me about the tissue atlas", "how does the single cell atlas work?"
-   USE "question" param (not "topic") for about-HPA and atlas overview questions. USE "topic" param for histology/pathology.
+   USE "question" param (not "topic") for about-HPA questions. USE "topic" param for histology/pathology.
 5. aso_hpa: Autonomous Scientific Orchestrator for multi-step analysis with charts/figures:
    - Comparing gene expression across tissues ("compare liver vs kidney enzymes")
    - Generating charts: heatmaps, scatter plots, bar charts, lollipop charts
@@ -556,7 +563,7 @@ if (toolName === 'dictionary_expert_hpa') {
         console.log('[SYNTHESIS-DEBUG] ========================================\n');
 
         let finalMessages;
-        if (PROVIDER === 'gemini') {
+        if (USING_GEMINI) {
           // Gemini OpenAI-compat does not reliably accept tool_call/tool role messages.
           const toolPayload = toolResult?.summary_md || JSON.stringify(toolResult.result || { status: 'ok', message: 'Tool executed successfully.' });
           finalMessages = [

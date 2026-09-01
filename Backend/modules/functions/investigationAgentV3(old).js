@@ -187,27 +187,12 @@ function extractPageStructure(html, pageUrl) {
         }
       }
 
-      // Extract unit from first tooltip that has one
-      let chartUnit = null;
-      for (const item of data) {
-        if (item.tooltip) {
-          const unitMatch = String(item.tooltip).match(/([\d.]+)\s+(nCPM|nTPM|TPM|FPKM|pTPM)/);
-          if (unitMatch) { chartUnit = unitMatch[2]; break; }
-        }
-      }
-
       // Extract clean data points
       const dataPoints = data.map(item => {
         const point = {
           label: item.label || item.name || '',
           value: item.value ?? item.y ?? null,
         };
-
-        // Include legend/category group if present (e.g. "Blood and immune cells")
-        if (item.legend) point.group = item.legend;
-
-        // Include unit from chart-level detection
-        if (chartUnit) point.unit = chartUnit;
 
         // Parse tooltip for additional fields
         if (item.tooltip) {
@@ -344,62 +329,6 @@ function extractPageStructure(html, pageUrl) {
             data: dataPoints,
           });
         }
-      }
-    }
-
-    // Pattern 5: bubble_plot calls (single cell tissue×cell type breakdown)
-    // Format: $('#chartId').bubble_plot([{tissue, cell_type, color, value, tooltip, url}, ...], opts)
-    // The `value` field is a scaled bubble size (-1 = no data), real nCPM is in tooltip
-    const bubblePlotRegex = /\$\(['"]#([^'"]+)['"]\)\.bubble_plot\s*\(\s*(\[[\s\S]*?\])\s*,/g;
-    let bubbleMatch;
-    while ((bubbleMatch = bubblePlotRegex.exec(txt)) !== null) {
-      const chartId = bubbleMatch[1];
-      const bubbleData = safeJsonParse(bubbleMatch[2]);
-      if (!Array.isArray(bubbleData)) continue;
-
-      // Find section context
-      let section = chartId;
-      const chartPos = html.indexOf(`id="${chartId}"`);
-      if (chartPos > 0) {
-        const before = html.slice(Math.max(0, chartPos - 6000), chartPos);
-        const headers = [...before.matchAll(/<th[^>]*class="[^"]*head[^"]*"[^>]*>([\s\S]*?)<\/th>/gi)];
-        if (headers.length > 0) {
-          let cleanHeader = headers[headers.length - 1][1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-          const titleMatch = cleanHeader.match(/^([A-Z][A-Z &\-]+)i\s/);
-          if (titleMatch) cleanHeader = titleMatch[1].trim();
-          if (cleanHeader.length >= 2 && cleanHeader.length <= 80) {
-            section = cleanHeader;
-          }
-        }
-      }
-
-      // Extract entries with actual expression data (value > 0)
-      const dataPoints = [];
-      for (const entry of bubbleData) {
-        if (entry.value <= 0) continue;
-
-        // Parse nCPM from tooltip: "Cell type<br>Tissue<br><br>Label 856.1 nCPM"
-        let nCPM = null;
-        const ttMatch = (entry.tooltip || '').match(/([\d.]+)\s*nCPM/);
-        if (ttMatch) nCPM = parseFloat(ttMatch[1]);
-
-        dataPoints.push({
-          label: `${entry.tissue} — ${entry.cell_type}`,
-          cellTypeGroup: entry.tissue,
-          tissue: entry.cell_type,
-          value: nCPM ?? entry.value,
-          unit: 'nCPM',
-        });
-      }
-
-      if (dataPoints.length > 0) {
-        dataPoints.sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
-        structure.charts.push({
-          id: chartId,
-          section,
-          type: 'bubblePlot',
-          data: dataPoints,
-        });
       }
     }
   }
@@ -682,68 +611,20 @@ function formatStructureForLLM(structure, maxChars = 12000) {
       return bLabeled - aLabeled; // Meaningful labels first
     });
 
-    // Merge all chart data into a unified entity-centric view.
-    // If the same entity appears in multiple charts (e.g. aggregate vs per-tissue),
-    // all values are shown together so the LLM can reason about them.
-    const entityMap = new Map(); // label -> { values: [{value, unit, source, group, detail}], seen: Set }
-    let totalZeros = 0;
-
-    for (const chart of sortedCharts) {
-      const sectionLabel = chart.section && chart.section !== chart.id ? chart.section : chart.type;
-
-      for (const point of chart.data) {
-        const val = point.value;
-        if (val === 0 || val === '0' || val === '0.0' || val == null) { totalZeros++; continue; }
-
-        // For bubble plots, the label is "CellType — Tissue" — use the cell type group as entity key
-        const entityKey = point.cellTypeGroup || point.label;
-        const detail = point.tissue || null; // tissue-specific context from bubble plots
-
-        if (!entityMap.has(entityKey)) {
-          entityMap.set(entityKey, { values: [], seen: new Set(), group: point.group || null });
-        }
-        const entry = entityMap.get(entityKey);
-
-        // Build a value descriptor
-        const descriptor = detail
-          ? `${val} in ${detail}`
-          : `${val}`;
-        const unit = point.unit || '';
-        const sigKey = `${descriptor}${unit}`;
-
-        // Skip if we've already recorded this exact value (dedup across identical charts)
-        if (entry.seen.has(sigKey)) continue;
-        entry.seen.add(sigKey);
-
-        entry.values.push({ value: val, unit, detail, source: sectionLabel });
-        if (point.group && !entry.group) entry.group = point.group;
-      }
-    }
-
     parts.push('\n=== CHART DATA ===');
-
-    // Group entities by legend group if available
-    const byGroup = {};
-    for (const [label, entry] of entityMap) {
-      const g = entry.group || '';
-      if (!byGroup[g]) byGroup[g] = [];
-      byGroup[g].push({ label, ...entry });
-    }
-
-    for (const [groupName, entities] of Object.entries(byGroup)) {
-      if (groupName) parts.push(`\n  ${groupName}:`);
-      for (const ent of entities) {
-        // Format all values for this entity on one line
-        const valStrs = ent.values.map(v => {
-          const u = v.unit ? ` ${v.unit}` : '';
-          return v.detail ? `${v.value}${u} in ${v.detail}` : `${v.value}${u}`;
-        });
-        const indent = groupName ? '    ' : '  ';
-        parts.push(`${indent}- ${ent.label}: ${valStrs.join(', ')}`);
+    for (const chart of sortedCharts) {
+      parts.push(`\n[${chart.section || 'Unknown Section'}] (${chart.id})`);
+      for (const point of chart.data.slice(0, 50)) {
+        const extras = [];
+        if (point.nTPM) extras.push(`nTPM: ${point.nTPM}`);
+        if (point.Organ) extras.push(`Organ: ${point.Organ}`);
+        if (point.Samples) extras.push(`Samples: ${point.Samples}`);
+        const extraStr = extras.length ? ` (${extras.join(', ')})` : '';
+        parts.push(`  - ${point.label}: ${point.value}${extraStr}`);
       }
-    }
-    if (totalZeros > 0) {
-      parts.push(`  (${totalZeros} other entries with value 0.0)`);
+      if (chart.data.length > 50) {
+        parts.push(`  ... and ${chart.data.length - 50} more`);
+      }
     }
   }
 
@@ -926,9 +807,6 @@ Return JSON: { "pages": ["page1", "page2"], "reasoning": "why these pages" }`;
     structuredData += `\n\n========== ${pageKey.toUpperCase() || 'MAIN'} PAGE ==========\n`;
     structuredData += formatStructureForLLM(structure, 12000);
   }
-
-  // Emit formatted data so tests can see exactly what the LLM receives
-  //onStep({ stage: 'debug_llm_input', label: 'Formatted Data', message: structuredData });
 
   // Build list of available tables for the LLM to request
   const availableTables = [];

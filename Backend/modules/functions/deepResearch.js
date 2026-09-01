@@ -7,12 +7,17 @@
  * - Explicit plan and coverage mapping
  */
 
-const { client, MODEL } = require('../llm');
+const OpenAI = require('openai');
 const https = require('https');
 
 const { detailedSearchOptions } = require('./data.js');
 const { hpaSchema } = require('../data/hpaSchema.js');
 
+const apiKey = process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY;
+const baseURL = process.env.GEMINI_BASE_URL || process.env.OPENAI_BASE_URL;
+const openai = baseURL ? new OpenAI({ apiKey, baseURL }) : new OpenAI({ apiKey });
+const MODEL = process.env.HPA_MODEL;
+if (!MODEL) throw new Error('HPA_MODEL environment variable is required');
 // Debug logging - off by default, enable with HPA_LOG_LLM_IO=1
 const LOG_LLM_IO = process.env.HPA_LOG_LLM_IO === '1';
 
@@ -216,7 +221,7 @@ async function invokeLLM(sys, usr, onStep, label, stats) {
     });
   }
 
-  const res = await client.chat.completions.create({
+  const res = await openai.chat.completions.create({
     model: MODEL,
     messages,
     temperature: 0,

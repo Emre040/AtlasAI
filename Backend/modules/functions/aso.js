@@ -1,6 +1,6 @@
 'use strict';
 
-const { client, MODEL } = require('../llm');
+const OpenAI = require('openai');
 const path = require('path');
 const deepResearch = require('./deepResearch');
 const investigationAgent = require('./investigationAgentV3');
@@ -21,6 +21,10 @@ const { measureDirect } = require('../aso/directMeasure');
 const DEFAULT_TOP_X = 0;
 const MAX_TOP_X = 500;
 
+const apiKey = process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY;
+const baseURL = process.env.GEMINI_BASE_URL || process.env.OPENAI_BASE_URL;
+const openai = baseURL ? new OpenAI({ apiKey, baseURL }) : new OpenAI({ apiKey });
+const MODEL = process.env.HPA_MODEL;
 const LOG_TOOL_STEPS = process.env.HPA_ASO_LOG_TOOL_STEPS === 'true';
 
 // =============================================================================
@@ -1288,7 +1292,7 @@ async function aso_hpa({ goal, max_steps = 20, top_x = DEFAULT_TOP_X, parallel_l
       // Call LLM with tools
       let response;
       try {
-        response = await client.chat.completions.create({
+        response = await openai.chat.completions.create({
           model: MODEL, messages, tools, temperature: 0
         });
       } catch (err) {

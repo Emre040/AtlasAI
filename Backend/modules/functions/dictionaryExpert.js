@@ -2,7 +2,12 @@
 
 const puppeteer = require('puppeteer');
 const cheerio = require('cheerio');
-const { client, MODEL } = require('../llm');
+const OpenAI = require('openai');
+
+const apiKey = process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY;
+const baseURL = process.env.GEMINI_BASE_URL || process.env.OPENAI_BASE_URL;
+const openai = baseURL ? new OpenAI({ apiKey, baseURL }) : new OpenAI({ apiKey });
+const MODEL = process.env.HPA_MODEL;
 
 // =============================================================================
 // ABOUT / RECEPTIONIST MODE
@@ -168,7 +173,7 @@ function grepRelevantSections(sections, question, maxSections = 6) {
 async function pickAboutPage(question) {
   const catalog = ABOUT_PAGES.map((p, i) => `${i}. ${p.key}: ${p.desc}`).join('\n');
 
-  const res = await client.chat.completions.create({
+  const res = await openai.chat.completions.create({
     model: MODEL,
     temperature: 0,
     response_format: { type: 'json_object' },
@@ -385,7 +390,7 @@ async function findBestCategories(topic, onStep) {
   // Build a structured view of all categories for the LLM
   const categoriesJson = JSON.stringify(DICTIONARY_CATEGORIES, null, 2);
 
-  const response = await client.chat.completions.create({
+  const response = await openai.chat.completions.create({
     model: MODEL,
     temperature: 0,
     messages: [

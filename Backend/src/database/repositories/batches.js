@@ -77,6 +77,11 @@ class BatchRepository {
       [now, now, jobId, queryIndex]
     );
     if (result.affectedRows !== 1) throw new Error('Batch query was not pending.');
+    const [rows] = await this.db.execute(
+      `SELECT id FROM ${QUERIES} WHERE job_id = ? AND query_index = ? LIMIT 1`,
+      [jobId, queryIndex]
+    );
+    return { id: rows[0].id, startedUnixMs: now };
   }
 
   async completeQuery(jobId, queryIndex, responseText, responseJson) {

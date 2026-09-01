@@ -442,36 +442,25 @@ CREATE TABLE `atlasai`.`conversations` (
   )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
 
+-- Human-visible conversation text only. Tool executions live in `runs`, their progress in
+-- `run_events`, and every model request in `inference_calls`. An assistant message links to the
+-- user message it answers and to the inference call that produced it.
 CREATE TABLE `atlasai`.`messages` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `public_id` BINARY(16) NOT NULL COMMENT 'UUIDv7 bytes',
   `conversation_id` BIGINT UNSIGNED NOT NULL,
-  `parent_message_id` BIGINT UNSIGNED NULL,
-  `run_public_id` BINARY(16) NULL COMMENT 'Groups messages emitted by one user request',
-  `role` ENUM('system','user','assistant','tool') NOT NULL,
-  `kind` ENUM('text','tool_call','tool_result','progress','status','error') NOT NULL DEFAULT 'text',
-  `state` ENUM('pending','streaming','completed','failed') NOT NULL DEFAULT 'completed',
-  `content_text` LONGTEXT NULL,
-  `content_json` JSON NULL,
-  `content_sha256` BINARY(32) NULL,
-  `inference_model_id` BIGINT UNSIGNED NULL,
-  `provider_request_id` VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NULL,
-  `finish_reason` VARCHAR(128) NULL,
-  `error_code` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL,
-  `input_tokens` BIGINT UNSIGNED NULL,
-  `cached_input_tokens` BIGINT UNSIGNED NULL,
-  `output_tokens` BIGINT UNSIGNED NULL,
-  `reasoning_tokens` BIGINT UNSIGNED NULL,
-  `total_tokens` BIGINT UNSIGNED NULL,
+  `parent_message_id` BIGINT UNSIGNED NULL COMMENT 'The user message an assistant message answers',
+  `inference_call_id` BIGINT UNSIGNED NULL COMMENT 'The inference call that produced an assistant message',
+  `role` ENUM('user','assistant') NOT NULL,
+  `content_text` LONGTEXT NOT NULL,
+  `content_sha256` BINARY(32) NOT NULL,
   `created_unix_ms` BIGINT UNSIGNED NOT NULL,
-  `completed_unix_ms` BIGINT UNSIGNED NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_messages_public_id` (`public_id`),
   UNIQUE KEY `uq_messages_id_conversation` (`id`, `conversation_id`),
   KEY `idx_messages_conversation_order` (`conversation_id`, `id`),
-  KEY `idx_messages_conversation_run` (`conversation_id`, `run_public_id`, `id`),
   KEY `idx_messages_parent` (`parent_message_id`),
-  KEY `idx_messages_model_time` (`inference_model_id`, `created_unix_ms`, `id`),
+  KEY `idx_messages_inference_call` (`inference_call_id`),
   CONSTRAINT `fk_messages_conversation`
     FOREIGN KEY (`conversation_id`) REFERENCES `atlasai`.`conversations` (`id`)
     ON UPDATE RESTRICT ON DELETE RESTRICT,
@@ -479,11 +468,11 @@ CREATE TABLE `atlasai`.`messages` (
     FOREIGN KEY (`parent_message_id`, `conversation_id`)
     REFERENCES `atlasai`.`messages` (`id`, `conversation_id`)
     ON UPDATE RESTRICT ON DELETE RESTRICT,
-  CONSTRAINT `fk_messages_model`
-    FOREIGN KEY (`inference_model_id`) REFERENCES `atlasai`.`inference_models` (`id`)
-    ON UPDATE RESTRICT ON DELETE RESTRICT,
-  CONSTRAINT `chk_messages_content` CHECK (`content_text` IS NOT NULL OR `content_json` IS NOT NULL),
-  CONSTRAINT `chk_messages_completion` CHECK (`completed_unix_ms` IS NULL OR `completed_unix_ms` >= `created_unix_ms`)
+  CONSTRAINT `chk_messages_parent_role` CHECK (
+    (`role` = 'user' AND `parent_message_id` IS NULL)
+    OR (`role` = 'assistant' AND `parent_message_id` IS NOT NULL)
+  ),
+  CONSTRAINT `chk_messages_inference_call_role` CHECK (`inference_call_id` IS NULL OR `role` = 'assistant')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
 
 CREATE TABLE `atlasai`.`aso_workspaces` (
@@ -668,6 +657,181 @@ CREATE TABLE `atlasai`.`batch_queries` (
     AND (`finished_unix_ms` IS NULL OR `finished_unix_ms` >= `created_unix_ms`)
   )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
+
+-- One tool execution inside a conversation turn. The model's own arguments, the sentence it
+-- streamed before running the tool, the compact result document it received back, and the
+-- promoted result scalars the UI links to.
+CREATE TABLE `atlasai`.`runs` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `public_id` BINARY(16) NOT NULL COMMENT 'UUIDv7 bytes',
+  `conversation_id` BIGINT UNSIGNED NOT NULL,
+  `visitor_id` BIGINT UNSIGNED NOT NULL,
+  `request_message_id` BIGINT UNSIGNED NOT NULL COMMENT 'The user message that triggered the run',
+  `response_message_id` BIGINT UNSIGNED NULL COMMENT 'The assistant message synthesized from the run',
+  `request_event_id` BIGINT UNSIGNED NULL,
+  `inference_model_id` BIGINT UNSIGNED NOT NULL,
+  `tool_key` ENUM('deep_research_hpa','investigator_hpa','check_inclusion_hpa','dictionary_expert_hpa','aso_hpa') NOT NULL,
+  `tool_call_id` VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NULL COMMENT 'Provider tool call id',
+  `arguments_json` JSON NULL COMMENT 'Tool arguments produced by the model; NULL only for runs migrated from the pre-runs schema',
+  `preamble_text` TEXT NULL COMMENT 'Sentence the assistant streamed before running the tool',
+  `status` ENUM('running','completed','failed') NOT NULL,
+  `step_count` INT UNSIGNED NOT NULL DEFAULT 0,
+  `search_url` VARCHAR(2048) NULL,
+  `rows_found` INT UNSIGNED NULL,
+  `validation_passed` TINYINT UNSIGNED NULL,
+  `attempts` SMALLINT UNSIGNED NULL,
+  `workspace_id` BIGINT UNSIGNED NULL,
+  `result_json` JSON NULL COMMENT 'Tool result document as returned to the model',
+  `summary_md` LONGTEXT NULL,
+  `error_message` TEXT NULL,
+  `started_unix_ms` BIGINT UNSIGNED NOT NULL,
+  `completed_unix_ms` BIGINT UNSIGNED NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_runs_public_id` (`public_id`),
+  KEY `idx_runs_conversation_order` (`conversation_id`, `id`),
+  KEY `idx_runs_visitor_time` (`visitor_id`, `started_unix_ms`, `id`),
+  KEY `idx_runs_request_message` (`request_message_id`),
+  KEY `idx_runs_response_message` (`response_message_id`),
+  KEY `idx_runs_request_event` (`request_event_id`),
+  KEY `idx_runs_workspace` (`workspace_id`),
+  KEY `idx_runs_model_time` (`inference_model_id`, `started_unix_ms`, `id`),
+  KEY `idx_runs_tool_time` (`tool_key`, `started_unix_ms`, `id`),
+  CONSTRAINT `fk_runs_conversation`
+    FOREIGN KEY (`conversation_id`) REFERENCES `atlasai`.`conversations` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `fk_runs_visitor`
+    FOREIGN KEY (`visitor_id`) REFERENCES `atlasai`.`visitors` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `fk_runs_request_message`
+    FOREIGN KEY (`request_message_id`, `conversation_id`)
+    REFERENCES `atlasai`.`messages` (`id`, `conversation_id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `fk_runs_response_message`
+    FOREIGN KEY (`response_message_id`, `conversation_id`)
+    REFERENCES `atlasai`.`messages` (`id`, `conversation_id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `fk_runs_request_event`
+    FOREIGN KEY (`request_event_id`) REFERENCES `atlasai`.`request_events` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `fk_runs_model`
+    FOREIGN KEY (`inference_model_id`) REFERENCES `atlasai`.`inference_models` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `fk_runs_workspace`
+    FOREIGN KEY (`workspace_id`) REFERENCES `atlasai`.`aso_workspaces` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `chk_runs_completion` CHECK (
+    (`status` = 'running' AND `completed_unix_ms` IS NULL)
+    OR (`status` <> 'running' AND `completed_unix_ms` IS NOT NULL AND `completed_unix_ms` >= `started_unix_ms`)
+  ),
+  CONSTRAINT `chk_runs_validation` CHECK (`validation_passed` IS NULL OR `validation_passed` IN (0, 1)),
+  CONSTRAINT `chk_runs_error` CHECK (`status` <> 'failed' OR `error_message` IS NOT NULL)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
+
+-- Ordered progress of one run: the started event, each agent step, and the completion or failure.
+CREATE TABLE `atlasai`.`run_events` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `run_id` BIGINT UNSIGNED NOT NULL,
+  `sequence_no` INT UNSIGNED NOT NULL,
+  `event_kind` ENUM('started','progress','completed','failed') NOT NULL,
+  `stage` VARCHAR(64) NOT NULL,
+  `label` VARCHAR(255) NULL,
+  `message` TEXT NULL,
+  `url` VARCHAR(2048) NULL,
+  `visual` VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  `detail_json` JSON NULL COMMENT 'Structured step payload emitted by the ASO agent',
+  `created_unix_ms` BIGINT UNSIGNED NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_run_events_sequence` (`run_id`, `sequence_no`),
+  CONSTRAINT `fk_run_events_run`
+    FOREIGN KEY (`run_id`) REFERENCES `atlasai`.`runs` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
+
+-- Every request the gateway sends to a model: what it was for, what it cost, how fast it was.
+-- Written by the gateway itself, so no caller can skip it. Prompts and responses are hashed,
+-- not copied; the conversation text lives in `messages` and tool documents in `runs`.
+CREATE TABLE `atlasai`.`inference_calls` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `public_id` BINARY(16) NOT NULL COMMENT 'UUIDv7 bytes',
+  `inference_model_id` BIGINT UNSIGNED NOT NULL,
+  `request_event_id` BIGINT UNSIGNED NULL,
+  `conversation_id` BIGINT UNSIGNED NULL,
+  `run_id` BIGINT UNSIGNED NULL,
+  `batch_query_id` BIGINT UNSIGNED NULL,
+  `workspace_id` BIGINT UNSIGNED NULL,
+  `purpose` ENUM('router','preface','synthesis','answer','agent','batch','manual') NOT NULL,
+  `agent_key` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL COMMENT 'Tool whose agent issued the call',
+  `status` ENUM('completed','failed') NOT NULL,
+  `streamed` TINYINT UNSIGNED NOT NULL,
+  `message_count` SMALLINT UNSIGNED NOT NULL,
+  `tool_count` SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  `response_format` VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  `provider_request_id` VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NULL,
+  `finish_reason` VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  `tool_call_count` SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  `response_characters` INT UNSIGNED NULL,
+  `input_tokens` BIGINT UNSIGNED NULL,
+  `cached_input_tokens` BIGINT UNSIGNED NULL,
+  `output_tokens` BIGINT UNSIGNED NULL,
+  `reasoning_tokens` BIGINT UNSIGNED NULL,
+  `total_tokens` BIGINT UNSIGNED NULL,
+  `first_token_latency_ms` INT UNSIGNED NULL COMMENT 'Time to the first content or tool-call delta',
+  `total_latency_ms` INT UNSIGNED NULL,
+  `output_tokens_per_second` DECIMAL(10,2) GENERATED ALWAYS AS (
+    IF(
+      `output_tokens` IS NULL OR `total_latency_ms` IS NULL
+        OR (`total_latency_ms` - COALESCE(`first_token_latency_ms`, 0)) <= 0,
+      NULL,
+      ROUND(`output_tokens` / ((`total_latency_ms` - COALESCE(`first_token_latency_ms`, 0)) / 1000), 2)
+    )
+  ) STORED,
+  `error_status` SMALLINT UNSIGNED NULL,
+  `error_code` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  `error_message` TEXT NULL,
+  `request_sha256` BINARY(32) NOT NULL,
+  `response_sha256` BINARY(32) NULL,
+  `started_unix_ms` BIGINT UNSIGNED NOT NULL,
+  `finished_unix_ms` BIGINT UNSIGNED NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_inference_calls_public_id` (`public_id`),
+  KEY `idx_inference_calls_model_time` (`inference_model_id`, `started_unix_ms`, `id`),
+  KEY `idx_inference_calls_conversation_time` (`conversation_id`, `started_unix_ms`, `id`),
+  KEY `idx_inference_calls_run` (`run_id`, `id`),
+  KEY `idx_inference_calls_request_event` (`request_event_id`, `id`),
+  KEY `idx_inference_calls_batch_query` (`batch_query_id`, `id`),
+  KEY `idx_inference_calls_workspace` (`workspace_id`, `id`),
+  KEY `idx_inference_calls_status_time` (`status`, `started_unix_ms`, `id`),
+  KEY `idx_inference_calls_purpose_time` (`purpose`, `started_unix_ms`, `id`),
+  CONSTRAINT `fk_inference_calls_model`
+    FOREIGN KEY (`inference_model_id`) REFERENCES `atlasai`.`inference_models` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `fk_inference_calls_request_event`
+    FOREIGN KEY (`request_event_id`) REFERENCES `atlasai`.`request_events` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `fk_inference_calls_conversation`
+    FOREIGN KEY (`conversation_id`) REFERENCES `atlasai`.`conversations` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `fk_inference_calls_run`
+    FOREIGN KEY (`run_id`) REFERENCES `atlasai`.`runs` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `fk_inference_calls_batch_query`
+    FOREIGN KEY (`batch_query_id`) REFERENCES `atlasai`.`batch_queries` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `fk_inference_calls_workspace`
+    FOREIGN KEY (`workspace_id`) REFERENCES `atlasai`.`aso_workspaces` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  CONSTRAINT `chk_inference_calls_streamed` CHECK (`streamed` IN (0, 1)),
+  CONSTRAINT `chk_inference_calls_completion` CHECK (
+    (`status` = 'completed' AND `finished_unix_ms` IS NOT NULL AND `error_message` IS NULL)
+    OR (`status` = 'failed' AND `error_message` IS NOT NULL)
+  ),
+  CONSTRAINT `chk_inference_calls_time_order` CHECK (`finished_unix_ms` IS NULL OR `finished_unix_ms` >= `started_unix_ms`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
+
+ALTER TABLE `atlasai`.`messages`
+  ADD CONSTRAINT `fk_messages_inference_call`
+    FOREIGN KEY (`inference_call_id`) REFERENCES `atlasai`.`inference_calls` (`id`)
+    ON UPDATE RESTRICT ON DELETE RESTRICT;
 
 SET @atlasai_seed_unix_ms = CAST(
   FLOOR(UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3)) * 1000)

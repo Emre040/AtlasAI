@@ -5,6 +5,7 @@ const express = require('express');
 const orchestrator = require('../../system/orchestrator');
 const { inference, getActiveModel } = require('../../inference/gateway');
 const { requireBoolean } = require('../../config/runtime');
+const { buildModelHistory } = require('../timeline');
 
 const MAX_QUERY_CHARACTERS = 20_000;
 const VERBOSE_DIAGNOSTICS = requireBoolean('ATLAS_VERBOSE_DIAGNOSTICS');
@@ -18,92 +19,37 @@ function invalidUuid(error) {
 
 /* ---------------- helpers + logging ---------------- */
 
-function extractJsonObject(text = '') {
-  const trimmed = String(text || '').trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) return trimmed;
-  const match = trimmed.match(/\{[\s\S]*\}/);
-  return match ? match[0] : null;
-}
-
-function safeJsonParse(text = '') {
-  const raw = extractJsonObject(text);
-  if (!raw) return null;
+// Agent steps sometimes carry a JSON document in `message` (ASO does this for every event).
+// Store such documents structurally next to the text so the UI does not have to re-parse them.
+function structuredDetail(message) {
+  if (typeof message !== 'string') return null;
+  const trimmed = message.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
   try {
-    return JSON.parse(raw);
+    const parsed = JSON.parse(trimmed);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
   } catch {
     return null;
   }
 }
 
-function parseSearchUrlEntry(text = '') {
-  const match = String(text || '').match(/^SEARCH_URL:\s*(.+)$/i);
-  if (!match) return null;
-  const raw = match[1].trim();
-  if (!raw) return null;
-
-  if (raw.startsWith('{')) {
-    const parsed = safeJsonParse(raw);
-    const url = parsed?.url || parsed?.search_url;
-    const goal = parsed?.goal || null;
-    if (url) {
-      return {
-        url: String(url).trim(),
-        goal: goal ? String(goal).trim() : null
-      };
-    }
-  }
-
-  const textFormat = raw.match(/^(\S+)(?:\s*\[FOR:\s*(.+?)\])?/i);
-  if (!textFormat) return null;
-  const url = textFormat[1]?.trim();
-  if (!url) return null;
-  const goal = textFormat[2]?.trim() || null;
-  return { url, goal };
+function extractSearchUrl(toolResult) {
+  const nested = toolResult?.result;
+  const urls = nested?.search_urls || toolResult?.search_urls || [];
+  if (Array.isArray(urls) && urls.length > 0) return String(urls[0]);
+  const single = nested?.search_url || toolResult?.search_url;
+  return single ? String(single) : null;
 }
 
-function getLastSearchEntry(rows) {
-  for (const row of rows || []) {
-    const entry = parseSearchUrlEntry(row?.text || '');
-    if (entry) return entry;
-  }
-  return null;
+function promotedInteger(toolResult, key) {
+  const value = toolResult?.result?.[key] ?? toolResult?.[key];
+  return Number.isInteger(value) ? value : null;
 }
 
-function rowsToMessages(rows) {
-  // Filter internal tool logs so the next LLM call is not polluted.
-  // SEARCH_URL is NOT filtered - we transform it to give AI context about successful searches
-  const filteredRows = (rows || []).filter(r => !/^(PRE:|TOOL_|RESOURCES:)/i.test(r.text || ''));
-
-  return filteredRows.reverse().map(r => {
-    let content = r.text || '';
-
-    // Transform SEARCH_URL into context for the AI.
-    const searchEntry = parseSearchUrlEntry(content);
-    if (searchEntry?.url) {
-      const goalText = searchEntry.goal || 'unknown query';
-      return {
-        role: 'assistant',
-        content: `[SEARCH COMPLETED for "${goalText}" - I sent the user: ${searchEntry.url}]`
-      };
-    }
-
-    // Strip either supported reply marker so the model sees clean text.
-    if (r.sender_type === 'user') {
-      content = content.replace(/^⟪HPA▸GENE:(ENSG\d+):([^⟫]+)⟫\s*/, '[Regarding gene $2 ($1)] ');
-      content = content.replace(/^\[\[REPLY:(ENSG\d+):([^\]]+)\]\]\s*/, '[Regarding gene $2 ($1)] ');
-    }
-    return r.sender_type === 'user'
-      ? { role: 'user', content }
-      : { role: 'assistant', content };
-  });
+function promotedBoolean(toolResult, key) {
+  const value = toolResult?.result?.[key] ?? toolResult?.[key];
+  return typeof value === 'boolean' ? value : null;
 }
-
-const roughTokenEstimate = (text = '') => {
-  const clean = (text || '').trim();
-  if (!clean) return 0;
-  return Math.ceil(clean.length / 4);
-};
 
 // Parse both reply-marker wire formats used by existing clients.
 const REPLY_MARKER_NEW = /^⟪HPA▸GENE:(ENSG\d+):([^⟫]+)⟫\s*/;
@@ -165,18 +111,6 @@ function ssePing(res) {
     if (SSE_DEBUG) debugLog('[SSE ping]');
     res.write(': ping\n\n');
   } catch {}
-}
-
-async function persistMsg(conversations, conversationId, text, meta = {}) {
-  if (!text || !String(text).trim()) return null;
-  const { senderType = 'ai', tokenCount = null, kind = 'text' } = meta;
-  await conversations.addMessage(conversationId, text, {
-    role: senderType === 'ai' ? 'assistant' : senderType,
-    kind,
-    totalTokens: tokenCount,
-    inferenceModelId: senderType === 'ai' ? getActiveModel().id : null
-  });
-  return true;
 }
 
 // Collect streamed tool_calls deltas
@@ -251,7 +185,7 @@ CRITICAL RULES:
 
 /* ---------------- 2) Stream a one-liner preface if tool is used ---------------- */
 
-async function streamPrefaceStrict({ baseMessages, res, conversations, conversationId, toolName }) {
+async function streamPrefaceStrict({ baseMessages, res, toolName }) {
   const RULES =
     "You have decided to use a tool. In a single, brief, conversational sentence, tell the user what you are about to do.\n" +
     "Examples: 'Of course, I'll start analyzing that.' or 'Certainly, let me begin the research process.'\n" +
@@ -261,7 +195,7 @@ async function streamPrefaceStrict({ baseMessages, res, conversations, conversat
 
   debugLog('[PRE] streaming strict preface for tool:', toolName);
 
-  const { text: streamedText, totalTokens } = await streamChatCompletion(
+  const { text: streamedText } = await streamChatCompletion(
     {
       model: getActiveModel().modelId,
       messages: [
@@ -274,8 +208,6 @@ async function streamPrefaceStrict({ baseMessages, res, conversations, conversat
   );
 
   const text = (streamedText || `Okay, I'll start the process for you.`).trim().replace(/\s+/g, ' ');
-  const tokenCount = totalTokens ?? roughTokenEstimate(streamedText || text);
-  await persistMsg(conversations, conversationId, text, { tokenCount });
   debugLog('[PRE] done:', text);
   return text;
 }
@@ -286,61 +218,102 @@ async function runSingleToolAndStream({
   toolCall,
   res,
   db,
-  conversations,
-  conversationId,
+  runs,
+  conversation,
+  userMessage,
+  preambleText,
+  callContext,
   rawUserQuery,
   visitorId
 }) {
   const { name } = toolCall.function;
   const args = JSON.parse(toolCall.function.arguments || '{}');
 
-  // Generate a consistent runId for this tool execution (used for grouping in frontend)
-  const runId = `${name}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-
-  debugLog('[TOOL] started:', name, 'runId:', runId);
-  sse(res, { tool: { name, status: 'started' } });
-  // Persist as JSON so we can restore full metadata on reload
-  await persistMsg(conversations, conversationId, `TOOL_EVENT:${JSON.stringify({ toolName: name, runId, status: 'started', stage: 'start' })}`, { kind: 'status' });
-
-  const execRes = await orchestrator.execute(name, args, {
-    rawQuery: rawUserQuery,
-    db,
+  // The run row is the identity the frontend groups by, live and after reload.
+  const run = await runs.create({
+    conversationId: conversation.id,
     visitorId,
-    onStep: async (payload) => {
-      // Show every step to the user and persist as TOOL_EVENT JSON
-      sse(res, { tool: { name, status: 'progress', step: payload } });
-
-      const s = payload || {};
-      // Persist full metadata as JSON for proper reload
-      const eventData = {
-        toolName: name,
-        runId,
-        stage: s.stage || 'info',
-        label: s.label || '',
-        message: s.message || s.stdout || '',
-        url: s.url || null,
-        visual: s.visual || null
-      };
-      await persistMsg(conversations, conversationId, `TOOL_EVENT:${JSON.stringify(eventData)}`, { kind: 'progress' });
-    }
-    // NOTE: Images are sent BEFORE synthesis starts (below), not during tool execution
+    requestMessageId: userMessage.id,
+    requestEventId: callContext.requestEventId,
+    inferenceModelId: getActiveModel().id,
+    toolKey: name,
+    toolCallId: toolCall.id || null,
+    argumentsJson: args,
+    preambleText
   });
+  let sequence = 0;
+  const persistEvent = event => runs.addEvent(run.id, sequence++, event);
 
-  const resultMeta = {
-    steps: execRes.steps?.length || 0
-  };
-  sse(res, { tool: { name, status: 'completed', result_meta: resultMeta } });
-  // Persist completion as JSON too
-  await persistMsg(conversations, conversationId, `TOOL_EVENT:${JSON.stringify({ toolName: name, runId, status: 'completed', stage: 'complete', steps: resultMeta.steps })}`, { kind: 'status' });
+  debugLog('[TOOL] started:', name, 'run:', run.publicId);
+  sse(res, { tool: { name, status: 'started', run_id: run.publicId } });
+  await persistEvent({ eventKind: 'started', stage: 'start' });
 
-  debugLog('[TOOL] completed:', name, 'runId:', runId);
+  let execRes;
+  try {
+    execRes = await inference.withContext(
+      { ...callContext, purpose: 'agent', runId: run.id, agentKey: name },
+      () => orchestrator.execute(name, args, {
+        rawQuery: rawUserQuery,
+        db,
+        visitorId,
+        onStep: async (payload) => {
+          sse(res, { tool: { name, status: 'progress', run_id: run.publicId, step: payload } });
+          const s = payload || {};
+          const message = s.message ?? s.stdout ?? null;
+          await persistEvent({
+            eventKind: 'progress',
+            stage: s.stage || 'info',
+            label: s.label || null,
+            message: message === null ? null : String(message),
+            url: s.url || null,
+            visual: s.visual || null,
+            detail: structuredDetail(message)
+          });
+        }
+        // NOTE: Images are sent BEFORE synthesis starts (below), not during tool execution
+      })
+    );
+  } catch (error) {
+    const errorMessage = String(error?.message || error).slice(0, 65535);
+    await persistEvent({ eventKind: 'failed', stage: 'error', label: 'Error', message: errorMessage });
+    await runs.complete(run.id, { status: 'failed', stepCount: Math.max(sequence - 2, 0), errorMessage });
+    sse(res, { tool: { name, status: 'failed', run_id: run.publicId, error: errorMessage } });
+    throw error;
+  }
+
+  const toolResult = execRes.result && typeof execRes.result === 'object' ? execRes.result : {};
+  const failed = toolResult.status === 'error';
+  const resultMeta = { steps: execRes.steps?.length || 0 };
+  const errorMessage = failed ? String(toolResult.error || 'Tool failed.').slice(0, 65535) : null;
+  await persistEvent({
+    eventKind: failed ? 'failed' : 'completed',
+    stage: 'complete',
+    label: failed ? 'Failed' : 'Complete',
+    message: errorMessage,
+    detail: { steps: resultMeta.steps }
+  });
+  await runs.complete(run.id, {
+    status: failed ? 'failed' : 'completed',
+    stepCount: resultMeta.steps,
+    searchUrl: extractSearchUrl(toolResult),
+    rowsFound: promotedInteger(toolResult, 'rows_found'),
+    validationPassed: promotedBoolean(toolResult, 'validation_passed'),
+    attempts: promotedInteger(toolResult, 'attempts'),
+    workspaceId: toolResult.workspace_uuid ? await runs.findWorkspaceId(toolResult.workspace_uuid) : null,
+    result: toolResult,
+    summaryMd: toolResult.summary_md || null,
+    errorMessage
+  });
+  sse(res, { tool: { name, status: 'completed', run_id: run.publicId, result_meta: resultMeta } });
+
+  debugLog('[TOOL] completed:', name, 'run:', run.publicId);
   // CRITICAL: Return orchestration result so we can synthesize from actual tool output.
-  return execRes;
+  return { execRes, run };
 }
 
 /* ---------------- router factory ---------------- */
 
-exports.createRouter = function({ db, conversations }) {
+exports.createRouter = function({ db, conversations, runs }) {
   const router = express.Router();
 
   router.post('/stream', async (req, res, next) => {
@@ -366,11 +339,17 @@ exports.createRouter = function({ db, conversations }) {
       res.flushHeaders?.();
       ssePing(res);
 
-      // Persist user message
-      await conversations.addMessage(conversation.id, query.trim(), { role: 'user' });
-
-      // Build base conversation for the model
-      const historyRows = await conversations.history(conversation.id);
+      // Context before this turn, then the user message itself.
+      const [historyRows, conversationRuns] = await Promise.all([
+        conversations.history(conversation.id),
+        runs.listForConversation(conversation.id)
+      ]);
+      const userMessage = await conversations.addMessage(conversation.id, 'user', query.trim());
+      const callContext = {
+        conversationId: conversation.id,
+        requestEventId: Number.isInteger(req.requestEventId) ? req.requestEventId : null,
+        callIds: []
+      };
 
       // Parse reply context if present (strips [[REPLY:ENSG...:GeneName]] marker)
       const replyContext = parseReplyContext(query.trim());
@@ -412,46 +391,50 @@ CRITICAL RULES:
 
       const base = [
         { role: 'system', content: systemContent },
-        ...rowsToMessages(historyRows),
+        ...buildModelHistory(historyRows, conversationRuns),
         { role: 'user', content: userQueryForAI }
       ];
 
       // Ask the model if any tool should be used
-      const toolCalls = await proposeTools({ messages: base });
+      const toolCalls = await inference.withContext(
+        { ...callContext, purpose: 'router' },
+        () => proposeTools({ messages: base })
+      );
       let finalText = '';
-      let finalTokenCount = null;
+      let finalCallId = null;
+      let run = null;
 
       if (toolCalls.length > 0 && toolCalls[0]?.function?.name) {
         const toolCall = toolCalls[0];
         const toolName = toolCall.function.name;
 
         // Pre-message (single sentence)
-        await streamPrefaceStrict({
-          baseMessages: base,
-          res,
-          conversations,
-          conversationId: conversation.id,
-          toolName
-        });
+        const preambleText = await inference.withContext(
+          { ...callContext, purpose: 'preface' },
+          () => streamPrefaceStrict({ baseMessages: base, res, toolName })
+        );
 
         // Execute the tool and stream progress (pass the raw user query!)
-        const toolResult = await runSingleToolAndStream({
+        const toolRun = await runSingleToolAndStream({
           toolCall,
           res,
           db,
-          conversations,
-          conversationId: conversation.id,
+          runs,
+          conversation,
+          userMessage,
+          preambleText,
+          callContext,
           rawUserQuery: query,
           visitorId: req.auth.visitorId
         });
+        run = toolRun.run;
+        const toolResult = toolRun.execRes;
 
         // Send investigator resources BEFORE synthesis (so they appear above)
         const resources = toolResult?.result?.resources || [];
         if (resources.length > 0) {
           debugLog('[RESOURCES] sending before synthesis:', resources.length, 'resources');
           sse(res, { resources });
-          // Persist for reload
-          await persistMsg(conversations, conversation.id, `RESOURCES: ${JSON.stringify(resources)}`);
         }
 
         // Send dictionary images BEFORE synthesis (so they appear as answer starts)
@@ -468,8 +451,6 @@ CRITICAL RULES:
           };
           debugLog('[DICTIONARY] sending before synthesis:', dictionaryData.images.length, 'images');
           sse(res, { dictionary_images: dictionaryData });
-          // Persist for reload
-          await persistMsg(conversations, conversation.id, `DICTIONARY_IMAGES: ${JSON.stringify(dictionaryData)}`);
         }
 
         // Send ASO chart artifacts BEFORE synthesis (so images appear above text)
@@ -484,7 +465,6 @@ CRITICAL RULES:
             }));
             debugLog('[ASO] sending', charts.length, 'chart(s) before synthesis');
             sse(res, { aso_charts: charts });
-            await persistMsg(conversations, conversation.id, `ASO_CHARTS: ${JSON.stringify(charts)}`);
           }
         }
 
@@ -584,23 +564,21 @@ if (toolName === 'dictionary_expert_hpa') {
           ];
         }
 
-        const { text, totalTokens } = await streamChatCompletion(
-          { messages: finalMessages },
-          { onToken: (delta) => sse(res, { token: delta }) }
+        const { text } = await inference.withContext(
+          { ...callContext, purpose: 'synthesis', runId: run.id },
+          () => streamChatCompletion(
+            { messages: finalMessages },
+            { onToken: (delta) => sse(res, { token: delta }) }
+          )
         );
         finalText = (text || '').trim();
-        finalTokenCount = totalTokens ?? roughTokenEstimate(text || finalText);
+        finalCallId = callContext.callIds.at(-1) ?? null;
 
-        // Send the search URL directly to frontend (not relying on AI to output it)
+        // Send the search URL directly to frontend (not relying on AI to output it).
+        // It is stored on the run, so reloads read it from there.
         const searchUrls = toolResult?.result?.result?.search_urls || toolResult?.result?.search_urls || [];
         if (searchUrls.length > 0) {
-          const searchUrl = searchUrls[0];
-          // Get the search goal from tool args for context
-          const searchGoal = JSON.parse(toolCall.function.arguments || '{}').goal || userQueryForAI;
-          sse(res, { search_url: searchUrl });
-          // Persist with goal context so AI knows what each search was for.
-          // NOTE: We keep this as a single line so the frontend can extract just the URL on reload.
-          await persistMsg(conversations, conversation.id, `SEARCH_URL: ${searchUrl} [FOR: ${searchGoal}]`);
+          sse(res, { search_url: searchUrls[0] });
         }
 
         // Dictionary images and resources already sent before synthesis (above)
@@ -609,22 +587,28 @@ if (toolName === 'dictionary_expert_hpa') {
         // No tools: answer directly
         debugLog('[SYNTH] no tools; streaming final answer');
 
-        const { text, totalTokens } = await streamChatCompletion(
-          {
-            messages: [
-              ...base,
-              { role: 'system', content: 'Provide a concise, polite final answer. Do not mention tools or making a plan.' }
-            ]
-          },
-          { onToken: (delta) => sse(res, { token: delta }) }
+        const { text } = await inference.withContext(
+          { ...callContext, purpose: 'answer' },
+          () => streamChatCompletion(
+            {
+              messages: [
+                ...base,
+                { role: 'system', content: 'Provide a concise, polite final answer. Do not mention tools or making a plan.' }
+              ]
+            },
+            { onToken: (delta) => sse(res, { token: delta }) }
+          )
         );
         finalText = (text || '').trim();
-        finalTokenCount = totalTokens ?? roughTokenEstimate(text || finalText);
+        finalCallId = callContext.callIds.at(-1) ?? null;
       }
 
       const aiText = finalText || "I'm sorry, I couldn't generate a response.";
-      const storedTokenCount = aiText ? (finalTokenCount ?? roughTokenEstimate(aiText)) : null;
-      await persistMsg(conversations, conversation.id, aiText, { tokenCount: storedTokenCount });
+      const assistantMessage = await conversations.addMessage(conversation.id, 'assistant', aiText, {
+        parentMessageId: userMessage.id,
+        inferenceCallId: finalCallId
+      });
+      if (run) await runs.setResponseMessage(run.id, assistantMessage.id);
       await conversations.touch(conversation.id);
 
       sse(res, { done: true });

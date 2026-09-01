@@ -249,7 +249,10 @@ test('gateway resolves and binds exactly one database model for a complete HTTP 
           return { model: model.modelId };
         }
       };
-    }
+    },
+    // Inference-call rows are covered by inference-calls.test.js; keep this fake database
+    // dedicated to model resolution reads.
+    callRepository: { async record() { return { id: 1, publicId: 'call-1' }; } }
   });
   await gateway.initialize();
 

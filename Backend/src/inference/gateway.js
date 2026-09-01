@@ -1,7 +1,9 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { createInferenceAdapter, isSupportedAdapter } = require('./adapters');
+const { InferenceCallRepository } = require('../database/repositories/inferenceCalls');
 
 const ACTIVE_MODEL_SQL = `
   SELECT
@@ -34,6 +36,8 @@ const ACTIVE_MODEL_SQL = `
   ORDER BY m.id
   LIMIT 2
 `;
+
+const PURPOSES = new Set(['router', 'preface', 'synthesis', 'answer', 'agent', 'batch', 'manual']);
 
 function asBoolean(value) {
   return Number(value) === 1;
@@ -122,12 +126,80 @@ function validateRequest(request, model) {
   }
 }
 
+const CONTEXT_ID_KEYS = ['requestEventId', 'conversationId', 'runId', 'batchQueryId', 'workspaceId'];
+
+// Row ids arrive as numbers (insertId) or digit strings (BIGINT columns); store them as numbers.
+function contextId(value, key) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'bigint') return Number(value);
+  if (typeof value === 'number' && Number.isSafeInteger(value)) return value;
+  if (typeof value === 'string' && /^\d{1,15}$/.test(value)) return Number(value);
+  throw new TypeError(`Inference context ${key} must be an integer id.`);
+}
+
+// Validates and normalizes a context object in place.
+function validateContext(context) {
+  if (!context || typeof context !== 'object' || Array.isArray(context)) {
+    throw new TypeError('Inference context must be an object.');
+  }
+  if (context.purpose !== undefined && !PURPOSES.has(context.purpose)) {
+    throw new TypeError(`Unknown inference purpose '${context.purpose}'.`);
+  }
+  for (const key of CONTEXT_ID_KEYS) {
+    if (context[key] !== undefined) context[key] = contextId(context[key], key);
+  }
+  if (context.agentKey !== undefined && context.agentKey !== null && typeof context.agentKey !== 'string') {
+    throw new TypeError('Inference context agentKey must be a string.');
+  }
+  return context;
+}
+
+function sha256(text) {
+  return crypto.createHash('sha256').update(text, 'utf8').digest();
+}
+
+function elapsedMs(startedAt, endedAt = process.hrtime.bigint()) {
+  return Number((endedAt - startedAt) / 1000n) / 1000;
+}
+
+function roundMs(value) {
+  return value === null ? null : Math.max(0, Math.round(value));
+}
+
+function tokenNumber(value) {
+  return Number.isFinite(Number(value)) && value !== null && value !== undefined ? Math.round(Number(value)) : null;
+}
+
+function usageFields(usage) {
+  if (!usage || typeof usage !== 'object') {
+    return { input_tokens: null, cached_input_tokens: null, output_tokens: null, reasoning_tokens: null, total_tokens: null };
+  }
+  const input = tokenNumber(usage.prompt_tokens);
+  const output = tokenNumber(usage.completion_tokens);
+  const total = tokenNumber(usage.total_tokens);
+  return {
+    input_tokens: input,
+    cached_input_tokens: tokenNumber(usage.prompt_tokens_details?.cached_tokens),
+    output_tokens: output,
+    reasoning_tokens: tokenNumber(usage.completion_tokens_details?.reasoning_tokens),
+    total_tokens: total ?? (input !== null && output !== null ? input + output : null)
+  };
+}
+
+function providerRequestId(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value);
+  return text.length > 255 ? text.slice(0, 255) : text;
+}
+
 class InferenceGateway {
-  constructor(db, { adapterFactory = createInferenceAdapter } = {}) {
+  constructor(db, { adapterFactory = createInferenceAdapter, callRepository = null } = {}) {
     this.db = db;
     this.adapterFactory = adapterFactory;
     this.adapters = new Map();
     this.modelContext = new AsyncLocalStorage();
+    this.callContext = new AsyncLocalStorage();
+    this.calls = callRepository || new InferenceCallRepository(db);
     this.model = null;
   }
 
@@ -190,6 +262,29 @@ class InferenceGateway {
     return this.modelContext.run(model, callback);
   }
 
+  // Call context: what a model request is for and which records it belongs to. Nested contexts
+  // inherit the outer values; `callIds` collects the inference_calls ids recorded inside.
+  withContext(context, callback) {
+    validateContext(context);
+    const parent = this.callContext.getStore() || {};
+    const merged = { ...parent, ...context, callIds: context.callIds || parent.callIds || [] };
+    return this.callContext.run(merged, callback);
+  }
+
+  getContext() {
+    return this.callContext.getStore() || null;
+  }
+
+  // Mutates the current context in place so later calls in the same async scope see the value
+  // (used when a record such as an ASO workspace is created after the context was opened).
+  assignContext(values) {
+    validateContext(values);
+    const store = this.callContext.getStore();
+    if (!store) return false;
+    Object.assign(store, values);
+    return true;
+  }
+
   async createChatCompletion(request) {
     const contextualModel = this.modelContext.getStore();
     let model;
@@ -205,7 +300,135 @@ class InferenceGateway {
     }
 
     validateRequest(request, model);
-    return adapter.create(request, model);
+
+    const context = this.callContext.getStore() || {};
+    const record = {
+      inference_model_id: model.id,
+      request_event_id: context.requestEventId ?? null,
+      conversation_id: context.conversationId ?? null,
+      run_id: context.runId ?? null,
+      batch_query_id: context.batchQueryId ?? null,
+      workspace_id: context.workspaceId ?? null,
+      purpose: context.purpose ?? 'manual',
+      agent_key: context.agentKey ?? null,
+      streamed: request.stream ? 1 : 0,
+      message_count: request.messages.length,
+      tool_count: Array.isArray(request.tools) ? request.tools.length : 0,
+      response_format: request.response_format?.type ?? null,
+      request_sha256: sha256(JSON.stringify({
+        model: model.modelId,
+        messages: request.messages,
+        tools: request.tools ?? null,
+        tool_choice: request.tool_choice ?? null,
+        response_format: request.response_format ?? null
+      })),
+      started_unix_ms: Date.now()
+    };
+    const startedAt = process.hrtime.bigint();
+
+    let result;
+    try {
+      result = await adapter.create(request, model);
+    } catch (error) {
+      await this.recordFailure(record, startedAt, null, error, context);
+      throw error;
+    }
+
+    if (request.stream) return this.instrumentStream(result, record, startedAt, context);
+
+    const choice = result?.choices?.[0];
+    const text = typeof choice?.message?.content === 'string' ? choice.message.content : '';
+    await this.recordCompletion(record, context, {
+      startedAt,
+      firstTokenAt: process.hrtime.bigint(),
+      providerRequestId: result?.id,
+      finishReason: choice?.finish_reason ?? null,
+      toolCallCount: Array.isArray(choice?.message?.tool_calls) ? choice.message.tool_calls.length : 0,
+      responseText: text,
+      usage: result?.usage
+    });
+    return result;
+  }
+
+  async *instrumentStream(stream, record, startedAt, context) {
+    let firstTokenAt = null;
+    let text = '';
+    let finishReason = null;
+    let usage = null;
+    let requestId = null;
+    const toolCallIndexes = new Set();
+    let completed = false;
+
+    try {
+      for await (const chunk of stream) {
+        if (requestId === null && chunk?.id) requestId = chunk.id;
+        const choice = chunk?.choices?.[0];
+        const delta = choice?.delta;
+        const hasContent = typeof delta?.content === 'string' && delta.content.length > 0;
+        const hasToolDelta = Array.isArray(delta?.tool_calls) && delta.tool_calls.length > 0;
+        if (firstTokenAt === null && (hasContent || hasToolDelta)) firstTokenAt = process.hrtime.bigint();
+        if (hasContent) text += delta.content;
+        if (hasToolDelta) {
+          for (const call of delta.tool_calls) toolCallIndexes.add(call.index ?? 0);
+        }
+        if (choice?.finish_reason) finishReason = choice.finish_reason;
+        if (chunk?.usage) usage = chunk.usage;
+        yield chunk;
+      }
+      completed = true;
+    } catch (error) {
+      await this.recordFailure(record, startedAt, firstTokenAt, error, context);
+      throw error;
+    } finally {
+      if (completed) {
+        await this.recordCompletion(record, context, {
+          startedAt,
+          firstTokenAt,
+          providerRequestId: requestId,
+          finishReason,
+          toolCallCount: toolCallIndexes.size,
+          responseText: text,
+          usage
+        });
+      }
+    }
+  }
+
+  async recordCompletion(record, context, { startedAt, firstTokenAt, providerRequestId: requestId, finishReason, toolCallCount, responseText, usage }) {
+    const finishedAt = process.hrtime.bigint();
+    const row = {
+      ...record,
+      ...usageFields(usage),
+      status: 'completed',
+      provider_request_id: providerRequestId(requestId),
+      finish_reason: finishReason ? String(finishReason).slice(0, 32) : null,
+      tool_call_count: toolCallCount,
+      response_characters: responseText.length,
+      response_sha256: responseText.length > 0 ? sha256(responseText) : null,
+      first_token_latency_ms: firstTokenAt === null ? null : roundMs(elapsedMs(startedAt, firstTokenAt)),
+      total_latency_ms: roundMs(elapsedMs(startedAt, finishedAt)),
+      finished_unix_ms: Date.now()
+    };
+    const saved = await this.calls.record(row);
+    if (Array.isArray(context.callIds)) context.callIds.push(saved.id);
+    return saved;
+  }
+
+  async recordFailure(record, startedAt, firstTokenAt, error, context) {
+    const finishedAt = process.hrtime.bigint();
+    const row = {
+      ...record,
+      status: 'failed',
+      error_status: Number.isInteger(error?.status) ? error.status : null,
+      error_code: typeof error?.code === 'string' ? error.code.slice(0, 128) : null,
+      error_message: String(error?.message || error || 'Inference request failed.').slice(0, 65535),
+      first_token_latency_ms: firstTokenAt === null ? null : roundMs(elapsedMs(startedAt, firstTokenAt)),
+      total_latency_ms: roundMs(elapsedMs(startedAt, finishedAt)),
+      finished_unix_ms: Date.now()
+    };
+    const saved = await this.calls.record(row);
+    if (Array.isArray(context.callIds)) context.callIds.push(saved.id);
+    return saved;
   }
 
   createActiveModelMiddleware() {
@@ -241,7 +464,16 @@ const inference = Object.freeze({
         return getInferenceGateway().createChatCompletion(request);
       }
     })
-  })
+  }),
+  withContext(context, callback) {
+    return getInferenceGateway().withContext(context, callback);
+  },
+  getContext() {
+    return getInferenceGateway().getContext();
+  },
+  assignContext(values) {
+    return getInferenceGateway().assignContext(values);
+  }
 });
 
 function getActiveModel() {
@@ -258,6 +490,7 @@ function createActiveModelMiddleware() {
 
 module.exports = {
   ACTIVE_MODEL_SQL,
+  INFERENCE_PURPOSES: PURPOSES,
   InferenceGateway,
   createActiveModelMiddleware,
   getActiveModel,

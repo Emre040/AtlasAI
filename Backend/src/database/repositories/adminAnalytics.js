@@ -9,16 +9,31 @@ class AdminAnalyticsRepository {
   }
 
   async summary() {
-    const [[visitors], [conversations], [messages]] = await Promise.all([
+    const [[visitors], [conversations], [messages], [runs], [calls]] = await Promise.all([
       this.db.execute('SELECT COUNT(*) AS count FROM `atlasai`.`visitors`'),
       this.db.execute("SELECT COUNT(*) AS count FROM `atlasai`.`conversations` WHERE status <> 'deleted'"),
-      this.db.execute('SELECT COUNT(*) AS count, COALESCE(SUM(total_tokens), 0) AS tokens FROM `atlasai`.`messages`')
+      this.db.execute('SELECT COUNT(*) AS count FROM `atlasai`.`messages`'),
+      this.db.execute("SELECT COUNT(*) AS count, COALESCE(SUM(status = 'failed'), 0) AS failed FROM `atlasai`.`runs`"),
+      this.db.execute(
+        `SELECT COUNT(*) AS count,
+                COALESCE(SUM(status = 'failed'), 0) AS failed,
+                COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                COALESCE(SUM(total_tokens), 0) AS tokens
+           FROM \`atlasai\`.\`inference_calls\``
+      )
     ]);
     return {
       visitors: Number(visitors[0].count),
       conversations: Number(conversations[0].count),
       messages: Number(messages[0].count),
-      tokens: Number(messages[0].tokens)
+      runs: Number(runs[0].count),
+      failed_runs: Number(runs[0].failed),
+      inference_calls: Number(calls[0].count),
+      failed_inference_calls: Number(calls[0].failed),
+      input_tokens: Number(calls[0].input_tokens),
+      output_tokens: Number(calls[0].output_tokens),
+      tokens: Number(calls[0].tokens)
     };
   }
 

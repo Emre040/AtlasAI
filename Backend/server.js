@@ -14,6 +14,7 @@ const { AdminAnalyticsRepository } = require('./src/database/repositories/adminA
 const { BatchRepository } = require('./src/database/repositories/batches');
 const { ConversationRepository } = require('./src/database/repositories/conversations');
 const { RequestEventRepository } = require('./src/database/repositories/requestEvents');
+const { RunRepository } = require('./src/database/repositories/runs');
 const { WorkspaceRepository } = require('./src/database/repositories/workspaces');
 const {
   createActiveModelMiddleware,
@@ -52,6 +53,7 @@ async function bootstrap() {
   const batches = new BatchRepository(db);
   const conversations = new ConversationRepository(db);
   const requestEvents = new RequestEventRepository(db);
+  const runs = new RunRepository(db);
   const workspaces = new WorkspaceRepository(db);
   const sessionService = new SessionService(db, sessionConfig);
   const deploymentService = new DeploymentService({
@@ -101,8 +103,8 @@ async function bootstrap() {
   app.use('/hpa-admin', createAdminRouter({ analytics, accessRules, admin: runtime.admin }));
 
   const bindActiveModel = createActiveModelMiddleware();
-  app.use('/conversations', requireAuthentication, requireCsrf, createConversationsRouter({ conversations }));
-  app.use('/query', requireAuthentication, requireCsrf, bindActiveModel, createQueryRouter({ db, conversations }));
+  app.use('/conversations', requireAuthentication, requireCsrf, createConversationsRouter({ conversations, runs }));
+  app.use('/query', requireAuthentication, requireCsrf, bindActiveModel, createQueryRouter({ db, conversations, runs }));
   app.use('/batch', requireAuthentication, requireCsrf, bindActiveModel, createBatchRouter({
     db,
     batches,

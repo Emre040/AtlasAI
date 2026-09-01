@@ -124,18 +124,21 @@ CRITICAL RULES:
 
     // Collect tool steps
     const steps = [];
-    const execRes = await orchestrator.execute(toolName, args, {
-      rawQuery: queryText,
-      db,
-      visitorId: auth.visitorId,
-      onStep: async (payload) => {
-        steps.push({
-          stage: payload?.stage || 'info',
-          label: payload?.label || '',
-          message: payload?.message || payload?.stdout || ''
-        });
-      }
-    });
+    const execRes = await inference.withContext(
+      { purpose: 'agent', agentKey: toolName },
+      () => orchestrator.execute(toolName, args, {
+        rawQuery: queryText,
+        db,
+        visitorId: auth.visitorId,
+        onStep: async (payload) => {
+          steps.push({
+            stage: payload?.stage || 'info',
+            label: payload?.label || '',
+            message: payload?.message || payload?.stdout || ''
+          });
+        }
+      })
+    );
 
     const toolResult = execRes;
 
@@ -343,10 +346,13 @@ async function processJob({ db, batches, job, queries, auth }) {
 
 async function processOneQuery({ db, batches, job, index, queryText, auth }) {
   console.log(`[BATCH] job ${job.publicId} query[${index}] starting.`);
-  await batches.startQuery(job.id, index);
+  const started = await batches.startQuery(job.id, index);
 
   try {
-    const { response, metadata } = await runQuery(queryText, db, auth);
+    const { response, metadata } = await inference.withContext(
+      { purpose: 'batch', batchQueryId: started.id },
+      () => runQuery(queryText, db, auth)
+    );
     await batches.completeQuery(job.id, index, response, metadata);
 
     console.log(`[BATCH] job ${job.publicId} query[${index}] completed.`);

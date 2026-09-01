@@ -98,6 +98,33 @@ using the same gateway contract as HTTP requests. Automated tests and fixtures
 remain under `tests/`; production never imports either `tests/` or
 `scripts/manual/`.
 
+## Conversations, runs, and inference calls
+
+`messages` holds human-visible text only: the user's message and the assistant's
+answer, which links to the user message it answers (`parent_message_id`) and to
+the inference call that produced it (`inference_call_id`). Tool executions are
+`runs`: one row per tool call with the model's own arguments, the sentence the
+assistant streamed before running the tool, the compact result document the
+model received back, and promoted scalars the UI links to (`search_url`,
+`rows_found`, `validation_passed`, `attempts`, `workspace_id`). Their progress
+is `run_events`, ordered by `sequence_no`; ASO's structured step payloads land
+in `detail_json` next to the text.
+
+`inference_calls` is written by the gateway itself, so every model request is
+recorded whoever made it: purpose (`router`, `preface`, `synthesis`, `answer`,
+`agent`, `batch`, `manual`), the run, conversation, request event, batch query,
+or workspace it served, provider request id, finish reason, token counts, time
+to first token, total latency, and a stored `output_tokens_per_second`. Prompts
+and responses are hashed, not copied. Callers describe the request with
+`inference.withContext({ purpose, conversationId, runId, ... }, fn)`; nested
+contexts inherit the outer ids, and `context.callIds` returns the recorded ids.
+
+`request_events` rows are inserted when a request arrives and completed when the
+response finishes, so `req.requestEventId` is available to everything that runs
+while serving the request. `GET /conversations/messages` returns the ordered
+timeline the frontend renders (`type: 'message' | 'run'`), built by
+`src/http/timeline.js` from those tables.
+
 ## Authentication and request controls
 
 - Access, refresh, and CSRF values are independent random 256-bit tokens; only

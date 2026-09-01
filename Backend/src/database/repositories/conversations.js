@@ -10,9 +10,43 @@ const { sqlLimit } = require('../sql');
 
 const CONVERSATIONS = '`atlasai`.`conversations`';
 const MESSAGES = '`atlasai`.`messages`';
+const CALLS = '`atlasai`.`inference_calls`';
+const MODELS = '`atlasai`.`inference_models`';
+
+const ROLES = new Set(['user', 'assistant']);
 
 function asUnixMs(value) {
   return Number(value);
+}
+
+function asNumber(value) {
+  return value === null || value === undefined ? null : Number(value);
+}
+
+function toMessage(row) {
+  return {
+    id: row.id,
+    publicId: uuidBufferToString(row.public_id),
+    parentMessageId: row.parent_message_id ?? null,
+    role: row.role,
+    text: row.content_text,
+    createdUnixMs: asUnixMs(row.created_unix_ms),
+    inference: row.call_public_id
+      ? {
+          callPublicId: uuidBufferToString(row.call_public_id),
+          modelConfigKey: row.model_config_key,
+          finishReason: row.finish_reason ?? null,
+          inputTokens: asNumber(row.input_tokens),
+          cachedInputTokens: asNumber(row.cached_input_tokens),
+          outputTokens: asNumber(row.output_tokens),
+          reasoningTokens: asNumber(row.reasoning_tokens),
+          totalTokens: asNumber(row.total_tokens),
+          firstTokenLatencyMs: asNumber(row.first_token_latency_ms),
+          totalLatencyMs: asNumber(row.total_latency_ms),
+          outputTokensPerSecond: asNumber(row.output_tokens_per_second)
+        }
+      : null
+  };
 }
 
 class ConversationRepository {
@@ -82,73 +116,72 @@ class ConversationRepository {
     }));
   }
 
-  async listMessages(conversationId, limit = 1000) {
-    const rowLimit = sqlLimit(limit, 1000);
-    const [rows] = await this.db.execute(
-      `SELECT public_id, role AS sender_type, content_text AS text, created_unix_ms
-         FROM ${MESSAGES}
-        WHERE conversation_id = ?
-        ORDER BY id
-        LIMIT ${rowLimit}`,
-      [conversationId]
-    );
-    return rows.map(row => ({
-      id: uuidBufferToString(row.public_id),
-      type: row.sender_type,
-      sender_type: row.sender_type,
-      text: row.text,
-      created_at: asUnixMs(row.created_unix_ms)
-    }));
-  }
-
-  async history(conversationId, limit = 100) {
-    const rowLimit = sqlLimit(limit, 1000);
-    const [rows] = await this.db.execute(
-      `SELECT role AS sender_type, content_text AS text
-         FROM ${MESSAGES}
-        WHERE conversation_id = ?
-        ORDER BY id DESC
-        LIMIT ${rowLimit}`,
-      [conversationId]
-    );
-    return rows;
-  }
-
-  async addMessage(conversationId, text, {
-    role,
-    kind = 'text',
-    totalTokens = null,
-    inferenceModelId = null,
-    runPublicId = null
-  }) {
+  // One human-visible message. Assistant messages name the user message they answer and the
+  // inference call that produced them; user messages have neither.
+  async addMessage(conversationId, role, text, { parentMessageId = null, inferenceCallId = null } = {}) {
+    if (!ROLES.has(role)) throw new TypeError(`Unknown message role '${role}'.`);
     const normalizedText = String(text || '').trim();
     if (!normalizedText) throw new TypeError('Message text must not be empty.');
+    if (role === 'user' && (parentMessageId !== null || inferenceCallId !== null)) {
+      throw new TypeError('User messages carry no parent message or inference call.');
+    }
+    if (role === 'assistant' && !Number.isInteger(parentMessageId)) {
+      throw new TypeError('Assistant messages require the user message they answer.');
+    }
 
     const publicId = createUuidV7();
     const now = Date.now();
     const contentHash = crypto.createHash('sha256').update(normalizedText, 'utf8').digest();
-    const runBytes = runPublicId ? uuidStringToBuffer(runPublicId) : null;
     const [result] = await this.db.execute(
       `INSERT INTO ${MESSAGES} (
-         public_id, conversation_id, run_public_id, role, kind, state,
-         content_text, content_sha256, inference_model_id, total_tokens,
-         created_unix_ms, completed_unix_ms
-       ) VALUES (?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?)`,
-      [
-        publicId.bytes,
-        conversationId,
-        runBytes,
-        role,
-        kind,
-        normalizedText,
-        contentHash,
-        inferenceModelId,
-        totalTokens,
-        now,
-        now
-      ]
+         public_id, conversation_id, parent_message_id, inference_call_id,
+         role, content_text, content_sha256, created_unix_ms
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [publicId.bytes, conversationId, parentMessageId, inferenceCallId, role, normalizedText, contentHash, now]
     );
-    return { id: result.insertId, publicId: publicId.text };
+    return { id: result.insertId, publicId: publicId.text, createdUnixMs: now };
+  }
+
+  async listMessages(conversationId, limit = 1000) {
+    const rowLimit = sqlLimit(limit, 1000);
+    const [rows] = await this.db.execute(
+      `SELECT m.id, m.public_id, m.parent_message_id, m.role, m.content_text, m.created_unix_ms,
+              c.public_id AS call_public_id, c.finish_reason, c.input_tokens, c.cached_input_tokens,
+              c.output_tokens, c.reasoning_tokens, c.total_tokens, c.first_token_latency_ms,
+              c.total_latency_ms, c.output_tokens_per_second,
+              im.config_key AS model_config_key
+         FROM ${MESSAGES} m
+         LEFT JOIN ${CALLS} c ON c.id = m.inference_call_id
+         LEFT JOIN ${MODELS} im ON im.id = c.inference_model_id
+        WHERE m.conversation_id = ?
+        ORDER BY m.id
+        LIMIT ${rowLimit}`,
+      [conversationId]
+    );
+    return rows.map(toMessage);
+  }
+
+  // The most recent messages in chronological order, for building the model's context.
+  async history(conversationId, limit = 100) {
+    const rowLimit = sqlLimit(limit, 1000);
+    const [rows] = await this.db.execute(
+      `SELECT id, parent_message_id, role, content_text
+         FROM (
+           SELECT id, parent_message_id, role, content_text
+             FROM ${MESSAGES}
+            WHERE conversation_id = ?
+            ORDER BY id DESC
+            LIMIT ${rowLimit}
+         ) recent
+        ORDER BY id`,
+      [conversationId]
+    );
+    return rows.map(row => ({
+      id: row.id,
+      parentMessageId: row.parent_message_id ?? null,
+      role: row.role,
+      text: row.content_text
+    }));
   }
 
   async touch(conversationId) {

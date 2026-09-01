@@ -1,12 +1,13 @@
 'use strict';
 
 const express = require('express');
+const { buildTimeline } = require('../timeline');
 
 function invalidUuid(error) {
   return error instanceof TypeError && error.message === 'Invalid UUID.';
 }
 
-function createRouter({ conversations }) {
+function createRouter({ conversations, runs }) {
   const router = express.Router();
 
   router.route('/')
@@ -42,7 +43,11 @@ function createRouter({ conversations }) {
 
       const conversation = await conversations.findOwned(conversationId, req.auth.visitorId);
       if (!conversation) return res.status(404).json({ error: 'conversation_not_found' });
-      return res.json(await conversations.listMessages(conversation.id));
+      const [messages, conversationRuns] = await Promise.all([
+        conversations.listMessages(conversation.id),
+        runs.listForConversation(conversation.id)
+      ]);
+      return res.json(buildTimeline(messages, conversationRuns));
     } catch (error) {
       if (invalidUuid(error)) return res.status(400).json({ error: 'invalid_conversation_id' });
       return next(error);

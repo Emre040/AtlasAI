@@ -1252,6 +1252,9 @@ async function aso_hpa({ goal, max_steps = 20, top_x = DEFAULT_TOP_X, parallel_l
     planJson: { goal, max_steps, top_x, allow_search }
   });
 
+  // Every model call made while this workspace is open is attributed to it in inference_calls.
+  inference.assignContext({ workspaceId: workspace.id });
+
   const logger = createLogger(workspace.logPath);
   const log = (phase, event, data, step) => {
     const name = phase ? (event ? `${phase}.${event}` : phase) : (event || 'log');

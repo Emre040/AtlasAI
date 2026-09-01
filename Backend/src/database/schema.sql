@@ -42,6 +42,7 @@ CREATE TABLE `atlasai`.`inference_models` (
   `supports_tool_role_messages` TINYINT UNSIGNED NOT NULL DEFAULT 0,
   `supports_vision` TINYINT UNSIGNED NOT NULL DEFAULT 0,
   `supports_reasoning` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `reasoning_effort` VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NULL COMMENT 'Sent as reasoning_effort by the OpenAI-compatible adapter when set',
   `max_context_tokens` INT UNSIGNED NULL,
   `max_output_tokens` INT UNSIGNED NULL,
   `default_output_tokens` INT UNSIGNED NOT NULL DEFAULT 8192,
@@ -67,6 +68,7 @@ CREATE TABLE `atlasai`.`inference_models` (
   CONSTRAINT `chk_inference_models_tool_roles` CHECK (`supports_tool_role_messages` IN (0, 1)),
   CONSTRAINT `chk_inference_models_vision` CHECK (`supports_vision` IN (0, 1)),
   CONSTRAINT `chk_inference_models_reasoning` CHECK (`supports_reasoning` IN (0, 1)),
+  CONSTRAINT `chk_inference_models_reasoning_effort` CHECK (`reasoning_effort` IS NULL OR `reasoning_effort` IN ('none', 'minimal', 'low', 'medium', 'high', 'xhigh')),
   CONSTRAINT `chk_inference_models_output_tokens` CHECK (
     `default_output_tokens` > 0
     AND (`max_output_tokens` IS NULL OR `default_output_tokens` <= `max_output_tokens`)
@@ -718,7 +720,7 @@ INSERT INTO `atlasai`.`inference_providers` (
     'openai_chat_completions',
     'https://api.groq.com/openai/v1',
     'GROQ_API_KEY',
-    'enabled',
+    'disabled',
     @atlasai_seed_unix_ms,
     @atlasai_seed_unix_ms
   ),
@@ -728,6 +730,26 @@ INSERT INTO `atlasai`.`inference_providers` (
     'anthropic_messages',
     'https://api.anthropic.com',
     'ANTHROPIC_API_KEY',
+    'enabled',
+    @atlasai_seed_unix_ms,
+    @atlasai_seed_unix_ms
+  ),
+  (
+    'alibaba',
+    'Alibaba Model Studio (DashScope intl)',
+    'openai_chat_completions',
+    'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+    'ALIBABA_API_KEY',
+    'enabled',
+    @atlasai_seed_unix_ms,
+    @atlasai_seed_unix_ms
+  ),
+  (
+    'deepseek',
+    'DeepSeek',
+    'openai_chat_completions',
+    'https://api.deepseek.com/v1',
+    'DEEPSEEK_API_KEY',
     'enabled',
     @atlasai_seed_unix_ms,
     @atlasai_seed_unix_ms
@@ -787,3 +809,61 @@ INSERT INTO `atlasai`.`inference_models` (
   ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic'), 'anthropic-claude-opus-5',  'claude-opus-5',                      'Claude Opus 5',         'inactive', 1, 1, 1, 1, 1, 1, 1000000, 128000, 8192, 5000000, 25000000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
   ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic'), 'anthropic-claude-sonnet-5','claude-sonnet-5',                    'Claude Sonnet 5',       'inactive', 1, 1, 1, 1, 1, 1, 1000000, 128000, 8192, 2000000, 10000000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
   ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic'), 'anthropic-claude-haiku-4-5','claude-haiku-4-5-20251001',          'Claude Haiku 4.5',      'inactive', 1, 1, 1, 1, 1, 1,  200000,  64000, 8192, 1000000,  5000000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms);
+
+-- Open-weight models served through Alibaba Model Studio (international endpoint) and
+-- DeepSeek's own API. Model IDs were taken from each provider's live /models listing on
+-- 2026-09-01; context/output limits are NULL where the provider does not publish them.
+INSERT INTO `atlasai`.`inference_models` (
+  `provider_id`,
+  `config_key`,
+  `model_id`,
+  `display_name`,
+  `status`,
+  `supports_streaming`,
+  `supports_tools`,
+  `supports_json_mode`,
+  `supports_tool_role_messages`,
+  `supports_vision`,
+  `supports_reasoning`,
+  `max_context_tokens`,
+  `max_output_tokens`,
+  `default_output_tokens`,
+  `catalog_verified_unix_ms`,
+  `created_unix_ms`,
+  `updated_unix_ms`
+) VALUES
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'alibaba'),  'alibaba-qwen3.8-27b',       'qwen3.8-27b',       'Qwen 3.8 27B (Alibaba)',        'inactive', 1, 1, 1, 1, 0, 1,    NULL,   NULL, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'alibaba'),  'alibaba-qwen3.8-2.4t-a95b', 'qwen3.8-2.4t-a95b', 'Qwen 3.8 2.4T-A95B (Alibaba)',  'inactive', 1, 1, 1, 1, 0, 1,    NULL,   NULL, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'alibaba'),  'alibaba-qwen3.5-397b-a17b', 'qwen3.5-397b-a17b', 'Qwen 3.5 397B-A17B (Alibaba)',  'inactive', 1, 1, 1, 1, 0, 1,    NULL,   NULL, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'alibaba'),  'alibaba-qwen3.8-flash',     'qwen3.8-flash',     'Qwen 3.8 Flash (Alibaba)',      'inactive', 1, 1, 1, 1, 0, 1,    NULL,   NULL, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  -- The bare 'deepseek-v4-pro' alias on DashScope intl never answered (90 s, every request shape) on 2026-09-01; the dated snapshot does.
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'alibaba'),  'alibaba-deepseek-v4-pro',   'deepseek-v4-pro-0813', 'DeepSeek V4 Pro 0813 (Alibaba)', 'inactive', 1, 1, 1, 1, 0, 1, NULL, NULL, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'alibaba'),  'alibaba-deepseek-v4-flash', 'deepseek-v4-flash', 'DeepSeek V4 Flash (Alibaba)',   'inactive', 1, 1, 1, 1, 0, 1,    NULL,   NULL, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'alibaba'),  'alibaba-kimi-k3',           'kimi-k3',           'Kimi K3 (Alibaba)',             'inactive', 1, 1, 1, 1, 0, 1,    NULL,   NULL, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'deepseek'), 'deepseek-v4-pro',           'deepseek-v4-pro',   'DeepSeek V4 Pro',               'inactive', 1, 1, 1, 1, 0, 1, 1000000, 384000, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'deepseek'), 'deepseek-v4-flash',         'deepseek-v4-flash', 'DeepSeek V4 Flash',             'inactive', 1, 1, 1, 1, 0, 1, 1000000, 384000, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms);
+
+-- GPT-5 family. On /v1/chat/completions the GPT-5.6 models accept function tools only with
+-- reasoning_effort 'none' (verified 2026-09-01), so those rows run without reasoning.
+INSERT INTO `atlasai`.`inference_models` (
+  `provider_id`,
+  `config_key`,
+  `model_id`,
+  `display_name`,
+  `status`,
+  `supports_streaming`,
+  `supports_tools`,
+  `supports_json_mode`,
+  `supports_tool_role_messages`,
+  `supports_vision`,
+  `supports_reasoning`,
+  `reasoning_effort`,
+  `catalog_verified_unix_ms`,
+  `created_unix_ms`,
+  `updated_unix_ms`
+) VALUES
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'openai'), 'openai-gpt-5.6-luna',  'gpt-5.6-luna',            'GPT-5.6 Luna',              'inactive', 1, 1, 1, 1, 1, 1, 'none', @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'openai'), 'openai-gpt-5.6-sol',   'gpt-5.6-sol',             'GPT-5.6 Sol',               'inactive', 1, 1, 1, 1, 1, 1, 'none', @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'openai'), 'openai-gpt-5.6-terra', 'gpt-5.6-terra',           'GPT-5.6 Terra',             'inactive', 1, 1, 1, 1, 1, 1, 'none', @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'openai'), 'openai-gpt-5.4-mini',  'gpt-5.4-mini-2026-03-17', 'GPT-5.4 mini (2026-03-17)', 'inactive', 1, 1, 1, 1, 1, 1, NULL,   @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'openai'), 'openai-gpt-5.4-nano',  'gpt-5.4-nano-2026-03-17', 'GPT-5.4 nano (2026-03-17)', 'inactive', 1, 1, 1, 1, 1, 1, NULL,   @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms);

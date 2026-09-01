@@ -70,7 +70,10 @@ explicitly and never operates on the old HPA database. It contains no migration
 ledger. Every stored point in time is Unix epoch milliseconds in a
 `BIGINT UNSIGNED ..._unix_ms` column; there are no SQL temporal column types.
 
-The catalog seeds five providers and sixteen selectable models. Exactly one model
+The catalog seeds seven providers and thirty selectable models. A row's
+`reasoning_effort`, when set, is sent verbatim by the OpenAI-compatible adapter;
+the GPT-5.6 rows carry `none` because Chat Completions accepts function tools
+from those models only without reasoning. Exactly one model
 may have `status = 'active'`, enforced by a unique generated singleton. Startup
 requires exactly one enabled, credentialed, streaming/tool-capable selection.
 Every inference call passes through `src/inference/gateway.js`; request code
@@ -81,8 +84,12 @@ through a run. Changing the active row takes effect on the next request without
 a process restart, provided that provider credential is already in the process
 environment.
 
-OpenAI, Gemini, GLM, and GroqCloud use the OpenAI-compatible adapter. Anthropic
-uses its native Messages API adapter. Both implement the same internal chat
+OpenAI, Gemini, GLM, Alibaba Model Studio (Qwen, DeepSeek, and Kimi open-weight
+models on the international endpoint), DeepSeek, and GroqCloud use the
+OpenAI-compatible adapter. GroqCloud is seeded `disabled` because its free tier
+cannot fit the research prompts. Anthropic uses its native Messages API adapter;
+it never forwards sampling parameters, and it accepts a single fenced JSON block
+in JSON-object mode because Claude models may wrap JSON in markdown fences. Both implement the same internal chat
 completion contract used by the agents, including text streams, tool calls,
 tool results, usage totals, and validated JSON-object responses.
 

@@ -15,7 +15,9 @@ class OpenAIChatCompletionsAdapter {
   create(request, model) {
     return this.client.chat.completions.create({
       ...request,
-      model: model.modelId
+      model: model.modelId,
+      // Catalog-driven: e.g. GPT-5.6 on Chat Completions only accepts function tools with 'none'.
+      ...(model.reasoningEffort ? { reasoning_effort: model.reasoningEffort } : {})
     });
   }
 }

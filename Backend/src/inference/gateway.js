@@ -15,6 +15,7 @@ const ACTIVE_MODEL_SQL = `
     m.supports_tool_role_messages,
     m.supports_vision,
     m.supports_reasoning,
+    m.reasoning_effort,
     m.max_context_tokens,
     m.max_output_tokens,
     m.default_output_tokens,
@@ -88,7 +89,8 @@ function rowToModel(row) {
     supportsJsonMode: asBoolean(row.supports_json_mode),
     supportsToolRoleMessages: asBoolean(row.supports_tool_role_messages),
     supportsVision: asBoolean(row.supports_vision),
-    supportsReasoning: asBoolean(row.supports_reasoning)
+    supportsReasoning: asBoolean(row.supports_reasoning),
+    reasoningEffort: row.reasoning_effort ?? null
   });
 }
 

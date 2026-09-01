@@ -168,16 +168,26 @@ function normalizeUsage(usage = {}) {
   };
 }
 
+// Claude models (Haiku 4.5 in particular) may wrap a JSON reply in one markdown code fence.
+// Exactly one fenced block or one bare object is accepted; anything else is an error.
+function extractJsonObjectText(text) {
+  const trimmed = String(text || '').trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return fenced ? fenced[1].trim() : trimmed;
+}
+
 function assertJsonObject(text) {
+  const jsonText = extractJsonObjectText(text);
   let parsed;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(jsonText);
   } catch {
-    throw new Error('Anthropic returned invalid JSON for json_object mode.');
+    throw new Error(`Anthropic returned invalid JSON for json_object mode: ${String(text || '').slice(0, 200)}`);
   }
   if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
     throw new Error('Anthropic returned a non-object value for json_object mode.');
   }
+  return jsonText;
 }
 
 function normalizeResponse(message, jsonObjectMode) {
@@ -198,7 +208,7 @@ function normalizeResponse(message, jsonObjectMode) {
     }
   }
 
-  if (jsonObjectMode) assertJsonObject(text);
+  if (jsonObjectMode) text = assertJsonObject(text);
 
   return {
     id: message.id,
@@ -359,8 +369,9 @@ function buildRequest(request, model) {
       ...(request.stream ? { stream: true } : {}),
       ...(tools ? { tools } : {}),
       ...(toolChoice ? { tool_choice: toolChoice } : {}),
-      ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
-      ...(request.top_p === undefined ? {} : { top_p: request.top_p }),
+      // Sampling parameters are accepted from the internal contract but never forwarded:
+      // Claude Opus 5 and Sonnet 5 reject temperature/top_p with HTTP 400, and the
+      // agents only ever send temperature 0 for determinism, which Claude does not need.
       ...(request.stop === undefined ? {} : {
         stop_sequences: Array.isArray(request.stop) ? request.stop : [request.stop]
       }),

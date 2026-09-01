@@ -29,6 +29,7 @@ function activeRow(overrides = {}) {
     supports_tool_role_messages: 1,
     supports_vision: 1,
     supports_reasoning: 0,
+    reasoning_effort: null,
     max_context_tokens: 100000,
     max_output_tokens: 32000,
     default_output_tokens: 8192,
@@ -63,11 +64,15 @@ test('Anthropic request conversion preserves system, tools, tool results, and JS
       { role: 'system', content: 'Return the final answer.' }
     ],
     response_format: { type: 'json_object' },
-    temperature: 0
+    temperature: 0,
+    top_p: 1
   }, anthropicModel);
 
   assert.equal(request.params.model, 'claude-sonnet-5');
   assert.equal(request.params.max_tokens, 8192);
+  // Claude Opus 5 / Sonnet 5 reject sampling parameters with HTTP 400; the adapter must never forward them.
+  assert.equal('temperature' in request.params, false);
+  assert.equal('top_p' in request.params, false);
   assert.match(request.params.system, /Primary instruction/);
   assert.match(request.params.system, /Return the final answer/);
   assert.match(request.params.system, /valid JSON object/);
@@ -110,6 +115,34 @@ test('Anthropic native responses normalize to the internal chat-completion contr
     total_tokens: 18,
     prompt_tokens_details: { cached_tokens: 3 }
   });
+});
+
+test('Anthropic json_object mode unwraps one markdown fence and rejects prose around the object', () => {
+  const fenced = normalizeResponse({
+    id: 'msg_2',
+    model: 'claude-haiku-4-5-20251001',
+    stop_reason: 'end_turn',
+    content: [{ type: 'text', text: '```json\n{"tool":"deep_research_hpa","goal":"heart"}\n```' }],
+    usage: { input_tokens: 5, output_tokens: 9 }
+  }, true);
+  assert.equal(fenced.choices[0].message.content, '{"tool":"deep_research_hpa","goal":"heart"}');
+
+  const bare = normalizeResponse({
+    id: 'msg_3',
+    model: 'claude-sonnet-5',
+    stop_reason: 'end_turn',
+    content: [{ type: 'text', text: ' {"ok":true} ' }],
+    usage: { input_tokens: 5, output_tokens: 3 }
+  }, true);
+  assert.equal(bare.choices[0].message.content, '{"ok":true}');
+
+  assert.throws(() => normalizeResponse({
+    id: 'msg_4',
+    model: 'claude-sonnet-5',
+    stop_reason: 'end_turn',
+    content: [{ type: 'text', text: 'Here is the plan: {"ok":true}' }],
+    usage: { input_tokens: 5, output_tokens: 3 }
+  }, true), /invalid JSON for json_object mode/);
 });
 
 test('Anthropic streams normalize text, fragmented tool arguments, finish reason, and usage', async () => {
@@ -173,9 +206,17 @@ test('Anthropic and OpenAI adapters call their native clients with the selected 
     }
   });
   await openai.create({ messages: [{ role: 'user', content: 'Go.' }] }, {
-    modelId: 'openai/gpt-oss-120b'
+    modelId: 'openai/gpt-oss-120b',
+    reasoningEffort: null
   });
   assert.equal(openAiParams.model, 'openai/gpt-oss-120b');
+  assert.equal('reasoning_effort' in openAiParams, false);
+
+  await openai.create({ messages: [{ role: 'user', content: 'Go.' }] }, {
+    modelId: 'gpt-5.6-luna',
+    reasoningEffort: 'none'
+  });
+  assert.equal(openAiParams.reasoning_effort, 'none');
 });
 
 test('gateway resolves and binds exactly one database model for a complete HTTP request', async () => {

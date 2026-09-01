@@ -98,7 +98,6 @@ CREATE TABLE `atlasai`.`auth_sessions` (
   `refresh_family_id` BINARY(16) NOT NULL,
   `access_token_sha256` BINARY(32) NOT NULL COMMENT 'Only the SHA-256 digest is stored',
   `csrf_token_sha256` BINARY(32) NOT NULL COMMENT 'Only the SHA-256 digest is stored',
-  `client_fingerprint_sha256` BINARY(32) NULL,
   `status` ENUM('active','revoked','expired') NOT NULL DEFAULT 'active',
   `access_expires_unix_ms` BIGINT UNSIGNED NOT NULL,
   `idle_expires_unix_ms` BIGINT UNSIGNED NOT NULL,

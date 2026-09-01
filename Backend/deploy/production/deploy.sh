@@ -63,7 +63,7 @@ if ! flock -n 9; then
   exit 3
 fi
 
-for command_name in curl find flock git grep node npm pm2 readlink seq ss; do
+for command_name in curl find flock git grep gzip node npm pm2 readlink seq ss unzip; do
   command -v "${command_name}" >/dev/null
 done
 
@@ -106,6 +106,18 @@ else
   ln -s "${canonical_runtime}" "${backend_root}/runtime"
 fi
 
+# The HPA bulk files are shared by every release, like runtime/.
+canonical_data_local="${repository_root}/Backend/data_local"
+mkdir -p "${canonical_data_local}"
+chmod 700 "${canonical_data_local}"
+if [[ -e "${backend_root}/data_local" || -L "${backend_root}/data_local" ]]; then
+  if [[ "$(readlink -f "${backend_root}/data_local")" != "$(readlink -f "${canonical_data_local}")" ]]; then
+    exit 16
+  fi
+else
+  ln -s "${canonical_data_local}" "${backend_root}/data_local"
+fi
+
 cd "${backend_root}"
 PUPPETEER_SKIP_DOWNLOAD=true npm ci
 # The dictionary agent and ASO renderer drive Chrome through Puppeteer. The browser lives in the
@@ -115,6 +127,13 @@ npm test
 while IFS= read -r -d '' javascript_file; do
   node --check "${javascript_file}"
 done < <(find . -path './node_modules' -prune -o -type f \( -name '*.js' -o -name '*.cjs' \) -print0)
+
+# Fetch any HPA bulk file of the active release that is not on disk yet (hpa_datasets). A sync
+# already running from another shell keeps the lock; the release then ships with what exists.
+# Offline agent modes fall back to online for datasets that are not ready, so this never blocks.
+if ! flock --nonblock "${canonical_data_local}/.sync.lock" node scripts/sync-hpa-data.js >"${log_root}/${sha}.hpa-sync.log" 2>&1; then
+  echo "[deploy] HPA data sync incomplete or already running; see ${log_root}/${sha}.hpa-sync.log" >&2
+fi
 
 if ss -H -ltn "sport = :${canary_port}" | grep -q .; then
   exit 9

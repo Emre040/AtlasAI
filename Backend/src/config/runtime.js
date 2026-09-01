@@ -148,6 +148,7 @@ function loadRuntimeConfig(backendRoot) {
     }),
     diagnostics,
     workspaceRoot: resolveBackendPath('HPA_ASO_WORKSPACES_DIR', backendRoot),
+    dataLocalRoot: resolveBackendPath('HPA_DATA_LOCAL_DIR', backendRoot),
     hpmSummariesPath: resolveBackendPath('HPM_SUMMARIES_PATH', backendRoot)
   });
 }

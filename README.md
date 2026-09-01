@@ -18,16 +18,19 @@ Requirements: Node 20, MySQL 8, Chrome for Puppeteer (installed on first `npx pu
 ```bash
 cd Backend
 cp .env.example .env            # fill every value; nothing has a hidden default
-mysql < src/database/schema.sql # creates the `atlasai` schema and the model catalog
+mysql < src/database/schema.sql # creates the `atlasai` schema, the model catalog, the policy row, and the HPA file catalog
 npm install
 npm test
+node scripts/sync-hpa-data.js   # downloads the active HPA release into HPA_DATA_LOCAL_DIR (optional; agents fall back to proteinatlas.org)
 npm start                       # listens on HPA_HOST:HPA_PORT from .env
 curl http://127.0.0.1:9000/healthz
 ```
 
 The active model is the single `inference_models` row with `status = 'active'`; every model
-request goes through `src/inference/gateway.js` and is recorded in `inference_calls`.
-`Backend/README.md` documents the layout, the conversation tables, authentication, and the
+request goes through `src/inference/gateway.js`, is admitted by the policy in `platform_config`
+(budgets, limits, model selection, visitor keys), and is recorded with its cost in
+`inference_calls`. `Backend/README.md` documents the layout, the conversation tables, the policy
+layer, the HPA data releases and offline agent modes, ASO provenance, authentication, and the
 Cloudflare request metadata.
 
 ## Frontend

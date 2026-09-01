@@ -13,6 +13,9 @@
  */
 
 const { inference } = require('../../inference/gateway');
+const { localData, FILES } = require('../../hpa/localData');
+const { buildLocalPageStructure } = require('../../hpa/localPages');
+const { resolveAgentMode } = require('../../hpa/agentMode');
 const cheerio = require('cheerio');
 
 
@@ -812,6 +815,12 @@ async function investigationAgent(args, ctx = {}) {
 
   const q = question || `Tell me about ${gene}`;
 
+  // Offline reads the local HPA release; online fetches the live gene pages as before.
+  const agentMode = await resolveAgentMode(args.mode, [FILES.master]);
+  const mode = agentMode.mode;
+  if (agentMode.note) onStep({ stage: 'mode', label: 'Mode', message: agentMode.note });
+  else if (mode === 'offline') onStep({ stage: 'mode', label: 'Mode', message: `Local HPA ${agentMode.hpaVersion} data` });
+
   // Token tracking
   const tokenUsage = {
     pageSelection: { prompt: 0, completion: 0, total: 0 },
@@ -824,19 +833,26 @@ async function investigationAgent(args, ctx = {}) {
   // ==========================================================================
   let geneData;
   try {
-    const searchUrl = `https://www.proteinatlas.org/search/${encodeURIComponent(gene)}?format=json&download=yes`;
-    const searchData = await fetchJson(searchUrl);
-    if (!Array.isArray(searchData) || !searchData.length) {
-      return { found: false, error: 'Gene not found in HPA' };
+    let geneRow;
+    if (mode === 'offline') {
+      const resolved = await localData.resolveGene(gene);
+      if (!resolved) return { found: false, error: 'Gene not found in HPA', mode };
+      geneRow = { Gene: resolved.gene, Ensembl: resolved.ensembl };
+    } else {
+      const searchUrl = `https://www.proteinatlas.org/search/${encodeURIComponent(gene)}?format=json&download=yes`;
+      const searchData = await fetchJson(searchUrl);
+      if (!Array.isArray(searchData) || !searchData.length) {
+        return { found: false, error: 'Gene not found in HPA', mode };
+      }
+      geneRow = searchData.find(g => (g.Gene || '').toUpperCase() === gene.toUpperCase()) || searchData[0];
     }
-    const geneRow = searchData.find(g => (g.Gene || '').toUpperCase() === gene.toUpperCase()) || searchData[0];
     geneData = {
       name: geneRow.Gene,
       ensembl: geneRow.Ensembl,
       baseUrl: `https://www.proteinatlas.org/${geneRow.Ensembl}-${geneRow.Gene}`,
     };
   } catch (err) {
-    return { found: false, error: `Gene search failed: ${err.message}` };
+    return { found: false, error: `Gene search failed: ${err.message}`, mode };
   }
 
   onStep({ stage: 'selection_step', label: 'Resolved', message: `${geneData.name} (${geneData.ensembl})` });
@@ -897,10 +913,20 @@ Return JSON: { "pages": ["page1", "page2"], "reasoning": "why these pages" }`;
     onStep({ stage: 'execution_step', label: 'Fetching', message: pageKey || 'main' });
 
     try {
-      const html = await fetchHtml(pageUrl);
-      onStep({ stage: 'fetch', label: 'Downloaded', message: `${(html.length / 1024).toFixed(0)}KB HTML` });
-
-      const structure = extractPageStructure(html, pageUrl);
+      let structure = null;
+      if (mode === 'offline') {
+        structure = await buildLocalPageStructure(pageKey, geneData, pageUrl);
+        if (structure) {
+          onStep({ stage: 'fetch', label: 'Local data', message: `${structure.charts.length} charts, ${structure.tables.length} tables, ${structure.keyValues.length} facts` });
+        } else {
+          onStep({ stage: 'fetch', label: 'Local data', message: `No local data for the ${pageKey || 'main'} page; fetching it online` });
+        }
+      }
+      if (!structure) {
+        const html = await fetchHtml(pageUrl);
+        onStep({ stage: 'fetch', label: 'Downloaded', message: `${(html.length / 1024).toFixed(0)}KB HTML` });
+        structure = extractPageStructure(html, pageUrl);
+      }
       allStructures.push({ pageKey: pageKey || 'main', structure });
 
       // Show what was found
@@ -1152,6 +1178,8 @@ Return JSON:
     gene: geneData.name,
     ensembl: geneData.ensembl,
     baseUrl: geneData.baseUrl,
+    mode,
+    hpa_version: agentMode.hpaVersion,
     pages_fetched: pagesToFetch,
     citations,
     tokens: tokenUsage,

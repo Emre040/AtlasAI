@@ -35,6 +35,15 @@ const defs = [
           type: 'array',
           description: 'Optional explicit chart specifications to render.',
           items: { type: 'object' }
+        },
+        mode: {
+          type: 'string',
+          enum: ['online', 'offline'],
+          description:
+            'Data source. "offline" (the default when the local copy of the HPA release is ready) runs searches and ' +
+            'batch measurements against the local HPA bulk data, which is much faster and cheaper. "online" uses ' +
+            'proteinatlas.org live; pick it only when the request needs data outside the bulk export (protein structure, ' +
+            'antibody validation, metabolic pathways, images).'
         }
       },
       required: ['goal'],
@@ -59,6 +68,16 @@ const defs = [
         question: {
           type: 'string',
           description: 'The question to answer about this gene (e.g., "What is the subcellular localization?", "Tell me about this gene").'
+        },
+        mode: {
+          type: 'string',
+          enum: ['online', 'offline'],
+          description:
+            'Data source. "offline" reads the gene\'s expression tables and annotations from the local copy of the HPA ' +
+            'release (tissue, brain, single cell, immune cell, cell line RNA; subcellular location; cancer prognostics; ' +
+            'interaction partners) with no network access, which is fast and ideal for expression values, locations and ' +
+            'classifications. "online" (default) fetches the live gene pages and is required for protein structure, ' +
+            'antibody validation, images and anything not in the bulk export.'
         }
       },
       required: ['gene'],
@@ -84,6 +103,17 @@ const defs = [
           type: 'number',
           description: 'Maximum research loops (default 5).',
           default: 5
+        },
+        mode: {
+          type: 'string',
+          enum: ['online', 'offline'],
+          description:
+            'Data source. "offline" evaluates the search against the local copy of the HPA release with no network ' +
+            'access: tissue, brain, single-cell, immune-cell, cancer and cell-line RNA categories, protein class, ' +
+            'subcellular location, secretome, evidence, expression clusters, cancer prognostics and IHC tissue ' +
+            'expression. "online" (default) queries proteinatlas.org live and supports every search field; use it when ' +
+            'the request involves antibody validation, metabolic pathways, protein structure, interaction structure or ' +
+            'any field the local data cannot answer. Offline automatically falls back to online for unsupported fields.'
         }
       },
       required: ['goal'],
@@ -167,6 +197,12 @@ async function execute(name, args, ctx = {}) {
     steps.push(payload);
     await ctx.onStep?.(payload);
   };
+
+  // The data-source switch is only meaningful as one of its two values.
+  if (parsed?.mode !== undefined && parsed.mode !== 'online' && parsed.mode !== 'offline') {
+    parsed = { ...parsed };
+    delete parsed.mode;
+  }
 
 
   // For investigator_hpa: Extract gene from rawQuery if not provided, and pass question

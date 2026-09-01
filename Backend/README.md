@@ -176,6 +176,38 @@ providers the visitor has keys for. `GET /keys` lists the visitor's keys (suffix
 endpoint and stores it AES-256-GCM encrypted with the secret in `ATLAS_PROVIDER_KEY_SECRET_FILE`,
 and `DELETE /keys/:provider` removes it. Keys are decrypted only for the request that uses them.
 
+## HPA data releases and offline agents
+
+`hpa_datasets` is the HPA bulk-download catalog (one row per file, keyed by the catalog ID from the
+HPA team's sheet) with the local sync state of each file. `platform_config.active_hpa_version`
+selects the release in use; rows of other versions are ignored. `scripts/sync-hpa-data.js` reads
+the active version, downloads every missing or changed file with curl from `download_url`,
+checks the size against the server, hashes it, unpacks it into `HPA_DATA_LOCAL_DIR` (a single
+TSV keeps its name; multi-file archives become a directory) and records `local_status`,
+`local_path`, `download_bytes`, `download_sha256`, `unpacked_bytes` and the timestamps. The
+deployment runs it before switching releases (`--check` only reports). To ship a new release the
+HPA team inserts the new rows, sets `active_hpa_version`, and redeploys; the first deployment
+after that downloads the release.
+
+`deep_research_hpa`, `investigator_hpa` and `aso_hpa` accept `mode: "online" | "offline"`.
+Online is unchanged and the default for the first two. Offline evaluates the same search plan
+against the local release (`src/hpa/offlineSearch.js` reproduces the proteinatlas.org search
+semantics for category, class, location, evidence, cluster, prognostic, IHC and interaction
+fields) and builds the investigator's page structures from the local expression tables
+(`src/hpa/localPages.js`). ASO defaults to offline when the local release is ready: its batch
+measurements become table lookups and skip the scout call. A field or page the bulk files cannot
+answer falls back to proteinatlas.org and says so in the run events; `offline_agents_enabled`
+turns the whole mode off. The dictionary expert is always online.
+
+## ASO provenance
+
+`GET /workspaces/:uuid/provenance` returns the run's provenance graph built from
+`aso_artifacts`, `aso_artifact_links` and the artifact files (never from the model): nodes are
+artifacts (kind, operation that produced them, purpose, size, and whitelisted facts such as rows
+found, tissue, join keys or chart type), edges are `derived_from` links from inputs to outputs,
+`layers` is the longest-path depth used for drawing, and `outputs` lists the final figures,
+analyses and report. The frontend renders it as an SVG next to the workspace download.
+
 ## Cloudflare metadata
 
 `request_events` stores request and Cloudflare fields in explicit typed

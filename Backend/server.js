@@ -14,6 +14,7 @@ const { ConversationRepository } = require('./src/database/repositories/conversa
 const { RequestEventRepository } = require('./src/database/repositories/requestEvents');
 const { RunRepository } = require('./src/database/repositories/runs');
 const { WorkspaceRepository } = require('./src/database/repositories/workspaces');
+const { localData } = require('./src/hpa/localData');
 const { initializeInferenceGateway, resolveActiveModel } = require('./src/inference/gateway');
 const { initializePlatformConfig } = require('./src/policy/config');
 const { PolicyEngine } = require('./src/policy/limits');
@@ -46,6 +47,7 @@ async function bootstrap() {
   const gateway = await initializeInferenceGateway(db);
   const platformConfig = await initializePlatformConfig(db);
   configureWorkspaceRoot(runtime.workspaceRoot);
+  localData.configure({ root: runtime.dataLocalRoot, db });
 
   const batches = new BatchRepository(db);
   const conversations = new ConversationRepository(db);

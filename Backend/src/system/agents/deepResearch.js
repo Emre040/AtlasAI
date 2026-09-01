@@ -10,6 +10,9 @@
 const { inference } = require('../../inference/gateway');
 const { requireBoolean } = require('../../config/runtime');
 const { platformConfig } = require('../../policy/config');
+const { offlineSearch } = require('../../hpa/offlineSearch');
+const { resolveAgentMode } = require('../../hpa/agentMode');
+const { FILES } = require('../../hpa/localData');
 const https = require('https');
 
 const { detailedSearchOptions } = require('../../hpa/searchOptions.js');
@@ -1463,9 +1466,11 @@ const failedPaths = previousAttempts.map(a => ({
 // -----------------------------
 // Main
 // -----------------------------
-async function deepResearch({ goal }, { onStep } = {}) {
+async function deepResearch({ goal, mode: requestedMode }, { onStep } = {}) {
   const MAX_RETRIES = platformConfig().deepResearchMaxRetries;
   const startedAt = Date.now();
+  let searchMode = 'online';
+  let hpaVersion = null;
   const stats = { promptTokens: 0, completionTokens: 0, totalTokens: 0, perStep: {} };
   let searchUrl = null;
   let finishedAt = null;
@@ -1539,9 +1544,27 @@ async function deepResearch({ goal }, { onStep } = {}) {
 
     let rows = [];
     if (searchUrl) {
-      await onStep?.({ stage: 'planning_step', label: 'Search', message: 'Executing compound query' });
-      const raw = await httpGetJson(`${searchUrl}?format=json&download=yes`).catch(() => []);
-      rows = Array.isArray(raw) ? raw : (raw?.rows || []);
+      // The plan is identical either way; only where it is evaluated differs. The local release
+      // answers most category searches; anything it cannot evaluate goes to proteinatlas.org.
+      const agentMode = await resolveAgentMode(requestedMode, [FILES.master]);
+      if (agentMode.note) await onStep?.({ stage: 'planning_step', label: 'Mode', message: agentMode.note });
+      if (agentMode.mode === 'offline') {
+        await onStep?.({ stage: 'planning_step', label: 'Search', message: `Evaluating compound query against local HPA ${agentMode.hpaVersion} data` });
+        const local = await offlineSearch.evaluate(finalInclude, finalExclude);
+        if (local.unsupported.length === 0) {
+          rows = local.rows;
+          searchMode = 'offline';
+          hpaVersion = agentMode.hpaVersion;
+        } else {
+          const fields = [...new Set(local.unsupported.map(u => u.field))].join(', ');
+          await onStep?.({ stage: 'planning_step', label: 'Mode', message: `Local data cannot evaluate ${fields}; querying proteinatlas.org` });
+        }
+      }
+      if (searchMode === 'online') {
+        await onStep?.({ stage: 'planning_step', label: 'Search', message: 'Executing compound query' });
+        const raw = await httpGetJson(`${searchUrl}?format=json&download=yes`).catch(() => []);
+        rows = Array.isArray(raw) ? raw : (raw?.rows || []);
+      }
     } else {
       const fallback = await tryFreeTextFallback(goal, onStep);
       rows = fallback.rows;
@@ -1577,7 +1600,9 @@ async function deepResearch({ goal }, { onStep } = {}) {
         search_urls: [searchUrl],
         validation_passed: validationPassed,
         validation_details: lastValidation?.component_check || null,
-        attempts: previousAttempts.length + 1
+        attempts: previousAttempts.length + 1,
+        mode: searchMode,
+        hpa_version: hpaVersion
       },
       started_unix_ms: startedAt,
       finished_unix_ms: finishedAt || Date.now()

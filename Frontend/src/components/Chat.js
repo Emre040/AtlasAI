@@ -27,7 +27,8 @@ import {
   faHashtag,
   faCheckCircle,
   faList,
-  faDownload
+  faDownload,
+  faProjectDiagram
 } from '@fortawesome/free-solid-svg-icons';
 import createPlotlyComponent from 'react-plotly.js/factory';
 import Plotly from 'plotly.js-dist-min';
@@ -40,6 +41,7 @@ import {
 import { getApiBaseUrl, getApiEndpoint, getRuntimeConfig, getUiConfig } from '../api/config';
 import { AUTO_MODEL, describeRefusal, loadSelectedModel, storeSelectedModel } from '../api/models';
 import ModelMenu from './ModelMenu';
+import ProvenanceGraph from './ProvenanceGraph';
 import { liveToolEventFromSse, timelineToUiMessages } from '../api/timeline';
 import DictionaryCarousel from './DictionaryCarousel';
 
@@ -200,6 +202,7 @@ function HPA() {
     storeSelectedModel(configKey);
   }, []);
   const [collapsedRuns, setCollapsedRuns] = useState({}); // Track collapsed state per runId
+  const [provenanceRuns, setProvenanceRuns] = useState({}); // ASO runs whose provenance graph is open
   const [searchResults, setSearchResults] = useState({}); // Map of searchUrl -> { rows, loading, error, currentPage }
   const [replyTo, setReplyTo] = useState(null); // { ensg, geneName } for reply context
   const messagesEndRef = useRef(null);
@@ -1793,13 +1796,33 @@ function HPA() {
                             </div>
                           )}
                           {group.isComplete && runWorkspaceUuid && (
-                            <button
-                              type="button"
-                              onClick={() => downloadWorkspace(runWorkspaceUuid)}
-                              className="HPAG-tool-run-download"
-                            >
-                              <FontAwesomeIcon icon={faDownload} /> Download Workspace
-                            </button>
+                            <>
+                              <div className="HPAG-tool-run-actions">
+                                <button
+                                  type="button"
+                                  onClick={() => downloadWorkspace(runWorkspaceUuid)}
+                                  className="HPAG-tool-run-download"
+                                >
+                                  <FontAwesomeIcon icon={faDownload} /> Download Workspace
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setProvenanceRuns(prev => ({ ...prev, [group.runId]: !prev[group.runId] }))}
+                                  className={`HPAG-tool-run-download ${provenanceRuns[group.runId] ? 'HPAG-tool-run-download-active' : ''}`}
+                                  aria-expanded={Boolean(provenanceRuns[group.runId])}
+                                >
+                                  <FontAwesomeIcon icon={faProjectDiagram} /> {provenanceRuns[group.runId] ? 'Hide provenance' : 'Show provenance'}
+                                </button>
+                              </div>
+                              {provenanceRuns[group.runId] && (
+                                <ProvenanceGraph
+                                  apiBaseUrl={apiBaseUrl}
+                                  workspaceUuid={runWorkspaceUuid}
+                                  onOpenArtifact={(node, event) => handleArtifactChipEnter(event, { artifactId: node.id, format: node.format }, runWorkspaceUuid)}
+                                  onLeaveArtifact={handleArtifactChipLeave}
+                                />
+                              )}
+                            </>
                           )}
                         </>
                       );

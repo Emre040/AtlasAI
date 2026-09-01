@@ -17,6 +17,9 @@ const { rankArray, compareDelta, aggregate, mergeLongFormat, joinScatter, joinSc
 const { renderCharts } = require('../aso/pipelines/renderCharts');
 const { writeReport } = require('../aso/pipelines/report');
 const { measureDirect } = require('../aso/directMeasure');
+const { measureLocal } = require('../../hpa/localPages');
+const { resolveAgentMode } = require('../../hpa/agentMode');
+const { FILES } = require('../../hpa/localData');
 
 // DEFAULT_TOP_X: what to use when no one specifies (0 = all)
 // MAX_TOP_X: hard ceiling, never exceed this (0 = no cap)
@@ -676,14 +679,15 @@ async function execDeepResearch(args, ctx) {
   const { state, workspace, db, log, step } = ctx;
   const onStep = LOG_TOOL_STEPS ? async (payload) => log('tool_step', 'deep_research_hpa', payload, step) : undefined;
 
-  const result = await deepResearch(args, { onStep });
+  const result = await deepResearch({ ...args, mode: ctx.mode }, { onStep });
   const summary = result?.result || {};
   const compact = {
     tool: 'deep_research_hpa',
     rows_found: summary.rows_found ?? null,
     search_url: summary.search_urls?.[0] || null,
     validation_passed: summary.validation_passed ?? null,
-    attempts: summary.attempts ?? null
+    attempts: summary.attempts ?? null,
+    mode: summary.mode ?? null
   };
 
   const artifact = await registerArtifact(db, {
@@ -704,12 +708,13 @@ async function execInvestigator(args, ctx) {
   const { state, workspace, db, log, step } = ctx;
   const onStep = LOG_TOOL_STEPS ? async (payload) => log('tool_step', 'investigator_hpa', payload, step) : undefined;
 
-  const result = await investigationAgent(args, { onStep });
+  const result = await investigationAgent({ ...args, mode: ctx.mode }, { onStep });
   const answer = String(result?.answer || '').trim();
   const compact = {
     tool: 'investigator_hpa', gene: result?.gene || args.gene, ensembl: result?.ensembl || args.ensembl || null,
     found: result?.found === true, answer_snippet: answer ? answer.slice(0, 320) : null,
-    extracted_value: result?.extracted_value || null, confidence: result?.confidence || null
+    extracted_value: result?.extracted_value || null, confidence: result?.confidence || null,
+    mode: result?.mode || null
   };
 
   const artifact = await registerArtifact(db, {
@@ -746,7 +751,7 @@ async function execCleanTopX(args, ctx) {
     const artifact = await registerArtifact(db, {
       workspaceId: workspace.id, artifactsDir: workspace.artifactsDir,
       kind: 'dataset', format: 'json',
-      schemaJson: { type: 'gene_list' }, provenance: { source: toolId, top_x: topX },
+      schemaJson: { type: 'gene_list' }, provenance: { source: toolId, top_x: topX, purpose: args.label },
       payload: { label, source_tool: toolId, search_url: searchUrl, row_count: normalized.length, rows: top }
     });
 
@@ -781,7 +786,7 @@ async function execCleanDiff(args, ctx) {
       workspaceId: workspace.id, artifactsDir: workspace.artifactsDir,
       kind: 'dataset', format: 'json',
       schemaJson: { type: 'diff_list', list: list.key },
-      provenance: { sources: [datasetA.artifact_uuid, datasetB.artifact_uuid] },
+      provenance: { sources: [datasetA.artifact_uuid, datasetB.artifact_uuid], purpose: args.label },
       payload: { label: list.label, source_datasets: [datasetA.artifact_uuid, datasetB.artifact_uuid], row_count: list.rows.length, rows: list.rows }
     });
     state.datasets.push({ artifact_uuid: artifact.artifactUuid, kind: `diff_${list.key}`, label: list.label, rows: list.rows, row_count: list.rows.length, columns: datasetColumns(list.rows), storage_uri: artifact.storageUri });
@@ -809,7 +814,7 @@ async function execInspect(args, ctx) {
 }
 
 async function execMeasure(args, ctx) {
-  const { state, workspace, db, log, step, goal, parallel_limit, top_x: defaultTopX, pageCache } = ctx;
+  const { state, workspace, db, log, step, goal, parallel_limit, top_x: defaultTopX, pageCache, mode: dataMode } = ctx;
 
   // Accept either dataset_id (from prior search) or inline genes array
   let rows;
@@ -830,13 +835,14 @@ async function execMeasure(args, ctx) {
   const useDirect = Boolean(args.tissue);
   const mode = useDirect ? 'direct' : 'investigator';
 
-  await log('measure', 'batch', { count: rows.length, dataset_id: args.dataset_id || null, genes_inline: !args.dataset_id, label: args.label, mode, tissue: args.tissue || null }, step);
+  await log('measure', 'batch', { count: rows.length, dataset_id: args.dataset_id || null, genes_inline: !args.dataset_id, label: args.label, mode, data_mode: dataMode, tissue: args.tissue || null }, step);
 
-  // ---- Scout phase: when using direct mode, run investigator on first gene ----
-  // to discover chart_id + exact_label for precise extraction on the rest.
+  // ---- Scout phase: when using direct mode online, run investigator on first gene ----
+  // to discover chart_id + exact_label for precise extraction on the rest. Local lookups are
+  // exact by construction, so offline direct measurements skip the scout.
   let scoutInfo = null;
   let scoutResult = null;
-  if (useDirect && rows.length > 0) {
+  if (useDirect && rows.length > 0 && dataMode !== 'offline') {
     const scoutGene = rows[0].gene || rows[0].ensembl;
     if (scoutGene) {
       await log('measure', 'scout', { gene: scoutGene, tissue: args.tissue, page: args.page || 'tissue' }, step);
@@ -888,15 +894,17 @@ async function execMeasure(args, ctx) {
 
     try {
       if (useDirect) {
-        // FAST PATH: direct page fetch + cheerio parse, zero LLM calls
-        // Uses scoutInfo from investigator scout when available for precise matching
-        const result = await measureDirect({
-          gene, ensembl: row.ensembl,
-          tissue: args.tissue,
-          page: args.page || 'tissue',
-          cache: pageCache,
-          scoutInfo,
-        });
+        // FAST PATH: zero LLM calls. Offline reads the local expression tables; online fetches
+        // the gene page and parses its charts, guided by the scout's chart id and label.
+        const result = dataMode === 'offline'
+          ? await measureLocal({ gene, ensembl: row.ensembl, tissue: args.tissue, page: args.page || 'tissue' })
+          : await measureDirect({
+            gene, ensembl: row.ensembl,
+            tissue: args.tissue,
+            page: args.page || 'tissue',
+            cache: pageCache,
+            scoutInfo,
+          });
         return {
           gene, ensembl: row.ensembl || result.ensembl || null,
           value: parseNumber(result.extracted_value ?? result.value),
@@ -908,7 +916,7 @@ async function execMeasure(args, ctx) {
       } else {
         // FULL PATH: investigator agent with LLM reasoning
         const question = buildQuestion(args.question, gene, goal);
-        const result = await investigationAgent({ gene, ensembl: row.ensembl, question }, {});
+        const result = await investigationAgent({ gene, ensembl: row.ensembl, question, mode: dataMode }, {});
         return {
           gene, ensembl: row.ensembl || null,
           value: parseNumber(result.extracted_value ?? result.answer ?? result.value),
@@ -933,7 +941,7 @@ async function execMeasure(args, ctx) {
   const artifact = await registerArtifact(db, {
     workspaceId: workspace.id, artifactsDir: workspace.artifactsDir,
     kind: 'measurement', format: 'json',
-    schemaJson: { type: 'measurement' }, provenance: { source_dataset: args.dataset_id || null },
+    schemaJson: { type: 'measurement' }, provenance: { source_dataset: args.dataset_id || null, purpose: args.label, mode, data_mode: dataMode, tissue: args.tissue || null },
     payload: { label: args.label, tissue: args.tissue || null, mode, source_dataset: args.dataset_id || null, value_type: args.value_type, unit: args.unit, row_count: rowsOut.length, numeric_count: numericCount, rows: rowsOut }
   });
 
@@ -956,7 +964,7 @@ async function execAnalyzeRank(args, ctx) {
   const artifact = await registerArtifact(db, {
     workspaceId: workspace.id, artifactsDir: workspace.artifactsDir,
     kind: 'analysis', format: 'json',
-    schemaJson: { type: 'rank' }, provenance: { source_dataset: args.dataset_id },
+    schemaJson: { type: 'rank' }, provenance: { source_dataset: args.dataset_id, purpose: args.label },
     payload: { label, source_dataset: args.dataset_id, key: args.key || 'value', rows: ranked }
   });
 
@@ -980,7 +988,7 @@ async function execAnalyzeDelta(args, ctx) {
   const artifact = await registerArtifact(db, {
     workspaceId: workspace.id, artifactsDir: workspace.artifactsDir,
     kind: 'analysis', format: 'json',
-    schemaJson: { type: 'delta' }, provenance: { sources: [datasetA.artifact_uuid, datasetB.artifact_uuid], joinKey },
+    schemaJson: { type: 'delta' }, provenance: { sources: [datasetA.artifact_uuid, datasetB.artifact_uuid], joinKey, purpose: args.label },
     payload: { label, sources: [datasetA.artifact_uuid, datasetB.artifact_uuid], rows: out }
   });
 
@@ -1002,7 +1010,7 @@ async function execAnalyzeAggregate(args, ctx) {
   const artifact = await registerArtifact(db, {
     workspaceId: workspace.id, artifactsDir: workspace.artifactsDir,
     kind: 'analysis', format: 'json',
-    schemaJson: { type: 'aggregate' }, provenance: { source_dataset: args.dataset_id },
+    schemaJson: { type: 'aggregate' }, provenance: { source_dataset: args.dataset_id, purpose: args.label },
     payload: { label, metric: args.metric, value, source_dataset: args.dataset_id }
   });
 
@@ -1032,7 +1040,7 @@ async function execAnalyzeMerge(args, ctx) {
   const artifact = await registerArtifact(db, {
     workspaceId: workspace.id, artifactsDir: workspace.artifactsDir,
     kind: 'analysis', format: 'json',
-    schemaJson: { type: 'merge' }, provenance: { sources: args.datasets.map(d => d.dataset_id), joinKey, valueKey },
+    schemaJson: { type: 'merge' }, provenance: { sources: args.datasets.map(d => d.dataset_id), joinKey, valueKey, purpose: args.label },
     payload: { label, rows: merged, row_count: merged.length }
   });
 
@@ -1097,7 +1105,7 @@ async function execAnalyzeScatter(args, ctx) {
   const artifact = await registerArtifact(db, {
     workspaceId: workspace.id, artifactsDir: workspace.artifactsDir,
     kind: 'analysis', format: 'json',
-    schemaJson: { type: 'scatter' }, provenance: { sources: allSourceIds, joinKey, valueKey, mode },
+    schemaJson: { type: 'scatter' }, provenance: { sources: allSourceIds, joinKey, valueKey, mode, purpose: args.label },
     payload: { label, rows: points, row_count: points.length }
   });
 
@@ -1130,7 +1138,7 @@ async function execAnalyzeConcat(args, ctx) {
   const artifact = await registerArtifact(db, {
     workspaceId: workspace.id, artifactsDir: workspace.artifactsDir,
     kind: 'analysis', format: 'json',
-    schemaJson: { type: 'concat' }, provenance: { sources: ids },
+    schemaJson: { type: 'concat' }, provenance: { sources: ids, purpose: args.label },
     payload: { label, rows: allRows, row_count: allRows.length }
   });
 
@@ -1157,7 +1165,7 @@ async function execAnalyzeMatrix(args, ctx) {
   const artifact = await registerArtifact(db, {
     workspaceId: workspace.id, artifactsDir: workspace.artifactsDir,
     kind: 'analysis', format: 'json',
-    schemaJson: { type: 'matrix' }, provenance: { source: args.dataset_id, rowKey, colKey, valueKey },
+    schemaJson: { type: 'matrix' }, provenance: { source: args.dataset_id, rowKey, colKey, valueKey, purpose: args.label },
     payload: { label, matrix, row_labels, col_labels, row_count: row_labels.length, col_count: col_labels.length }
   });
 
@@ -1185,7 +1193,7 @@ async function execChart(args, ctx) {
   const chartArtifact = await registerArtifact(db, {
     workspaceId: workspace.id, artifactsDir: workspace.artifactsDir,
     kind: 'figure', format: 'json',
-    schemaJson: { type: 'chart_spec' }, provenance: { source: 'aso' },
+    schemaJson: { type: 'chart_spec' }, provenance: { tool: 'chart', sources: [args.source_dataset], purpose: args.title || null },
     payload: { charts: [spec] }
   });
 
@@ -1238,7 +1246,7 @@ const TOOL_HANDLERS = {
 // MAIN ORCHESTRATOR
 // =============================================================================
 
-async function aso_hpa({ goal, max_steps, top_x, parallel_limit, chart_requests = [], allow_search = true }, ctx = {}) {
+async function aso_hpa({ goal, max_steps, top_x, parallel_limit, chart_requests = [], allow_search = true, mode: requestedMode }, ctx = {}) {
   const db = ctx.db;
   if (!db) throw new Error('ASO requires db in context.');
   getActiveModel();
@@ -1247,6 +1255,9 @@ async function aso_hpa({ goal, max_steps, top_x, parallel_limit, chart_requests 
   max_steps = max_steps ?? config.asoMaxSteps;
   parallel_limit = parallel_limit ?? config.asoParallelLimit;
   top_x = top_x ?? (config.asoTopX || DEFAULT_TOP_X);
+  // ASO prefers the local HPA release: batch measurements become lookups instead of page fetches.
+  const agentMode = await resolveAgentMode(requestedMode ?? 'offline', [FILES.master, FILES.tissueConsensus]);
+  const mode = agentMode.mode;
 
   const requestText = goal || ctx.rawQuery || '';
   const outerOnStep = ctx.onStep;  // Forward progress to the outer query.js SSE stream
@@ -1255,7 +1266,7 @@ async function aso_hpa({ goal, max_steps, top_x, parallel_limit, chart_requests 
     visitorId: ctx.visitorId,
     inferenceModelId: getActiveModel().id,
     requestText,
-    planJson: { goal, max_steps, top_x, allow_search }
+    planJson: { goal, max_steps, top_x, allow_search, mode, hpa_version: agentMode.hpaVersion }
   });
 
   // Every model call made while this workspace is open is attributed to it in inference_calls.
@@ -1269,7 +1280,7 @@ async function aso_hpa({ goal, max_steps, top_x, parallel_limit, chart_requests 
     return logger.logEvent({ event: name, data, step });
   };
 
-  await log('start', 'workspace_created', { workspace_uuid: workspace.uuid, allow_search });
+  await log('start', 'workspace_created', { workspace_uuid: workspace.uuid, allow_search, mode, hpa_version: agentMode.hpaVersion, mode_note: agentMode.note });
   await log('understand', 'objective', { objective: goal });
 
   const state = {
@@ -1289,7 +1300,7 @@ async function aso_hpa({ goal, max_steps, top_x, parallel_limit, chart_requests 
     { role: 'user', content: `Objective: ${goal}\n\nWorkspace is empty. No data yet.${!allow_search ? '\n\nNote: Search is disabled. Use only investigator_hpa and existing datasets.' : ''}` }
   ];
 
-  const handlerCtx = { state, workspace, db, log, goal, parallel_limit, top_x, pageCache };
+  const handlerCtx = { state, workspace, db, log, goal, parallel_limit, top_x, pageCache, mode };
 
   try {
     for (let step = 0; step < max_steps; step++) {
@@ -1357,7 +1368,7 @@ async function aso_hpa({ goal, max_steps, top_x, parallel_limit, chart_requests 
               const specArtifact = await registerArtifact(db, {
                 workspaceId: workspace.id, artifactsDir: workspace.artifactsDir,
                 kind: 'figure', format: 'json',
-                schemaJson: { type: 'chart_spec' }, provenance: { source: 'explicit_request' },
+                schemaJson: { type: 'chart_spec' }, provenance: { tool: 'explicit_request', sources: chart_requests.map(c => c?.source_dataset).filter(Boolean), purpose: 'Charts requested with the task' },
                 payload: { charts: chart_requests }
               });
               const renderOut = await renderCharts(specArtifact.storageUri, path.join(workspace.workspaceDir, 'artifacts'));
@@ -1384,7 +1395,7 @@ async function aso_hpa({ goal, max_steps, top_x, parallel_limit, chart_requests 
           const reportArtifact = await registerArtifact(db, {
             workspaceId: workspace.id, artifactsDir: workspace.artifactsDir,
             kind: 'summary', format: 'md', schemaJson: { type: 'report' },
-            provenance: { source: 'report' },
+            provenance: { tool: 'report', sources: state.artifacts.map(a => a.artifact_uuid), purpose: 'Final report' },
             payload: null, storageUriOverride: reportPath, skipWrite: true
           });
           state.artifacts.push({ artifact_uuid: reportArtifact.artifactUuid, kind: 'summary', summary: { report: reportArtifact.storageUri }, storage_uri: reportArtifact.storageUri });
@@ -1436,7 +1447,7 @@ async function aso_hpa({ goal, max_steps, top_x, parallel_limit, chart_requests 
     const reportArtifact = await registerArtifact(db, {
       workspaceId: workspace.id, artifactsDir: workspace.artifactsDir,
       kind: 'summary', format: 'md', schemaJson: { type: 'report' },
-      provenance: { source: 'report' },
+      provenance: { tool: 'report', sources: state.artifacts.map(a => a.artifact_uuid), purpose: 'Final report (step limit reached)' },
       payload: null, storageUriOverride: reportPath, skipWrite: true
     });
     state.artifacts.push({ artifact_uuid: reportArtifact.artifactUuid, kind: 'summary', summary: { report: reportArtifact.storageUri }, storage_uri: reportArtifact.storageUri });

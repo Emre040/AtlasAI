@@ -59,9 +59,9 @@ class ConversationRepository {
     const now = Date.now();
     const [result] = await this.db.execute(
       `INSERT INTO ${CONVERSATIONS} (
-         public_id, visitor_id, status, title,
+         public_id, visitor_id, title,
          created_unix_ms, updated_unix_ms, revision
-       ) VALUES (?, ?, 'active', ?, ?, ?, 1)`,
+       ) VALUES (?, ?, ?, ?, ?, 1)`,
       [publicId.bytes, visitorId, title, now, now]
     );
     return { id: result.insertId, publicId: publicId.text, title, createdUnixMs: now };
@@ -72,7 +72,7 @@ class ConversationRepository {
     const [rows] = await this.db.execute(
       `SELECT id, public_id, title, created_unix_ms, updated_unix_ms
          FROM ${CONVERSATIONS}
-        WHERE public_id = ? AND visitor_id = ? AND status = 'active'
+        WHERE public_id = ? AND visitor_id = ?
         LIMIT 1`,
       [publicIdBytes, visitorId]
     );
@@ -102,7 +102,7 @@ class ConversationRepository {
             LIMIT 1
          ) AS preview
        FROM ${CONVERSATIONS} c
-       WHERE c.visitor_id = ? AND c.status = 'active'
+       WHERE c.visitor_id = ?
        ORDER BY c.updated_unix_ms DESC, c.id DESC
        LIMIT ${rowLimit}`,
       [visitorId]
@@ -188,7 +188,7 @@ class ConversationRepository {
     await this.db.execute(
       `UPDATE ${CONVERSATIONS}
           SET updated_unix_ms = ?, revision = revision + 1
-        WHERE id = ? AND status = 'active'`,
+        WHERE id = ?`,
       [Date.now(), conversationId]
     );
   }

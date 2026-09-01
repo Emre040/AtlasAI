@@ -491,12 +491,9 @@ function createActiveModelMiddleware() {
 }
 
 module.exports = {
-  ACTIVE_MODEL_SQL,
-  INFERENCE_PURPOSES: PURPOSES,
   InferenceGateway,
   createActiveModelMiddleware,
   getActiveModel,
-  getInferenceGateway,
   inference,
   initializeInferenceGateway,
   resolveActiveModel

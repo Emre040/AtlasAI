@@ -421,25 +421,17 @@ CREATE TABLE `atlasai`.`conversations` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `public_id` BINARY(16) NOT NULL COMMENT 'UUIDv7 bytes',
   `visitor_id` BIGINT UNSIGNED NOT NULL,
-  `status` ENUM('active','archived','deleted') NOT NULL DEFAULT 'active',
   `title` VARCHAR(512) NOT NULL,
   `created_unix_ms` BIGINT UNSIGNED NOT NULL,
   `updated_unix_ms` BIGINT UNSIGNED NOT NULL,
-  `archived_unix_ms` BIGINT UNSIGNED NULL,
-  `deleted_unix_ms` BIGINT UNSIGNED NULL,
   `revision` BIGINT UNSIGNED NOT NULL DEFAULT 1,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_conversations_public_id` (`public_id`),
-  KEY `idx_conversations_visitor_updated` (`visitor_id`, `status`, `updated_unix_ms`, `id`),
+  KEY `idx_conversations_visitor_updated` (`visitor_id`, `updated_unix_ms`, `id`),
   CONSTRAINT `fk_conversations_visitor`
     FOREIGN KEY (`visitor_id`) REFERENCES `atlasai`.`visitors` (`id`)
     ON UPDATE RESTRICT ON DELETE RESTRICT,
-  CONSTRAINT `chk_conversations_time_order` CHECK (`updated_unix_ms` >= `created_unix_ms`),
-  CONSTRAINT `chk_conversations_archived` CHECK (
-    (`status` = 'archived' AND `archived_unix_ms` IS NOT NULL AND `deleted_unix_ms` IS NULL)
-    OR (`status` = 'deleted' AND `deleted_unix_ms` IS NOT NULL)
-    OR (`status` = 'active' AND `archived_unix_ms` IS NULL AND `deleted_unix_ms` IS NULL)
-  )
+  CONSTRAINT `chk_conversations_time_order` CHECK (`updated_unix_ms` >= `created_unix_ms`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
 
 -- Human-visible conversation text only. Tool executions live in `runs`, their progress in
@@ -520,7 +512,6 @@ CREATE TABLE `atlasai`.`aso_artifacts` (
   `kind` ENUM('tool_result','dataset','measurement','analysis','figure','summary','inspection','cleaned') NOT NULL,
   `type_key` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `format` ENUM('json','png','md','csv','tsv','svg','html','parquet','txt','binary') NOT NULL,
-  `status` ENUM('pending','ready','failed','deleted') NOT NULL DEFAULT 'ready',
   `name` VARCHAR(512) NOT NULL,
   `producer_key` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   `purpose` VARCHAR(1024) NULL,
@@ -530,7 +521,6 @@ CREATE TABLE `atlasai`.`aso_artifacts` (
   `sha256` BINARY(32) NULL,
   `schema_json` JSON NULL,
   `created_unix_ms` BIGINT UNSIGNED NOT NULL,
-  `deleted_unix_ms` BIGINT UNSIGNED NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_aso_artifacts_public_id` (`public_id`),
   UNIQUE KEY `uq_aso_artifacts_id_workspace` (`id`, `workspace_id`),
@@ -541,11 +531,7 @@ CREATE TABLE `atlasai`.`aso_artifacts` (
   KEY `idx_aso_artifacts_workspace_hash` (`workspace_id`, `sha256`),
   CONSTRAINT `fk_aso_artifacts_workspace`
     FOREIGN KEY (`workspace_id`) REFERENCES `atlasai`.`aso_workspaces` (`id`)
-    ON UPDATE RESTRICT ON DELETE RESTRICT,
-  CONSTRAINT `chk_aso_artifacts_deleted` CHECK (
-    (`status` = 'deleted' AND `deleted_unix_ms` IS NOT NULL)
-    OR (`status` <> 'deleted' AND `deleted_unix_ms` IS NULL)
-  )
+    ON UPDATE RESTRICT ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
 
 CREATE TABLE `atlasai`.`aso_artifact_links` (
@@ -574,8 +560,6 @@ CREATE TABLE `atlasai`.`batch_jobs` (
   `visitor_id` BIGINT UNSIGNED NOT NULL,
   `inference_model_id` BIGINT UNSIGNED NOT NULL,
   `status` ENUM('queued','running','completed','failed','cancelled') NOT NULL DEFAULT 'queued',
-  `original_filename` VARCHAR(1024) NULL,
-  `input_sha256` BINARY(32) NULL,
   `total_queries` BIGINT UNSIGNED NOT NULL,
   `finished_queries` BIGINT UNSIGNED NOT NULL DEFAULT 0,
   `succeeded_queries` BIGINT UNSIGNED NOT NULL DEFAULT 0,
@@ -620,12 +604,6 @@ CREATE TABLE `atlasai`.`batch_queries` (
   `response_text` LONGTEXT NULL,
   `response_json` JSON NULL,
   `inference_model_id` BIGINT UNSIGNED NOT NULL,
-  `provider_request_id` VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NULL,
-  `input_tokens` BIGINT UNSIGNED NULL,
-  `cached_input_tokens` BIGINT UNSIGNED NULL,
-  `output_tokens` BIGINT UNSIGNED NULL,
-  `reasoning_tokens` BIGINT UNSIGNED NULL,
-  `total_tokens` BIGINT UNSIGNED NULL,
   `error_code` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NULL,
   `error_message` TEXT NULL,
   `created_unix_ms` BIGINT UNSIGNED NOT NULL,

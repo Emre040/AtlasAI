@@ -105,10 +105,10 @@ async function registerArtifact(db, {
   const artifactId = await db.transaction(async tx => {
     const [result] = await tx.execute(
       `INSERT INTO ${ARTIFACTS} (
-         public_id, workspace_id, kind, type_key, format, status, name,
+         public_id, workspace_id, kind, type_key, format, name,
          producer_key, purpose, storage_uri, content_type, size_bytes,
          sha256, schema_json, created_unix_ms
-       ) VALUES (?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         publicId.bytes,
         workspaceId,

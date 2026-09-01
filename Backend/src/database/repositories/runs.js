@@ -222,17 +222,6 @@ class RunRepository {
     return rows[0]?.id ?? null;
   }
 
-  async latestSearchUrl(conversationId) {
-    const [rows] = await this.db.execute(
-      `SELECT search_url FROM ${RUNS}
-        WHERE conversation_id = ? AND search_url IS NOT NULL
-        ORDER BY id DESC
-        LIMIT 1`,
-      [conversationId]
-    );
-    return rows[0]?.search_url ?? null;
-  }
-
   async listForConversation(conversationId) {
     const [runRows] = await this.db.execute(
       `SELECT r.*, m.config_key AS model_config_key, w.public_id AS workspace_public_id
@@ -259,4 +248,4 @@ class RunRepository {
   }
 }
 
-module.exports = { RunRepository, TOOL_KEYS };
+module.exports = { RunRepository };

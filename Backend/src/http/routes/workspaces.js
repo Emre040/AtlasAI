@@ -55,7 +55,7 @@ function createRouter({ workspaces }) {
     try {
       const workspace = await workspaces.findOwned(uuid, req.auth.visitorId);
       if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
-      const artifact = await workspaces.findReadyArtifact(workspace.id, filename);
+      const artifact = await workspaces.findArtifact(workspace.id, filename);
       if (!artifact) return res.status(404).json({ error: 'Artifact not found' });
 
       const expectedRoot = path.resolve(workspaceRoot, uuid, 'artifacts');

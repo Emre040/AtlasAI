@@ -1,47 +1,50 @@
 # AtlasAI
 
-Monorepo containing the AtlasAI backend (Node/Express) and frontend (React).
+Human Protein Atlas research agent: a Node/Express API that runs HPA search, gene investigation,
+dictionary, inclusion-check, and ASO analysis agents against a catalog of language models, and a
+React app that streams the runs.
 
+```text
+AtlasAI/
+├── Backend/    # Node API (Express 5, MySQL `atlasai`, one inference gateway)
+├── Frontend/   # React (Create React App)
+└── .github/    # main-push workflow: Backend tests, then the Aurem release webhook
 ```
-Repo/
-├── Backend/   # Node API server (port 8012)
-└── Frontend/  # React app (port 8010)
-```
 
-## Prerequisites
-- Node.js 18+
+## Backend
 
-## Configuration
+Requirements: Node 20, MySQL 8, Chrome for Puppeteer (installed on first `npx puppeteer browsers install chrome`).
 
 ```bash
-cp Backend/config.env.example Backend/config.env
-```
-
-Open `Backend/config.env` and paste your `OPENAI_API_KEY`. That's the only value you need to fill in for local mode — everything else is pre-set with working defaults.
-
-`config.env` is gitignored and never pushed.
-
-## Run
-
-Two terminals:
-
-```bash
-# Terminal 1 — Backend (http://localhost:8012)
 cd Backend
+cp .env.example .env            # fill every value; nothing has a hidden default
+mysql < src/database/schema.sql # creates the `atlasai` schema and the model catalog
 npm install
-node server.js
+npm test
+npm start                       # listens on HPA_HOST:HPA_PORT from .env
+curl http://127.0.0.1:9000/healthz
+```
 
-# Terminal 2 — Frontend (http://localhost:8010)
+The active model is the single `inference_models` row with `status = 'active'`; every model
+request goes through `src/inference/gateway.js` and is recorded in `inference_calls`.
+`Backend/README.md` documents the layout, the conversation tables, authentication, and the
+Cloudflare request metadata.
+
+## Frontend
+
+```bash
 cd Frontend
 npm install
-npm run start:local
+REACT_APP_HPA_API_BASE=http://localhost:9000 npm start   # any origin; HTTPS required off localhost
 ```
 
-Health check: `GET http://localhost:8012/healthz`
+`npm run start:local` and `npm run start:prod` are the same command pointed at `localhost:8012`
+and at the production API.
 
-## Notes
+## Production
 
-- **Database:** runs in-memory by default — no MySQL needed. Data resets on restart. To enable persistence, fill in the `HPA_DB_*` block in `config.env`.
-- **Other LLM providers:** swap `LLM_PROVIDER` to `gemini` / `anthropic` / `openrouter` and set the matching API key.
-- **Other scripts:** `npm run start:prod` (dev server pointed at production API), `npm run build` (production bundle).
-- **Optional features:** admin analytics (`/hpa-admin`) and batch API (`/batch`) require their own env vars — see `Backend/config.env.example`.
+- Frontend: Vercel builds `Frontend/` on every push to `main` (`REACT_APP_HPA_API_BASE` is a Vercel build variable).
+- Backend: Aurem, PM2 app `atlas-api`, reached at `https://p9000.greenaurem.org`.
+- Releases: a push touching `Backend/**` runs the tests in GitHub Actions and posts the commit to
+  `POST /deploy/github` on the API; `Backend/deploy/production/deploy.sh` checks the exact commit
+  out into an isolated worktree, tests it, boots a canary, switches PM2, and rolls back on failure.

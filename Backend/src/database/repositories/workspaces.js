@@ -21,11 +21,12 @@ class WorkspaceRepository {
     return rows[0] || null;
   }
 
-  async findReadyArtifact(workspaceId, filename) {
+  // Artifacts are registered only after their file exists, so a row is always servable.
+  async findArtifact(workspaceId, filename) {
     const [rows] = await this.db.execute(
       `SELECT id, storage_uri, content_type, size_bytes, sha256
          FROM ${ARTIFACTS}
-        WHERE workspace_id = ? AND name = ? AND status = 'ready'
+        WHERE workspace_id = ? AND name = ?
         LIMIT 1`,
       [workspaceId, filename]
     );

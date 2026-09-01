@@ -55,24 +55,6 @@ class InferenceCallRepository {
     );
     return { id: result.insertId, publicId: publicId.text };
   }
-
-  async totals() {
-    const [rows] = await this.db.execute(
-      `SELECT COUNT(*) AS calls,
-              COALESCE(SUM(status = 'failed'), 0) AS failed_calls,
-              COALESCE(SUM(input_tokens), 0) AS input_tokens,
-              COALESCE(SUM(output_tokens), 0) AS output_tokens,
-              COALESCE(SUM(total_tokens), 0) AS total_tokens
-         FROM ${CALLS}`
-    );
-    return {
-      calls: Number(rows[0].calls),
-      failedCalls: Number(rows[0].failed_calls),
-      inputTokens: Number(rows[0].input_tokens),
-      outputTokens: Number(rows[0].output_tokens),
-      totalTokens: Number(rows[0].total_tokens)
-    };
-  }
 }
 
 module.exports = { InferenceCallRepository, INFERENCE_CALL_COLUMNS: COLUMNS };

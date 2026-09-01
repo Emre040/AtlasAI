@@ -80,7 +80,6 @@ async function streamChatCompletion(request = {}, { onToken } = {}) {
   });
 
   let fullText = '';
-  let totalTokens = null;
   let cutAtMarkup = false;
 
   for await (const part of stream) {
@@ -101,11 +100,10 @@ async function streamChatCompletion(request = {}, { onToken } = {}) {
         console.warn('[STREAM] Dropped tool-call markup emitted as text by', getActiveModel().configKey);
       }
     }
-    const usageTokens = part?.usage?.total_tokens;
-    if (typeof usageTokens === 'number') totalTokens = usageTokens;
   }
 
-  return { text: fullText, totalTokens };
+  // Token usage is recorded by the gateway in inference_calls; callers only need the text.
+  return { text: fullText };
 }
 
 // DeepSeek models on the Chat Completions API sometimes emit their native tool-call markup

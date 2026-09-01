@@ -1071,7 +1071,6 @@ function HPA() {
       const evt = {
         id: Date.now() + Math.random(),
         type: 'tool',
-        text: eventPayload.rawText || '',
         toolEvent: eventPayload,
         timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
       };

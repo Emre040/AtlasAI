@@ -43,8 +43,7 @@ export function toolEventFromRunEvent(run, event) {
       kind: 'status',
       status: 'started',
       label: event.label || startLabel(toolName),
-      message: event.message || startMessage(toolName, false),
-      rawText: `TOOL_START: ${toolName}`
+      message: event.message || startMessage(toolName, false)
     };
   }
   if (event.kind === 'completed' || event.kind === 'failed') {
@@ -55,20 +54,15 @@ export function toolEventFromRunEvent(run, event) {
       status: 'completed',
       failed: event.kind === 'failed',
       label: event.kind === 'failed' ? 'Failed' : (event.label && event.label !== 'Complete' ? event.label : completeLabel(toolName)),
-      message: event.kind === 'failed' ? (event.message || run.error || 'The tool failed.') : finishedMessage(steps),
-      rawText: `TOOL_DONE: ${toolName} (steps=${steps ?? 0})`
+      message: event.kind === 'failed' ? (event.message || run.error || 'The tool failed.') : finishedMessage(steps)
     };
   }
   // ASO events carry a structured payload; the renderer reads it as JSON text in `message`.
-  const message = event.detail ? JSON.stringify(event.detail) : (event.message || '');
   return {
     ...base,
     kind: 'progress',
     label: event.label || '',
-    message,
-    rawText: [`TOOL_STEP: ${toolName}`, event.stage ? `[${event.stage}]` : null, event.label || null, message || null]
-      .filter(Boolean)
-      .join(' — ')
+    message: event.detail ? JSON.stringify(event.detail) : (event.message || '')
   };
 }
 
@@ -90,16 +84,12 @@ function messageFromItem(item) {
 
 function toolLinesFromRun(run) {
   const events = Array.isArray(run.events) ? run.events : [];
-  return events.map(event => {
-    const toolEvent = toolEventFromRunEvent(run, event);
-    return {
-      id: `${run.id}:${event.seq}`,
-      type: 'tool',
-      text: toolEvent.rawText,
-      toolEvent,
-      timestamp: formatTimestamp(event.created_at)
-    };
-  });
+  return events.map(event => ({
+    id: `${run.id}:${event.seq}`,
+    type: 'tool',
+    toolEvent: toolEventFromRunEvent(run, event),
+    timestamp: formatTimestamp(event.created_at)
+  }));
 }
 
 // Timeline items -> flat message list (user/ai bubbles and tool lines grouped later by runId).
@@ -130,12 +120,10 @@ export function liveToolEventFromSse(tool) {
       stage: 'start',
       label: startLabel(toolName),
       message: startMessage(toolName, true),
-      meta: { url: null, visual: null },
-      rawText: `TOOL_START: ${toolName}`
+      meta: { url: null, visual: null }
     };
   }
   if (t.status === 'completed' || t.status === 'failed') {
-    const steps = t.result_meta?.steps;
     const failed = t.status === 'failed';
     return {
       toolName,
@@ -145,23 +133,18 @@ export function liveToolEventFromSse(tool) {
       failed,
       stage: 'complete',
       label: failed ? 'Failed' : completeLabel(toolName),
-      message: failed ? (t.error || 'The tool failed.') : finishedMessage(steps),
-      meta: { url: null, visual: null },
-      rawText: `TOOL_DONE: ${toolName} (steps=${steps ?? 0})`
+      message: failed ? (t.error || 'The tool failed.') : finishedMessage(t.result_meta?.steps),
+      meta: { url: null, visual: null }
     };
   }
   const s = t.step || {};
-  const baseMessage = s.message || s.stdout || '';
   return {
     toolName,
     runId,
     kind: 'progress',
     stage: s.stage || 'info',
     label: s.label || (s.stage === 'execution_step' ? 'Executing search' : 'Planning'),
-    message: baseMessage,
-    meta: s,
-    rawText: [`TOOL_STEP: ${toolName}`, s.stage ? `[${s.stage}]` : null, s.label || null, baseMessage || null]
-      .filter(Boolean)
-      .join(' — ')
+    message: s.message || s.stdout || '',
+    meta: s
   };
 }

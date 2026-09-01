@@ -11,7 +11,7 @@ class AdminAnalyticsRepository {
   async summary() {
     const [[visitors], [conversations], [messages], [runs], [calls]] = await Promise.all([
       this.db.execute('SELECT COUNT(*) AS count FROM `atlasai`.`visitors`'),
-      this.db.execute("SELECT COUNT(*) AS count FROM `atlasai`.`conversations` WHERE status <> 'deleted'"),
+      this.db.execute('SELECT COUNT(*) AS count FROM `atlasai`.`conversations`'),
       this.db.execute('SELECT COUNT(*) AS count FROM `atlasai`.`messages`'),
       this.db.execute("SELECT COUNT(*) AS count, COALESCE(SUM(status = 'failed'), 0) AS failed FROM `atlasai`.`runs`"),
       this.db.execute(

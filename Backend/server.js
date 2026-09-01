@@ -9,8 +9,6 @@ const helmet = require('helmet');
 
 const { loadRuntimeConfig } = require('./src/config/runtime');
 const { createDatabaseClient } = require('./src/database/client');
-const { AccessRuleRepository } = require('./src/database/repositories/accessRules');
-const { AdminAnalyticsRepository } = require('./src/database/repositories/adminAnalytics');
 const { BatchRepository } = require('./src/database/repositories/batches');
 const { ConversationRepository } = require('./src/database/repositories/conversations');
 const { RequestEventRepository } = require('./src/database/repositories/requestEvents');
@@ -25,13 +23,11 @@ const { loadSessionConfig } = require('./src/security/config');
 const { SessionService } = require('./src/security/sessionService');
 const { configureWorkspaceRoot } = require('./src/system/aso/workspaceStore');
 const { DeploymentService } = require('./src/system/deployment/service');
-const { createAccessControlMiddleware } = require('./src/http/middleware/accessControl');
 const { createAuthenticationMiddleware } = require('./src/http/middleware/authenticate');
 const { createCorsOptions } = require('./src/http/middleware/cors');
 const { errorHandler } = require('./src/http/middleware/errorHandler');
 const { createGlobalRateLimit } = require('./src/http/middleware/globalRateLimit');
 const { createRequestEventMiddleware } = require('./src/http/middleware/requestEvents');
-const { createRouter: createAdminRouter } = require('./src/http/routes/adminAnalytics');
 const { createRouter: createAuthRouter } = require('./src/http/routes/auth');
 const { createRouter: createBatchRouter } = require('./src/http/routes/batch');
 const { createRouter: createConversationsRouter } = require('./src/http/routes/conversations');
@@ -48,8 +44,6 @@ async function bootstrap() {
   await initializeInferenceGateway(db);
   configureWorkspaceRoot(runtime.workspaceRoot);
 
-  const accessRules = new AccessRuleRepository(db);
-  const analytics = new AdminAnalyticsRepository(db);
   const batches = new BatchRepository(db);
   const conversations = new ConversationRepository(db);
   const requestEvents = new RequestEventRepository(db);
@@ -92,7 +86,6 @@ async function bootstrap() {
   app.use(express.json({ limit: runtime.jsonLimit, strict: true }));
   app.use('/deploy', createDeployRouter({ deploymentService }));
   app.use(optionalAuthentication);
-  app.use(createAccessControlMiddleware(accessRules));
 
   app.use('/auth', createAuthRouter({
     sessionService,
@@ -100,8 +93,6 @@ async function bootstrap() {
     requireCsrf,
     config: sessionConfig
   }));
-  app.use('/hpa-admin', createAdminRouter({ analytics, accessRules, admin: runtime.admin }));
-
   const bindActiveModel = createActiveModelMiddleware();
   app.use('/conversations', requireAuthentication, requireCsrf, createConversationsRouter({ conversations, runs }));
   app.use('/query', requireAuthentication, requireCsrf, bindActiveModel, createQueryRouter({ db, conversations, runs }));

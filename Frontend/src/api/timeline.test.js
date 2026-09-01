@@ -1,5 +1,5 @@
 import fixture from './__fixtures__/timeline.deep-research.json';
-import { liveToolEventFromSse, timelineToUiMessages, toolEventFromRunEvent } from './hpaTimeline';
+import { liveToolEventFromSse, timelineToUiMessages, toolEventFromRunEvent } from './timeline';
 
 test('a real deep-research timeline maps to user, preamble, tool lines, and the answer with its search URL', () => {
   const messages = timelineToUiMessages(fixture);

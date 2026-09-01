@@ -131,10 +131,6 @@ function loadRuntimeConfig(backendRoot) {
     trustProxy: requireTrustProxy(),
     jsonLimit,
     corsOrigins: requireOrigins('HPA_CORS_ORIGINS', nodeEnv),
-    admin: Object.freeze({
-      username: requireString('HPA_ADMIN_USERNAME'),
-      password: requireString('HPA_ADMIN_PASSWORD')
-    }),
     batchSecret: requireString('HPA_BATCH_SECRET'),
     globalRateLimit: Object.freeze({
       windowMs: requirePositiveInteger('ATLAS_GLOBAL_RATE_LIMIT_WINDOW_MS'),

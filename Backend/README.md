@@ -1,7 +1,7 @@
 # AtlasAI Backend
 
 AtlasAI is one Node.js API process for Human Protein Atlas conversations,
-research agents, batch work, ASO workspaces, and administration. `server.js` is
+research agents, batch work, and ASO workspaces. `server.js` is
 the only composition and process entry point; there is no second `app.js`
 bootstrap.
 
@@ -18,7 +18,7 @@ Backend/
 │   │   └── repositories/        # persisted domain queries
 │   ├── hpa/                     # HPA schema and search-option data
 │   ├── http/
-│   │   ├── middleware/          # CORS, auth, access control, rate limiting
+│   │   ├── middleware/          # CORS, auth, rate limiting
 │   │   ├── requestContext/      # explicit request/Cloudflare extraction
 │   │   └── routes/              # HTTP transport handlers
 │   ├── inference/               # one gateway plus provider adapters

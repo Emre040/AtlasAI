@@ -1,21 +1,15 @@
 import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 
-import HPA from './modules/HPA.js';
-import AdminAnalytics from './modules/AdminAnalytics';
+import Chat from './components/Chat';
 
 function App() {
-    return (
-            <Router>
-                <Routes>
-
-                <Route path="/" element={<HPA />} />
-                <Route path="/admin" element={<AdminAnalytics />} />
-
-                </Routes>
-            </Router>
-    );
+  return (
+    <Router>
+      <Routes>
+        <Route path="/" element={<Chat />} />
+      </Routes>
+    </Router>
+  );
 }
-
-
 
 export default App;

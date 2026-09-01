@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import './HPA.css';
+import './Chat.css';
 import ReactMarkdown from 'react-markdown';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -36,9 +36,9 @@ import {
   authenticatedFetch,
   getVisitorId,
   initializeHPAAuth
-} from './hpaAuth';
-import { getApiBaseUrl, getApiEndpoint, getRuntimeConfig, getUiConfig } from './hpaConfig';
-import { liveToolEventFromSse, timelineToUiMessages } from './hpaTimeline';
+} from '../api/auth';
+import { getApiBaseUrl, getApiEndpoint, getRuntimeConfig, getUiConfig } from '../api/config';
+import { liveToolEventFromSse, timelineToUiMessages } from '../api/timeline';
 import DictionaryCarousel from './DictionaryCarousel';
 
 const RUNTIME_CONFIG = getRuntimeConfig();
@@ -199,7 +199,6 @@ function HPA() {
   const inputRef = useRef(null);
   const modelDropdownRef = useRef(null);
   const toolRunRefs = useRef({}); // Refs for auto-scroll within each run container
-  const [isBlocked, setIsBlocked] = useState(false);
   const [artifactPreview, setArtifactPreview] = useState(null);
   const artifactLeaveTimer = useRef(null);
   const apiBaseUrl = getApiBaseUrl();
@@ -971,33 +970,6 @@ function HPA() {
     return () => { cancelled = true; };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const checkBlockStatus = async () => {
-      if (cancelled) return;
-      try {
-        const resp = await authenticatedFetch(getApiEndpoint('authSession'), {
-          method: 'GET',
-          headers: { 'Cache-Control': 'no-cache' }
-        });
-        if (resp.status === 403) {
-          setIsBlocked(true);
-          return;
-        }
-        if (resp.ok) setIsBlocked(false);
-      } catch (err) {
-        console.warn('[FE] block-check failed', err);
-      }
-    };
-
-    checkBlockStatus();
-    const timer = setInterval(checkBlockStatus, UI_CONFIG.blockPollIntervalMs);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, []);
 
   // load messages for selected convo (once)
   useEffect(() => {
@@ -1300,17 +1272,6 @@ function HPA() {
       setIsLoading(false);
     }
   };
-
-  if (isBlocked) {
-    return (
-      <div className="HPAG-blocked">
-        <div className="HPAG-blocked-card">
-          <h1>Access Restricted</h1>
-          <p>Your session has been disabled by the administrators. If you believe this is an error, please contact the HPA team.</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="HPAG-container">

@@ -378,44 +378,6 @@ CREATE TABLE `atlasai`.`request_event_bot_detections` (
     ON UPDATE RESTRICT ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
 
-CREATE TABLE `atlasai`.`access_rules` (
-  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `public_id` BINARY(16) NOT NULL COMMENT 'UUIDv7 bytes',
-  `match_type` ENUM('visitor','ip','ip_cidr','asn','country','ja3','ja4') NOT NULL,
-  `match_value` VARBINARY(255) NOT NULL COMMENT 'Canonical binary representation selected by match_type',
-  `match_sha256` BINARY(32) NOT NULL COMMENT 'SHA-256 of match_type plus canonical value',
-  `visitor_id` BIGINT UNSIGNED NULL,
-  `action` ENUM('block','allow','challenge','log') NOT NULL,
-  `priority` SMALLINT UNSIGNED NOT NULL DEFAULT 0,
-  `status` ENUM('active','revoked','expired') NOT NULL DEFAULT 'active',
-  `active_match_sha256` BINARY(32) GENERATED ALWAYS AS (
-    CASE WHEN `status` = 'active' THEN `match_sha256` ELSE NULL END
-  ) STORED,
-  `reason` VARCHAR(1024) NOT NULL,
-  `created_by` VARCHAR(128) NULL,
-  `created_unix_ms` BIGINT UNSIGNED NOT NULL,
-  `expires_unix_ms` BIGINT UNSIGNED NULL,
-  `revoked_unix_ms` BIGINT UNSIGNED NULL,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_access_rules_public_id` (`public_id`),
-  UNIQUE KEY `uq_access_rules_one_active_match` (`active_match_sha256`),
-  KEY `idx_access_rules_visitor` (`visitor_id`, `status`),
-  KEY `idx_access_rules_status_type` (`status`, `match_type`, `priority`, `created_unix_ms`, `id`),
-  KEY `idx_access_rules_expiry` (`status`, `expires_unix_ms`, `id`),
-  CONSTRAINT `fk_access_rules_visitor`
-    FOREIGN KEY (`visitor_id`) REFERENCES `atlasai`.`visitors` (`id`)
-    ON UPDATE RESTRICT ON DELETE RESTRICT,
-  CONSTRAINT `chk_access_rules_visitor_shape` CHECK (
-    (`match_type` = 'visitor' AND `visitor_id` IS NOT NULL)
-    OR (`match_type` <> 'visitor' AND `visitor_id` IS NULL)
-  ),
-  CONSTRAINT `chk_access_rules_expiry` CHECK (`expires_unix_ms` IS NULL OR `expires_unix_ms` >= `created_unix_ms`),
-  CONSTRAINT `chk_access_rules_revocation` CHECK (
-    (`status` = 'revoked' AND `revoked_unix_ms` IS NOT NULL)
-    OR (`status` <> 'revoked' AND `revoked_unix_ms` IS NULL)
-  )
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
-
 CREATE TABLE `atlasai`.`conversations` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `public_id` BINARY(16) NOT NULL COMMENT 'UUIDv7 bytes',

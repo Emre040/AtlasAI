@@ -32,18 +32,13 @@ const hpaConfig = Object.freeze({
       createConversation: '/conversations',      
       listConversations: '/conversations',        
       getMessages: '/conversations/messages',      
-      queryStream: '/query/stream',               
-      adminSummary: '/hpa-admin/summary',
-      adminGeo: '/hpa-admin/geo',
-      adminVisitors: '/hpa-admin/visitors',
-      adminBlock: '/hpa-admin/block',
+      queryStream: '/query/stream',
       hpaSearchResults: '/hpa-proxy/search-results',
       hpaGeneThumbnails: '/hpa-proxy/gene-thumbnails-batch'
     })
   }),
 
   ui: Object.freeze({
-    blockPollIntervalMs: 10_000,
     maxConversationTitleLength: 50,
     messageTimestampFormat: Object.freeze({
       hour: 'numeric',

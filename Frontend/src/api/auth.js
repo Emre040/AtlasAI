@@ -1,4 +1,4 @@
-import { getApiEndpoint } from './hpaConfig';
+import { getApiEndpoint } from './config';
 
 const STORAGE_KEY = 'atlas-auth-session';
 const EXPIRY_SKEW_MS = 10_000;

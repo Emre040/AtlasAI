@@ -152,6 +152,25 @@ if [[ ! -f "${previous_ecosystem}" || ! -f "${next_ecosystem}" ]]; then
   exit 11
 fi
 
+# Refuse to replace the API from inside its own process tree: PM2 kills descendants of
+# atlas-api on delete, which would kill this script mid-switch and leave nothing running.
+atlas_pid="$(pm2 jlist | node -e '
+let input = "";
+process.stdin.on("data", chunk => { input += chunk; });
+process.stdin.on("end", () => {
+  const matches = JSON.parse(input).filter(app => app.name === "atlas-api");
+  if (matches.length !== 1 || !Number.isInteger(matches[0].pid)) process.exit(1);
+  process.stdout.write(String(matches[0].pid));
+});
+')"
+ancestor_pid="$$"
+while [[ -n "${ancestor_pid}" && "${ancestor_pid}" -gt 1 ]]; do
+  if [[ "${ancestor_pid}" == "${atlas_pid}" ]]; then
+    exit 14
+  fi
+  ancestor_pid="$(ps -o ppid= -p "${ancestor_pid}" | tr -d '[:space:]')"
+done
+
 switched=true
 pm2 delete atlas-api
 pm2 start "${next_ecosystem}" --only atlas-api

@@ -66,4 +66,10 @@ test('queue persists one exact SHA and does not launch it twice', t => {
   assert.deepEqual(service.readStatus(sha), first.status);
   assert.equal(calls[0][2].env.ATLAS_DEPLOY_REPOSITORY_ROOT, repositoryRoot);
   assert.equal('HPA_DB_PASS' in calls[0][2].env, false);
+  // The launcher must double-fork under setsid so PM2 cannot kill the release script.
+  assert.equal(calls[0][0], '/usr/bin/env');
+  assert.deepEqual(calls[0][1].slice(0, 2), ['bash', '-c']);
+  assert.match(calls[0][1][2], /^setsid nohup bash "\$0" "\$1" .*&$/);
+  assert.deepEqual(calls[0][1].slice(3), [scriptPath, sha]);
+  assert.equal(calls[0][2].detached, true);
 });

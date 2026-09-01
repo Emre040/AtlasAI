@@ -118,7 +118,17 @@ class DeploymentService {
     }).filter(([, value]) => typeof value === 'string' && value !== ''));
     let child;
     try {
-      child = this.spawnProcess('/usr/bin/env', ['bash', this.scriptPath, sha], {
+      // Double fork: the launcher shell backgrounds the release script under setsid and exits at
+      // once, so the script is reparented to init before it reaches `pm2 delete atlas-api`.
+      // A plain detached child keeps this process as its parent and PM2's tree-kill would take
+      // the release script down together with the API it is replacing (2026-09-01 outage).
+      child = this.spawnProcess('/usr/bin/env', [
+        'bash',
+        '-c',
+        'setsid nohup bash "$0" "$1" </dev/null >/dev/null 2>&1 &',
+        this.scriptPath,
+        sha
+      ], {
         cwd: this.repositoryRoot,
         detached: true,
         stdio: 'ignore',

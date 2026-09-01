@@ -1,5 +1,3 @@
-'use strict';
-
 import React, { useState } from 'react';
 import './AdminAnalytics.css';
 import { getApiEndpoint } from './hpaConfig';

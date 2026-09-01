@@ -62,6 +62,7 @@ function TissueViewer({ imageId, annotations = [], hiddenAnnotations = new Set()
 
   useEffect(() => {
     let mounted = true;
+    const overlays = overlaysRef.current;
 
     if (!containerRef.current) return;
 
@@ -458,7 +459,7 @@ function TissueViewer({ imageId, annotations = [], hiddenAnnotations = new Set()
         viewerRef.current.destroy();
         viewerRef.current = null;
       }
-      overlaysRef.current.clear();
+      overlays.clear();
     };
   }, [imageId, annotationList, onViewerReady, onZoomChange]);
 

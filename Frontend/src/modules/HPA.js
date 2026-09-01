@@ -38,6 +38,7 @@ import {
   initializeHPAAuth
 } from './hpaAuth';
 import { getApiBaseUrl, getApiEndpoint, getRuntimeConfig, getUiConfig } from './hpaConfig';
+import { liveToolEventFromSse, timelineToUiMessages } from './hpaTimeline';
 import DictionaryCarousel from './DictionaryCarousel';
 
 const RUNTIME_CONFIG = getRuntimeConfig();
@@ -205,49 +206,6 @@ function HPA() {
   const isLocalEnv = RUNTIME_CONFIG.isLocal;
   const maxConversationTitleLength = UI_CONFIG.maxConversationTitleLength;
 
-  const isToolish = (t = '') => /^\s*(TOOL_(START|STEP|DONE|EVENT)|DETAIL\s)/i.test(t);
-
-  const isSearchUrlMarker = (t = '') => /^\s*SEARCH_URL:\s*/i.test(t);
-  const extractSearchUrl = (t = '') => {
-    const match = t.match(/^\s*SEARCH_URL:\s*(.+)$/i);
-    if (!match) return null;
-    const raw = match[1].trim();
-    if (!raw) return null;
-    if (raw.startsWith('{')) {
-      try {
-        const parsed = JSON.parse(raw);
-        const url = parsed?.url || parsed?.search_url;
-        return url ? String(url).trim() : null;
-      } catch {}
-    }
-    const textFormat = raw.match(/^(\S+)(?:\s*\[FOR:.*)?$/i);
-    return textFormat ? textFormat[1].trim() : null;
-  };
-
-  const isResourcesMarker = (t = '') => /^\s*RESOURCES:\s*/i.test(t);
-  const extractResources = (t = '') => {
-    const match = t.match(/^\s*RESOURCES:\s*(.+)/i);
-    if (!match) return null;
-    try {
-      return JSON.parse(match[1].trim());
-    } catch (e) {
-      console.warn('[FE] Failed to parse RESOURCES JSON:', e);
-      return null;
-    }
-  };
-
-  const isDictionaryImagesMarker = (t = '') => /^\s*DICTIONARY_IMAGES:\s*/i.test(t);
-  const extractDictionaryImages = (t = '') => {
-    const match = t.match(/^\s*DICTIONARY_IMAGES:\s*(.+)/i);
-    if (!match) return null;
-    try {
-      return JSON.parse(match[1].trim());
-    } catch (e) {
-      console.warn('[FE] Failed to parse DICTIONARY_IMAGES JSON:', e);
-      return null;
-    }
-  };
-
   const REPLY_MARKER_NEW = /^⟪HPA▸GENE:(ENSG\d+):([^⟫]+)⟫\s*/;
   const REPLY_MARKER_COMPAT = /^\[\[REPLY:(ENSG\d+):([^\]]+)\]\]\s*/;
   const extractReplyContext = (t = '') => {
@@ -307,91 +265,6 @@ function HPA() {
     if (previewText) return buildTitleFromText(previewText);
 
     return explicitTitle || 'New Conversation';
-  };
-
-  const parseToolEventLine = (line = '') => {
-    if (!line || !/^TOOL_/i.test(line.trim())) return null;
-    const trimmed = line.trim();
-
-    const jsonMatch = trimmed.match(/^TOOL_EVENT:(.+)$/i);
-    if (jsonMatch) {
-      try {
-        const data = JSON.parse(jsonMatch[1]);
-        const isStart = data.status === 'started';
-        const isComplete = data.status === 'completed';
-        const isInvestigator = data.toolName === 'investigator_hpa';
-        return {
-          rawText: trimmed,
-          toolName: data.toolName,
-          runId: data.runId,
-          kind: (isStart || isComplete) ? 'status' : 'progress',
-          status: data.status || (isComplete ? 'completed' : (isStart ? 'started' : undefined)),
-          stage: data.stage || 'info',
-          label: data.label || (isStart ? (isInvestigator ? 'Investigating gene' : 'Deep Research initiated') : (isComplete ? (isInvestigator ? 'Investigation complete' : 'Deep Research complete') : 'Update')),
-          message: data.message || (isStart ? (isInvestigator ? 'Resolving gene in HPA…' : 'Starting research…') : (isComplete ? `Finished in ${data.steps || 'several'} steps.` : '')),
-          meta: {
-            url: data.url || null,
-            visual: data.visual || null
-          }
-        };
-      } catch (e) {
-        console.warn('[FE] Failed to parse TOOL_EVENT JSON:', e);
-      }
-    }
-
-    const match = trimmed.match(/^TOOL_(START|STEP|DONE):\s*(.+)$/i);
-    if (!match) return null;
-
-    const kindRaw = match[1].toUpperCase();
-    const rest = match[2].trim();
-    const base = { rawText: trimmed };
-
-    if (kindRaw === 'START') {
-      return {
-        ...base,
-        toolName: rest,
-        kind: 'status',
-        status: 'started',
-        stage: 'start',
-        label: 'Research agent engaged',
-        message: ''
-      };
-    }
-
-    if (kindRaw === 'DONE') {
-      const [namePart, metaPart] = rest.split(/\s*\(/);
-      return {
-        ...base,
-        toolName: (namePart || '').trim(),
-        kind: 'status',
-        status: 'completed',
-        stage: 'complete',
-        label: 'Research complete',
-        message: metaPart ? `(${metaPart}`.trim() : ''
-      };
-    }
-
-    if (kindRaw === 'STEP') {
-      const parts = rest.split('—').map(bit => bit.trim()).filter(Boolean);
-      const toolName = parts.shift() || '';
-      let stage = null;
-      if (parts.length && /^\[.+\]$/.test(parts[0])) {
-        stage = parts.shift().replace(/^\[|\]$/g, '');
-      }
-      const label = parts.shift() || '';
-      const message = parts.join(' — ');
-
-      return {
-        ...base,
-        toolName,
-        kind: 'progress',
-        stage: stage || undefined,
-        label,
-        message
-      };
-    }
-
-    return null;
   };
 
   const TOOL_STAGE_META = {
@@ -514,7 +387,7 @@ function HPA() {
 
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
-      const toolEvent = msg.type === 'tool' ? (msg.toolEvent || parseToolEventLine(msg.text)) : null;
+      const toolEvent = msg.type === 'tool' ? (msg.toolEvent) : null;
 
       if (msg.type === 'tool' && toolEvent?.runId) {
         // This is part of a tool run
@@ -777,27 +650,6 @@ function HPA() {
 
     // Otherwise show date
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  };
-
-  const toUiMsg = (row) => {
-    const text   = (row?.text ?? row?.content ?? '');
-    const sender = (row?.sender_type ?? row?.type ?? row?.role ?? 'ai'); // <-- include row.type fallback
-    const type   = sender === 'user' ? 'user' : (isToolish(text) ? 'tool' : 'ai');
-    const created = row?.created_at ?? row?.createdAt ?? null;
-    const ts = created
-      ? new Date(created).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-      : new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-
-    const toolEvent = type === 'tool' ? parseToolEventLine(text) : null;
-    const ui = {
-      id: row?.id ?? (Date.now() + Math.random()),
-      type,
-      text,
-      timestamp: ts,
-      toolEvent
-    };
-    debugLog('[FE normalize]', { raw: row, classified: ui });
-    return ui;
   };
 
   // Fetch HPA search results for a given URL
@@ -1158,49 +1010,11 @@ function HPA() {
         debugLog('[FE] load messages…', selectedConversation);
         const response = await authenticatedFetch(`${getApiEndpoint('getMessages')}?conversationId=${selectedConversation}`);
         if (response.ok) {
-          const rows = await response.json();
-          const normalized = Array.isArray(rows) ? rows.map(toUiMsg) : [];
-          const processed = [];
-          let pendingResources = null; // Resources come BEFORE the AI message they belong to
-          for (let i = 0; i < normalized.length; i++) {
-            const msg = normalized[i];
-            if (isSearchUrlMarker(msg.text)) {
-              const url = extractSearchUrl(msg.text);
-              for (let j = processed.length - 1; j >= 0; j--) {
-                if (processed[j].type === 'ai') {
-                  processed[j] = { ...processed[j], searchUrl: url };
-                  break;
-                }
-              }
-              continue;
-            }
-            if (isResourcesMarker(msg.text)) {
-              // Store resources to attach to the next AI message
-              pendingResources = extractResources(msg.text);
-              // Don't add the RESOURCES marker itself to the messages
-              continue;
-            }
-            if (isDictionaryImagesMarker(msg.text)) {
-              // Find the next AI message and attach the dictionary images
-              const dictData = extractDictionaryImages(msg.text);
-              // Attach to previous AI message (dictionary images come after tool completion, before synthesis)
-              for (let j = processed.length - 1; j >= 0; j--) {
-                if (processed[j].type === 'ai') {
-                  processed[j] = { ...processed[j], dictionaryImages: dictData };
-                  break;
-                }
-              }
-              continue;
-            }
-            if (/^\s*ASO_CHARTS:\s*/i.test(msg.text)) {
-              continue;
-            }
-            if (pendingResources && msg.type === 'ai') {
-              msg.resources = pendingResources;
-              pendingResources = null;
-            }
-            processed.push(msg);
-          }
+          // The backend returns the ordered timeline: messages carry their run's search URL,
+          // resources, and dictionary images; runs expand into tool lines grouped by run id.
+          const timeline = await response.json();
+          const processed = timelineToUiMessages(timeline);
+          debugLog('[FE] timeline loaded', { items: Array.isArray(timeline) ? timeline.length : 0, messages: processed.length });
           setConversations(convs => convs.map(c => (c.id === selectedConversation ? { ...c, messages: processed } : c)));
         } else {
           console.warn('[FE] getMessages failed:', response.status);
@@ -1343,7 +1157,6 @@ function HPA() {
       let currentAiMessageId = initialAiId;
       let finalAnswerBubbleCreated = false;
       let toolHasRun = false;
-      let activeToolRunId = null;
       let pendingResources = null; // Store resources until final answer bubble is created
 
       debugLog(`[FE] POST queryStream… Initial AI bubble ID: ${currentAiMessageId}`);
@@ -1384,55 +1197,8 @@ function HPA() {
 
           if (payload.tool) {
             toolHasRun = true;
-            const t = payload.tool || {};
-
-            if (t.status === 'started') {
-              activeToolRunId = `${t.name || 'tool'}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-              const isInvestigator = t.name === 'investigator_hpa';
-              pushToolLine({
-                toolName: t.name,
-                runId: activeToolRunId,
-                kind: 'status',
-                status: 'started',
-                stage: 'start',
-                label: isInvestigator ? 'Investigating gene' : 'Deep Research initiated',
-                message: isInvestigator ? 'Resolving gene in HPA…' : 'Calibrating schema-aware plan…',
-                rawText: `TOOL_START: ${t.name || ''}`
-              }, conversationId);
-            } else if (t.status === 'progress') {
-              const s = t.step || {};
-              const baseMessage = s.message || s.stdout || '';
-              const rawBits = [
-                `TOOL_STEP: ${t.name || ''}`,
-                s.stage ? `[${s.stage}]` : null,
-                s.label || null,
-                baseMessage || null
-              ].filter(Boolean);
-              pushToolLine({
-                toolName: t.name,
-                runId: activeToolRunId || `${t.name || 'tool'}-${Date.now()}`,
-                kind: 'progress',
-                stage: s.stage || 'info',
-                label: s.label || (s.stage === 'execution_step' ? 'Executing search' : 'Planning'),
-                message: baseMessage,
-                meta: s,
-                rawText: rawBits.join(' — ')
-              }, conversationId);
-            } else if (t.status === 'completed') {
-              const isInvestigator = t.name === 'investigator_hpa';
-              const toolLabel = isInvestigator ? 'Investigation complete' : 'Deep Research complete';
-              pushToolLine({
-                toolName: t.name,
-                runId: activeToolRunId || `${t.name || 'tool'}-${Date.now()}`,
-                kind: 'status',
-                status: 'completed',
-                stage: 'complete',
-                label: toolLabel,
-                message: `Finished in ${t.result_meta?.steps ?? 'several'} steps.`,
-                rawText: `TOOL_DONE: ${t.name || ''} (steps=${t.result_meta?.steps ?? 0})`
-              }, conversationId);
-              activeToolRunId = null;
-            }
+            // The backend names the run; live lines and reloaded lines share that id.
+            pushToolLine(liveToolEventFromSse(payload.tool), conversationId);
             continue;
           }
 
@@ -1651,7 +1417,7 @@ function HPA() {
                   let runWorkspaceUuid = null;
                   if (isAsoRun) {
                     for (const m of group.messages) {
-                      const evt = m.toolEvent || parseToolEventLine(m.text);
+                      const evt = m.toolEvent;
                       if ((evt?.stage || '').toLowerCase() === 'start.workspace_created' && evt?.message) {
                         try { const pd = JSON.parse(evt.message); if (pd.workspace_uuid) { runWorkspaceUuid = pd.workspace_uuid; break; } } catch (_) {}
                       }
@@ -1661,7 +1427,7 @@ function HPA() {
                   // Get latest step label for shimmer text (identical to HPAG-tool-line-label)
                   const lastStepMsg = (() => {
                     for (let mi = group.messages.length - 1; mi >= 0; mi--) {
-                      const evt = group.messages[mi].toolEvent || parseToolEventLine(group.messages[mi].text);
+                      const evt = group.messages[mi].toolEvent;
                       if (evt && evt.status !== 'started' && evt.status !== 'completed') {
                         return getStepDisplayLabel(evt, isAsoRun);
                       }
@@ -1696,7 +1462,7 @@ function HPA() {
                           let i = 0;
                           while (i < group.messages.length) {
                             const msg = group.messages[i];
-                            const evt = msg.toolEvent || parseToolEventLine(msg.text);
+                            const evt = msg.toolEvent;
                             const stage = (evt?.stage || '').toLowerCase();
                             let parsed = null;
                             if (evt?.message) { try { parsed = JSON.parse(evt.message); } catch (_) {} }
@@ -1710,7 +1476,7 @@ function HPA() {
                               const startIdx = i;
                               while (i < group.messages.length) {
                                 const m = group.messages[i];
-                                const e = m.toolEvent || parseToolEventLine(m.text);
+                                const e = m.toolEvent;
                                 const s = (e?.stage || '').toLowerCase();
                                 let p = null;
                                 if (e?.message) { try { p = JSON.parse(e.message); } catch (_) {} }
@@ -1753,11 +1519,11 @@ function HPA() {
                             const message = item.msg;
                             const msgIndex = item.origIdx;
                             const nextMsg = group.messages[msgIndex + 1];
-                            const nextEvent = nextMsg?.type === 'tool' ? (nextMsg.toolEvent || parseToolEventLine(nextMsg.text)) : null;
+                            const nextEvent = nextMsg?.type === 'tool' ? (nextMsg.toolEvent) : null;
                             const nextSelections = nextEvent ? extractSelectionsForEvent(nextEvent) : [];
                             const selectionsForThisRow = new Set(nextSelections.map(s => s.toLowerCase().trim()));
 
-                            const toolEvent = message.toolEvent || parseToolEventLine(message.text);
+                            const toolEvent = message.toolEvent;
                             const toolStageMeta = toolEvent ? stageMetaFor(toolEvent) : null;
                             const stageBadgeClass = toolStageMeta?.css ? `HPAG-tool-stage-${toolStageMeta.css}` : '';
                             const toolMetaLine = toolEvent
@@ -1982,11 +1748,11 @@ function HPA() {
                         {/* Non-ASO runs: original per-message timeline */}
                         {!isAsoRun && group.messages.map((message, msgIndex) => {
                           const nextMsg = group.messages[msgIndex + 1];
-                          const nextEvent = nextMsg?.type === 'tool' ? (nextMsg.toolEvent || parseToolEventLine(nextMsg.text)) : null;
+                          const nextEvent = nextMsg?.type === 'tool' ? (nextMsg.toolEvent) : null;
                           const nextSelections = nextEvent ? extractSelectionsForEvent(nextEvent) : [];
                           const selectionsForThisRow = new Set(nextSelections.map(s => s.toLowerCase().trim()));
 
-                          const toolEvent = message.toolEvent || parseToolEventLine(message.text);
+                          const toolEvent = message.toolEvent;
                           const toolStageMeta = toolEvent ? stageMetaFor(toolEvent) : null;
                           const stageBadgeClass = toolStageMeta?.css ? `HPAG-tool-stage-${toolStageMeta.css}` : '';
                           const toolMetaLine = toolEvent
@@ -2057,7 +1823,7 @@ function HPA() {
                       const charts = [];
                       let lastChartInvokeSource = null;
                       for (const m of group.messages) {
-                        const evt = m.toolEvent || parseToolEventLine(m.text);
+                        const evt = m.toolEvent;
                         const st = (evt?.stage || '').toLowerCase();
                         if (st === 'tool.invoke' && evt?.message) {
                           try { const iv = JSON.parse(evt.message); if (iv.name === 'chart') lastChartInvokeSource = iv.args?.source_dataset || null; } catch (_) {}

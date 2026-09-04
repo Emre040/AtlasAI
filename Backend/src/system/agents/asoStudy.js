@@ -41,8 +41,8 @@ const STUDY_TOOLS = [
   tool('update_plan', 'Mark a plan item (1-based) todo, doing, done or dropped.', { item: N, status: { type: 'string', enum: ['todo', 'doing', 'done', 'dropped'] }, note: S }, ['item', 'status']),
   tool('note', 'Write a note to yourself; it stays in NOTES.', { text: S }, ['text']),
   tool('datasets', 'List the datasets on disk.'),
-  tool('open', 'Read an artifact (by id) or a dataset (by name): its columns and some rows.', { what: S, rows: N }, ['what']),
-  tool('measure', 'Read a dataset value for every gene of an artifact; with entity one row per gene, without one row per gene and entity; "as" names the value column.', { artifact: A, table: { type: 'string', description: 'dataset name' }, value_column: S, entity_column: S, entity: S, as: S }, ['artifact', 'table', 'value_column']),
+  tool('open', 'Read an artifact (by id) or a dataset (by name): its columns and some rows, shown this turn.', { what: S, rows: N }, ['what']),
+  tool('measure', 'Add a dataset value to every row of an artifact (the rows keep their columns); with entity one row per gene, without one row per gene and entity; "as" names the new column.', { artifact: A, table: { type: 'string', description: 'dataset name' }, value_column: S, entity_column: S, entity: S, as: S }, ['artifact', 'table', 'value_column']),
   tool('union', 'Genes in either artifact.', { a: A, b: A }, ['a', 'b']),
   tool('intersect', 'Rows of a whose gene is in b.', { a: A, b: A }, ['a', 'b']),
   tool('difference', 'Rows of a whose gene is not in b.', { a: A, b: A }, ['a', 'b']),
@@ -66,12 +66,13 @@ function systemPrompt() {
   return `You run a study over a database for a researcher, the way a careful person would at a desk. You work in turns. Each turn you see the goal, your plan, the artifacts on your desk and where each came from, what is still running, and what came back since your last turn. You act by calling tools; you never state a value, gene or count yourself: a tool produces it and it becomes an artifact.
 
 How the turns work:
-- Your first turn does one thing: call set_plan, alone, with a few high-level items (what to find out, not which operation). Nothing else runs in that turn; agents and tools come in the turns after, once the plan exists. Keep the plan honest: mark items done when an artifact shows they are, drop items that turn out wrong, rewrite the plan when the study changes direction.
+- Your first turn does one thing: call set_plan, alone, with a few high-level items (what to find out, not which operation). Nothing else runs in that turn; agents and tools come in the turns after, once the plan exists. Do not write the plan again unless the study changes direction; from the second turn on, work. Keep the plan honest: mark items done when an artifact shows they are, drop items that turn out wrong, rewrite the plan when the study changes direction.
 - Call as many tools in one turn as can run independently; they run in parallel. Agents (deep_research_hpa, investigator_hpa, check_inclusion_hpa, dictionary_expert_hpa) run in the background and you are woken when each returns. Everything else returns at once.
 - When nothing useful can be done until something running returns, call skip with the reason. Do not repeat a tool that is still running.
-- You know nothing about the data until you look. datasets shows what is on disk; open reads a dataset or an artifact and shows what it holds. The columns of what you opened stay on your desk; rows are shown once, so read what you need and write a note if you must remember it. Look before you name a dataset, a column or an entity in a tool call.
+- You know nothing about the data until you look. datasets shows what is on disk; open reads a dataset or an artifact and shows what it holds, in that turn. An artifact you opened keeps a short column line on the desk; anything else you must remember, open again or write in a note. Look before you name a dataset, a column or an entity in a tool call.
 - deep_research_hpa finds gene sets from a description and builds the database query itself; it knows the search fields and tells you when something cannot be expressed. investigator_hpa answers one question about one gene and cites the row it rests on; when the value sits in a table column you can name, measure is exact and free, so prefer it.
-- Refer to artifacts by their id. Name measure outputs with "as" so later steps can refer to the column.
+- Refer to artifacts by their id. measure adds a column to the rows it is given, so measuring pancreas then liver on the same artifact leaves both columns in the result; name each with "as".
+- Do the bookkeeping in the same turn as the work: update_plan alongside the tools that complete the item, and finish in the same turn as the last piece of work. A turn spent only on update_plan is a turn wasted.
 - A tool that fails tells you why under SINCE YOUR LAST TURN; fix the call rather than repeating it. Table tools are exact: if a value looks wrong, the arguments were wrong (the entity, the column, the table), not the data.
 - Call finish when the goal is met, with a summary that cites artifact ids; also finish, saying what is missing, when the database cannot express what is left.`;
 }
@@ -95,10 +96,10 @@ function describeArgs(args) {
 // An artifact as it sits on the desk: what it is and where it came from. Its columns appear
 // once the model has opened it; rows are shown only in the turn it read them.
 function artifactLine(a) {
-  const lines = [`${a.id}  ${a.kind.padEnd(7)} "${a.label}"  ${a.size}  from ${a.tool}(${describeArgs(a.args).slice(0, 160)})${a.inputs.length ? `  reads ${a.inputs.join(', ')}` : ''}`];
+  const lines = [`${a.id}  ${a.kind.padEnd(7)} "${a.label}"  ${a.size}  from turn ${a.turn}: ${a.tool}(${describeArgs(a.args).slice(0, 110)})${a.inputs.length ? `  reads ${a.inputs.join(', ')}` : ''}`];
   if (a.meta?.query) lines.push(`    ${a.meta.query}`);
   if (a.meta?.not_expressible?.length) lines.push(`    not expressible: ${a.meta.not_expressible.join('; ')}`);
-  if (a.opened && a.columns?.length) lines.push(`    columns ${a.columns.join(', ')}`);
+  if (a.opened && a.columns?.length) lines.push(`    columns ${a.columns.slice(0, 12).join(', ')}${a.columns.length > 12 ? ` … ${a.columns.length} in all (open it to see them)` : ''}`);
   if (a.text) lines.push(`    ${cell(a.text).slice(0, 300)}`);
   return lines.join('\n');
 }
@@ -113,7 +114,8 @@ function renderContext(state, turn, startedAt) {
     : '(nothing)';
   const recent = state.recent.length ? state.recent.map(r => `- ${r}`).join('\n') : '(nothing new)';
   const notes = state.notes.length ? state.notes.map(n => `- ${n}`).join('\n') : '(none)';
-  const tables = [state.tableList ? `DATASETS ON DISK\n${state.tableList.join('\n')}` : '', state.tablesSeen.size ? `DATASETS YOU HAVE OPENED\n${[...state.tablesSeen.values()].join('\n')}` : ''].filter(Boolean).join('\n\n') || null;
+  const tables = state.tableList ? `DATASETS ON DISK\n${state.tableList.join('\n')}` : null;
+  const history = state.history.length ? state.history.map(h => `turn ${h.turn}: ${h.items.join('; ')}`).join('\n') : '(nothing yet)';
   return `GOAL
 ${state.goal}
 
@@ -125,6 +127,9 @@ ${artifacts}
 
 RUNNING  (started by you, not back yet; you are woken when each returns)
 ${running}
+
+HISTORY  (what you did each turn and what came of it)
+${history}
 
 SINCE YOUR LAST TURN
 ${recent}
@@ -195,7 +200,8 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
   let registrations = Promise.resolve();
   const register = args => { const next = registrations.then(() => registerArtifact(db, args)); registrations = next.catch(() => {}); return next; };
 
-  const state = { goal, plan: [], artifacts: [], byId: new Map(), running: new Map(), recent: [], notes: [], tablesSeen: new Map(), tableList: null, toolCalls: 0, failed: 0, ids: { a: 0, t: 0 } };
+  const state = { goal, plan: [], artifacts: [], byId: new Map(), running: new Map(), recent: [], notes: [], tableList: null, history: [], turn: 0, toolCalls: 0, failed: 0, ids: { a: 0, t: 0 } };
+  const remember = (text) => { const entry = state.history[state.history.length - 1]; if (entry && entry.turn === state.turn) entry.items.push(text); else state.history.push({ turn: state.turn, items: [text] }); };
   const wake = { resolve: null };
   const wakeUp = () => { if (wake.resolve) { const r = wake.resolve; wake.resolve = null; r(); } };
   const artifactsSummary = () => state.artifacts.map(a => ({ artifact_uuid: a.uuid, kind: a.kind === 'figure' ? 'figure' : a.kind === 'note' ? 'inspection' : a.kind === 'answer' ? 'measurement' : 'dataset', tool: a.tool, summary: { id: a.id, label: a.label, row_count: a.rows?.length }, storage_uri: a.storageUri }));
@@ -243,7 +249,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
     }
     const columns = rows ? tools.columnsOf(rows) : [];
     const size = kind === 'figure' ? 'figure' : matrix ? `${matrix.row_labels.length} × ${matrix.col_labels.length} matrix` : kind === 'note' ? 'note' : `${rows.length} rows`;
-    const a = { id, uuid: reg.artifactUuid, storageUri: reg.storageUri, kind, label, size, rows: rows || null, matrix: matrix || null, text: text || null, columns, tool, args, inputs, meta: meta || {}, images, toolId };
+    const a = { id, uuid: reg.artifactUuid, storageUri: reg.storageUri, kind, label, size, rows: rows || null, matrix: matrix || null, text: text || null, columns, tool, args, inputs, meta: meta || {}, images, toolId, turn: state.turn };
     state.artifacts.push(a);
     state.byId.set(id, a);
     return a;
@@ -265,11 +271,13 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
         const built = agentArtifact(tool, args, result);
         const a = await addArtifact({ ...built, tool, args, inputs: [], toolId: id });
         state.recent.push(`${id} ${tool} returned: ${a.id} (${a.size})${a.meta?.search_url ? `, ${a.meta.search_url}` : ''}${a.meta?.not_expressible?.length ? `, not expressible: ${a.meta.not_expressible.join('; ')}` : ''}`);
+        remember(`${tool} → ${a.id} (${a.size})`);
         await log('tool.done', { id, tool, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);
       })
       .catch(async err => {
         state.failed++;
         state.recent.push(`${id} ${tool} failed: ${err.message}`);
+        remember(`${tool} failed: ${err.message.slice(0, 90)}`);
         await log('tool.failed', { id, tool, kind: 'agent', error: err.message, ms: Date.now() - job.startedAt }, id);
       })
       .finally(() => { state.running.delete(id); wakeUp(); });
@@ -302,10 +310,12 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
       }
       const a = await addArtifact({ kind: out.figure ? 'figure' : 'data', label: tool === 'chart' ? label : `${tool} of ${inputs.join(', ')}`, rows: out.rows, matrix: out.matrix, figure: out.figure, tool, args, inputs, toolId: id });
       state.recent.push(`${id} ${tool} -> ${a.id} (${a.size})`);
+      remember(`${tool}(${inputs.join(', ')}) → ${a.id} (${a.size})`);
       await log('tool.done', { id, tool, kind: out.figure ? 'chart' : 'tool', artifact: artifactEvent(a), ms: Date.now() - t0 }, id);
     } catch (err) {
       state.failed++;
       state.recent.push(`${id} ${tool}(${describeArgs(args).slice(0, 120)}) failed: ${err.message}`);
+      remember(`${tool}(${inputs.join(', ')}) failed: ${err.message.slice(0, 90)}`);
       await log('tool.failed', { id, tool, kind: tool === 'chart' ? 'chart' : 'tool', error: err.message, ms: Date.now() - t0 }, id);
     }
   }
@@ -323,6 +333,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
     await updateWorkspace(db, workspace.id, { status: 'running' });
     while (turn < maxTurns) {
       turn++;
+      state.turn = turn;
       const context = renderContext(state, turn, startedAt);
       // The exact text the model saw this turn, kept as a file in the workspace (the event log
       // truncates long strings); the log keeps only its size.
@@ -337,7 +348,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
       addUsage(res.usage);
       const message = res.choices?.[0]?.message || {};
       const calls = (message.tool_calls || []).map(c => { let args = {}; try { args = JSON.parse(c.function?.arguments || '{}'); } catch { args = {}; } return { name: c.function?.name, args }; });
-      await log('turn', { turn, text: message.content ? String(message.content).slice(0, 600) : null, calls: calls.map(c => ({ tool: c.name, args: c.args })) });
+      await log('turn', { turn, text: message.content ? String(message.content).slice(0, 600) : null, calls: calls.map(c => ({ tool: c.name, args: c.args })), offered: offered.length });
       state.recent = [];
       let sync = 0;
       let waiting = false;
@@ -345,7 +356,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
         // The planning turn: set_plan and nothing else; anything else waits for the next turn.
         const plan = calls.find(c => c.name === 'set_plan');
         const others = calls.filter(c => c.name !== 'set_plan').map(c => c.name);
-        if (plan) { state.plan = (plan.args.items || []).map(text => ({ text: String(text), status: 'todo', note: '' })); await log('plan', { items: state.plan }); }
+        if (plan) { state.plan = (plan.args.items || []).map(text => ({ text: String(text), status: 'todo', note: '' })); remember('wrote the plan'); await log('plan', { items: state.plan }); }
         if (others.length) state.recent.push(`Not run: ${others.join(', ')}. The first turn writes the plan alone; call tools from the next turn on.`);
         if (!plan) { stalls++; state.recent.push('Write the plan first with set_plan, alone.'); if (stalls > MAX_STALLS) break; }
         else stalls = 0;
@@ -353,25 +364,26 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
       }
       for (const call of calls) {
         if (call.name === 'finish') { finishSummary = String(call.args.summary || ''); break; }
-        if (call.name === 'skip') { waiting = true; await log('skip', { reason: call.args.reason || '' }); continue; }
-        if (call.name === 'set_plan') { state.plan = (call.args.items || []).map(text => ({ text: String(text), status: 'todo', note: '' })); await log('plan', { items: state.plan }); continue; }
+        if (call.name === 'skip') { waiting = true; remember(`waited: ${String(call.args.reason || '').slice(0, 80)}`); await log('skip', { reason: call.args.reason || '' }); continue; }
+        if (call.name === 'set_plan') { state.plan = (call.args.items || []).map(text => ({ text: String(text), status: 'todo', note: '' })); remember('rewrote the plan'); await log('plan', { items: state.plan }); continue; }
         if (call.name === 'update_plan') {
           const item = state.plan[Number(call.args.item) - 1];
-          if (item) { item.status = call.args.status || item.status; if (call.args.note) item.note = String(call.args.note); }
+          if (item) { item.status = call.args.status || item.status; if (call.args.note) item.note = String(call.args.note); remember(`plan item ${call.args.item} ${item.status}`); }
           else state.recent.push(`update_plan failed: there is no item ${call.args.item}`);
           await log('plan', { items: state.plan, changed: Number(call.args.item) }); continue;
         }
-        if (call.name === 'note') { state.notes.push(String(call.args.text || '')); await log('note', { text: String(call.args.text || '') }); continue; }
+        if (call.name === 'note') { state.notes.push(String(call.args.text || '')); remember('wrote a note'); await log('note', { text: String(call.args.text || '') }); continue; }
         if (call.name === 'datasets') {
           const entries = (await geneData.catalog()).filter(e => e.key !== 'unreadable');
           state.tableList = entries.map(e => `${e.file} — ${e.title}`);
           state.recent.push(`${entries.length} datasets are now listed under DATASETS ON DISK for every later turn`);
-          sync++; continue;
+          remember('listed the datasets'); sync++; continue;
         }
         if (call.name === 'open') {
           const n = Math.min(INSPECT_MAX, Number(call.args.rows) || 10);
           const what = String(call.args.what || '').trim();
           try {
+            remember(`opened ${what}`);
             if (state.byId.has(what)) {
               const a = get(what);
               a.opened = true;
@@ -387,8 +399,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
               if (entry.key === 'lookup') rows = (await geneData.read({ gene: '', ensembl: '' }, entry.file)).rows;
               else if (sampleGene) { const gene = await geneData.resolveGene(sampleGene); if (gene) rows = (await geneData.read(gene, entry.file)).rows; }
               const terms = entry.columns.map(c => geneData.definition(c)).filter(Boolean);
-              state.tablesSeen.set(entry.file, `${entry.file} — ${entry.title}. ${entry.description}\n  columns: ${entry.columns.join(' | ')}${terms.length ? `\n  terms: ${terms.slice(0, 6).join('; ')}` : ''}`);
-              state.recent.push(`${entry.file} (columns ${entry.columns.join(' | ')})${rows.length ? `:\n  ${sampleLines(rows, entry.columns, n).join('\n  ')}${rows.length > n ? `\n  … ${rows.length - n} more rows for this gene` : ''}` : ' (no rows to show yet; nothing on the desk names a gene)'}`);
+              state.recent.push(`${entry.file} — ${entry.title} (columns ${entry.columns.join(' | ')})${terms.length ? `\n  terms: ${terms.slice(0, 4).join('; ')}` : ''}${rows.length ? `:\n  ${sampleLines(rows, entry.columns, n).join('\n  ')}${rows.length > n ? `\n  … ${rows.length - n} more rows for this gene` : ''}` : ' (no rows to show yet; nothing on the desk names a gene)'}`);
             }
           } catch (err) { state.recent.push(`open failed: ${err.message}`); }
           sync++; continue;
@@ -406,7 +417,9 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
       }
       if (sync > 0) { stalls = 0; continue; }
       if (state.running.size === 0) {
-        if (waiting) state.recent.push('Nothing is running, so there is nothing to wait for. Act or finish.');
+        state.recent.push(waiting
+          ? 'Nothing is running, so there is nothing to wait for. Act or finish.'
+          : `That turn did no work${state.artifacts.length ? '' : ' and there are no artifacts yet'}: the plan exists, nothing is running. Summon agents or call tools for the open items now, or finish.`);
         stalls++;
         if (stalls > MAX_STALLS) break;
         continue;

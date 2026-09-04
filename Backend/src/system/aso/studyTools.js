@@ -36,7 +36,7 @@ const TOOL_CATALOG = [
     description: 'Finds genes by a question ("kinases enriched in the pancreas that are secreted to blood"). Runs a search agent that knows the database\'s search grammar and returns the matching genes with their facts.' },
   { name: 'lookup', inputs: 1, args: { question: 'a question about one gene with {gene} where the gene name goes', max_genes: 'optional cap on how many genes of the input table to ask about', as: 'optional name for the value column (default value)' }, produces: 'the input genes with columns answer, value (or the "as" name), entity, table, found',
     description: 'Asks a reading agent one factual question about each gene of the input table, in parallel; each answer cites the database row it rests on. Use it for questions that need reading and judgement; for a plain value from a known table use measure, which is exact and free, and for "which entity is highest per gene" use measure of all entities followed by top_per_group. Not for summaries or conclusions: the report does those.' },
-  { name: 'measure', inputs: 1, args: { table: 'a per-gene table of the database', value_column: 'the column to read', entity_column: 'optional: the column that names the entity (tissue, cell type, cancer)', entity: 'optional: which entity to read; omit to read every entity as separate rows', as: 'name for the value column in the output (default value); name it after what it holds, such as liver_nTPM, so later steps can refer to it' }, produces: 'rows gene, ensembl, entity (if any), and the value under the "as" name',
+  { name: 'measure', inputs: 1, args: { table: 'a per-gene table of the database', value_column: 'the column to read', entity_column: 'optional: the column that names the entity (tissue, cell type, cancer)', entity: 'optional: which entity to read; omit to read every entity as separate rows', as: 'name for the value column in the output (default value); name it after what it holds, such as liver_nTPM, so later steps can refer to it' }, produces: 'the input rows with entity (if any) and the value added under the "as" name',
     description: 'Reads a value straight from a named table for every gene of the input table: exact, no model call. With an entity ("liver") one row per gene; without, one row per gene per entity, which pivot can turn into a matrix. Two measures joined later keep both values apart when each names its column with "as".' },
   { name: 'union', inputs: 2, args: {}, produces: 'genes present in either input (one row per gene)', description: 'Genes in either table.' },
   { name: 'intersect', inputs: 2, args: {}, produces: 'the rows of the first input whose gene is also in the second', description: 'Genes in both tables (rows and columns of the first; join to add the second\'s columns).' },
@@ -315,16 +315,19 @@ async function measure(rows, { table, value_column, entity_column, entity, as },
     while (queue.length) {
       const r = queue.shift();
       const gene = await geneData.resolveGene(r.ensembl || r.gene);
-      if (!gene) { out.push({ gene: r.gene, ensembl: r.ensembl || null, entity: entity || null, [valueName]: null, note: 'gene not in release' }); continue; }
+      // The input row travels along: a measure adds a column to the table it was given.
+      const base = { ...r, gene: gene ? gene.gene : r.gene, ensembl: gene ? gene.ensembl : (r.ensembl || null) };
+      delete base.note;
+      if (!gene) { out.push({ ...base, entity: entity || null, [valueName]: null, note: 'gene not in release' }); continue; }
       let reading;
-      try { reading = await geneData.read(gene, entry.file); } catch (e) { out.push({ gene: gene.gene, ensembl: gene.ensembl, entity: entity || null, [valueName]: null, note: e.message }); continue; }
-      try { inferEntityColumn(reading.rows); } catch (e) { out.push({ gene: gene.gene, ensembl: gene.ensembl, entity: entity || null, [valueName]: null, note: e.message }); continue; }
+      try { reading = await geneData.read(gene, entry.file); } catch (e) { out.push({ ...base, entity: entity || null, [valueName]: null, note: e.message }); continue; }
+      try { inferEntityColumn(reading.rows); } catch (e) { out.push({ ...base, entity: entity || null, [valueName]: null, note: e.message }); continue; }
       const rowsFor = entityCol && entity ? reading.rows.filter(x => lower(x[entityCol]) === lower(entity)) : reading.rows;
       if (entity || !entityCol) {
         const row = rowsFor[0];
-        out.push({ gene: gene.gene, ensembl: gene.ensembl, entity: entity || null, [valueName]: row ? (num(row[valueCol]) ?? row[valueCol] ?? null) : null, ...(row ? {} : { note: 'no row' }) });
+        out.push({ ...base, entity: entity || base.entity || null, [valueName]: row ? (num(row[valueCol]) ?? row[valueCol] ?? null) : null, ...(row ? {} : { note: 'no row' }) });
       } else {
-        for (const row of rowsFor) out.push({ gene: gene.gene, ensembl: gene.ensembl, entity: row[entityCol], [valueName]: num(row[valueCol]) ?? row[valueCol] ?? null });
+        for (const row of rowsFor) out.push({ ...base, entity: row[entityCol], [valueName]: num(row[valueCol]) ?? row[valueCol] ?? null });
       }
     }
   };

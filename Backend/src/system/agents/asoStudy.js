@@ -58,7 +58,7 @@ const STUDY_TOOLS = [
     parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, group_by: { type: 'string' }, by: { type: 'string' }, n: { type: 'integer' }, order: { type: 'string', enum: ['desc', 'asc'] } }, required: ['artifact', 'by'] } },
   { name: 'aggregate', description: 'Summarise a column (count, sum, mean, median, min, max), optionally per group.',
     parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, group_by: { type: 'string' }, column: { type: 'string' }, metrics: { type: 'array', items: { type: 'string', enum: ['count', 'sum', 'mean', 'median', 'min', 'max'] } } }, required: ['artifact', 'metrics'] } },
-  { name: 'compute', description: 'Add a column computed from one or two numeric columns: "a / b", "a - b", "log2(a / b)", "a + b", "a * b", "abs(a)".',
+  { name: 'compute', description: 'Add a column computed from numeric columns and numbers: + - * / parentheses and log2, log10, ln, abs, sqrt, exp, min, max; for example "log2((pancreas_nTPM + 1) / (liver_nTPM + 1))". Rows with a missing value or a non-finite result get null.',
     parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, name: { type: 'string' }, expr: { type: 'string' } }, required: ['artifact', 'name', 'expr'] } },
   { name: 'pivot', description: 'Turn long rows (gene, entity, value) into a matrix; cap rows and columns for a readable heatmap.',
     parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, row: { type: 'string' }, column: { type: 'string' }, value: { type: 'string' }, top: { type: 'integer' }, top_columns: { type: 'integer' } }, required: ['artifact'] } },

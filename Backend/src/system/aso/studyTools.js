@@ -48,7 +48,7 @@ const TOOL_CATALOG = [
   { name: 'rank', inputs: 1, args: { by: 'column', order: '"desc" (default) or "asc"', top: 'optional N' }, produces: 'rows sorted by the column with a rank column, cut to the top N', description: 'Sorts by a numeric column.' },
   { name: 'aggregate', inputs: 1, args: { group_by: 'optional column', column: 'numeric column', metrics: ['count | sum | mean | median | min | max'] }, produces: 'one row per group with the requested metrics', description: 'Summarises a column, optionally per group.' },
   { name: 'top_per_group', inputs: 1, args: { group_by: 'column that defines the groups (default gene)', by: 'numeric column', n: 'rows to keep per group (default 1)', order: '"desc" (default) or "asc"' }, produces: 'the n highest (or lowest) rows of each group, with a rank column', description: 'Keeps the top rows within each group: for example the entity with the highest value for every gene.' },
-  { name: 'compute', inputs: 1, args: { name: 'new column', expr: '"a / b", "a - b", "log2(a / b)", "a + b", "a * b", "abs(a)" where a and b are column names' }, produces: 'the rows with the new column', description: 'Adds a column computed from one or two numeric columns; rows where a value is missing get null.' },
+  { name: 'compute', inputs: 1, args: { name: 'new column', expr: 'arithmetic over column names and numbers: + - * / parentheses and log2, log10, ln, abs, sqrt, exp, min, max; for example "log2((pancreas_nTPM + 1) / (liver_nTPM + 1))"' }, produces: 'the rows with the new column', description: 'Adds a column computed from numeric columns; rows where a value is missing or the result is not finite get null.' },
   { name: 'pivot', inputs: 1, args: { row: 'column for rows (default gene)', column: 'column for columns (default entity)', value: 'value column (default value)', top: 'optional: keep the N rows with the highest maximum', top_columns: 'optional: keep the N columns with the highest maximum' }, produces: 'a matrix with row_labels and col_labels, for a heatmap', description: 'Turns long rows (gene, entity, value) into a matrix; cap rows and columns for a readable heatmap.' },
   { name: 'chart', inputs: 1, args: { type: 'bar | lollipop | dot_plot | diverging_bar | grouped_bar | scatter | bubble | heatmap | radar | line | volcano', x: 'label column (bar family) or x column (scatter)', y: 'value column', group: 'optional group column (grouped_bar, radar)', size: 'optional size column (bubble)', title: 'title', x_label: 'axis label', y_label: 'axis label' }, produces: 'a figure', description: 'Draws the input table. A heatmap takes a pivot output; other types take rows with the named columns.' }
 ];
@@ -168,23 +168,87 @@ function aggregate(rows, { group_by, column, metrics = ['count'] }) {
   return out;
 }
 
+// A small arithmetic language for compute: column names (quote names with spaces), numbers,
+// + - * / and parentheses, and the functions log2, log10, ln, abs, sqrt, exp, min, max.
+// Every row gets the value, or null where a column it needs is missing or the result is not finite.
+const FUNCTIONS = { log2: Math.log2, log10: Math.log10, ln: Math.log, log: Math.log, abs: Math.abs, sqrt: Math.sqrt, exp: Math.exp, min: Math.min, max: Math.max };
+
+function parseExpression(text) {
+  const tokens = [];
+  const re = /\s*(?:(\d+\.?\d*(?:[eE][-+]?\d+)?)|("[^"]*"|'[^']*')|([A-Za-z_][\w.]*)|([-+*/(),]))/y;
+  let i = 0;
+  while (i < text.length) {
+    re.lastIndex = i;
+    const m = re.exec(text);
+    if (!m || m.index !== i) throw new Error(`compute: cannot read "${text}" near "${text.slice(i, i + 12)}"`);
+    if (m[1] !== undefined) tokens.push({ t: 'num', v: Number(m[1]) });
+    else if (m[2] !== undefined) tokens.push({ t: 'id', v: m[2].slice(1, -1) });
+    else if (m[3] !== undefined) tokens.push({ t: 'id', v: m[3] });
+    else tokens.push({ t: 'op', v: m[4] });
+    i = re.lastIndex;
+    if (/^\s*$/.test(text.slice(i))) break;
+  }
+  let pos = 0;
+  const peek = () => tokens[pos];
+  const take = () => tokens[pos++];
+  const expect = v => { const tok = take(); if (!tok || tok.v !== v) throw new Error(`compute: expected "${v}" in "${text}"`); };
+  const parseSum = () => { let node = parseProduct(); while (peek() && (peek().v === '+' || peek().v === '-')) { const op = take().v; node = { op, a: node, b: parseProduct() }; } return node; };
+  const parseProduct = () => { let node = parseUnary(); while (peek() && (peek().v === '*' || peek().v === '/')) { const op = take().v; node = { op, a: node, b: parseUnary() }; } return node; };
+  const parseUnary = () => { if (peek() && peek().v === '-') { take(); return { op: 'neg', a: parseUnary() }; } return parseAtom(); };
+  const parseAtom = () => {
+    const tok = take();
+    if (!tok) throw new Error(`compute: unexpected end of "${text}"`);
+    if (tok.t === 'num') return { num: tok.v };
+    if (tok.t === 'op' && tok.v === '(') { const node = parseSum(); expect(')'); return node; }
+    if (tok.t === 'id') {
+      if (peek() && peek().v === '(' && FUNCTIONS[tok.v.toLowerCase()]) {
+        take();
+        const args = [parseSum()];
+        while (peek() && peek().v === ',') { take(); args.push(parseSum()); }
+        expect(')');
+        return { fn: tok.v.toLowerCase(), args };
+      }
+      return { col: tok.v };
+    }
+    throw new Error(`compute: unexpected "${tok.v}" in "${text}"`);
+  };
+  const tree = parseSum();
+  if (pos < tokens.length) throw new Error(`compute: unexpected "${tokens[pos].v}" in "${text}"`);
+  return tree;
+}
+
+function columnsIn(tree, out = []) {
+  if (!tree) return out;
+  if (tree.col) out.push(tree.col);
+  if (tree.a) columnsIn(tree.a, out);
+  if (tree.b) columnsIn(tree.b, out);
+  for (const a of tree.args || []) columnsIn(a, out);
+  return out;
+}
+
+function evaluate(tree, row, resolved) {
+  if (tree.num !== undefined) return tree.num;
+  if (tree.col) { const raw = row[resolved.get(tree.col)]; return raw === null || raw === undefined || String(raw).trim() === '' ? null : num(raw); }
+  if (tree.fn) { const vals = tree.args.map(a => evaluate(a, row, resolved)); return vals.some(v => v === null) ? null : FUNCTIONS[tree.fn](...vals); }
+  const a = evaluate(tree.a, row, resolved);
+  if (tree.op === 'neg') return a === null ? null : -a;
+  const b = evaluate(tree.b, row, resolved);
+  if (a === null || b === null) return null;
+  if (tree.op === '+') return a + b;
+  if (tree.op === '-') return a - b;
+  if (tree.op === '*') return a * b;
+  return b === 0 ? null : a / b;
+}
+
 function compute(rows, name, expr) {
-  const m = /^\s*(log2\()?\s*([\w .\-()\[\]]+?)\s*(?:([-+*/])\s*([\w .\-()\[\]]+?))?\s*\)?\s*$/.exec(String(expr || ''));
-  const abs = /^\s*abs\(\s*(.+?)\s*\)\s*$/.exec(String(expr || ''));
-  if (abs) { const col = findColumn(rows, abs[1]); if (!col) throw new Error(`compute: no column "${abs[1]}"`); return rows.map(r => ({ ...r, [name]: num(r[col]) === null ? null : Math.abs(num(r[col])) })); }
-  if (!m) throw new Error(`compute: cannot read "${expr}"`);
-  const log2 = Boolean(m[1]);
-  const a = findColumn(rows, m[2]);
-  const b = m[4] ? findColumn(rows, m[4]) : null;
-  if (!a || (m[4] && !b)) throw new Error(`compute: no column "${!a ? m[2] : m[4]}"`);
-  return rows.map(r => {
-    const x = num(r[a]), y = b ? num(r[b]) : null;
-    if (x === null || (b && y === null)) return { ...r, [name]: null };
-    let v = x;
-    if (b) v = m[3] === '/' ? (y === 0 ? null : x / y) : m[3] === '-' ? x - y : m[3] === '+' ? x + y : x * y;
-    if (log2) v = v === null || v <= 0 ? null : Math.log2(v);
-    return { ...r, [name]: v === null ? null : Number(v.toFixed(4)) };
-  });
+  const tree = parseExpression(String(expr || ''));
+  const resolved = new Map();
+  for (const c of columnsIn(tree)) {
+    const found = findColumn(rows, c);
+    if (!found) throw new Error(`compute: no column "${c}" (columns: ${columnsOf(rows).slice(0, 20).join(', ')})`);
+    resolved.set(c, found);
+  }
+  return rows.map(r => { const v = evaluate(tree, r, resolved); return { ...r, [name]: v === null || !Number.isFinite(v) ? null : Number(v.toFixed(4)) }; });
 }
 
 function pivot(rows, { row = 'gene', column = 'entity', value = 'value', top = 0, top_columns = 0 } = {}) {

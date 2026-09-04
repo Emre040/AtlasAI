@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -286,6 +286,9 @@ export default function StudyRun({ events, apiBaseUrl, workspaceUuid, isComplete
   const [hovered, setHovered] = useState(null);
   const [planOpen, setPlanOpen] = useState(true);
   const ws = workspaceUuid || state.workspaceUuid;
+  // Once the study is over the checklist has done its job; fold it so the map has the space.
+  const finished = state.phase === 'done' || state.phase === 'failed';
+  useEffect(() => { if (finished) setPlanOpen(false); }, [finished]);
 
   const counts = { done: 0, failed: 0, running: 0 };
   for (const n of state.nodes) { if (n.status === 'done') counts.done++; else if (n.status === 'failed' || n.status === 'blocked') counts.failed++; else if (n.status === 'running') counts.running++; }
@@ -315,7 +318,7 @@ export default function StudyRun({ events, apiBaseUrl, workspaceUuid, isComplete
             <div className="HPAG-map-empty">{state.phase === 'planning' || state.phase === 'starting' ? 'The map fills in as steps run.' : 'No step has run.'}</div>
           ) : (
             <div className="HPAG-map-scroll">
-              <div className="HPAG-map" style={{ width: layout.width, height: layout.height }}>
+              <div className="HPAG-map" style={{ width: layout.width + (planOpen ? 320 : 0), height: layout.height }}>
                 <svg className="HPAG-map-edges" width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} aria-hidden="true">
                   <defs>
                     <marker id="HPAG-map-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">

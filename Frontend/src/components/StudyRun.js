@@ -1,4 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faChartBar, faDatabase, faFlagCheckered, faGear, faListCheck, faMagnifyingGlass, faMicroscope, faNoteSticky, faQuestion, faRobot, faExternalLinkAlt } from '@fortawesome/free-solid-svg-icons';
 import './StudyRun.css';
@@ -92,6 +94,8 @@ function layoutIslands(state, width) {
     const parents = (i.inputs || []).filter(p => depth.has(p));
     depth.set(i.key, i.key === 'query' ? 0 : parents.length ? Math.max(...parents.map(p => depth.get(p))) + 1 : 1);
   }
+  // Finish closes the map: it sits under everything.
+  if (depth.has('finish')) depth.set('finish', Math.max(...depth.values()) + 1);
   const rows = new Map();
   for (const i of state.islands) { const d = depth.get(i.key); if (!rows.has(d)) rows.set(d, []); rows.get(d).push(i); }
   const rowCount = Math.max(0, ...rows.keys()) + 1;
@@ -197,7 +201,7 @@ function Panel({ island, state }) {
       )}
       {island.type === 'plan' && <ol className="HPAG-map-plan-list">{island.items.map((p, i) => <li key={i} className={`HPAG-map-plan-${p.status}`}>{p.text}</li>)}</ol>}
       {island.type === 'note' && <div className="HPAG-map-panel-text">{island.text}</div>}
-      {island.type === 'finish' && <div className="HPAG-map-panel-text">{island.summary}</div>}
+      {island.type === 'finish' && <div className="HPAG-map-panel-text">{truncate(island.summary, 600)}</div>}
     </div>
   );
 }
@@ -283,7 +287,7 @@ export default function StudyRun({ events, isComplete }) {
           </div>
         )}
       </div>
-      {state.finish?.summary && <div className="HPAG-study-summary">{state.finish.summary}</div>}
+      {state.finish?.summary && <div className="HPAG-study-summary"><ReactMarkdown remarkPlugins={[remarkGfm]}>{state.finish.summary}</ReactMarkdown></div>}
     </div>
   );
 }

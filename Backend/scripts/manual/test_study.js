@@ -21,15 +21,15 @@ async function run() {
       return inference.withContext({ purpose: 'manual' }, () => asoStudy({ goal, mode: 'offline', parallel_limit: parallel }, {
         db, visitorId: 1,
         onStep: async p => {
-          if (/^(node\.|plan|reflect|final|error|start|report)/.test(p.stage || '')) {
+          if (/^(tool\.|turn|plan|note|skip|finish|error|start)/.test(p.stage || '')) {
             console.log(`${((Date.now() - since) / 1000).toFixed(1).padStart(6)}s ${p.stage.padEnd(14)} ${String(p.message || '').slice(0, 200)}`);
           }
         }
       }));
     });
-    console.log('\n== nodes');
-    for (const n of result.nodes || []) console.log(`${n.id.padEnd(5)} ${n.op.padEnd(14)} ${n.status.padEnd(7)} ${String(n.rows ?? '').padStart(6)} rows  ${n.label}${n.error ? '  <- ' + n.error : ''}`);
-    console.log(`\n== ${result.status}${result.error ? ': ' + result.error : ''} | ${result.seconds ?? ((Date.now() - since) / 1000).toFixed(1)}s | tokens ${JSON.stringify(result.tokens)} | workspace ${result.workspace_uuid}`);
+    console.log('\n== artifacts');
+    for (const a of result.artifacts || []) console.log(`${String(a.summary?.id || '').padEnd(5)} ${a.kind.padEnd(12)} ${String(a.summary?.row_count ?? '').padStart(6)} rows  ${a.summary?.label || ''}  (${a.tool})`);
+    console.log(`\n== ${result.status}${result.error ? ': ' + result.error : ''} | turns ${result.turns} | tools ${result.tool_calls} (${result.failed} failed) | ${result.seconds?.toFixed?.(1) ?? ((Date.now() - since) / 1000).toFixed(1)}s | tokens ${JSON.stringify(result.tokens)} | workspace ${result.workspace_uuid}`);
     if (result.summary) console.log(`\n${result.summary}`);
   } finally {
     await end();

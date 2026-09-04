@@ -1,20 +1,17 @@
 'use strict';
 
 /**
- * Study agent (ASO v2). The model plans a graph of operations once; independent nodes run in
- * parallel; each node's output becomes an artifact whose derived_from links are the graph's edges,
- * so the provenance drawing is the study itself. A bounded number of reflection rounds may add
- * nodes after seeing the results, and a report cites nodes by id. The model only chooses operations
- * and their arguments: every value, gene list and figure is produced by a tool.
+ * The study loop (aso_hpa). One prompt, one loop. Every turn the model sees the goal, its own plan,
+ * every artifact in the workspace and where it came from, what is still running and what came
+ * back since its last turn; then it calls tools: the same agents the chat offers (taken from the
+ * orchestrator), table operations on artifacts, plan and note updates, skip (wait) and finish.
+ * Every tool result is an artifact linked to its inputs. A tool that returns wakes the loop.
  */
 
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { inference, getActiveModel } = require('../../inference/gateway');
-const { jsonCall } = require('../../inference/jsonCall');
 const { platformConfig } = require('../../policy/config');
-const deepResearchTrail = require('./deepResearchTrail');
-const investigatorTrail = require('./investigatorTrail');
 const tools = require('../aso/studyTools');
 const geneData = require('../../hpa/geneDataAdapter');
 const searchAdapter = require('../../hpa/searchAdapter');
@@ -25,87 +22,139 @@ const { renderCharts } = require('../aso/pipelines/renderCharts');
 const { resolveAgentMode } = require('../../hpa/agentMode');
 const { FILES } = require('../../hpa/localData');
 
-const MAX_REFLECTIONS = 2;      // rounds in which the model may add nodes after seeing results
-const MAX_NODES = 60;           // graph size cap
-const MAX_LOOKUP_GENES = 200;   // genes one lookup node may ask about
-const FULL_ROWS = 30;           // a node with at most this many rows is shown whole to the model
-const SAMPLE_ROWS = 8;          // otherwise this many
-const SAMPLE_CELL = 80;         // characters per shown cell
+const MAX_TURNS_DEFAULT = 40;     // platform_config.aso_max_steps overrides
+const MAX_STALLS = 2;             // turns in a row with nothing to do before the loop ends
+const WAKE_DEBOUNCE_MS = 300;     // completions this close together wake the loop once
+const JOB_WAIT_MS = 15 * 60_000;  // longest the loop waits for a running agent
+const SAMPLE_ROWS = 2;            // rows of each artifact shown in the context
+const INSPECT_MAX = 40;           // rows inspect may show
+const CELL = 60;                  // characters per shown cell
 
-const REQUIRED_ARGS = { search: ['question'], lookup: ['question'], measure: ['table', 'value_column'], filter: ['where'], rank: ['by'], top_per_group: ['by'], compute: ['name', 'expr'], chart: ['type'] };
-const KIND_FOR_OP = { search: 'gene_list', lookup: 'measurement', measure: 'measurement', pivot: 'analysis_matrix', rank: 'analysis_rank', aggregate: 'analysis_aggregate' };
+// ---- tools of the study itself ---------------------------------------------------------------------
 
-function planSystem(allowSearch, dataOverview, searchOverview, masterEntry) {
-  const catalog = tools.TOOL_CATALOG.filter(t => allowSearch || t.name !== 'search');
-  return `You design a study as a graph of operations that answers a research goal from a database. You never compute, guess or state a value yourself: every number, gene list and figure comes from an operation applied to earlier nodes.
+const ARTIFACT_ARG = { type: 'string', description: 'an artifact id from the ARTIFACTS block, such as a3' };
+const STUDY_TOOLS = [
+  { name: 'set_plan', description: 'Write or rewrite the plan: a short list of high-level items (what to find out, not which operation). Write one first when the workspace is empty and there is no plan; rewrite it when the study changes direction.',
+    parameters: { type: 'object', properties: { items: { type: 'array', items: { type: 'string' } } }, required: ['items'] } },
+  { name: 'update_plan', description: 'Mark one plan item todo, doing, done or dropped, with an optional note on why.',
+    parameters: { type: 'object', properties: { item: { type: 'integer', description: '1-based item number' }, status: { type: 'string', enum: ['todo', 'doing', 'done', 'dropped'] }, note: { type: 'string' } }, required: ['item', 'status'] } },
+  { name: 'note', description: 'Write a short note to yourself; it stays in the NOTES block of every later turn.',
+    parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
+  { name: 'measure', description: 'Read a value from a named table of the database for every gene of an artifact: exact, no model. With an entity ("liver") one row per gene; without, one row per gene per entity. Name the value column with "as" (liver_nTPM) so later steps can refer to it.',
+    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, table: { type: 'string' }, value_column: { type: 'string' }, entity_column: { type: 'string' }, entity: { type: 'string' }, as: { type: 'string' } }, required: ['artifact', 'table', 'value_column'] } },
+  { name: 'union', description: 'Genes in either artifact, one row per gene.', parameters: { type: 'object', properties: { a: ARTIFACT_ARG, b: ARTIFACT_ARG }, required: ['a', 'b'] } },
+  { name: 'intersect', description: 'The rows of a whose gene is also in b.', parameters: { type: 'object', properties: { a: ARTIFACT_ARG, b: ARTIFACT_ARG }, required: ['a', 'b'] } },
+  { name: 'difference', description: 'The rows of a whose gene is absent from b.', parameters: { type: 'object', properties: { a: ARTIFACT_ARG, b: ARTIFACT_ARG }, required: ['a', 'b'] } },
+  { name: 'concat', description: 'All rows of a followed by all rows of b; no matching on gene (for tables that share no key).', parameters: { type: 'object', properties: { a: ARTIFACT_ARG, b: ARTIFACT_ARG }, required: ['a', 'b'] } },
+  { name: 'join', description: 'Each row of a combined with every row of b for the same gene (or the "on" column); b\'s clashing column names get _2.',
+    parameters: { type: 'object', properties: { a: ARTIFACT_ARG, b: ARTIFACT_ARG, how: { type: 'string', enum: ['inner', 'left'] }, on: { type: 'string' } }, required: ['a', 'b'] } },
+  { name: 'filter', description: 'Keep the rows of an artifact that satisfy every clause. Numbers compare numerically, text by case-insensitive equality or containment.',
+    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, where: { type: 'array', items: { type: 'object', properties: { column: { type: 'string' }, op: { type: 'string', enum: ['>', '>=', '<', '<=', '=', '!=', 'contains', 'in'] }, value: {} }, required: ['column', 'op'] } } }, required: ['artifact', 'where'] } },
+  { name: 'select', description: 'Keep and rename columns; add a constant column to label rows.',
+    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, columns: { type: 'array', items: { type: 'string' } }, rename: { type: 'object', additionalProperties: { type: 'string' } }, add: { type: 'object', additionalProperties: {} } }, required: ['artifact'] } },
+  { name: 'rank', description: 'Sort the rows by a numeric column (adds rank), optionally cut to the top N.',
+    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, by: { type: 'string' }, order: { type: 'string', enum: ['desc', 'asc'] }, top: { type: 'integer' } }, required: ['artifact', 'by'] } },
+  { name: 'top_per_group', description: 'Keep the n highest (or lowest) rows within each group: for example the entity with the highest value for every gene.',
+    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, group_by: { type: 'string' }, by: { type: 'string' }, n: { type: 'integer' }, order: { type: 'string', enum: ['desc', 'asc'] } }, required: ['artifact', 'by'] } },
+  { name: 'aggregate', description: 'Summarise a column (count, sum, mean, median, min, max), optionally per group.',
+    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, group_by: { type: 'string' }, column: { type: 'string' }, metrics: { type: 'array', items: { type: 'string', enum: ['count', 'sum', 'mean', 'median', 'min', 'max'] } } }, required: ['artifact', 'metrics'] } },
+  { name: 'compute', description: 'Add a column computed from one or two numeric columns: "a / b", "a - b", "log2(a / b)", "a + b", "a * b", "abs(a)".',
+    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, name: { type: 'string' }, expr: { type: 'string' } }, required: ['artifact', 'name', 'expr'] } },
+  { name: 'pivot', description: 'Turn long rows (gene, entity, value) into a matrix; cap rows and columns for a readable heatmap.',
+    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, row: { type: 'string' }, column: { type: 'string' }, value: { type: 'string' }, top: { type: 'integer' }, top_columns: { type: 'integer' } }, required: ['artifact'] } },
+  { name: 'chart', description: 'Draw an artifact as a figure. A heatmap takes a pivot output; the other types take rows with the named columns.',
+    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, type: { type: 'string', enum: ['bar', 'lollipop', 'dot_plot', 'diverging_bar', 'grouped_bar', 'scatter', 'bubble', 'heatmap', 'radar', 'line', 'volcano'] }, x: { type: 'string' }, y: { type: 'string' }, group: { type: 'string' }, size: { type: 'string' }, title: { type: 'string' }, x_label: { type: 'string' }, y_label: { type: 'string' } }, required: ['artifact', 'type'] } },
+  { name: 'inspect', description: `List more rows of an artifact (up to ${INSPECT_MAX}) under it in ARTIFACTS, where they stay for every later turn.`,
+    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, rows: { type: 'integer' } }, required: ['artifact'] } },
+  { name: 'skip', description: 'Nothing useful can be done until something running returns. Say why. You are woken again when it returns.',
+    parameters: { type: 'object', properties: { reason: { type: 'string' } }, required: ['reason'] } },
+  { name: 'finish', description: 'The goal is met, or cannot be met further. Give the summary: the findings with the artifact ids they rest on, and what could not be done.',
+    parameters: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] } }
+];
+const STUDY_TOOL_NAMES = new Set(STUDY_TOOLS.map(t => t.name));
+const TABLE_TOOLS = new Set(['measure', 'union', 'intersect', 'difference', 'concat', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'compute', 'pivot', 'chart']);
 
-Operations:
-${catalog.map(t => `- ${t.name}: ${t.description} Inputs: ${t.inputs}. Args: ${JSON.stringify(t.args)}. Produces: ${t.produces}.`).join('\n')}
+function systemPrompt(dataOverview, searchOverview) {
+  return `You run a study over a database for a researcher. You work in turns. Each turn you see the goal, your plan, every artifact in the workspace with where it came from, what is still running, and what came back since your last turn. You act by calling tools; you never state a value, gene or count yourself: a tool produces it and it becomes an artifact.
 
-Row shapes: search rows carry gene, ensembl and every non-empty column of the "${masterEntry?.title || 'summary'}" table below; measure rows carry gene, ensembl, entity and the value under the name given in "as" (default value); lookup rows carry gene, ensembl, found, answer, the value under "as" (default value), entity, table. A join keeps the first input's columns and adds the second's, suffixing a clashing name with _2; give each measure its own "as" name (liver_nTPM, pancreas_nTPM) so later steps can name columns that exist. Every later step's column names are checked against its real input before it runs.
+How the turns work:
+- If the workspace is empty and there is no plan, write the plan first with set_plan: a few high-level items, what to find out, not which operation. Keep it honest: mark items done when an artifact shows they are, drop items that turn out wrong, rewrite the plan when the study changes direction.
+- Call as many tools in one turn as can run independently; they run in parallel. Agents (deep_research_hpa, investigator_hpa, check_inclusion_hpa, dictionary_expert_hpa) run in the background and you are woken when each returns. Table tools return at once.
+- When nothing useful can be done until something running returns, call skip with the reason. Do not repeat a tool that is still running.
+- Refer to artifacts by their id. Use only column names an artifact actually has (they are listed). Name measure outputs with "as".
+- deep_research_hpa finds gene sets from a description and builds the database query itself. investigator_hpa answers one question about one gene and cites the row it rests on; use measure instead when the value sits in a table column you can name, it is exact and free.
+- A tool that fails tells you why under SINCE YOUR LAST TURN; fix the call rather than repeating it.
+- inspect lists more rows of an artifact under it in ARTIFACTS, where they stay; one inspect per artifact is enough. Two rows are always shown.
+- Do not verify a table tool's output with an agent; table tools are exact. If a value looks wrong, check the arguments (the entity, the column, the table) and call the tool again.
+- Call finish when the goal is met, with a summary that cites artifact ids; also finish, saying what is missing, when the database cannot express what is left.
 
-What "search" can express (the database's search fields; the search agent fills them in itself):
+What a search can express (the search agent fills the fields in itself):
 ${searchOverview}
 
-Tables that "measure" can read, with their columns:
-${dataOverview}
-
-Return JSON:
-{"understanding": "the goal in your own words",
- "nodes": [{"id": "n1", "op": "search", "inputs": [], "args": {}, "label": "short name for this node", "why": "one line"}],
- "cannot": [{"requirement": "a requirement no operation can express", "why": "..."}]}
-
-Rules:
-- inputs are ids of earlier nodes; their number must match the operation's input count.
-- search finds gene sets; combine sets with union, intersect, difference; take exact values with measure; ask judgement questions with lookup; derive with compute, aggregate, rank, filter, pivot; draw with chart.
-- Use measure when the value sits in a table column you can name; use lookup only when the question needs reading and judgement.
-- Column names in args must be columns the input actually has.
-- Independent nodes run in parallel: make the graph as wide as the goal allows, one specific question per search.
-- Every figure is its own chart node fed by the node holding exactly the rows to draw (rank or filter first when a chart would be too crowded).
-- Put anything the operations cannot express in "cannot" instead of approximating it.`;
+Tables that measure can read, with their columns:
+${dataOverview}`;
 }
 
-const REFLECT_SUFFIX = `
+// ---- context rendering -----------------------------------------------------------------------------
 
-You are now reviewing the study in progress: the graph and what each node produced. Decide whether the goal is answered or more nodes are needed: to repair a failed node (a different table, column, question or argument), to follow what the results show, or to add a missing figure. Return JSON {"done": true|false, "assessment": "what the results show so far and what is missing", "nodes": [new nodes with fresh ids; inputs may reference any existing node]}. Do not repeat a node that succeeded and do not add nodes that only restate what exists; return done: true with no nodes when the goal is answered.`;
-
-const REPAIR_SYSTEM = `One operation of a study names columns its input does not have. Return JSON {"args": {...}} with the corrected arguments: keep the operation's intent, name only columns from the list given, and change nothing else.`;
-
-const REPORT_SYSTEM = `Write the report of a completed study in Markdown. You are given the goal and every node with what it produced: row counts, columns, its rows or a sample of them, or its error. Every statement of fact ends with the id of the node it comes from, like [n4]. Use only values that appear in the node outputs; when only a sample of a node is shown, say so and point to the node for the rest. Sections: "Summary" (answers the goal in a few sentences), "Findings" (one bullet per line of evidence, each with its node), "Methods" (how the graph answered the goal, in words, naming the operations), "Limitations" (failed or blocked nodes, requirements the database could not express, sampling). Do not invent numbers or genes. Return JSON {"title": "a short title", "report_md": "the report"}.`;
-
-// ---- plan validation -----------------------------------------------------------------------------
-
-function validateNodes(rawNodes, existingIds, allowSearch) {
-  const errors = [];
-  const ids = new Set(existingIds);
-  const nodes = [];
-  if (!Array.isArray(rawNodes)) return { errors: ['"nodes" must be a list'], nodes };
-  for (const raw of rawNodes) {
-    const n = {
-      id: String(raw?.id || '').trim(), op: String(raw?.op || raw?.tool || '').trim(),
-      inputs: Array.isArray(raw?.inputs) ? raw.inputs.map(String) : [],
-      args: raw?.args && typeof raw.args === 'object' ? raw.args : {},
-      label: String(raw?.label || raw?.id || '').slice(0, 80), why: String(raw?.why || '')
-    };
-    const tool = tools.TOOL_CATALOG.find(t => t.name === n.op);
-    if (!n.id) { errors.push('a node has no id'); continue; }
-    if (!/^[A-Za-z0-9_.-]{1,40}$/.test(n.id)) errors.push(`${n.id}: ids are letters, digits, _ . - (at most 40)`);
-    if (ids.has(n.id)) errors.push(`duplicate id ${n.id}`);
-    if (!tool) errors.push(`${n.id}: unknown operation "${n.op}"`);
-    else {
-      if (!allowSearch && n.op === 'search') errors.push(`${n.id}: search is not allowed in this study`);
-      if (n.inputs.length !== tool.inputs) errors.push(`${n.id}: ${n.op} takes ${tool.inputs} input(s), got ${n.inputs.length}`);
-      for (const a of REQUIRED_ARGS[n.op] || []) if (n.args[a] === undefined || n.args[a] === '') errors.push(`${n.id}: ${n.op} needs args.${a}`);
-    }
-    for (const i of n.inputs) if (!ids.has(i)) errors.push(`${n.id}: input ${i} is not an earlier node`);
-    ids.add(n.id);
-    nodes.push(n);
-  }
-  if (ids.size > MAX_NODES) errors.push(`too many nodes (limit ${MAX_NODES})`);
-  return { errors, nodes };
+function cell(v) {
+  const s = v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+  return s.length > CELL ? `${s.slice(0, CELL - 1)}…` : s;
 }
 
-// ---- node execution ------------------------------------------------------------------------------
+function sampleLines(rows, columns, n) {
+  const cols = columns.slice(0, 7);
+  return rows.slice(0, n).map(r => cols.map(c => cell(r[c])).join(' | '));
+}
+
+function describeArgs(args) {
+  return Object.entries(args || {}).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ');
+}
+
+function artifactLine(a) {
+  const lines = [`${a.id}  ${a.kind.padEnd(7)} "${a.label}"  ${a.size}`];
+  lines.push(`    from ${a.tool}(${describeArgs(a.args)})${a.inputs.length ? `  reads ${a.inputs.join(', ')}` : ''}`);
+  if (a.meta?.search_url) lines.push(`    ${a.meta.query ? a.meta.query + '  ' : ''}${a.meta.search_url}`);
+  if (a.meta?.not_expressible?.length) lines.push(`    not expressible: ${a.meta.not_expressible.join('; ')}`);
+  if (a.columns?.length) lines.push(`    columns ${a.columns.slice(0, 14).join(', ')}${a.columns.length > 14 ? `, … (${a.columns.length})` : ''}`);
+  if (a.rows?.length) for (const l of sampleLines(a.rows, a.columns, a.shown || SAMPLE_ROWS)) lines.push(`    ${l}`);
+  if (a.shown && a.rows && a.rows.length > a.shown) lines.push(`    … ${a.rows.length - a.shown} more rows`);
+  if (a.text) lines.push(`    ${cell(a.text).slice(0, 300)}`);
+  return lines.join('\n');
+}
+
+function renderContext(state, turn, startedAt) {
+  const plan = state.plan.length
+    ? state.plan.map((p, i) => `${i + 1}. [${p.status === 'done' ? 'done' : p.status === 'doing' ? 'doing' : p.status === 'dropped' ? 'dropped' : ' '}]  ${p.text}${p.note ? `  (${p.note})` : ''}`).join('\n')
+    : 'No plan yet. The workspace is empty. Start by writing one with set_plan.';
+  const artifacts = state.artifacts.length ? state.artifacts.map(artifactLine).join('\n') : '(none)';
+  const running = state.running.size
+    ? [...state.running.values()].map(j => `${j.id}  ${j.tool}(${describeArgs(j.args)})  ${Math.round((Date.now() - j.startedAt) / 1000)} s`).join('\n')
+    : '(nothing)';
+  const recent = state.recent.length ? state.recent.map(r => `- ${r}`).join('\n') : '(nothing new)';
+  const notes = state.notes.length ? state.notes.map(n => `- ${n}`).join('\n') : '(none)';
+  return `GOAL
+${state.goal}
+
+PLAN  (yours; high level; cross items off with update_plan; rewrite with set_plan)
+${plan}
+
+ARTIFACTS  (everything in the workspace; refer to them by id)
+${artifacts}
+
+RUNNING  (started by you, not back yet; you are woken when each returns)
+${running}
+
+SINCE YOUR LAST TURN
+${recent}
+
+NOTES
+${notes}
+
+turn ${turn} · ${Math.round((Date.now() - startedAt) / 1000)} s elapsed · ${state.toolCalls} tools called · ${state.failed} failed`;
+}
+
+// ---- artifacts from tool results ---------------------------------------------------------------------
 
 function normalizeSearchRow(r) {
   const out = { gene: r.Gene ?? r.gene ?? null, ensembl: r.Ensembl ?? r.ensembl ?? null };
@@ -116,314 +165,249 @@ function normalizeSearchRow(r) {
   return out;
 }
 
-function rowsOf(input, nodeId) {
-  if (input?.output?.rows) return input.output.rows;
-  if (input?.output?.matrix) throw new Error(`${nodeId}: input ${input.id} is a matrix; only a heatmap chart can take it`);
-  if (input?.output?.figure) throw new Error(`${nodeId}: input ${input.id} is a figure and has no rows`);
-  throw new Error(`${nodeId}: input ${input?.id} has no rows`);
+function scalarRow(obj) {
+  const row = {};
+  for (const [k, v] of Object.entries(obj || {})) if (v === null || ['string', 'number', 'boolean'].includes(typeof v)) row[k] = v;
+  return row;
 }
 
-async function parallelMap(items, limit, fn) {
-  const out = new Array(items.length);
-  let next = 0;
-  const worker = async () => { while (next < items.length) { const i = next++; out[i] = await fn(items[i], i); } };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
-  return out;
-}
-
-// The columns an operation's arguments name, checked against the real input before it runs.
-function columnRefs(op, args) {
-  switch (op) {
-    case 'filter': return (Array.isArray(args.where) ? args.where : []).map(w => w?.column);
-    case 'select': return [...(Array.isArray(args.columns) ? args.columns : []), ...Object.keys(args.rename || {})];
-    case 'rank': return [args.by];
-    case 'top_per_group': return [args.group_by || 'gene', args.by];
-    case 'aggregate': return [args.group_by, args.column];
-    case 'compute': return String(args.expr || '').replace(/log2|abs/g, '').split(/[-+*/()]/).map(s => s.trim()).filter(s => s && !/^[\d.]+$/.test(s));
-    case 'pivot': return [args.row || 'gene', args.column || 'entity', args.value || 'value'];
-    case 'chart': return args.type === 'heatmap' ? [] : [args.x, args.y, args.group, args.size];
-    case 'join': return args.on ? [args.on] : [];
-    default: return [];
+// What an agent's result becomes: rows for a gene set or an answer, text for a lookup.
+function agentArtifact(tool, args, result) {
+  if (tool === 'deep_research_hpa') {
+    if (result?.status !== 'ok') throw new Error(result?.error || 'search failed');
+    const r = result.result || {};
+    return { kind: 'data', label: String(args.goal || 'search').slice(0, 80), rows: (r.rows || []).map(normalizeSearchRow), meta: { search_url: r.search_urls?.[0] || null, query: r.plan || null, not_expressible: (r.not_expressible || []).map(c => c.requirement), mode: r.mode || null } };
   }
-}
-
-const ROW_OPS = new Set(['filter', 'select', 'rank', 'top_per_group', 'aggregate', 'compute', 'pivot', 'chart', 'join', 'measure', 'lookup']);
-
-// Arguments that name columns the input does not have are repaired once, from the real columns.
-async function checkColumns(node, args, rows, ctx) {
-  const missing = [...new Set(columnRefs(node.op, args).filter(c => c && !tools.findColumn(rows, c)))];
-  if (!missing.length) return args;
-  const columns = tools.columnsOf(rows);
-  const repaired = await ctx.repairArgs(node, args, missing, columns, rows.slice(0, 2));
-  const still = [...new Set(columnRefs(node.op, repaired).filter(c => c && !tools.findColumn(rows, c)))];
-  if (still.length) throw new Error(`${node.op}: no column named "${still[0]}" (columns: ${columns.slice(0, 20).join(', ')})`);
-  return repaired;
-}
-
-async function runNode(node, inputs, ctx) {
-  let args = node.args || {};
-  const first = inputs[0];
-  if (node.op === 'search') {
-    const r = await deepResearchTrail({ goal: String(args.question), mode: ctx.mode }, { onStep: ctx.forward(node.id), includeRows: true });
-    ctx.addTokens(r.tokens);
-    if (r.status !== 'ok') throw new Error(r.error || 'search failed');
-    return { rows: (r.result.rows || []).map(normalizeSearchRow), meta: { search_url: r.result.search_urls[0], query: r.result.plan, trail: r.result.trail, not_expressible: r.result.not_expressible, mode: r.result.mode, hpa_version: r.result.hpa_version } };
+  if (tool === 'investigator_hpa') {
+    if (result?.error && result.found !== true) throw new Error(result.error);
+    return { kind: 'answer', label: `${result.gene || args.gene}: ${String(args.question || '').slice(0, 60)}`, rows: [{ gene: result.gene || args.gene, ensembl: result.ensembl || null, question: args.question || '', found: result.found === true, answer: result.answer || '', value: result.extracted_value ?? null, entity: result.exact_label ?? null, table: result.source_section || null, cited_row: result.cited_row || null }], meta: {} };
   }
-  const rows = ROW_OPS.has(node.op) && !(node.op === 'chart' && first?.output?.matrix) ? rowsOf(first, node.id) : null;
-  // An empty input yields an empty output rather than a failure over columns that never existed.
-  if (rows && !rows.length) {
-    if (node.op === 'chart') throw new Error(`${node.id}: nothing to draw, ${first.id} has no rows`);
-    if (node.op === 'pivot') return { matrix: { matrix: [], row_labels: [], col_labels: [] }, meta: { note: `${first.id} had no rows` } };
-    return { rows: [], meta: { note: `${first.id} had no rows` } };
+  if (tool === 'check_inclusion_hpa') {
+    return { kind: 'answer', label: `${args.gene} in search result?`, rows: [scalarRow(result)], meta: {} };
   }
-  if (rows) args = await checkColumns(node, args, rows, ctx);
-  switch (node.op) {
-    case 'lookup': {
-      const cap = Math.min(MAX_LOOKUP_GENES, Number(args.max_genes) > 0 ? Number(args.max_genes) : MAX_LOOKUP_GENES);
-      const valueName = String(args.as || '').trim() || 'value';
-      const genes = rows.slice(0, cap);
-      const out = await parallelMap(genes, ctx.parallel, async g => {
-        const question = String(args.question).replace(/\{gene\}/g, g.gene || g.ensembl);
-        const r = await investigatorTrail({ gene: g.ensembl || g.gene, question, mode: ctx.mode }, { onStep: ctx.forward(`${node.id}:${g.gene || g.ensembl}`) });
-        ctx.addTokens(r.tokens);
-        return { gene: r.gene || g.gene, ensembl: r.ensembl || g.ensembl || null, found: r.found === true, answer: r.answer || '', [valueName]: r.extracted_value ?? null, entity: r.exact_label ?? null, table: r.source_section || null, cited_row: r.cited_row || null, confidence: r.confidence || null, ...(r.error ? { error: r.error } : {}) };
-      });
-      return { rows: out, meta: { question: args.question, asked: genes.length, found: out.filter(r => r.found).length } };
-    }
-    case 'measure': return { rows: await tools.measure(rows, args, ctx.parallel), meta: { table: args.table, value_column: args.value_column, entity_column: args.entity_column || null, entity: args.entity || null } };
-    case 'union': case 'intersect': case 'difference': case 'concat': return { rows: tools.setOp(node.op, rowsOf(inputs[0], node.id), rowsOf(inputs[1], node.id), args.on || null) };
-    case 'join': return { rows: tools.join(rows, rowsOf(inputs[1], node.id), args.how, args.on || null) };
-    case 'filter': return { rows: tools.applyWhere(rows, args.where) };
-    case 'select': return { rows: tools.select(rows, args.columns, args.rename || {}, args.add || {}) };
-    case 'rank': return { rows: tools.rank(rows, args.by, args.order, Number(args.top) || 0) };
-    case 'top_per_group': return { rows: tools.topPerGroup(rows, args) };
-    case 'aggregate': return { rows: tools.aggregate(rows, args) };
-    case 'compute': return { rows: tools.compute(rows, String(args.name), String(args.expr)) };
-    case 'pivot': return { matrix: tools.pivot(rows, args) };
-    case 'chart': return { figure: tools.chartSpec(args, first?.output?.matrix ? first.output.matrix : rows) };
-    default: throw new Error(`${node.id}: unknown operation ${node.op}`);
-  }
+  const text = [result?.summary, result?.answer, result?.content, result?.text].find(v => typeof v === 'string') || JSON.stringify(scalarRow(result));
+  return { kind: 'note', label: String(args.topic || args.question || tool).slice(0, 80), rows: [], text: String(text).slice(0, 4000), meta: { images: Array.isArray(result?.images) ? result.images.length : 0 } };
 }
 
-async function persistNode(node, out, inputs, ctx) {
-  const { workspace, register } = ctx;
-  const sources = inputs.map(i => i.artifact_uuid).filter(Boolean);
-  const base = { workspaceId: workspace.id, artifactsDir: workspace.artifactsDir };
-  if (out.figure) {
-    const spec = await register({ ...base, kind: 'figure', format: 'json', schemaJson: { type: 'chart_spec' }, provenance: { tool: 'chart', sources, purpose: node.label },
-      payload: { charts: [out.figure], node_id: node.id, label: node.label, args: node.args, provenance: { tool: 'chart', purpose: node.label, sources } } });
-    // Each node renders in its own directory and the image takes the node's name, so parallel
-    // chart nodes never race for a file name.
-    const renderDir = path.join(workspace.workspaceDir, 'render', node.id);
-    await fs.mkdir(renderDir, { recursive: true });
-    const rendered = await renderCharts(spec.storageUri, renderDir);
-    const images = [];
-    for (const [i, img] of (rendered?.images || []).entries()) {
-      const target = path.join(workspace.artifactsDir, `${node.id}${i ? `_${i + 1}` : ''}.png`);
-      await fs.rename(img, target);
-      const a = await register({ ...base, kind: 'figure', format: 'png', schemaJson: { type: 'image' }, provenance: { tool: 'chart', source: spec.artifactUuid, purpose: node.label }, payload: null, storageUriOverride: target, skipWrite: true });
-      images.push({ artifact_uuid: a.artifactUuid, path: target });
-    }
-    if (!images.length) throw new Error(`${node.id}: the chart did not render`);
-    return { artifact_uuid: spec.artifactUuid, storage_uri: spec.storageUri, images };
-  }
-  const provenance = { tool: node.op, purpose: node.label, sources, ...(out.meta || {}) };
-  const payload = out.matrix
-    ? { node_id: node.id, op: node.op, label: node.label, args: node.args, row_count: out.matrix.row_labels.length, column_count: out.matrix.col_labels.length, ...out.matrix, provenance }
-    : { node_id: node.id, op: node.op, label: node.label, args: node.args, row_count: out.rows.length, columns: tools.columnsOf(out.rows), rows: out.rows, provenance };
-  const a = await register({ ...base, kind: KIND_FOR_OP[node.op] || `analysis_${node.op}`, format: 'json', schemaJson: { type: node.op, columns: payload.columns || null }, provenance: { tool: node.op, sources, purpose: node.label }, payload });
-  return { artifact_uuid: a.artifactUuid, storage_uri: a.storageUri, images: [] };
-}
+// ---- the loop --------------------------------------------------------------------------------------
 
-// Runs every node whose inputs are complete, up to the parallel limit, until nothing can run.
-async function runGraph(nodes, state, ctx) {
-  const pending = nodes.filter(n => !state.outputs[n.id] && !state.failed[n.id]);
-  const running = new Map();
-  const execute = async n => {
-    const inputs = n.inputs.map(i => ({ id: i, output: state.outputs[i].output, artifact_uuid: state.outputs[i].artifact_uuid }));
-    const t0 = Date.now();
-    await ctx.log('node.start', { node: n.id, op: n.op, label: n.label, inputs: n.inputs, args: n.args }, n.id);
-    try {
-      const out = await runNode(n, inputs, ctx);
-      const reg = await persistNode(n, out, inputs, ctx);
-      state.outputs[n.id] = { output: out, meta: out.meta || null, artifact_uuid: reg.artifact_uuid, storage_uri: reg.storage_uri, images: reg.images, ms: Date.now() - t0 };
-      state.artifacts.push({ artifact_uuid: reg.artifact_uuid, kind: KIND_FOR_OP[n.op] === 'gene_list' ? 'dataset' : n.op === 'chart' ? 'figure' : ['lookup', 'measure'].includes(n.op) ? 'measurement' : 'analysis', tool: n.op, summary: { node: n.id, label: n.label, row_count: out.rows ? out.rows.length : out.matrix ? out.matrix.row_labels.length : undefined }, storage_uri: reg.storage_uri });
-      for (const img of reg.images) state.artifacts.push({ artifact_uuid: img.artifact_uuid, kind: 'figure', tool: 'chart', summary: { node: n.id, label: n.label, image: img.path }, storage_uri: img.path });
-      // What the live view shows for a finished node: counts, a few columns and rows, the figure names.
-      const sample = out.rows ? compactRows(out.rows.slice(0, 3)) : null;
-      await ctx.log('node.done', {
-        node: n.id, op: n.op, label: n.label, ms: Date.now() - t0, artifact_uuid: reg.artifact_uuid,
-        rows: out.rows ? out.rows.length : undefined,
-        columns: out.rows ? tools.columnsOf(out.rows).slice(0, 12) : undefined,
-        sample: sample ? sample.lines.map(l => l.split(' | ')) : undefined,
-        sample_columns: sample ? sample.columns : undefined,
-        matrix: out.matrix ? [out.matrix.row_labels.length, out.matrix.col_labels.length] : undefined,
-        images: reg.images.map(img => path.basename(img.path)),
-        ...(out.meta?.search_url ? { search_url: out.meta.search_url, query: out.meta.query } : {}),
-        ...(out.meta?.question ? { asked: out.meta.asked, found: out.meta.found } : {})
-      }, n.id);
-    } catch (err) {
-      state.failed[n.id] = err.message;
-      await ctx.log('node.failed', { node: n.id, op: n.op, label: n.label, error: err.message, ms: Date.now() - t0 }, n.id);
-    }
-  };
-  while (pending.length || running.size) {
-    for (const n of [...pending]) {
-      if (running.size >= ctx.parallel) break;
-      const failedInput = n.inputs.find(i => state.failed[i]);
-      if (failedInput) { state.failed[n.id] = `blocked: input ${failedInput} failed`; pending.splice(pending.indexOf(n), 1); await ctx.log('node.blocked', { node: n.id, input: failedInput }, n.id); continue; }
-      if (n.inputs.every(i => state.outputs[i])) {
-        pending.splice(pending.indexOf(n), 1);
-        const p = execute(n).finally(() => running.delete(n.id));
-        running.set(n.id, p);
-      }
-    }
-    if (!running.size) {
-      for (const n of pending) { state.failed[n.id] = 'blocked: an input never completed'; await ctx.log('node.blocked', { node: n.id }, n.id); }
-      break;
-    }
-    await Promise.race(running.values());
-  }
-}
-
-// ---- what the model sees of the results ----------------------------------------------------------
-
-function cell(v) {
-  const s = v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
-  return s.length > SAMPLE_CELL ? `${s.slice(0, SAMPLE_CELL)}…` : s;
-}
-
-function compactRows(rows) {
-  const cols = tools.columnsOf(rows);
-  const preferred = ['gene', 'ensembl', 'entity', 'value', 'answer', 'found', 'table', 'rank', 'count', 'mean', 'median', 'min', 'max', 'sum'];
-  const shown = [...preferred.filter(c => cols.includes(c)), ...cols.filter(c => !preferred.includes(c))].slice(0, 12);
-  const sampled = rows.length > FULL_ROWS;
-  const pick = sampled ? rows.slice(0, SAMPLE_ROWS) : rows;
-  return { columns: shown, lines: pick.map(r => shown.map(c => cell(r[c])).join(' | ')), sampled };
-}
-
-function outcomesText(state) {
-  return state.nodes.map(n => {
-    const o = state.outputs[n.id];
-    const head = `[${n.id}] ${n.op} "${n.label}" inputs=${n.inputs.join(',') || 'none'} args=${JSON.stringify(n.args)}`;
-    if (!o) return `${head}\n  FAILED: ${state.failed[n.id] || 'not run'}`;
-    if (o.output.figure) return `${head}\n  figure rendered (${o.images.length} image): ${o.output.figure.type}, "${o.output.figure.title}"`;
-    if (o.output.matrix) return `${head}\n  matrix ${o.output.matrix.row_labels.length} rows × ${o.output.matrix.col_labels.length} columns; rows: ${o.output.matrix.row_labels.slice(0, 12).join(', ')}${o.output.matrix.row_labels.length > 12 ? ', …' : ''}; columns: ${o.output.matrix.col_labels.slice(0, 12).join(', ')}${o.output.matrix.col_labels.length > 12 ? ', …' : ''}`;
-    const rows = o.output.rows;
-    const c = compactRows(rows);
-    const meta = o.meta?.search_url ? `\n  query: ${o.meta.query}\n  url: ${o.meta.search_url}${o.meta.not_expressible?.length ? `\n  not expressible: ${o.meta.not_expressible.map(x => x.requirement).join('; ')}` : ''}` : o.meta?.question ? `\n  asked ${o.meta.asked} genes, ${o.meta.found} answered with a cited row` : '';
-    const cols = tools.columnsOf(rows);
-    return `${head}${meta}\n  ${rows.length} rows; columns: ${cols.slice(0, 30).join(', ')}${cols.length > 30 ? `, … (${cols.length})` : ''}\n  ${c.sampled ? `first ${SAMPLE_ROWS} rows` : 'all rows'} (${c.columns.join(' | ')}):\n  ${c.lines.join('\n  ') || '(none)'}`;
-  }).join('\n\n');
-}
-
-// ---- the study -----------------------------------------------------------------------------------
-
-async function asoStudy({ goal, allow_search = true, mode: requestedMode, parallel_limit }, ctx = {}) {
+async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
   const db = ctx.db;
-  if (!db) throw new Error('The study agent requires db in context.');
+  if (!db) throw new Error('The study requires db in context.');
   getActiveModel();
+  const orchestrator = require('../orchestrator'); // at call time: the orchestrator requires this module too
   const config = platformConfig();
-  const parallel = Number(parallel_limit) > 0 ? Number(parallel_limit) : (config.asoParallelLimit || 3);
+  const maxTurns = Number(max_turns) > 0 ? Number(max_turns) : (config.asoMaxSteps || MAX_TURNS_DEFAULT);
   const agentMode = await resolveAgentMode(requestedMode ?? 'offline', [FILES.master]);
   const mode = agentMode.mode;
   const startedAt = Date.now();
   const tokens = { prompt: 0, completion: 0, total: 0 };
-  const stats = { promptTokens: 0, completionTokens: 0, totalTokens: 0, perStep: {} };
-  // Agents report {prompt, completion, total} or {total: {prompt, completion, total}, steps}.
-  const addTokens = t => {
-    const c = t && typeof t.total === 'object' ? t.total : t;
-    if (!c) return;
-    tokens.prompt += Number(c.prompt) || 0; tokens.completion += Number(c.completion) || 0; tokens.total += Number(c.total) || 0;
-  };
+  const addUsage = usage => { tokens.prompt += usage?.prompt_tokens || 0; tokens.completion += usage?.completion_tokens || 0; tokens.total += (usage?.prompt_tokens || 0) + (usage?.completion_tokens || 0); };
 
-  const workspace = await createWorkspace(db, { visitorId: ctx.visitorId, inferenceModelId: getActiveModel().id, requestText: goal, planJson: { goal, mode, hpa_version: agentMode.hpaVersion, allow_search, parallel, version: 'study' } });
+  const workspace = await createWorkspace(db, { visitorId: ctx.visitorId, inferenceModelId: getActiveModel().id, requestText: goal, planJson: { goal, mode, hpa_version: agentMode.hpaVersion, version: 'loop' } });
   inference.assignContext({ workspaceId: workspace.id });
   const logger = createLogger(workspace.logPath);
   const log = async (event, data, step) => {
     if (ctx.onStep) await ctx.onStep({ stage: event, label: event, message: typeof data === 'string' ? data : JSON.stringify(data), step });
     return logger.logEvent({ event, data, step });
   };
-  const forward = prefix => s => log(`agent.${s.stage}`, { node: prefix, label: s.label, message: s.message }, prefix);
-  const state = { nodes: [], outputs: {}, failed: {}, artifacts: [], cannot: [] };
-  // Artifact rows of one workspace are written one at a time: parallel nodes registering at once
-  // deadlock on the workspace's artifact counter.
   let registrations = Promise.resolve();
   const register = args => { const next = registrations.then(() => registerArtifact(db, args)); registrations = next.catch(() => {}); return next; };
-  const repairArgs = async (node, args, missing, columns, sample) => {
-    const user = `Operation: ${node.op}\nArguments: ${JSON.stringify(args)}\nMissing columns: ${missing.join(', ')}\nColumns the input has: ${columns.join(', ')}\nFirst rows: ${JSON.stringify(sample)}`;
-    const fixed = await jsonCall(REPAIR_SYSTEM, user, ctx.onStep, 'repair', stats);
-    const next = fixed && fixed.args && typeof fixed.args === 'object' ? fixed.args : args;
-    await log('node.repair', { node: node.id, op: node.op, missing, columns: columns.slice(0, 20), args_before: args, args_after: next }, node.id);
-    return next;
+
+  const state = { goal, plan: [], artifacts: [], byId: new Map(), running: new Map(), recent: [], notes: [], toolCalls: 0, failed: 0, ids: { a: 0, t: 0 } };
+  const wake = { resolve: null };
+  const wakeUp = () => { if (wake.resolve) { const r = wake.resolve; wake.resolve = null; r(); } };
+  const artifactsSummary = () => state.artifacts.map(a => ({ artifact_uuid: a.uuid, kind: a.kind === 'figure' ? 'figure' : a.kind === 'note' ? 'inspection' : a.kind === 'answer' ? 'measurement' : 'dataset', tool: a.tool, summary: { id: a.id, label: a.label, row_count: a.rows?.length }, storage_uri: a.storageUri }));
+
+  const agentSpecs = orchestrator.getToolSpecs().filter(t => t.function.name !== 'aso_hpa');
+  const agentNames = new Set(agentSpecs.map(t => t.function.name));
+  const toolSpecs = [...agentSpecs, ...STUDY_TOOLS.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }))];
+  const [dataOverview] = await Promise.all([geneData.overview()]);
+  const system = systemPrompt(dataOverview, searchAdapter.overview());
+
+  const get = id => {
+    const a = state.byId.get(String(id || '').trim());
+    if (!a) throw new Error(`no artifact "${id}" (have ${state.artifacts.map(x => x.id).join(', ') || 'none'})`);
+    return a;
   };
-  const nodeCtx = { db, workspace, mode, parallel, log, forward, addTokens, register, repairArgs };
 
-  const finish = async (status, fields) => { await updateWorkspace(db, workspace.id, { status, finishedUnixMs: Date.now(), ...fields }); await logger.close(); };
-  const graphSummary = () => state.nodes.map(n => ({ id: n.id, op: n.op, label: n.label, inputs: n.inputs, status: state.outputs[n.id] ? 'done' : state.failed[n.id] ? 'failed' : 'pending', rows: state.outputs[n.id]?.output?.rows?.length, artifact_uuid: state.outputs[n.id]?.artifact_uuid || null, error: state.failed[n.id] || null, ms: state.outputs[n.id]?.ms }));
+  // Stores a tool's output as an artifact, linked to the artifacts it read.
+  async function addArtifact({ kind, label, rows, matrix, text, tool, args, inputs, meta, figure, toolId }) {
+    const id = `a${++state.ids.a}`;
+    const sources = inputs.map(i => state.byId.get(i)?.uuid).filter(Boolean);
+    const base = { workspaceId: workspace.id, artifactsDir: workspace.artifactsDir };
+    let reg;
+    let images = [];
+    if (kind === 'figure') {
+      reg = await register({ ...base, kind: 'figure', format: 'json', schemaJson: { type: 'chart_spec' }, provenance: { tool: 'chart', sources, purpose: label }, payload: { charts: [figure], node_id: id, label, args, provenance: { tool: 'chart', purpose: label, sources } } });
+      const renderDir = path.join(workspace.workspaceDir, 'render', id);
+      await fs.mkdir(renderDir, { recursive: true });
+      try {
+        const rendered = await renderCharts(reg.storageUri, renderDir);
+        for (const [i, img] of (rendered?.images || []).entries()) {
+          const target = path.join(workspace.artifactsDir, `${id}${i ? `_${i + 1}` : ''}.png`);
+          await fs.rename(img, target);
+          await register({ ...base, kind: 'figure', format: 'png', schemaJson: { type: 'image' }, provenance: { tool: 'chart', source: reg.artifactUuid, purpose: label }, payload: null, storageUriOverride: target, skipWrite: true });
+          images.push(path.basename(target));
+        }
+      } catch (err) {
+        await log('render.failed', { artifact: id, error: err.message });
+      }
+    } else {
+      const columns = rows ? tools.columnsOf(rows) : [];
+      const artifactKind = kind === 'answer' ? 'answer' : kind === 'note' ? 'note' : tool === 'deep_research_hpa' ? 'gene_list' : tool === 'measure' ? 'measurement' : `analysis_${tool}`;
+      const payload = matrix
+        ? { node_id: id, op: tool, label, args, row_count: matrix.row_labels.length, column_count: matrix.col_labels.length, ...matrix, provenance: { tool, purpose: label, sources, ...(meta || {}) } }
+        : { node_id: id, op: tool, label, args, row_count: rows ? rows.length : 0, columns, rows: rows || [], text: text || undefined, provenance: { tool, purpose: label, sources, ...(meta || {}) } };
+      reg = await register({ ...base, kind: artifactKind, format: 'json', schemaJson: { type: tool, columns }, provenance: { tool, sources, purpose: label }, payload });
+    }
+    const columns = rows ? tools.columnsOf(rows) : [];
+    const size = kind === 'figure' ? 'figure' : matrix ? `${matrix.row_labels.length} × ${matrix.col_labels.length} matrix` : kind === 'note' ? 'note' : tool === 'deep_research_hpa' ? `${rows.length} genes` : `${rows.length} rows`;
+    const a = { id, uuid: reg.artifactUuid, storageUri: reg.storageUri, kind, label, size, rows: rows || null, matrix: matrix || null, text: text || null, columns, tool, args, inputs, meta: meta || {}, images, toolId };
+    state.artifacts.push(a);
+    state.byId.set(id, a);
+    return a;
+  }
 
+  const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.size, rows: a.rows ? a.rows.length : undefined, columns: a.columns.slice(0, 12), sample: a.rows ? sampleLines(a.rows, a.columns, 3).map(l => l.split(' | ')) : undefined, sample_columns: a.columns.slice(0, 7), text: a.text ? a.text.slice(0, 600) : undefined, images: a.images, artifact_uuid: a.uuid, search_url: a.meta?.search_url, query: a.meta?.query, inputs: a.inputs });
+
+  // An agent runs in the background through the orchestrator, exactly as a chat message would.
+  function startAgent(tool, args) {
+    const id = `t${++state.ids.t}`;
+    const job = { id, tool, args, startedAt: Date.now(), kind: 'agent' };
+    state.running.set(id, job);
+    state.toolCalls++;
+    const label = String(args.goal || args.question || args.topic || args.gene || tool).slice(0, 80);
+    log('tool.start', { id, tool, kind: 'agent', label, args, inputs: [] }, id);
+    const forward = async s => log(`agent.${s.stage}`, { id, label: s.label, message: s.message }, id);
+    orchestrator.execute(tool, { ...args, mode: args.mode || mode }, { db, visitorId: ctx.visitorId, rawQuery: '', includeRows: true, onStep: forward })
+      .then(async ({ result }) => {
+        const built = agentArtifact(tool, args, result);
+        const a = await addArtifact({ ...built, tool, args, inputs: [], toolId: id });
+        state.recent.push(`${id} ${tool} returned: ${a.id} (${a.size})${a.meta?.search_url ? `, ${a.meta.search_url}` : ''}${a.meta?.not_expressible?.length ? `, not expressible: ${a.meta.not_expressible.join('; ')}` : ''}`);
+        await log('tool.done', { id, tool, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);
+      })
+      .catch(async err => {
+        state.failed++;
+        state.recent.push(`${id} ${tool} failed: ${err.message}`);
+        await log('tool.failed', { id, tool, kind: 'agent', error: err.message, ms: Date.now() - job.startedAt }, id);
+      })
+      .finally(() => { state.running.delete(id); wakeUp(); });
+  }
+
+  // Table tools run at once on the artifacts named in the call.
+  async function runTableTool(tool, args) {
+    const id = `t${++state.ids.t}`;
+    const t0 = Date.now();
+    state.toolCalls++;
+    const inputs = ['artifact', 'a', 'b'].map(k => args[k]).filter(Boolean).map(String);
+    const label = tool === 'chart' ? String(args.title || 'figure').slice(0, 80) : `${tool}(${describeArgs(args).slice(0, 60)})`;
+    await log('tool.start', { id, tool, kind: tool === 'chart' ? 'chart' : 'tool', label, args, inputs }, id);
+    try {
+      const rowsOf = key => { const a = get(args[key]); if (a.matrix) throw new Error(`${a.id} is a matrix; only a heatmap chart can take it`); if (!a.rows) throw new Error(`${a.id} has no rows`); return a.rows; };
+      let out;
+      switch (tool) {
+        case 'measure': out = { rows: await tools.measure(rowsOf('artifact'), args, config.asoParallelLimit || 3) }; break;
+        case 'union': case 'intersect': case 'difference': case 'concat': out = { rows: tools.setOp(tool, rowsOf('a'), rowsOf('b'), args.on || null) }; break;
+        case 'join': out = { rows: tools.join(rowsOf('a'), rowsOf('b'), args.how, args.on || null) }; break;
+        case 'filter': out = { rows: tools.applyWhere(rowsOf('artifact'), args.where) }; break;
+        case 'select': out = { rows: tools.select(rowsOf('artifact'), args.columns, args.rename || {}, args.add || {}) }; break;
+        case 'rank': out = { rows: tools.rank(rowsOf('artifact'), args.by, args.order, Number(args.top) || 0) }; break;
+        case 'top_per_group': out = { rows: tools.topPerGroup(rowsOf('artifact'), args) }; break;
+        case 'aggregate': out = { rows: tools.aggregate(rowsOf('artifact'), args) }; break;
+        case 'compute': out = { rows: tools.compute(rowsOf('artifact'), String(args.name), String(args.expr)) }; break;
+        case 'pivot': out = { matrix: tools.pivot(rowsOf('artifact'), args) }; break;
+        case 'chart': { const a = get(args.artifact); out = { figure: tools.chartSpec(args, a.matrix ? a.matrix : rowsOf('artifact')) }; break; }
+        default: throw new Error(`unknown tool ${tool}`);
+      }
+      const a = await addArtifact({ kind: out.figure ? 'figure' : 'data', label: tool === 'chart' ? label : `${tool} of ${inputs.join(', ')}`, rows: out.rows, matrix: out.matrix, figure: out.figure, tool, args, inputs, toolId: id });
+      state.recent.push(`${id} ${tool} -> ${a.id} (${a.size})`);
+      await log('tool.done', { id, tool, kind: out.figure ? 'chart' : 'tool', artifact: artifactEvent(a), ms: Date.now() - t0 }, id);
+    } catch (err) {
+      state.failed++;
+      state.recent.push(`${id} ${tool}(${describeArgs(args).slice(0, 120)}) failed: ${err.message}`);
+      await log('tool.failed', { id, tool, kind: tool === 'chart' ? 'chart' : 'tool', error: err.message, ms: Date.now() - t0 }, id);
+    }
+  }
+
+  const waitForCompletion = () => new Promise(resolve => {
+    const timer = setTimeout(resolve, JOB_WAIT_MS);
+    wake.resolve = () => { clearTimeout(timer); setTimeout(resolve, WAKE_DEBOUNCE_MS); };
+  });
+
+  let finishSummary = null;
+  let turn = 0;
+  let stalls = 0;
   try {
-    await log('start', { workspace_uuid: workspace.uuid, mode, hpa_version: agentMode.hpaVersion, parallel, allow_search });
-    const [dataOverview, catalog] = await Promise.all([geneData.overview(), geneData.catalog()]);
-    const system = planSystem(allow_search, dataOverview, searchAdapter.overview(), catalog.find(e => e.key === 'master'));
-
-    // Plan: one call, one correction round if the graph is not valid.
-    await log('plan.start', { goal });
-    let plan = await jsonCall(system, `Goal: ${goal}`, ctx.onStep, 'plan', stats);
-    let checked = validateNodes(plan.nodes, [], allow_search);
-    if (checked.errors.length) {
-      await log('plan.invalid', { errors: checked.errors });
-      plan = await jsonCall(system, `Goal: ${goal}\n\nYour previous plan had these problems; return a corrected plan:\n- ${checked.errors.join('\n- ')}\n\nPrevious plan:\n${JSON.stringify(plan)}`, ctx.onStep, 'plan', stats);
-      checked = validateNodes(plan.nodes, [], allow_search);
-      if (checked.errors.length) throw new Error(`The plan is not valid: ${checked.errors.join('; ')}`);
+    await log('start', { workspace_uuid: workspace.uuid, mode, hpa_version: agentMode.hpaVersion, model: getActiveModel().configKey, goal });
+    await updateWorkspace(db, workspace.id, { status: 'running' });
+    while (turn < maxTurns) {
+      turn++;
+      const context = renderContext(state, turn, startedAt);
+      const res = await inference.chat.completions.create({ messages: [{ role: 'system', content: system }, { role: 'user', content: context }], tools: toolSpecs, temperature: 0 });
+      addUsage(res.usage);
+      const message = res.choices?.[0]?.message || {};
+      const calls = (message.tool_calls || []).map(c => { let args = {}; try { args = JSON.parse(c.function?.arguments || '{}'); } catch { args = {}; } return { name: c.function?.name, args }; });
+      await log('turn', { turn, text: message.content ? String(message.content).slice(0, 600) : null, calls: calls.map(c => ({ tool: c.name, args: c.args })) });
+      state.recent = [];
+      let sync = 0;
+      let waiting = false;
+      for (const call of calls) {
+        if (call.name === 'finish') { finishSummary = String(call.args.summary || ''); break; }
+        if (call.name === 'skip') { waiting = true; await log('skip', { reason: call.args.reason || '' }); continue; }
+        if (call.name === 'set_plan') { state.plan = (call.args.items || []).map(text => ({ text: String(text), status: 'todo', note: '' })); await log('plan', { items: state.plan }); continue; }
+        if (call.name === 'update_plan') {
+          const item = state.plan[Number(call.args.item) - 1];
+          if (item) { item.status = call.args.status || item.status; if (call.args.note) item.note = String(call.args.note); }
+          else state.recent.push(`update_plan failed: there is no item ${call.args.item}`);
+          await log('plan', { items: state.plan, changed: Number(call.args.item) }); continue;
+        }
+        if (call.name === 'note') { state.notes.push(String(call.args.text || '')); await log('note', { text: String(call.args.text || '') }); continue; }
+        if (call.name === 'inspect') {
+          // The rows stay listed under the artifact from now on, so one look is enough.
+          try { const a = get(call.args.artifact); const n = Math.min(INSPECT_MAX, Number(call.args.rows) || 20); a.shown = Math.max(a.shown || 0, n); state.recent.push(`${a.id}: ${Math.min(n, (a.rows || []).length)} rows now listed under it in ARTIFACTS`); }
+          catch (err) { state.recent.push(`inspect failed: ${err.message}`); }
+          sync++; continue;
+        }
+        if (agentNames.has(call.name)) { startAgent(call.name, call.args); continue; }
+        if (TABLE_TOOLS.has(call.name)) { await runTableTool(call.name, call.args); sync++; continue; }
+        state.recent.push(`unknown tool ${call.name}`);
+      }
+      if (finishSummary !== null) break;
+      if (!calls.length) {
+        stalls++;
+        state.recent.push('You called no tool. Call tools, skip while waiting, or finish.');
+        if (stalls > MAX_STALLS) break;
+        continue;
+      }
+      if (sync > 0) { stalls = 0; continue; }
+      if (state.running.size === 0) {
+        if (waiting) state.recent.push('Nothing is running, so there is nothing to wait for. Act or finish.');
+        stalls++;
+        if (stalls > MAX_STALLS) break;
+        continue;
+      }
+      stalls = 0;
+      await waitForCompletion();
     }
-    if (!checked.nodes.length) throw new Error(plan.cannot?.length ? `Nothing in the goal can be expressed: ${plan.cannot.map(c => c.requirement).join('; ')}` : 'The plan has no nodes.');
-    state.nodes.push(...checked.nodes);
-    state.cannot = Array.isArray(plan.cannot) ? plan.cannot : [];
-    await updateWorkspace(db, workspace.id, { status: 'running', planJson: { goal, mode, hpa_version: agentMode.hpaVersion, allow_search, parallel, version: 'study', understanding: plan.understanding, graph: graphSummary(), cannot: state.cannot } });
-    await log('plan.graph', { understanding: plan.understanding, nodes: state.nodes.map(n => ({ id: n.id, op: n.op, label: n.label, inputs: n.inputs, why: n.why, args: n.args })), cannot: state.cannot });
-    await runGraph(state.nodes, state, nodeCtx);
+    // Agents still out when the loop ends are given a moment to land their artifacts.
+    if (state.running.size) await Promise.race([new Promise(r => { wake.resolve = r; }), new Promise(r => setTimeout(r, 30_000))]);
+    if (finishSummary === null) finishSummary = turn >= maxTurns ? `The study stopped after ${turn} turns without calling finish.` : 'The study stopped with nothing left to do.';
 
-    // Reflect: the model may add nodes after seeing the results, a bounded number of times.
-    for (let round = 1; round <= MAX_REFLECTIONS; round++) {
-      await log('reflect.start', { round });
-      const review = await jsonCall(system + REFLECT_SUFFIX, `Goal: ${goal}\n\nGraph and outcomes so far:\n${outcomesText(state)}`, ctx.onStep, 'reflect', stats);
-      const added = validateNodes(review.nodes || [], state.nodes.map(n => n.id), allow_search);
-      await log('reflect', { round, done: review.done === true, assessment: review.assessment, added: added.nodes.map(n => ({ id: n.id, op: n.op, label: n.label, inputs: n.inputs, why: n.why, args: n.args })), errors: added.errors });
-      if (review.done === true || !added.nodes.length) break;
-      if (added.errors.length) { const bad = new Set(added.errors.map(e => e.split(':')[0])); added.nodes = added.nodes.filter(n => !bad.has(n.id) && n.inputs.every(i => state.outputs[i] || state.failed[i] || added.nodes.some(m => m.id === i))); }
-      if (!added.nodes.length) break;
-      state.nodes.push(...added.nodes);
-      await runGraph(added.nodes, state, nodeCtx);
-    }
-
-    // Report: the model writes from node outcomes and cites nodes; code adds figures and the node table.
-    await log('report.start', { nodes: state.nodes.length });
-    const rep = await jsonCall(REPORT_SYSTEM, `Goal: ${goal}\n\nNodes:\n${outcomesText(state)}${state.cannot.length ? `\n\nNot expressible: ${state.cannot.map(c => `${c.requirement} (${c.why || ''})`).join('; ')}` : ''}`, ctx.onStep, 'report', stats);
-    const title = String(rep.title || 'Study report').slice(0, 120);
-    const images = state.nodes.flatMap(n => (state.outputs[n.id]?.images || []).map(img => ({ node: n.id, label: n.label, path: img.path })));
-    const nodeTable = ['| node | operation | label | rows | status | time |', '|---|---|---|---|---|---|', ...graphSummary().map(n => `| ${n.id} | ${n.op} | ${n.label} | ${n.rows ?? ''} | ${n.status}${n.error ? `: ${n.error}` : ''} | ${n.ms ? `${(n.ms / 1000).toFixed(1)}s` : ''} |`)];
-    const reportMd = [`# ${title}`, '', `**Goal:** ${goal}`, '', `**Workspace:** ${workspace.uuid}`, '', String(rep.report_md || ''), '',
-      ...(images.length ? ['## Figures', '', ...images.map(i => `**${i.node}** ${i.label}\n\n![${i.label}](artifacts/${path.basename(i.path)})\n`)] : []),
-      '## Graph', '', ...nodeTable, ''].join('\n');
-    const reportPath = path.join(workspace.workspaceDir, 'report.md');
-    await fs.writeFile(reportPath, reportMd, { mode: 0o600 });
-    const reportArtifact = await register({ workspaceId: workspace.id, artifactsDir: workspace.artifactsDir, kind: 'summary', format: 'md', schemaJson: { type: 'report' },
-      provenance: { tool: 'report', sources: state.nodes.map(n => state.outputs[n.id]?.artifact_uuid).filter(Boolean), purpose: title }, payload: null, storageUriOverride: reportPath, skipWrite: true });
-    state.artifacts.push({ artifact_uuid: reportArtifact.artifactUuid, kind: 'summary', tool: 'report', summary: { report: reportPath, title }, storage_uri: reportPath });
-    await log('report.written', { title, report_md: reportMd, artifact_uuid: reportArtifact.artifactUuid });
-
-    addTokens({ prompt: stats.promptTokens, completion: stats.completionTokens, total: stats.totalTokens });
     const seconds = (Date.now() - startedAt) / 1000;
-    await log('final', { title, nodes: state.nodes.length, failed: Object.keys(state.failed).length, seconds, tokens, study_calls: stats.perStep });
-    await updateWorkspace(db, workspace.id, { planJson: { goal, mode, hpa_version: agentMode.hpaVersion, allow_search, parallel, version: 'study', understanding: plan.understanding, graph: graphSummary(), cannot: state.cannot } });
-    await finish('completed', {});
-    return { status: 'ok', workspace_uuid: workspace.uuid, title, summary: reportMd, summary_md: reportMd, report_uri: reportPath, artifacts: state.artifacts, nodes: graphSummary(), not_expressible: state.cannot, tokens, seconds, mode, hpa_version: agentMode.hpaVersion };
+    const summaryMd = [`# Study`, '', `**Goal:** ${goal}`, '', finishSummary, '', '## Artifacts', '', ...state.artifacts.map(a => `- ${a.id} ${a.kind} "${a.label}" (${a.size}) from ${a.tool}${a.inputs.length ? ` of ${a.inputs.join(', ')}` : ''}`), '', '## Plan', '', ...state.plan.map((p, i) => `${i + 1}. [${p.status}] ${p.text}`)].join('\n');
+    const reportPath = path.join(workspace.workspaceDir, 'report.md');
+    await fs.writeFile(reportPath, summaryMd, { mode: 0o600 });
+    await register({ workspaceId: workspace.id, artifactsDir: workspace.artifactsDir, kind: 'summary', format: 'md', schemaJson: { type: 'report' }, provenance: { tool: 'report', sources: state.artifacts.map(a => a.uuid), purpose: 'Study summary' }, payload: null, storageUriOverride: reportPath, skipWrite: true });
+    await log('finish', { summary: finishSummary, turns: turn, tool_calls: state.toolCalls, failed: state.failed, artifacts: state.artifacts.length, seconds, tokens });
+    await updateWorkspace(db, workspace.id, { status: 'completed', finishedUnixMs: Date.now(), planJson: { goal, mode, hpa_version: agentMode.hpaVersion, version: 'loop', plan: state.plan, turns: turn } });
+    await logger.close();
+    return { status: 'ok', workspace_uuid: workspace.uuid, summary: finishSummary, summary_md: summaryMd, artifacts: artifactsSummary(), plan: state.plan, turns: turn, tool_calls: state.toolCalls, failed: state.failed, tokens, seconds, mode, hpa_version: agentMode.hpaVersion };
   } catch (err) {
     await log('error', { message: err.message });
-    addTokens({ prompt: stats.promptTokens, completion: stats.completionTokens, total: stats.totalTokens });
-    await finish('failed', { errorCode: 'study_failed', errorMessage: err.message });
-    return { status: 'error', error: err.message, workspace_uuid: workspace.uuid, nodes: graphSummary(), tokens };
+    await updateWorkspace(db, workspace.id, { status: 'failed', finishedUnixMs: Date.now(), errorCode: 'study_failed', errorMessage: err.message });
+    await logger.close();
+    return { status: 'error', error: err.message, workspace_uuid: workspace.uuid, artifacts: artifactsSummary(), tokens };
   }
 }
 

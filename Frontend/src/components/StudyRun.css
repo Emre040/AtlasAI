@@ -13,13 +13,12 @@
   align-items: baseline;
   gap: 6px 16px;
   font-size: 12px;
-  color: #475569;
+  color: #64748b;
 }
 
 .HPAG-study-phase { font-weight: 700; color: #111827; }
 .HPAG-study-phase-failed { color: #b91c1c; }
 .HPAG-study-phase-done { color: #047857; }
-.HPAG-study-counts b { color: #111827; }
 
 .HPAG-study-meta {
   margin-left: auto;
@@ -36,21 +35,29 @@
   padding: 8px 10px;
 }
 
-.HPAG-study-hint { font-size: 11.5px; color: #94a3b8; min-height: 14px; }
-
-/* The map. */
-.HPAG-map-scroll {
-  overflow: auto;
-  max-height: 72vh;
+.HPAG-study-summary {
+  font-size: 13px;
+  line-height: 1.55;
+  color: #1f2937;
+  background: #ffffff;
   border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  background:
-    linear-gradient(to right, rgba(148, 163, 184, 0.12) 1px, transparent 1px) 0 0 / 24px 24px,
-    linear-gradient(to bottom, rgba(148, 163, 184, 0.12) 1px, transparent 1px) 0 0 / 24px 24px,
-    #fbfcfd;
+  border-radius: 12px;
+  padding: 12px 14px;
+  white-space: pre-wrap;
 }
 
-.HPAG-map { position: relative; min-height: 140px; }
+/* The map: full width, grows downward, scrolls past its height. */
+.HPAG-map-frame {
+  position: relative;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.HPAG-map-scroll { overflow: auto; max-height: 70vh; }
+
+.HPAG-map { position: relative; min-height: 120px; }
 
 .HPAG-map-edges { position: absolute; left: 0; top: 0; pointer-events: none; }
 
@@ -61,120 +68,103 @@
   transition: stroke 0.15s, opacity 0.15s;
 }
 
+.HPAG-map-edge-soft { stroke-dasharray: 3 4; }
 .HPAG-map-edge-hot { stroke: #111827; stroke-width: 2; }
 .HPAG-map-edge-dim { opacity: 0.2; }
 
-/* Every node on the map: the query, agents, tools and islands. */
-.HPAG-map-node {
+/* An island: an icon, its id and a word. */
+.HPAG-map-island {
   position: absolute;
-  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-  padding: 6px 10px;
-  border: 1px solid #cbd5e1;
-  border-radius: 10px;
-  background: #ffffff;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  align-items: center;
+  gap: 3px;
   cursor: pointer;
-  overflow: hidden;
-  font-size: 11px;
-  color: #334155;
-  animation: HPAG-map-rise 0.45s ease-out;
-  transition: left 0.4s ease, top 0.4s ease, border-color 0.15s, box-shadow 0.15s, opacity 0.15s;
+  animation: HPAG-map-rise 0.4s ease-out;
+  transition: left 0.4s ease, top 0.4s ease, opacity 0.15s;
+  outline: none;
 }
 
-.HPAG-map-node:hover, .HPAG-map-selected { border-color: #111827; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.14); }
-.HPAG-map-node:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 .HPAG-map-dim { opacity: 0.3; }
 
 @keyframes HPAG-map-rise {
-  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .HPAG-map-node { animation: none; transition: none; }
+  .HPAG-map-island { animation: none; transition: none; }
 }
 
-.HPAG-map-node-kind {
+.HPAG-map-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #64748b;
-  white-space: nowrap;
+  justify-content: center;
+  color: #ffffff;
+  font-size: 17px;
+  background: #64748b;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+  border: 3px solid #ffffff;
+  transition: box-shadow 0.15s, transform 0.15s;
 }
 
-.HPAG-map-node-id {
-  margin-left: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-weight: 700;
-  letter-spacing: 0;
-  text-transform: none;
-  color: #94a3b8;
-}
+.HPAG-map-island:hover .HPAG-map-icon, .HPAG-map-focus .HPAG-map-icon { transform: scale(1.06); box-shadow: 0 0 0 2px #111827, 0 2px 8px rgba(15, 23, 42, 0.18); }
+.HPAG-map-island:focus-visible .HPAG-map-icon { box-shadow: 0 0 0 3px #2563eb; }
 
-.HPAG-map-node-label { font-size: 12px; font-weight: 600; color: #111827; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.HPAG-map-node-stat { font-size: 10.5px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.HPAG-map-type-query .HPAG-map-icon { background: #111827; width: 54px; height: 54px; font-size: 20px; }
+.HPAG-map-type-agent .HPAG-map-icon { background: #4f46e5; }
+.HPAG-map-type-tool .HPAG-map-icon { background: #64748b; }
+.HPAG-map-type-data .HPAG-map-icon { background: #0d9488; }
+.HPAG-map-type-figure .HPAG-map-icon { background: #d97706; }
+.HPAG-map-type-plan .HPAG-map-icon { background: #7c3aed; }
+.HPAG-map-type-note .HPAG-map-icon { background: #ca8a04; }
+.HPAG-map-type-finish .HPAG-map-icon { background: #047857; }
 
-/* The query: where the map starts. */
-.HPAG-map-query { border: 2px solid #111827; background: #111827; color: #e2e8f0; border-radius: 14px; }
-.HPAG-map-query .HPAG-map-node-kind { color: #94a3b8; }
-.HPAG-map-query-text { font-size: 11.5px; line-height: 1.35; color: #f8fafc; white-space: normal; }
-
-/* Agents: rounded, coloured by agent; tools: small pills. */
-.HPAG-map-agent { border-radius: 28px; border-width: 2px; padding-left: 14px; }
-.HPAG-map-agent .HPAG-map-node-kind { color: #1e293b; }
-.HPAG-map-tool { border-radius: 8px; background: #f8fafc; }
-.HPAG-map-tool .HPAG-map-node-label { font-weight: 500; font-size: 11.5px; }
-
-.HPAG-map-status-running { border-color: #0ea5e9; border-style: dashed; animation: HPAG-map-rise 0.45s ease-out, HPAG-map-pulse 1.4s ease-in-out infinite; }
-.HPAG-map-status-running .HPAG-map-node-kind { color: #0369a1; }
-.HPAG-map-status-done.HPAG-map-agent { border-color: #4f46e5; }
-.HPAG-map-status-done .HPAG-map-node-kind svg { color: #047857; }
-.HPAG-map-status-failed, .HPAG-map-status-blocked { border-color: #dc2626; background: #fef2f2; }
-.HPAG-map-status-failed .HPAG-map-node-kind, .HPAG-map-status-blocked .HPAG-map-node-kind { color: #b91c1c; }
+.HPAG-map-status-running .HPAG-map-icon { animation: HPAG-map-pulse 1.3s ease-in-out infinite; }
+.HPAG-map-status-failed .HPAG-map-icon { background: #dc2626; }
 
 @keyframes HPAG-map-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.35); }
-  50% { box-shadow: 0 0 0 6px rgba(14, 165, 233, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(79, 70, 229, 0.45); }
+  50% { box-shadow: 0 0 0 9px rgba(79, 70, 229, 0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .HPAG-map-status-running { animation: none; }
+  .HPAG-map-status-running .HPAG-map-icon { animation: none; }
 }
 
-/* Islands: the data. Each type has its own colour on the left edge. */
-.HPAG-map-island { border-left-width: 5px; }
-.HPAG-map-island-genes { border-left-color: #4f46e5; }
-.HPAG-map-island-table { border-left-color: #0d9488; }
-.HPAG-map-island-matrix { border-left-color: #7c3aed; }
-.HPAG-map-island-figure { border-left-color: #d97706; }
-.HPAG-map-island-report { border-left-color: #111827; }
-.HPAG-map-island .HPAG-map-node-stat { color: #334155; font-weight: 600; }
+.HPAG-map-key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 700; color: #111827; line-height: 1; min-height: 10px; }
+.HPAG-map-label { font-size: 10.5px; color: #64748b; line-height: 1.1; white-space: nowrap; max-width: 100px; overflow: hidden; text-overflow: ellipsis; text-align: center; }
 
-/* Detail below the map. */
-.HPAG-study-detail {
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
+/* The panel that opens beside a hovered island. */
+.HPAG-map-panel {
+  position: absolute;
+  width: 320px;
+  z-index: 5;
   background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
   padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
   font-size: 12px;
   color: #334155;
+  animation: HPAG-map-rise 0.15s ease-out;
 }
 
-.HPAG-study-detail-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.HPAG-map-panel-body { display: flex; flex-direction: column; gap: 7px; }
+.HPAG-map-panel-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; }
+.HPAG-map-panel-key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; color: #111827; }
+.HPAG-map-panel-title { font-weight: 600; color: #111827; }
+.HPAG-map-panel-meta { color: #94a3b8; font-size: 11px; }
+.HPAG-map-panel-text { color: #334155; line-height: 1.45; white-space: pre-wrap; }
+.HPAG-map-panel-error { color: #b91c1c; }
+.HPAG-map-link { color: #1d4ed8; text-decoration: none; font-size: 11.5px; }
+.HPAG-map-link:hover { text-decoration: underline; }
 
-.HPAG-study-pill {
-  font-size: 10px;
+.HPAG-map-pill {
+  font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -184,81 +174,58 @@
   color: #334155;
 }
 
-.HPAG-study-pill-done { background: #d1fae5; color: #065f46; }
-.HPAG-study-pill-running { background: #e0f2fe; color: #075985; }
-.HPAG-study-pill-failed, .HPAG-study-pill-blocked { background: #fee2e2; color: #991b1b; }
+.HPAG-map-pill-done { background: #d1fae5; color: #065f46; }
+.HPAG-map-pill-running { background: #e0f2fe; color: #075985; }
+.HPAG-map-pill-failed { background: #fee2e2; color: #991b1b; }
 
-.HPAG-study-detail-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; color: #111827; }
-.HPAG-study-detail-op { color: #64748b; }
-.HPAG-study-detail-label { color: #111827; font-weight: 600; }
-.HPAG-study-detail-meta { color: #94a3b8; font-variant-numeric: tabular-nums; }
-.HPAG-study-detail-why { color: #475569; }
-.HPAG-study-detail-error { color: #b91c1c; }
+.HPAG-map-args { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 0; }
+.HPAG-map-args dt { color: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; }
+.HPAG-map-args dd { margin: 0; color: #111827; word-break: break-word; }
 
-.HPAG-study-detail-line { display: flex; flex-wrap: wrap; gap: 4px 14px; color: #475569; }
-.HPAG-study-detail-line a { color: #1d4ed8; text-decoration: none; }
-.HPAG-study-detail-line a:hover { text-decoration: underline; }
+.HPAG-map-steps { display: flex; flex-direction: column; gap: 3px; border-top: 1px solid #f1f5f9; padding-top: 6px; max-height: 220px; overflow-y: auto; }
+.HPAG-map-step { display: flex; gap: 8px; font-size: 11px; }
+.HPAG-map-step-label { flex: 0 0 92px; color: #64748b; font-weight: 600; }
+.HPAG-map-step-text { color: #334155; word-break: break-word; }
 
-.HPAG-study-args { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 0; }
-.HPAG-study-args dt { color: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
-.HPAG-study-args dd { margin: 0; color: #111827; word-break: break-word; }
+.HPAG-map-sample { overflow-x: auto; }
+.HPAG-map-sample table { border-collapse: collapse; font-size: 10.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.HPAG-map-sample th, .HPAG-map-sample td { padding: 2px 6px; border-bottom: 1px solid #f1f5f9; text-align: left; white-space: nowrap; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.HPAG-map-sample th { color: #64748b; font-weight: 600; }
 
-.HPAG-study-sample { overflow-x: auto; }
-.HPAG-study-sample table { border-collapse: collapse; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.HPAG-study-sample th, .HPAG-study-sample td { padding: 3px 8px; border-bottom: 1px solid #f1f5f9; text-align: left; white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
-.HPAG-study-sample th { color: #64748b; font-weight: 600; }
-.HPAG-study-sample-more { margin-top: 4px; color: #94a3b8; font-size: 11px; }
-
-.HPAG-study-steps { display: flex; flex-direction: column; gap: 3px; border-top: 1px solid #f1f5f9; padding-top: 8px; }
-.HPAG-study-step { display: flex; gap: 10px; font-size: 11.5px; }
-.HPAG-study-step-label { flex: 0 0 150px; color: #64748b; font-weight: 600; }
-.HPAG-study-step-message { color: #334155; word-break: break-word; }
-
-.HPAG-study-review {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+/* The plan, stuck top right of the map. */
+.HPAG-map-plan {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 260px;
+  max-width: calc(100% - 20px);
+  max-height: calc(70vh - 20px);
+  overflow-y: auto;
+  z-index: 4;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.1);
+  padding: 8px 12px 10px;
   font-size: 12px;
   color: #334155;
-  border-left: 3px solid #a5b4fc;
-  padding-left: 10px;
 }
 
-.HPAG-study-review-label { font-weight: 700; color: #3730a3; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
-
-.HPAG-study-figures {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-  gap: 12px;
+.HPAG-map-plan-head {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-bottom: 4px;
 }
 
-.HPAG-study-figure {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  padding: 8px;
-  min-width: 0;
-}
-
-.HPAG-study-report {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  padding: 14px 18px;
-  font-size: 13.5px;
-  line-height: 1.6;
-  color: #1f2937;
-  max-width: 82ch;
-}
-
-.HPAG-study-report-title { font-size: 16px; font-weight: 700; color: #111827; margin-bottom: 6px; }
-.HPAG-study-report h2, .HPAG-study-report h3 { font-size: 14px; margin: 14px 0 4px; color: #111827; }
-.HPAG-study-report p { margin: 6px 0; }
-.HPAG-study-report ul { padding-left: 20px; margin: 4px 0; }
-.HPAG-study-report li { margin: 3px 0; }
-.HPAG-study-report code { font-size: 12px; background: #f1f5f9; padding: 1px 4px; border-radius: 3px; }
-.HPAG-study-report table { border-collapse: collapse; font-size: 12px; }
-.HPAG-study-report th, .HPAG-study-report td { border-bottom: 1px solid #e2e8f0; padding: 4px 8px; text-align: left; }
+.HPAG-map-plan-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.HPAG-map-plan-list li { line-height: 1.35; }
+.HPAG-map-plan-done { color: #64748b; text-decoration: line-through; text-decoration-color: #94a3b8; }
+.HPAG-map-plan-doing { color: #111827; font-weight: 600; }
+.HPAG-map-plan-dropped { color: #94a3b8; text-decoration: line-through; }
+.HPAG-map-plan-note { color: #94a3b8; font-size: 11px; }
 
 /* A study is its map: the run bar is a status line, the container has no cap. */
 .HPAG-shimmer-bar.HPAG-shimmer-static { cursor: default; }

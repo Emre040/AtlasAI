@@ -1,29 +1,22 @@
-import React, { useMemo, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import React, { useMemo, useRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faCheck, faChartBar, faDna, faExternalLinkAlt, faFileAlt, faSpinner, faTable, faTh, faTimes, faQuestion } from '@fortawesome/free-solid-svg-icons';
-import AsoChart from './AsoChart';
+import { faChartBar, faDatabase, faFlagCheckered, faGear, faListCheck, faMagnifyingGlass, faMicroscope, faNoteSticky, faQuestion, faRobot, faExternalLinkAlt } from '@fortawesome/free-solid-svg-icons';
 import './StudyRun.css';
 
-// A study run (aso_hpa) as a live map. It starts with the query. Agent nodes (Deep research,
-// Investigator) and tool nodes appear when they start work, and each drops a data island when it
-// finishes: a gene set, a table, a matrix, a figure. Islands feed the next tools. Click anything
-// for its details. Live SSE steps and stored run events share one shape (stage + JSON message),
-// so the same reducer draws a run in progress and a run reloaded from history.
+// A study run (aso_hpa) as a live map, top to bottom. The query sits at the top. An agent or tool
+// island appears the moment the loop calls it and pulses until it returns; its data or figure
+// island appears under it, linked to what it read. Plan, note and finish get islands of their
+// own. Hovering an island opens its details beside it, live while it runs. The plan sits top
+// right. Live SSE steps and stored run events share one shape (stage + JSON message), so the same
+// reducer draws a run in progress and a run reloaded from history.
 
-const AGENT = { search: 'Deep research', lookup: 'Investigator' };
-const QUERY_W = 200;
-const QUERY_H = 92;
-const OP_W = 132;
-const AGENT_W = 156;
-const OP_H = 58;
-const ISLAND_W = 176;
-const ISLAND_H = 62;
-const GAP = 34;
-const COL_GAP = 56;
-const ROW_GAP = 20;
-const PAD = 24;
+const AGENT_NAMES = { deep_research_hpa: 'Deep research', investigator_hpa: 'Investigator', check_inclusion_hpa: 'Inclusion check', dictionary_expert_hpa: 'Dictionary' };
+const ICONS = { query: faQuestion, agent: faRobot, deep_research_hpa: faMagnifyingGlass, investigator_hpa: faMicroscope, data: faDatabase, tool: faGear, figure: faChartBar, plan: faListCheck, note: faNoteSticky, finish: faFlagCheckered };
+const CELL_W = 104;
+const ROW_H = 104;
+const ICON = 46;
+const PAD_X = 24;
+const PAD_Y = 18;
 
 function parse(message) {
   if (!message || typeof message !== 'string') return null;
@@ -36,90 +29,45 @@ function stageOf(event) {
   return String(event?.stage || '').toLowerCase();
 }
 
-// What kind of island a step produces.
-function islandType(node) {
-  if (node.op === 'search') return 'genes';
-  if (node.op === 'chart') return 'figure';
-  if (node.op === 'pivot' || node.matrix) return 'matrix';
-  return 'table';
-}
-
-const ISLAND_META = {
-  genes: { name: 'Gene set', icon: faDna },
-  table: { name: 'Table', icon: faTable },
-  matrix: { name: 'Matrix', icon: faTh },
-  figure: { name: 'Figure', icon: faChartBar },
-  report: { name: 'Report', icon: faFileAlt }
-};
-
-// The study's state after every event so far.
+// The study's state after every event so far: islands in order of appearance, with their links.
 export function studyStateFromEvents(events) {
-  const state = {
-    phase: 'starting', goal: '', workspaceUuid: null, mode: null, hpaVersion: null, understanding: '', cannot: [],
-    nodes: [], byId: new Map(), reflections: [], report: null, final: null, error: null, agentSteps: new Map(),
-    failed: false, complete: false, planErrors: [], order: 0
-  };
-  const upsert = (raw, round) => {
-    if (!raw?.id) return null;
-    let node = state.byId.get(raw.id);
-    if (!node) {
-      node = { id: raw.id, op: raw.op, label: raw.label || raw.id, inputs: raw.inputs || [], why: raw.why || '', args: raw.args || {}, status: 'pending', round: round || 0, appeared: null };
-      state.byId.set(node.id, node);
-      state.nodes.push(node);
-    } else {
-      Object.assign(node, { op: raw.op || node.op, label: raw.label || node.label, inputs: raw.inputs || node.inputs, why: raw.why || node.why, args: raw.args || node.args });
-    }
-    return node;
-  };
-  const appear = node => { if (node && node.appeared === null) node.appeared = state.order++; };
+  const state = { phase: 'starting', goal: '', workspaceUuid: null, mode: null, hpaVersion: null, model: null, plan: [], islands: [], byKey: new Map(), turns: [], trails: new Map(), finish: null, error: null, complete: false, failed: false, artifactsById: new Map() };
+  const add = island => { island.order = state.islands.length; state.islands.push(island); state.byKey.set(island.key, island); return island; };
+  add({ key: 'query', type: 'query', label: 'Query', inputs: [], status: 'done' });
   for (const event of events || []) {
-    if (event?.status === 'completed') {
-      state.complete = true;
-      if (event.failed) { state.failed = true; state.error = state.error || event.message; }
-      continue;
-    }
+    if (event?.status === 'completed') { state.complete = true; if (event.failed) { state.failed = true; state.error = state.error || event.message; } continue; }
     if (event?.status === 'started') continue;
     const stage = stageOf(event);
     const d = parse(event.message) || {};
-    if (stage === 'start') { state.workspaceUuid = d.workspace_uuid || state.workspaceUuid; state.mode = d.mode || null; state.hpaVersion = d.hpa_version || null; state.phase = 'planning'; }
-    else if (stage === 'plan.start') { state.goal = d.goal || state.goal; state.phase = 'planning'; }
-    else if (stage === 'plan.invalid') state.planErrors = d.errors || [];
-    else if (stage === 'plan.graph') {
-      state.understanding = d.understanding || '';
-      state.cannot = Array.isArray(d.cannot) ? d.cannot : [];
-      for (const raw of d.nodes || []) upsert(raw, 0);
-      state.phase = 'running';
-    } else if (stage === 'node.start') {
-      const node = upsert({ id: d.node, op: d.op, label: d.label, inputs: d.inputs, args: d.args });
-      if (node) { node.status = 'running'; appear(node); }
-      state.phase = 'running';
-    } else if (stage === 'node.done') {
-      const node = upsert({ id: d.node, op: d.op, label: d.label });
-      if (node) { appear(node); Object.assign(node, { status: 'done', rows: d.rows, ms: d.ms, columns: d.columns, sample: d.sample, sampleColumns: d.sample_columns, matrix: d.matrix, images: d.images || [], artifactUuid: d.artifact_uuid, searchUrl: d.search_url, query: d.query, asked: d.asked, found: d.found }); }
-    } else if (stage === 'node.failed') {
-      const node = upsert({ id: d.node, op: d.op, label: d.label });
-      if (node) { appear(node); Object.assign(node, { status: 'failed', error: d.error, ms: d.ms }); }
-    } else if (stage === 'node.blocked') {
-      const node = upsert({ id: d.node });
-      if (node) Object.assign(node, { status: 'blocked', error: d.input ? `waiting on ${d.input}, which failed` : 'an input never completed' });
-    } else if (stage === 'node.repair') {
-      const node = upsert({ id: d.node });
-      if (node) { node.repaired = { missing: d.missing || [], before: d.args_before, after: d.args_after }; if (d.args_after) node.args = d.args_after; }
-    } else if (stage.startsWith('agent.')) {
-      const key = String(d.node || '').split(':')[0];
-      if (key) {
-        if (!state.agentSteps.has(key)) state.agentSteps.set(key, []);
-        state.agentSteps.get(key).push({ stage: stage.slice(6), label: d.label || '', message: d.message || '', who: String(d.node || '').includes(':') ? String(d.node).split(':')[1] : null });
+    if (stage === 'start') { state.workspaceUuid = d.workspace_uuid || state.workspaceUuid; state.mode = d.mode || null; state.hpaVersion = d.hpa_version || null; state.model = d.model || null; state.goal = d.goal || state.goal; state.phase = 'running'; }
+    else if (stage === 'turn') state.turns.push({ turn: d.turn, text: d.text || '', calls: d.calls || [] });
+    else if (stage === 'plan') {
+      state.plan = Array.isArray(d.items) ? d.items : state.plan;
+      if (!d.changed) add({ key: `plan${state.islands.length}`, type: 'plan', label: 'Plan', inputs: ['query'], status: 'done', items: state.plan.map(p => ({ ...p })) });
+    }
+    else if (stage === 'note') add({ key: `note${state.islands.length}`, type: 'note', label: 'Note', inputs: ['query'], status: 'done', text: d.text || '' });
+    else if (stage === 'skip') state.turns.push({ turn: null, skip: d.reason || '' });
+    else if (stage === 'tool.start') {
+      const type = d.kind === 'agent' ? 'agent' : 'tool';
+      add({ key: d.id, type, tool: d.tool, label: type === 'agent' ? (AGENT_NAMES[d.tool] || d.tool) : d.tool, detail: d.label, args: d.args || {}, inputs: (d.inputs || []).length ? d.inputs : ['query'], status: 'running', startedAt: event.createdAt || null });
+    } else if (stage === 'tool.done') {
+      const t = state.byKey.get(d.id);
+      if (t) { t.status = 'done'; t.ms = d.ms; t.output = d.artifact?.id || null; }
+      const a = d.artifact;
+      if (a) {
+        const island = add({ key: a.id, type: a.kind === 'figure' ? 'figure' : 'data', kind: a.kind, label: a.label, size: a.size, inputs: [d.id], status: 'done', rows: a.rows, columns: a.columns || [], sample: a.sample || [], sampleColumns: a.sample_columns || [], text: a.text || null, images: a.images || [], searchUrl: a.search_url || null, query: a.query || null, artifactUuid: a.artifact_uuid, from: t ? { tool: t.tool, args: t.args, inputs: t.inputs } : null });
+        state.artifactsById.set(a.id, island);
       }
-    } else if (stage === 'reflect.start') state.phase = 'reviewing';
-    else if (stage === 'reflect') {
-      state.reflections.push({ round: d.round, done: d.done, assessment: d.assessment || '', added: d.added || [], errors: d.errors || [] });
-      for (const raw of d.added || []) upsert(raw, d.round);
-      state.phase = d.done ? 'reporting' : 'running';
-    } else if (stage === 'report.start') state.phase = 'reporting';
-    else if (stage === 'report.written') state.report = { title: d.title || '', md: d.report_md || '' };
-    else if (stage === 'final') { state.final = d; state.phase = 'done'; }
-    else if (stage === 'error') { state.error = d.message || event.message || 'The study failed.'; state.failed = true; state.phase = 'failed'; }
+    } else if (stage === 'tool.failed') {
+      const t = state.byKey.get(d.id);
+      if (t) { t.status = 'failed'; t.error = d.error; t.ms = d.ms; }
+    } else if (stage.startsWith('agent.')) {
+      if (d.id) { if (!state.trails.has(d.id)) state.trails.set(d.id, []); state.trails.get(d.id).push({ stage: stage.slice(6), label: d.label || '', message: d.message || '' }); }
+    } else if (stage === 'finish') {
+      state.finish = d;
+      add({ key: 'finish', type: 'finish', label: 'Finish', inputs: ['query'], status: 'done', summary: d.summary || '' });
+      state.phase = 'done';
+    } else if (stage === 'error') { state.error = d.message || event.message || 'The study failed.'; state.failed = true; state.phase = 'failed'; }
   }
   if (state.complete && state.phase !== 'failed') state.phase = state.failed ? 'failed' : 'done';
   return state;
@@ -128,64 +76,40 @@ export function studyStateFromEvents(events) {
 // One line for the run bar while the study runs.
 export function studyStatusLine(events) {
   const s = studyStateFromEvents(events);
-  const running = s.nodes.filter(n => n.status === 'running');
-  const done = s.nodes.filter(n => n.status === 'done').length;
-  if (s.phase === 'planning') return 'Planning the study';
-  if (s.phase === 'reviewing') return `Reviewing results · ${done}/${s.nodes.length} steps done`;
-  if (s.phase === 'reporting') return 'Writing the report';
-  if (s.phase === 'running') return running.length ? `${running.map(n => `${n.id} ${(AGENT[n.op] || n.op).toLowerCase()}`).slice(0, 3).join(', ')}${running.length > 3 ? ` +${running.length - 3}` : ''} · ${done}/${s.nodes.length} done` : `${done}/${s.nodes.length} steps done`;
+  const running = s.islands.filter(i => i.status === 'running');
+  const artifacts = s.islands.filter(i => i.type === 'data' || i.type === 'figure').length;
   if (s.phase === 'failed') return 'Study failed';
-  return 'Study complete';
+  if (s.phase === 'done') return 'Study complete';
+  if (running.length) return `${running.map(i => i.label.toLowerCase()).slice(0, 3).join(', ')}${running.length > 3 ? ` +${running.length - 3}` : ''} running · ${artifacts} artifacts`;
+  if (s.turns.length) return `turn ${s.turns.length} · ${artifacts} artifacts`;
+  return 'Starting the study';
 }
 
-// Map nodes: the query, then for every started step its agent or tool node and, when it has
-// finished, its island. Each step sits one column right of the islands it reads; the query is
-// the root of the steps that read nothing. Columns are centred so the map grows from the middle.
-function layoutMap(state) {
-  const started = state.nodes.filter(n => n.appeared !== null).sort((a, b) => a.appeared - b.appeared);
+// Rows by depth from the query; islands read their inputs, so everything flows downward.
+function layoutIslands(state, width) {
   const depth = new Map();
-  for (const n of started) {
-    const parents = (n.inputs || []).filter(i => depth.has(i));
-    depth.set(n.id, parents.length ? Math.max(...parents.map(p => depth.get(p))) + 1 : 0);
+  for (const i of state.islands) {
+    const parents = (i.inputs || []).filter(p => depth.has(p));
+    depth.set(i.key, i.key === 'query' ? 0 : parents.length ? Math.max(...parents.map(p => depth.get(p))) + 1 : 1);
   }
-  const columns = new Map();
-  for (const n of started) { const d = depth.get(n.id); if (!columns.has(d)) columns.set(d, []); columns.get(d).push(n); }
-  const layers = Math.max(-1, ...columns.keys()) + 1;
-  const colStride = OP_W + GAP + ISLAND_W + COL_GAP;
-  const rowH = Math.max(OP_H, ISLAND_H);
-  const maxRows = Math.max(1, ...[...columns.values()].map(c => c.length));
-  const height = PAD * 2 + Math.max(QUERY_H, maxRows * rowH + (maxRows - 1) * ROW_GAP);
-  const boxes = new Map();
-  const mid = height / 2;
-  boxes.set('query', { x: PAD, y: mid - QUERY_H / 2, w: QUERY_W, h: QUERY_H, type: 'query' });
-  for (let d = 0; d < layers; d++) {
-    const list = columns.get(d) || [];
-    const colH = list.length * rowH + (list.length - 1) * ROW_GAP;
-    let y = mid - colH / 2;
-    const x = PAD + QUERY_W + COL_GAP + d * colStride;
-    for (const n of list) {
-      const isAgent = Boolean(AGENT[n.op]);
-      const opW = isAgent ? AGENT_W : OP_W;
-      boxes.set(`${n.id}:op`, { x, y: y + (rowH - OP_H) / 2, w: opW, h: OP_H, type: isAgent ? 'agent' : 'tool', node: n });
-      if (n.status === 'done') boxes.set(`${n.id}:out`, { x: x + opW + GAP, y: y + (rowH - ISLAND_H) / 2, w: ISLAND_W, h: ISLAND_H, type: 'island', node: n });
-      y += rowH + ROW_GAP;
-    }
+  const rows = new Map();
+  for (const i of state.islands) { const d = depth.get(i.key); if (!rows.has(d)) rows.set(d, []); rows.get(d).push(i); }
+  const rowCount = Math.max(0, ...rows.keys()) + 1;
+  const maxCols = Math.max(1, ...[...rows.values()].map(r => r.length));
+  const mapWidth = Math.max(width, PAD_X * 2 + maxCols * CELL_W);
+  const positions = new Map();
+  for (const [d, list] of rows) {
+    const rowWidth = list.length * CELL_W;
+    const start = (mapWidth - rowWidth) / 2;
+    list.forEach((i, c) => positions.set(i.key, { x: start + c * CELL_W + CELL_W / 2, y: PAD_Y + d * ROW_H + ICON / 2 }));
   }
-  const edges = [];
-  for (const n of started) {
-    const parents = (n.inputs || []).filter(i => boxes.has(`${i}:out`));
-    if (!parents.length) edges.push(['query', `${n.id}:op`]);
-    for (const p of parents) edges.push([`${p}:out`, `${n.id}:op`]);
-    if (boxes.has(`${n.id}:out`)) edges.push([`${n.id}:op`, `${n.id}:out`]);
-  }
-  const width = layers ? PAD + QUERY_W + COL_GAP + (layers - 1) * colStride + AGENT_W + GAP + ISLAND_W + PAD : PAD * 2 + QUERY_W;
-  return { boxes, edges, width, height, started: started.length };
+  return { positions, width: mapWidth, height: PAD_Y * 2 + rowCount * ROW_H };
 }
 
 function edgePath(from, to) {
-  const x1 = from.x + from.w, y1 = from.y + from.h / 2, x2 = to.x, y2 = to.y + to.h / 2;
-  const bend = Math.max(18, (x2 - x1) / 2);
-  return `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`;
+  const x1 = from.x, y1 = from.y + ICON / 2 + 14, x2 = to.x, y2 = to.y - ICON / 2 - 2;
+  const bend = Math.max(16, (y2 - y1) / 2);
+  return `M ${x1} ${y1} C ${x1} ${y1 + bend}, ${x2} ${y2 - bend}, ${x2} ${y2}`;
 }
 
 function truncate(text, max) {
@@ -197,212 +121,169 @@ function seconds(ms) {
   return ms === undefined || ms === null ? '' : `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
 }
 
-function islandStat(node) {
-  if (node.op === 'search') return `${node.rows} genes`;
-  if (node.op === 'chart') return 'figure';
-  if (node.matrix) return `${node.matrix[0]} × ${node.matrix[1]}`;
-  if (node.asked !== undefined) return `${node.found} of ${node.asked} answered`;
-  return node.rows === undefined ? '' : `${node.rows} rows`;
+function iconFor(island) {
+  if (island.type === 'agent') return ICONS[island.tool] || ICONS.agent;
+  return ICONS[island.type] || ICONS.tool;
 }
 
-// The report body without the title, goal, workspace line, figure links and the node table, which
-// the map already shows.
-function reportBody(md) {
-  const cut = md.indexOf('\n## Figures');
-  const body = (cut === -1 ? md : md.slice(0, cut)).split('\n').filter(line => !/^# /.test(line) && !/^\*\*(Goal|Workspace):\*\*/.test(line));
-  return body.join('\n').trim();
+function argLines(args) {
+  return Object.entries(args || {}).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)]);
 }
 
-function Detail({ box, state, apiBaseUrl, workspaceUuid, onArtifactEnter, onArtifactLeave }) {
-  if (box.type === 'query') {
-    return (
-      <div className="HPAG-study-detail">
-        <div className="HPAG-study-detail-head"><span className="HPAG-study-pill">query</span><span className="HPAG-study-detail-label">The goal</span></div>
-        <div className="HPAG-study-detail-why">{state.goal}</div>
-        {state.understanding && <div className="HPAG-study-detail-line"><span><b>Read as:</b> {state.understanding}</span></div>}
-        {state.cannot.length > 0 && <div className="HPAG-study-detail-line"><span><b>Not expressible in this database:</b> {state.cannot.map(c => c.requirement).join('; ')}</span></div>}
-      </div>
-    );
-  }
-  const node = box.node;
-  const steps = state.agentSteps.get(node.id);
-  const argEntries = Object.entries(node.args || {}).filter(([, v]) => v !== undefined && v !== null && v !== '');
-  const isIsland = box.type === 'island';
-  const kindName = isIsland ? ISLAND_META[islandType(node)].name : (AGENT[node.op] || node.op);
+function Panel({ island, state }) {
+  const trail = state.trails.get(island.key) || [];
+  const out = island.output ? state.artifactsById.get(island.output) : null;
   return (
-    <div className="HPAG-study-detail">
-      <div className="HPAG-study-detail-head">
-        <span className={`HPAG-study-pill HPAG-study-pill-${node.status}`}>{node.status}</span>
-        <span className="HPAG-study-detail-id">{node.id}</span>
-        <span className="HPAG-study-detail-op">{kindName}</span>
-        <span className="HPAG-study-detail-label">{node.label}</span>
-        {node.ms !== undefined && <span className="HPAG-study-detail-meta">{seconds(node.ms)}</span>}
-        {node.rows !== undefined && <span className="HPAG-study-detail-meta">{node.rows} rows</span>}
-        {node.matrix && <span className="HPAG-study-detail-meta">{node.matrix[0]} × {node.matrix[1]} matrix</span>}
-        {node.inputs?.length > 0 && <span className="HPAG-study-detail-meta">reads {node.inputs.join(', ')}</span>}
-        {node.round ? <span className="HPAG-study-detail-meta">added in review {node.round}</span> : null}
+    <div className="HPAG-map-panel-body">
+      <div className="HPAG-map-panel-head">
+        <span className={`HPAG-map-pill HPAG-map-pill-${island.status}`}>{island.type === 'query' ? 'query' : island.status}</span>
+        <span className="HPAG-map-panel-key">{island.key}</span>
+        <span className="HPAG-map-panel-title">{island.type === 'agent' || island.type === 'tool' ? island.label : island.type === 'data' ? (island.size || 'data') : island.type === 'figure' ? 'figure' : island.label}</span>
+        {island.ms !== undefined && <span className="HPAG-map-panel-meta">{seconds(island.ms)}</span>}
       </div>
-      {node.why && <div className="HPAG-study-detail-why">{node.why}</div>}
-      {node.error && <div className="HPAG-study-detail-error">{node.error}</div>}
-      {node.repaired && <div className="HPAG-study-detail-line"><span>Arguments repaired before running: {node.repaired.missing.join(', ')} did not exist in the input.</span></div>}
-      {isIsland && node.op === 'chart' && workspaceUuid && node.artifactUuid && (
-        <div className="HPAG-study-figure"><AsoChart apiBaseUrl={apiBaseUrl} workspaceUuid={workspaceUuid} artifactId={node.artifactUuid} title={node.args?.title || node.label} onArtifactEnter={onArtifactEnter} onArtifactLeave={onArtifactLeave} /></div>
-      )}
-      {!isIsland && argEntries.length > 0 && (
-        <dl className="HPAG-study-args">
-          {argEntries.map(([k, v]) => <React.Fragment key={k}><dt>{k}</dt><dd>{typeof v === 'string' ? v : JSON.stringify(v)}</dd></React.Fragment>)}
-        </dl>
-      )}
-      {node.searchUrl && (
-        <div className="HPAG-study-detail-line">
-          {node.query && <span>{node.query}</span>}
-          <a href={node.searchUrl} target="_blank" rel="noopener noreferrer">open on proteinatlas.org <FontAwesomeIcon icon={faExternalLinkAlt} /></a>
-        </div>
-      )}
-      {isIsland && node.sample?.length > 0 && (
-        <div className="HPAG-study-sample">
-          <table>
-            <thead><tr>{(node.sampleColumns || []).map(c => <th key={c}>{c}</th>)}</tr></thead>
-            <tbody>{node.sample.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>)}</tbody>
-          </table>
-          {node.columns?.length > (node.sampleColumns || []).length && <div className="HPAG-study-sample-more">columns: {node.columns.join(', ')}</div>}
-        </div>
-      )}
-      {!isIsland && steps?.length > 0 && (
-        <div className="HPAG-study-steps">
-          {steps.slice(-14).map((s, i) => (
-            <div key={i} className="HPAG-study-step">
-              <span className="HPAG-study-step-label">{s.who ? `${s.who} · ` : ''}{s.label || s.stage}</span>
-              <span className="HPAG-study-step-message">{truncate(s.message, 260)}</span>
+      {island.type === 'query' && (
+        <>
+          <div className="HPAG-map-panel-text">{state.goal}</div>
+          {state.turns.length > 0 && (
+            <div className="HPAG-map-steps">
+              {state.turns.slice(-8).map((t, i) => (
+                <div key={i} className="HPAG-map-step">
+                  <span className="HPAG-map-step-label">{t.turn ? `turn ${t.turn}` : 'wait'}</span>
+                  <span className="HPAG-map-step-text">{t.skip !== undefined ? `skip: ${t.skip}` : t.calls.length ? t.calls.map(c => c.tool).join(', ') : truncate(t.text, 160)}</span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
+      {(island.type === 'agent' || island.type === 'tool') && (
+        <>
+          {island.detail && <div className="HPAG-map-panel-text">{island.detail}</div>}
+          <dl className="HPAG-map-args">{argLines(island.args).map(([k, v]) => <React.Fragment key={k}><dt>{k}</dt><dd>{truncate(v, 240)}</dd></React.Fragment>)}</dl>
+          {island.inputs?.filter(i => i !== 'query').length > 0 && <div className="HPAG-map-panel-meta">reads {island.inputs.filter(i => i !== 'query').join(', ')}</div>}
+          {island.error && <div className="HPAG-map-panel-error">{island.error}</div>}
+          {trail.length > 0 && (
+            <div className="HPAG-map-steps">
+              {trail.slice(-12).map((s, i) => (
+                <div key={i} className="HPAG-map-step">
+                  <span className="HPAG-map-step-label">{s.label || s.stage}</span>
+                  <span className="HPAG-map-step-text">{truncate(s.message, 220)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {island.status === 'running' && <div className="HPAG-map-panel-meta">working…</div>}
+          {out && <div className="HPAG-map-panel-meta">produced {out.key} ({out.size})</div>}
+        </>
+      )}
+      {(island.type === 'data' || island.type === 'figure') && (
+        <>
+          <div className="HPAG-map-panel-text">{island.label}</div>
+          {island.from && <div className="HPAG-map-panel-meta">from {island.from.tool}{island.from.inputs?.filter(i => i !== 'query').length ? ` of ${island.from.inputs.filter(i => i !== 'query').join(', ')}` : ''}</div>}
+          {island.query && <div className="HPAG-map-panel-meta">{island.query}</div>}
+          {island.searchUrl && <a className="HPAG-map-link" href={island.searchUrl} target="_blank" rel="noopener noreferrer">open on proteinatlas.org <FontAwesomeIcon icon={faExternalLinkAlt} /></a>}
+          {island.text && <div className="HPAG-map-panel-text">{truncate(island.text, 500)}</div>}
+          {island.sample?.length > 0 && (
+            <div className="HPAG-map-sample">
+              <table>
+                <thead><tr>{island.sampleColumns.map(c => <th key={c}>{c}</th>)}</tr></thead>
+                <tbody>{island.sample.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>)}</tbody>
+              </table>
+            </div>
+          )}
+          {island.columns?.length > 0 && <div className="HPAG-map-panel-meta">columns: {truncate(island.columns.join(', '), 200)}</div>}
+          {island.type === 'figure' && island.images?.length > 0 && <div className="HPAG-map-panel-meta">rendered: {island.images.join(', ')}</div>}
+        </>
+      )}
+      {island.type === 'plan' && <ol className="HPAG-map-plan-list">{island.items.map((p, i) => <li key={i} className={`HPAG-map-plan-${p.status}`}>{p.text}</li>)}</ol>}
+      {island.type === 'note' && <div className="HPAG-map-panel-text">{island.text}</div>}
+      {island.type === 'finish' && <div className="HPAG-map-panel-text">{island.summary}</div>}
     </div>
   );
 }
 
-export default function StudyRun({ events, apiBaseUrl, workspaceUuid, isComplete, onArtifactEnter, onArtifactLeave }) {
+export default function StudyRun({ events, isComplete }) {
   const state = useMemo(() => studyStateFromEvents(events), [events]);
-  const layout = useMemo(() => layoutMap(state), [state]);
-  const [selected, setSelected] = useState(null);
   const [hovered, setHovered] = useState(null);
-  const ws = workspaceUuid || state.workspaceUuid;
-  const focus = hovered || selected;
+  const [pinned, setPinned] = useState(null);
+  const [width, setWidth] = useState(800);
+  const leaveTimer = useRef(null);
+  const measureRef = el => { if (el && el.clientWidth && el.clientWidth !== width) setWidth(el.clientWidth); };
+  const layout = useMemo(() => layoutIslands(state, width), [state, width]);
+  const focus = pinned || hovered;
+  const focusIsland = focus ? state.byKey.get(focus) : null;
+  const focusPos = focus ? layout.positions.get(focus) : null;
   const linked = new Set();
-  if (focus) { linked.add(focus); for (const [a, b] of layout.edges) { if (a === focus) linked.add(b); if (b === focus) linked.add(a); } }
-
-  const counts = { done: 0, failed: 0, running: 0 };
-  for (const n of state.nodes) { if (n.status === 'done') counts.done++; else if (n.status === 'failed' || n.status === 'blocked') counts.failed++; else if (n.status === 'running') counts.running++; }
+  if (focus) { linked.add(focus); for (const i of state.islands) { if (i.inputs?.includes(focus)) linked.add(i.key); if (i.key === focus) for (const p of i.inputs || []) linked.add(p); } }
+  const enter = key => { if (leaveTimer.current) { clearTimeout(leaveTimer.current); leaveTimer.current = null; } setHovered(key); };
+  const leave = () => { leaveTimer.current = setTimeout(() => setHovered(null), 180); };
   const live = !isComplete && state.phase !== 'done' && state.phase !== 'failed';
-  const phaseText = { starting: 'Starting', planning: 'Planning', running: 'Running', reviewing: 'Reviewing results', reporting: 'Writing the report', done: 'Complete', failed: 'Failed' }[state.phase] || state.phase;
-  const selectedBox = selected ? layout.boxes.get(selected) : null;
-  const elapsed = state.final?.seconds !== undefined ? `${Number(state.final.seconds).toFixed(1)}s` : null;
-  const figures = state.nodes.filter(n => n.op === 'chart' && n.status === 'done' && n.artifactUuid);
-  const toggle = key => setSelected(selected === key ? null : key);
+  const counts = { artifacts: state.islands.filter(i => i.type === 'data' || i.type === 'figure').length, running: state.islands.filter(i => i.status === 'running').length, failed: state.islands.filter(i => i.status === 'failed').length };
+  const panelLeft = focusPos ? (focusPos.x > layout.width * 0.55 ? focusPos.x - ICON / 2 - 12 - 320 : focusPos.x + ICON / 2 + 12) : 0;
+  const panelTop = focusPos ? Math.max(6, focusPos.y - 20) : 0;
 
   return (
     <div className="HPAG-study">
       <div className="HPAG-study-head">
-        <span className={`HPAG-study-phase HPAG-study-phase-${state.phase}`}>{live && <FontAwesomeIcon icon={faSpinner} spin />} {phaseText}</span>
-        {state.nodes.length > 0 && (
-          <span className="HPAG-study-counts"><b>{counts.done}</b> of {state.nodes.length} steps done{counts.running ? `, ${counts.running} running` : ''}{counts.failed ? `, ${counts.failed} failed` : ''}</span>
-        )}
-        <span className="HPAG-study-meta">
-          {elapsed && `${elapsed} · `}{state.final?.tokens?.total ? `${Number(state.final.tokens.total).toLocaleString()} tokens · ` : ''}{state.mode ? `${state.mode} data` : ''}{state.hpaVersion ? ` (HPA ${state.hpaVersion})` : ''}
-        </span>
+        <span className={`HPAG-study-phase HPAG-study-phase-${state.phase}`}>{live ? 'Running' : state.phase === 'failed' ? 'Failed' : 'Complete'}</span>
+        <span className="HPAG-study-counts">{state.turns.filter(t => t.turn).length} turns · {counts.artifacts} artifacts{counts.running ? ` · ${counts.running} running` : ''}{counts.failed ? ` · ${counts.failed} failed` : ''}</span>
+        <span className="HPAG-study-meta">{state.finish?.seconds ? `${Number(state.finish.seconds).toFixed(0)}s · ` : ''}{state.finish?.tokens?.total ? `${Number(state.finish.tokens.total).toLocaleString()} tokens · ` : ''}{state.model || ''}{state.mode ? ` · ${state.mode} data` : ''}</span>
       </div>
       {state.error && <div className="HPAG-study-error">{state.error}</div>}
 
-      <div className="HPAG-map-scroll">
-        <div className="HPAG-map" style={{ width: layout.width, height: layout.height }}>
-          <svg className="HPAG-map-edges" width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} aria-hidden="true">
-            <defs>
-              <marker id="HPAG-map-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />
-              </marker>
-            </defs>
-            {layout.edges.map(([a, b]) => {
-              const from = layout.boxes.get(a);
-              const to = layout.boxes.get(b);
-              if (!from || !to) return null;
-              const hot = focus && (a === focus || b === focus);
-              return <path key={`${a}>${b}`} className={`HPAG-map-edge ${hot ? 'HPAG-map-edge-hot' : ''} ${focus && !hot ? 'HPAG-map-edge-dim' : ''}`} d={edgePath(from, to)} markerEnd="url(#HPAG-map-arrow)" />;
+      <div className="HPAG-map-frame" ref={measureRef}>
+        <div className="HPAG-map-scroll" onScroll={() => { if (!pinned) setHovered(null); }}>
+          <div className="HPAG-map" style={{ width: layout.width, height: layout.height }}>
+            <svg className="HPAG-map-edges" width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} aria-hidden="true">
+              {state.islands.map(i => (i.inputs || []).map(p => {
+                const from = layout.positions.get(p);
+                const to = layout.positions.get(i.key);
+                if (!from || !to) return null;
+                const hot = focus && (p === focus || i.key === focus);
+                return <path key={`${p}>${i.key}`} className={`HPAG-map-edge ${hot ? 'HPAG-map-edge-hot' : ''} ${focus && !hot ? 'HPAG-map-edge-dim' : ''} ${i.type === 'plan' || i.type === 'note' || i.type === 'finish' ? 'HPAG-map-edge-soft' : ''}`} d={edgePath(from, to)} />;
+              }))}
+            </svg>
+            {state.islands.map(i => {
+              const p = layout.positions.get(i.key);
+              if (!p) return null;
+              const dim = focus && !linked.has(i.key);
+              const label = i.type === 'query' ? 'query' : i.type === 'data' ? (i.size || 'data') : i.type === 'figure' ? 'figure' : i.type === 'agent' ? i.label : i.type === 'tool' ? i.tool : i.label;
+              return (
+                <div
+                  key={i.key}
+                  className={`HPAG-map-island HPAG-map-type-${i.type} HPAG-map-status-${i.status} ${focus === i.key ? 'HPAG-map-focus' : ''} ${dim ? 'HPAG-map-dim' : ''}`}
+                  style={{ left: p.x - CELL_W / 2, top: p.y - ICON / 2, width: CELL_W }}
+                  onMouseEnter={() => enter(i.key)}
+                  onMouseLeave={leave}
+                  onClick={() => setPinned(pinned === i.key ? null : i.key)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPinned(pinned === i.key ? null : i.key); } }}
+                  aria-label={`${i.key} ${label}`}
+                >
+                  <span className="HPAG-map-icon"><FontAwesomeIcon icon={iconFor(i)} /></span>
+                  <span className="HPAG-map-key">{i.key === 'query' ? '' : i.key}</span>
+                  <span className="HPAG-map-label">{truncate(label, 15)}</span>
+                </div>
+              );
             })}
-          </svg>
-
-          {[...layout.boxes.entries()].map(([key, box]) => {
-            const dim = focus && !linked.has(key);
-            const common = {
-              key,
-              style: { left: box.x, top: box.y, width: box.w, height: box.h },
-              onMouseEnter: () => setHovered(key),
-              onMouseLeave: () => setHovered(null),
-              onClick: () => toggle(key),
-              role: 'button',
-              tabIndex: 0,
-              onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(key); } }
-            };
-            if (box.type === 'query') {
-              return (
-                <div {...common} className={`HPAG-map-node HPAG-map-query ${selected === key ? 'HPAG-map-selected' : ''} ${dim ? 'HPAG-map-dim' : ''}`}>
-                  <div className="HPAG-map-node-kind"><FontAwesomeIcon icon={faQuestion} /> Query</div>
-                  <div className="HPAG-map-query-text">{truncate(state.goal || 'the goal', 120)}</div>
-                </div>
-              );
-            }
-            const n = box.node;
-            if (box.type === 'island') {
-              const type = islandType(n);
-              const meta = ISLAND_META[type];
-              return (
-                <div {...common} className={`HPAG-map-node HPAG-map-island HPAG-map-island-${type} ${selected === key ? 'HPAG-map-selected' : ''} ${dim ? 'HPAG-map-dim' : ''}`}>
-                  <div className="HPAG-map-node-kind"><FontAwesomeIcon icon={meta.icon} /> {meta.name}<span className="HPAG-map-node-id">{n.id}</span></div>
-                  <div className="HPAG-map-node-label">{truncate(n.label, 26)}</div>
-                  <div className="HPAG-map-node-stat">{islandStat(n)}</div>
-                </div>
-              );
-            }
-            const agent = AGENT[n.op];
-            return (
-              <div {...common} className={`HPAG-map-node ${agent ? 'HPAG-map-agent' : 'HPAG-map-tool'} HPAG-map-status-${n.status} ${selected === key ? 'HPAG-map-selected' : ''} ${dim ? 'HPAG-map-dim' : ''}`}>
-                <div className="HPAG-map-node-kind">
-                  {n.status === 'running' ? <FontAwesomeIcon icon={faSpinner} spin /> : n.status === 'done' ? <FontAwesomeIcon icon={faCheck} /> : <FontAwesomeIcon icon={faTimes} />}
-                  {' '}{agent || n.op}<span className="HPAG-map-node-id">{n.id}</span>
-                </div>
-                <div className="HPAG-map-node-label">{truncate(agent ? n.label : n.label, agent ? 24 : 20)}</div>
-                <div className="HPAG-map-node-stat">{n.status === 'running' ? 'working…' : n.status === 'done' ? seconds(n.ms) : truncate(n.error, 28)}</div>
+            {focusIsland && focusPos && (
+              <div className="HPAG-map-panel" style={{ left: panelLeft, top: panelTop }} onMouseEnter={() => enter(focus)} onMouseLeave={leave}>
+                <Panel island={focusIsland} state={state} />
               </div>
-            );
-          })}
+            )}
+          </div>
         </div>
+        {state.plan.length > 0 && (
+          <div className="HPAG-map-plan">
+            <div className="HPAG-map-plan-head">Plan</div>
+            <ol className="HPAG-map-plan-list">
+              {state.plan.map((p, i) => <li key={i} className={`HPAG-map-plan-${p.status}`}>{p.text}{p.note ? <span className="HPAG-map-plan-note"> {p.note}</span> : null}</li>)}
+            </ol>
+          </div>
+        )}
       </div>
-      {!selectedBox && <div className="HPAG-study-hint">{layout.started ? 'Click a node or an island for its details.' : state.phase === 'planning' ? 'Agents appear here as they start.' : ''}</div>}
-      {selectedBox && <Detail box={selectedBox} state={state} apiBaseUrl={apiBaseUrl} workspaceUuid={ws} onArtifactEnter={onArtifactEnter} onArtifactLeave={onArtifactLeave} />}
-
-      {state.reflections.map(r => (
-        <div key={r.round} className="HPAG-study-review">
-          <span className="HPAG-study-review-label">Review {r.round}{r.done ? ' · done' : r.added.length ? ` · added ${r.added.map(a => a.id).join(', ')}` : ''}</span>
-          <span className="HPAG-study-review-text">{r.assessment}</span>
-        </div>
-      ))}
-
-      {figures.length > 0 && ws && (
-        <div className="HPAG-study-figures">
-          {figures.map(n => (
-            <div key={n.id} className="HPAG-study-figure">
-              <AsoChart apiBaseUrl={apiBaseUrl} workspaceUuid={ws} artifactId={n.artifactUuid} title={`${n.id} · ${n.args?.title || n.label}`} onArtifactEnter={onArtifactEnter} onArtifactLeave={onArtifactLeave} />
-            </div>
-          ))}
-        </div>
-      )}
-
-      {state.report && (
-        <div className="HPAG-study-report">
-          <div className="HPAG-study-report-title">{state.report.title}</div>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{reportBody(state.report.md)}</ReactMarkdown>
-        </div>
-      )}
+      {state.finish?.summary && <div className="HPAG-study-summary">{state.finish.summary}</div>}
     </div>
   );
 }

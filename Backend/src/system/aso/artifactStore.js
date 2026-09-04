@@ -24,7 +24,10 @@ const KIND_CATEGORY = Object.freeze({
   figure: 'figure',
   summary: 'summary',
   inspection: 'inspection',
-  cleaned: 'cleaned'
+  cleaned: 'cleaned',
+  // Study loop artifacts: an agent's answer to one question, and a note the loop wrote down.
+  answer: 'measurement',
+  note: 'inspection'
 });
 
 const CONTENT_TYPES = Object.freeze({

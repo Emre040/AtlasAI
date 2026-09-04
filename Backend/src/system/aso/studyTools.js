@@ -231,8 +231,20 @@ async function measure(rows, { table, value_column, entity_column, entity, as },
   if (!entry) throw new Error(`measure: no table named "${table}" in the release`);
   const valueCol = entry.columns.find(c => lower(c) === lower(value_column));
   if (!valueCol) throw new Error(`measure: "${table}" has no column "${value_column}" (columns: ${entry.columns.join(', ')})`);
-  const entityCol = entity_column ? entry.columns.find(c => lower(c) === lower(entity_column)) : null;
+  let entityCol = entity_column ? entry.columns.find(c => lower(c) === lower(entity_column)) : null;
   if (entity_column && !entityCol) throw new Error(`measure: "${table}" has no column "${entity_column}"`);
+  // No entity column named: find the one that holds the entity, or the first text column that
+  // is not the gene, so "liver" reads the liver row and a long read keeps its entity names.
+  const inferEntityColumn = rows => {
+    if (entityCol || !rows.length) return;
+    const candidates = entry.columns.filter(c => c !== valueCol && !/^(gene|ensembl|gene name)$/i.test(c));
+    if (entity) {
+      entityCol = candidates.find(c => rows.some(r => lower(r[c]) === lower(entity))) || null;
+      if (!entityCol) throw new Error(`measure: no column of "${table}" holds "${entity}" (columns: ${entry.columns.join(', ')})`);
+    } else if (rows.length > 1) {
+      entityCol = candidates.find(c => rows.every(r => num(r[c]) === null && String(r[c] ?? '') !== '')) || null;
+    }
+  };
   const out = [];
   const queue = [...rows];
   const worker = async () => {
@@ -242,6 +254,7 @@ async function measure(rows, { table, value_column, entity_column, entity, as },
       if (!gene) { out.push({ gene: r.gene, ensembl: r.ensembl || null, entity: entity || null, [valueName]: null, note: 'gene not in release' }); continue; }
       let reading;
       try { reading = await geneData.read(gene, entry.file); } catch (e) { out.push({ gene: gene.gene, ensembl: gene.ensembl, entity: entity || null, [valueName]: null, note: e.message }); continue; }
+      try { inferEntityColumn(reading.rows); } catch (e) { out.push({ gene: gene.gene, ensembl: gene.ensembl, entity: entity || null, [valueName]: null, note: e.message }); continue; }
       const rowsFor = entityCol && entity ? reading.rows.filter(x => lower(x[entityCol]) === lower(entity)) : reading.rows;
       if (entity || !entityCol) {
         const row = rowsFor[0];

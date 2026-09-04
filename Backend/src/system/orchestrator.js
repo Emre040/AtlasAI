@@ -23,8 +23,9 @@ const defs = [
     description:
       'Autonomous study over the Human Protein Atlas. Use for any request that needs several steps: several gene ' +
       'sets combined, values measured for many genes, comparisons, rankings, counts, charts or figures, or a written ' +
-      'analysis with conclusions. It plans a graph of operations, runs independent steps in parallel with search and ' +
-      'gene-reading agents, keeps every intermediate result as an artifact, and returns a report that cites its steps.',
+      'analysis with conclusions. It works in turns: it keeps a plan, summons the search and gene-reading agents in ' +
+      'parallel, applies table operations to their results, keeps every result as an artifact, and finishes with a ' +
+      'summary that cites the artifacts.',
     parameters: {
       type: 'object',
       properties: {

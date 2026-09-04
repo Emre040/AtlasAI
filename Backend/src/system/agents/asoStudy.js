@@ -55,7 +55,7 @@ const STUDY_TOOLS = [
   tool('rank', 'Sort by a numeric column (adds rank); top keeps the first N.', { artifact: A, by: S, order: { type: 'string', enum: ['desc', 'asc'] }, top: N }, ['artifact', 'by']),
   tool('top_per_group', 'Keep the n highest rows per group (default group gene). Streams a whole dataset.', { artifact: A, group_by: S, by: S, n: N, order: { type: 'string', enum: ['desc', 'asc'] } }, ['artifact', 'by']),
   tool('aggregate', 'count, sum, mean, median, sd, q1, q3, min, max, missing of a column, optionally per group. Streams a whole dataset.', { artifact: A, group_by: S, column: S, metrics: { type: 'array', items: { type: 'string', enum: ['count', 'sum', 'mean', 'median', 'sd', 'q1', 'q3', 'min', 'max', 'missing'] } } }, ['artifact', 'metrics']),
-  tool('compute', 'Add a column from an expression over columns and numbers: + - * / ( ) log2 log10 ln abs sqrt exp min max.', { artifact: A, name: S, expr: S }, ['artifact', 'name', 'expr']),
+  tool('compute', 'Add a column from an expression over columns and numbers: + - * / ( ) log2 log10 ln abs sqrt exp min max; + also joins text, as in a + " / " + b.', { artifact: A, name: S, expr: S }, ['artifact', 'name', 'expr']),
   tool('pivot', 'Long rows to a matrix: row (default gene), column and value name the columns; top and top_columns cap it.', { artifact: A, row: S, column: S, value: S, top: N, top_columns: N }, ['artifact', 'column', 'value']),
   tool('chart', 'Draw an artifact: x the label column and y the value column (bar family), both numeric for scatter; heatmap takes a pivot.', { artifact: A, type: { type: 'string', enum: ['bar', 'lollipop', 'dot_plot', 'diverging_bar', 'grouped_bar', 'scatter', 'bubble', 'heatmap', 'radar', 'line', 'volcano'] }, x: S, y: S, group: S, size: S, title: S, x_label: S, y_label: S }, ['artifact', 'type']),
   tool('correlate', 'Pearson or Spearman correlation of two numeric columns: r, p and n.', { artifact: A, x: S, y: S, method: { type: 'string', enum: ['pearson', 'spearman'] } }, ['artifact', 'x', 'y']),
@@ -432,6 +432,8 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
 
   // Table tools run at once on the artifacts named in the call.
   async function runTableTool(tool, args) {
+    // A two-table tool called with artifact instead of a: read it as a.
+    if (['union', 'intersect', 'difference', 'concat', 'join', 'overlap'].includes(tool) && args && args.a === undefined && args.artifact !== undefined) args = { ...args, a: args.artifact };
     const id = `t${++state.ids.t}`;
     const t0 = Date.now();
     state.toolCalls++;

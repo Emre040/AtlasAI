@@ -75,7 +75,9 @@ function catalogText() {
 
 function wherePredicate(columns, where = []) {
   const clauses = [];
-  for (const w of Array.isArray(where) ? where : []) {
+  for (const raw of Array.isArray(where) ? where : []) {
+    // Clause keys arrive occasionally wrapped in their own quotes ("\"column\""); read them anyway.
+    const w = raw && typeof raw === 'object' ? Object.fromEntries(Object.entries(raw).map(([k, v]) => [k.replace(/^["'\s]+|["'\s]+$/g, ''), v])) : {};
     const column = columns.find(c => c === w?.column) || columns.find(c => lower(c) === lower(w?.column)) || null;
     const op = String(w?.op || '=').trim();
     if (!column) throw new Error(`filter: no column named "${w?.column}" (columns: ${columns.slice(0, 30).join(', ')})`);
@@ -437,7 +439,7 @@ function parseExpression(text) {
     const m = re.exec(text);
     if (!m || m.index !== i) throw new Error(`compute: cannot read "${text}" near "${text.slice(i, i + 12)}"`);
     if (m[1] !== undefined) tokens.push({ t: 'num', v: Number(m[1]) });
-    else if (m[2] !== undefined) tokens.push({ t: 'id', v: m[2].slice(1, -1) });
+    else if (m[2] !== undefined) tokens.push({ t: 'id', v: m[2].slice(1, -1), quoted: true });
     else if (m[3] !== undefined) tokens.push({ t: 'id', v: m[3] });
     else tokens.push({ t: 'op', v: m[4] });
     i = re.lastIndex;
@@ -463,13 +465,21 @@ function parseExpression(text) {
         expect(')');
         return { fn: tok.v.toLowerCase(), args };
       }
-      return { col: tok.v };
+      return { col: tok.v, quoted: !!tok.quoted };
     }
     throw new Error(`compute: unexpected "${tok.v}" in "${text}"`);
   };
   const tree = parseSum();
   if (pos < tokens.length) throw new Error(`compute: unexpected "${tokens[pos].v}" in "${text}"`);
   return tree;
+}
+
+function colNodes(tree, out = []) {
+  if (!tree || typeof tree !== 'object') return out;
+  if (tree.col) out.push(tree);
+  for (const k of ['a', 'b']) if (tree[k]) colNodes(tree[k], out);
+  for (const a of tree.args || []) colNodes(a, out);
+  return out;
 }
 
 function columnsIn(tree, out = []) {
@@ -483,13 +493,20 @@ function columnsIn(tree, out = []) {
 
 function evaluate(tree, row, resolved) {
   if (tree.num !== undefined) return tree.num;
-  if (tree.col) { const raw = row[resolved.get(tree.col)]; return raw === null || raw === undefined || String(raw).trim() === '' ? null : num(raw); }
-  if (tree.fn) { const vals = tree.args.map(a => evaluate(a, row, resolved)); return vals.some(v => v === null) ? null : FUNCTIONS[tree.fn](...vals); }
+  if (tree.str !== undefined) return tree.str;
+  if (tree.col) {
+    const raw = row[resolved.get(tree.col)];
+    if (raw === null || raw === undefined || String(raw).trim() === '') return null;
+    const n = num(raw);
+    return n === null ? String(raw) : n;
+  }
+  if (tree.fn) { const vals = tree.args.map(a => evaluate(a, row, resolved)); return vals.some(v => typeof v !== 'number') ? null : FUNCTIONS[tree.fn](...vals); }
   const a = evaluate(tree.a, row, resolved);
-  if (tree.op === 'neg') return a === null ? null : -a;
+  if (tree.op === 'neg') return typeof a === 'number' ? -a : null;
   const b = evaluate(tree.b, row, resolved);
   if (a === null || b === null) return null;
-  if (tree.op === '+') return a + b;
+  if (tree.op === '+') return typeof a === 'string' || typeof b === 'string' ? `${a}${b}` : a + b;
+  if (typeof a !== 'number' || typeof b !== 'number') return null;
   if (tree.op === '-') return a - b;
   if (tree.op === '*') return a * b;
   return b === 0 ? null : a / b;
@@ -509,12 +526,14 @@ function autoQuote(expr, columns) {
 function compute(rows, name, expr) {
   const tree = parseExpression(autoQuote(String(expr || ''), columnsOf(rows)));
   const resolved = new Map();
-  for (const c of columnsIn(tree)) {
-    const found = findColumn(rows, c);
-    if (!found) throw new Error(`compute: no column "${c}" (columns: ${columnsOf(rows).slice(0, 20).join(', ')})`);
-    resolved.set(c, found);
+  for (const node of colNodes(tree)) {
+    const found = findColumn(rows, node.col);
+    if (found) { resolved.set(node.col, found); continue; }
+    // A quoted token that names no column is a piece of text, as in a + " / " + b.
+    if (node.quoted) { node.str = node.col; delete node.col; continue; }
+    throw new Error(`compute: no column "${node.col}" (columns: ${columnsOf(rows).slice(0, 20).join(', ')})`);
   }
-  return rows.map(r => { const v = evaluate(tree, r, resolved); return { ...r, [name]: v === null || !Number.isFinite(v) ? null : Number(v.toFixed(4)) }; });
+  return rows.map(r => { const v = evaluate(tree, r, resolved); return { ...r, [name]: typeof v === 'string' ? v : (v === null || !Number.isFinite(v) ? null : Number(v.toFixed(4))) }; });
 }
 
 function pivot(rows, { row = 'gene', column, value, top = 0, top_columns = 0 } = {}) {

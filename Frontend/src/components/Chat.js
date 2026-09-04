@@ -22,16 +22,9 @@ import {
   faTimes,
   faExternalLinkAlt,
   faSearch,
-  faTag,
-  faChartBar,
-  faHashtag,
-  faCheckCircle,
-  faList,
   faDownload,
   faProjectDiagram
 } from '@fortawesome/free-solid-svg-icons';
-import createPlotlyComponent from 'react-plotly.js/factory';
-import Plotly from 'plotly.js-dist-min';
 import {
   authenticatedDownload,
   authenticatedFetch,
@@ -42,6 +35,7 @@ import { getApiBaseUrl, getApiEndpoint, getRuntimeConfig, getUiConfig } from '..
 import { AUTO_MODEL, describeRefusal, loadSelectedModel, storeSelectedModel } from '../api/models';
 import ModelMenu from './ModelMenu';
 import ProvenanceGraph from './ProvenanceGraph';
+import StudyRun, { studyStatusLine } from './StudyRun';
 import { liveToolEventFromSse, timelineToUiMessages } from '../api/timeline';
 import DictionaryCarousel from './DictionaryCarousel';
 
@@ -50,144 +44,6 @@ const UI_CONFIG = getUiConfig();
 const debugLog = (...args) => {
   if (RUNTIME_CONFIG.isLocal) console.log(...args);
 };
-
-const Plot = createPlotlyComponent(Plotly);
-
-const PLOTLY_COLORS = ['#636efa','#ef553b','#00cc96','#ab63fa','#ffa15a','#19d3f3','#ff6692','#b6e880','#ff97ff','#fecb52'];
-
-function specToPlotly(chart) {
-  const t = chart.type;
-  const data = [];
-  const layout = {
-    title: chart.title || '',
-    xaxis: { title: { text: chart.x_label || '', standoff: 10 } },
-    yaxis: { title: { text: chart.y_label || '', standoff: 10 } },
-    margin: { t: 20, r: 20, b: 60, l: 70 },
-    font: { size: 11 },
-    paper_bgcolor: 'rgba(0,0,0,0)',
-    plot_bgcolor: 'rgba(0,0,0,0)',
-    showlegend: false,
-    autosize: true
-  };
-
-  if (t === 'bar') {
-    data.push({ type: 'bar', x: chart.data.map(d => d.label), y: chart.data.map(d => d.value), marker: { color: PLOTLY_COLORS[0] } });
-  } else if (t === 'lollipop') {
-    const labels = chart.data.map(d => d.label);
-    const values = chart.data.map(d => d.value);
-    for (let li = 0; li < labels.length; li++) {
-      data.push({ type: 'scatter', mode: 'lines', x: [labels[li], labels[li]], y: [0, values[li]], line: { color: PLOTLY_COLORS[0], width: 2 }, showlegend: false, hoverinfo: 'skip' });
-    }
-    data.push({ type: 'scatter', mode: 'markers', x: labels, y: values, marker: { color: PLOTLY_COLORS[0], size: 10 }, showlegend: false });
-  } else if (t === 'diverging_bar') {
-    data.push({ type: 'bar', y: chart.data.map(d => d.label), x: chart.data.map(d => d.value), orientation: 'h',
-      marker: { color: chart.data.map(d => d.value >= 0 ? PLOTLY_COLORS[2] : PLOTLY_COLORS[1]) } });
-    layout.xaxis.zeroline = true;
-  } else if (t === 'dot_plot') {
-    data.push({ type: 'scatter', mode: 'markers', y: chart.data.map(d => d.label), x: chart.data.map(d => d.value),
-      marker: { color: PLOTLY_COLORS[0], size: 9 } });
-  } else if (t === 'waterfall') {
-    data.push({ type: 'waterfall', x: chart.data.map(d => d.label), y: chart.data.map(d => d.value),
-      connector: { line: { color: '#94a3b8' } },
-      increasing: { marker: { color: PLOTLY_COLORS[2] } },
-      decreasing: { marker: { color: PLOTLY_COLORS[1] } } });
-  } else if (t === 'scatter') {
-    const series = {};
-    for (const d of chart.data) { const s = d.series || '_'; if (!series[s]) series[s] = { x: [], y: [], text: [] }; series[s].x.push(d.x); series[s].y.push(d.y); series[s].text.push(d.label || ''); }
-    const keys = Object.keys(series);
-    keys.forEach((s, i) => data.push({ type: 'scatter', mode: 'markers', x: series[s].x, y: series[s].y, text: series[s].text, name: s === '_' ? '' : s, marker: { color: PLOTLY_COLORS[i % PLOTLY_COLORS.length] } }));
-    if (keys.length > 1) layout.showlegend = true;
-  } else if (t === 'bubble') {
-    const maxSize = Math.max(...chart.data.map(d => d.size || 1));
-    data.push({ type: 'scatter', mode: 'markers', x: chart.data.map(d => d.x), y: chart.data.map(d => d.y), text: chart.data.map(d => d.label || ''),
-      marker: { size: chart.data.map(d => Math.max(4, (d.size / maxSize) * 50)), color: chart.data.map(d => d.color ?? d.size), colorscale: 'Viridis', showscale: !!chart.color_label, colorbar: { title: chart.color_label || '' } } });
-  } else if (t === 'volcano') {
-    const fc = chart.fc_threshold || 1.0;
-    const sig = chart.sig_threshold || 1.3;
-    const colors = chart.data.map(d => Math.abs(d.x) >= fc && d.y >= sig ? (d.x > 0 ? PLOTLY_COLORS[1] : PLOTLY_COLORS[2]) : '#94a3b8');
-    data.push({ type: 'scatter', mode: 'markers', x: chart.data.map(d => d.x), y: chart.data.map(d => d.y), text: chart.data.map(d => d.label || ''),
-      marker: { color: colors, size: 5 } });
-    layout.shapes = [
-      { type: 'line', x0: -fc, x1: -fc, y0: 0, y1: 1, yref: 'paper', line: { dash: 'dash', color: '#94a3b8' } },
-      { type: 'line', x0: fc, x1: fc, y0: 0, y1: 1, yref: 'paper', line: { dash: 'dash', color: '#94a3b8' } },
-      { type: 'line', x0: 0, x1: 1, xref: 'paper', y0: sig, y1: sig, line: { dash: 'dash', color: '#94a3b8' } }
-    ];
-  } else if (t === 'line') {
-    const series = {};
-    for (const d of chart.data) { const s = d.series || '_'; if (!series[s]) series[s] = { x: [], y: [] }; series[s].x.push(d.x); series[s].y.push(d.y); }
-    const keys = Object.keys(series);
-    keys.forEach((s, i) => data.push({ type: 'scatter', mode: 'lines+markers', x: series[s].x, y: series[s].y, name: s === '_' ? '' : s, line: { color: PLOTLY_COLORS[i % PLOTLY_COLORS.length] } }));
-    if (keys.length > 1) layout.showlegend = true;
-  } else if (t === 'grouped_bar') {
-    const groups = {};
-    for (const d of chart.data) { if (!groups[d.group]) groups[d.group] = { labels: [], values: [] }; groups[d.group].labels.push(d.label); groups[d.group].values.push(d.value); }
-    Object.entries(groups).forEach(([g, v], i) => data.push({ type: 'bar', x: v.labels, y: v.values, name: g, marker: { color: PLOTLY_COLORS[i % PLOTLY_COLORS.length] } }));
-    layout.barmode = 'group'; layout.showlegend = true;
-  } else if (t === 'stacked_bar') {
-    const stacks = {};
-    for (const d of chart.data) { if (!stacks[d.stack]) stacks[d.stack] = { labels: [], values: [] }; stacks[d.stack].labels.push(d.label); stacks[d.stack].values.push(d.value); }
-    Object.entries(stacks).forEach(([s, v], i) => data.push({ type: 'bar', x: v.labels, y: v.values, name: s, marker: { color: PLOTLY_COLORS[i % PLOTLY_COLORS.length] } }));
-    layout.barmode = 'stack'; layout.showlegend = true;
-  } else if (t === 'heatmap') {
-    data.push({ type: 'heatmap', z: chart.matrix, x: chart.col_labels, y: chart.row_labels, colorscale: 'YlOrRd', reversescale: true });
-    layout.yaxis.autorange = 'reversed';
-    layout.margin.l = 100;
-  } else if (t === 'radar') {
-    for (let i = 0; i < chart.series.length; i++) {
-      const s = chart.series[i];
-      data.push({ type: 'scatterpolar', r: [...s.values, s.values[0]], theta: [...chart.axes, chart.axes[0]], fill: 'toself', name: s.label, line: { color: PLOTLY_COLORS[i % PLOTLY_COLORS.length] } });
-    }
-    layout.showlegend = chart.series.length > 1;
-    delete layout.xaxis; delete layout.yaxis;
-    layout.polar = { radialaxis: { visible: true } };
-  } else if (t === 'box') {
-    chart.series.forEach((s, i) => data.push({ type: 'box', y: s.values, name: s.label, marker: { color: PLOTLY_COLORS[i % PLOTLY_COLORS.length] } }));
-  } else if (t === 'ridge') {
-    chart.series.forEach((s, i) => data.push({ type: 'violin', y: s.values, name: s.label, box: { visible: true }, meanline: { visible: true }, line: { color: PLOTLY_COLORS[i % PLOTLY_COLORS.length] } }));
-  } else {
-    // Fallback: try bar if data has label+value
-    if (chart.data?.length) {
-      data.push({ type: 'bar', x: chart.data.map(d => d.label || ''), y: chart.data.map(d => d.value || 0) });
-    }
-  }
-  return { data, layout };
-}
-
-function AsoChart({ apiBaseUrl, workspaceUuid, artifactId, title, sourceDatasetId, onArtifactEnter, onArtifactLeave }) {
-  const [spec, setSpec] = useState(null);
-  const [error, setError] = useState(null);
-  useEffect(() => {
-    if (!workspaceUuid || !artifactId) return;
-    let cancelled = false;
-    authenticatedFetch(`${apiBaseUrl}/workspaces/${workspaceUuid}/artifacts/${artifactId}.json`)
-      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(json => { if (!cancelled) setSpec(json); })
-      .catch(err => { if (!cancelled) setError(err.message); });
-    return () => { cancelled = true; };
-  }, [apiBaseUrl, workspaceUuid, artifactId]);
-
-  if (error) return <div className="HPAG-aso-chart-error">Chart failed to load</div>;
-  if (!spec) return <div className="HPAG-aso-chart-loading"><FontAwesomeIcon icon={faSpinner} spin /> Loading chart...</div>;
-
-  const chart = spec.charts?.[0];
-  if (!chart) return null;
-  const { data, layout } = specToPlotly(chart);
-  const chartTitle = title || chart.title || '';
-  return (
-    <div className="HPAG-aso-chart-item" style={{ position: 'relative' }}>
-      <Plot data={data} layout={{ ...layout, title: '' }} useResizeHandler style={{ width: '100%', height: 380 }}
-        config={{ displayModeBar: true, displaylogo: false, modeBarButtonsToRemove: ['lasso2d','select2d'], responsive: true }} />
-      {sourceDatasetId && (
-        <span className="HPAG-aso-data-chip HPAG-aso-data-chip-artifact HPAG-aso-chart-source"
-          onMouseEnter={e => onArtifactEnter?.(e, { artifactId: sourceDatasetId, format: 'json' }, workspaceUuid)}
-          onMouseLeave={() => onArtifactLeave?.()}>
-          <FontAwesomeIcon icon={faFileCode} /> {sourceDatasetId.slice(0, 8)}
-        </span>
-      )}
-      {chartTitle && <div className="HPAG-aso-chart-caption">{chartTitle}</div>}
-    </div>
-  );
-}
 
 function HPA() {
   const [conversations, setConversations] = useState([]);
@@ -276,27 +132,16 @@ function HPA() {
   };
 
   const TOOL_STAGE_META = {
-    start: { label: 'Start', css: 'start', description: 'Research agent activated.' },
-    planning_step: { label: 'Plan', css: 'planning', description: 'Building search strategy.' },
-    reasoning_step: { label: 'Think', css: 'reasoning', description: 'Analyzing options.' },
-    selection_step: { label: 'Select', css: 'selection', description: 'Locking in choice.' },
-    execution_step: { label: 'Run', css: 'execution', description: 'Executing query.' },
+    start: { label: 'Start', css: 'start', description: 'Agent activated.' },
+    planning_step: { label: 'Plan', css: 'planning', description: 'Reading the schema.' },
+    reasoning_step: { label: 'Think', css: 'reasoning', description: 'Weighing the options.' },
+    selection_step: { label: 'Select', css: 'selection', description: 'Choice made.' },
+    execution_step: { label: 'Run', css: 'execution', description: 'Executing.' },
     fallback: { label: 'Fallback', css: 'fallback', description: 'Trying backup.' },
     error: { label: 'Error', css: 'error', description: 'Issue detected.' },
-    complete: { label: 'Done', css: 'complete', description: 'Research complete.' },
-    info: { label: 'Info', css: 'info', description: 'Status update.' },
-    'measure.scout': { label: 'Agent', css: 'execution', description: 'Calibrating gene lookup.' },
-    'measure.scout_result': { label: 'Agent', css: 'complete', description: 'Calibration result.' },
-    'tool.invoke': { label: 'Invoke', css: 'execution', description: 'Tool invocation.' },
-    'measure.batch': { label: 'Target', css: 'target', description: 'Batch data acquisition.' },
-    'tool.result': { label: 'Info', css: 'info', description: 'Tool result.' },
-    'state.snapshot': { label: 'Info', css: 'info', description: 'State snapshot.' },
-    think: { label: 'Think', css: 'reasoning', description: 'Planning steps.' },
-    'understand.objective': { label: 'Think', css: 'reasoning', description: 'Understanding objective.' },
-    'final.complete': { label: 'Info', css: 'complete', description: 'ASO completed.' },
-    'final.report': { label: 'Info', css: 'complete', description: 'Compiling report.' },
-    'start.workspace_created': { label: 'Info', css: 'start', description: 'Workspace initialized.' },
-    tokens: { label: null, css: null, description: null }
+    complete: { label: 'Done', css: 'complete', description: 'Complete.' },
+    not_found: { label: 'Not found', css: 'fallback', description: 'No answer in the data.' },
+    info: { label: 'Info', css: 'info', description: 'Status update.' }
   };
 
   const stageMetaFor = (event = {}) => {
@@ -308,30 +153,10 @@ function HPA() {
   };
 
   // Compute the display label for a tool event (shared by shimmer + timeline)
-  const getStepDisplayLabel = (evt, isAso) => {
+  const getStepDisplayLabel = (evt) => {
     if (!evt) return 'Update';
     const meta = stageMetaFor(evt);
-    let label = titleCase(evt.label || meta?.label || 'Update');
-
-    if (isAso && evt.message) {
-      try {
-        const d = JSON.parse(evt.message);
-        const stage = (evt.stage || '').toLowerCase();
-        if (stage === 'think' && d.text) label = 'Planning';
-        else if (stage === 'measure.scout') label = `Calibrating ${d.gene || '?'} · ${d.tissue || '?'}`;
-        else if (stage === 'measure.scout_result') label = d.exact_label ? `Found ${d.exact_label}` : `Result · ${d.gene || '?'}`;
-        else if (stage === 'measure.batch') label = 'Batch Data Acquisition';
-        else if (stage === 'tool.invoke' && d.name) label = `Invoking ${titleCase(d.name.replace(/_/g, ' '))}`;
-        else if (stage === 'tool.result' && d.name) label = 'Tool Result';
-        else if (stage === 'state.snapshot') label = 'State Snapshot';
-        else if (stage === 'start.workspace_created') label = 'Workspace Initialized';
-        else if (stage === 'final.complete') label = 'Completion';
-        else if (stage === 'final.report') label = 'Compiling Report';
-        else if (stage === 'understand.objective') label = 'Understanding Objective';
-        else if (stage === 'measure.invoke' && d.mode?.includes('direct+scout')) label = `Measuring ${d.gene || '?'}`;
-      } catch (_) {}
-    }
-    return label;
+    return titleCase(evt.label || meta?.label || 'Update');
   };
 
   const linkifyInline = (text = '') => {
@@ -1358,14 +1183,14 @@ function HPA() {
                   const firstToolEvent = group.messages[0]?.toolEvent;
                   const isInvestigatorRun = firstToolEvent?.toolName === 'investigator_hpa';
                   const isAsoRun = firstToolEvent?.toolName === 'aso_hpa';
-                  const runTitle = isAsoRun ? 'ASO Analysis' : isInvestigatorRun ? 'Investigator' : 'Deep Research';
+                  const runTitle = isAsoRun ? 'Study' : isInvestigatorRun ? 'Investigator' : 'Deep Research';
 
-                  // Extract workspace UUID from start.workspace_created event
+                  // The study names its workspace in its first event.
                   let runWorkspaceUuid = null;
                   if (isAsoRun) {
                     for (const m of group.messages) {
                       const evt = m.toolEvent;
-                      if ((evt?.stage || '').toLowerCase() === 'start.workspace_created' && evt?.message) {
+                      if ((evt?.stage || '').toLowerCase() === 'start' && evt?.message) {
                         try { const pd = JSON.parse(evt.message); if (pd.workspace_uuid) { runWorkspaceUuid = pd.workspace_uuid; break; } } catch (_) {}
                       }
                     }
@@ -1373,10 +1198,11 @@ function HPA() {
 
                   // Get latest step label for shimmer text (identical to HPAG-tool-line-label)
                   const lastStepMsg = (() => {
+                    if (isAsoRun) return studyStatusLine(group.messages.map(m => m.toolEvent).filter(Boolean));
                     for (let mi = group.messages.length - 1; mi >= 0; mi--) {
                       const evt = group.messages[mi].toolEvent;
                       if (evt && evt.status !== 'started' && evt.status !== 'completed') {
-                        return getStepDisplayLabel(evt, isAsoRun);
+                        return getStepDisplayLabel(evt);
                       }
                     }
                     return runTitle;
@@ -1398,300 +1224,19 @@ function HPA() {
                     {isExpanded && (
                     <div className="HPAG-tool-run-container">
                       <div
-                        className="HPAG-tool-run-content"
+                        className={`HPAG-tool-run-content ${isAsoRun ? 'HPAG-tool-run-content-study' : ''}`}
                         ref={el => { toolRunRefs.current[group.runId] = el; }}
                       >
-                        {(() => {
-                          // For ASO runs: collapse consecutive measure.invoke direct+scout into single timeline rows
-                          if (!isAsoRun) return null;
-
-                          const items = [];
-                          let i = 0;
-                          while (i < group.messages.length) {
-                            const msg = group.messages[i];
-                            const evt = msg.toolEvent;
-                            const stage = (evt?.stage || '').toLowerCase();
-                            let parsed = null;
-                            if (evt?.message) { try { parsed = JSON.parse(evt.message); } catch (_) {} }
-
-                            // Skip tokens events entirely
-                            if (stage === 'tokens') { i++; continue; }
-
-                            if (stage === 'measure.invoke' && parsed?.mode?.includes('direct+scout')) {
-                              // Collect consecutive direct+scout genes
-                              const genes = [];
-                              const startIdx = i;
-                              while (i < group.messages.length) {
-                                const m = group.messages[i];
-                                const e = m.toolEvent;
-                                const s = (e?.stage || '').toLowerCase();
-                                let p = null;
-                                if (e?.message) { try { p = JSON.parse(e.message); } catch (_) {} }
-                                if (s === 'measure.invoke' && p?.mode?.includes('direct+scout')) {
-                                  genes.push(p.gene || '?');
-                                  i++;
-                                } else break;
-                              }
-                              items.push({ type: 'swarm', genes, id: group.messages[startIdx].id, startIdx });
-                            } else {
-                              items.push({ type: 'msg', msg, origIdx: i });
-                              i++;
-                            }
-                          }
-
-                          return items.map((item, itemIdx) => {
-                            const isFirst = itemIdx === 0;
-                            const isLast = itemIdx === items.length - 1;
-
-                            if (item.type === 'swarm') {
-                              return (
-                                <div key={item.id} className="HPAG-tool-line">
-                                  <div className={`HPAG-tool-timeline ${!isFirst ? 'HPAG-has-line-above' : ''} ${!isLast ? 'HPAG-has-line-below' : ''}`}>
-                                    <div className="HPAG-tool-timeline-dot" />
-                                  </div>
-                                  <div className="HPAG-tool-stage-badge HPAG-tool-stage-dispatch">Dispatch</div>
-                                  <div className="HPAG-tool-line-body">
-                                    <div className="HPAG-tool-line-label">{item.genes.length} agents deployed</div>
-                                    <div className="HPAG-aso-swarm-chips">
-                                      {item.genes.map((g, gi) => (
-                                        <span key={gi} className="HPAG-ASO-tool-option-chip" style={{ animationDelay: `${Math.min(gi * 0.02, 2)}s` }}>{g}</span>
-                                      ))}
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            }
-
-                            // Normal message — standard timeline rendering
-                            const message = item.msg;
-                            const msgIndex = item.origIdx;
-                            const nextMsg = group.messages[msgIndex + 1];
-                            const nextEvent = nextMsg?.type === 'tool' ? (nextMsg.toolEvent) : null;
-                            const nextSelections = nextEvent ? extractSelectionsForEvent(nextEvent) : [];
-                            const selectionsForThisRow = new Set(nextSelections.map(s => s.toLowerCase().trim()));
-
-                            const toolEvent = message.toolEvent;
-                            const toolStageMeta = toolEvent ? stageMetaFor(toolEvent) : null;
-                            const stageBadgeClass = toolStageMeta?.css ? `HPAG-tool-stage-${toolStageMeta.css}` : '';
-                            const toolMetaLine = toolEvent
-                              ? [toolStageMeta?.description || null, toolEvent.toolName || null].filter(Boolean).join(' • ')
-                              : '';
-                            const toolOptions = toolEvent ? extractOptionsForEvent(toolEvent) : [];
-                            const toolSelections = toolEvent ? extractSelectionsForEvent(toolEvent) : [];
-                            const hasScanVisual = toolEvent?.meta?.visual === 'scan';
-                            const hasUrl = toolEvent?.meta?.url;
-                            const shouldShowToolMessage = toolEvent?.message && toolOptions.length === 0 && toolSelections.length === 0 && !hasScanVisual && !hasUrl;
-
-                            // ASO label + chip overrides
-                            let displayLabel = titleCase(toolEvent?.label || toolStageMeta?.label || 'Update');
-                            let displayBadge = toolStageMeta?.label || 'Info';
-                            const evtStage = (toolEvent?.stage || '').toLowerCase();
-                            let asoChips = [];
-                            let asoTextContent = null;
-                            if (toolEvent?.message) {
-                              try {
-                                const d = JSON.parse(toolEvent.message);
-                                if (evtStage === 'think' && d.text) {
-                                  displayBadge = 'Think';
-                                  displayLabel = 'Planning';
-                                  asoTextContent = d.text;
-                                } else if (evtStage === 'measure.scout') {
-                                  displayLabel = `Calibrating ${d.gene || '?'} · ${d.tissue || '?'}`;
-                                  const fieldMap = {
-                                    gene: { label: 'Gene', icon: faDna },
-                                    tissue: { label: 'Tissue', icon: faMicroscope },
-                                    page: { label: 'Page', icon: faFileCode }
-                                  };
-                                  for (const [key, meta] of Object.entries(fieldMap)) {
-                                    if (d[key] !== undefined && d[key] !== null && d[key] !== '') {
-                                      asoChips.push({ label: meta.label, icon: meta.icon, value: String(d[key]) });
-                                    }
-                                  }
-                                } else if (evtStage === 'measure.scout_result') {
-                                  displayLabel = d.exact_label ? `Found ${d.exact_label}` : `Result · ${d.gene || '?'}`;
-                                  const fieldMap = {
-                                    gene: { label: 'Gene', icon: faDna },
-                                    chart_id: { label: 'Chart ID', icon: faChartBar },
-                                    exact_label: { label: 'Label', icon: faTag },
-                                    value: { label: 'Value', icon: faHashtag }
-                                  };
-                                  for (const [key, meta] of Object.entries(fieldMap)) {
-                                    if (d[key] !== undefined && d[key] !== null && d[key] !== '') {
-                                      asoChips.push({ label: meta.label, icon: meta.icon, value: String(d[key]) });
-                                    }
-                                  }
-                                } else if (evtStage === 'measure.batch') {
-                                  displayBadge = 'Target';
-                                  displayLabel = 'Batch Data Acquisition';
-                                  const fieldMap = {
-                                    count: { label: 'Count', icon: faHashtag },
-                                    tissue: { label: 'Tissue', icon: faMicroscope },
-                                    mode: { label: 'Mode', icon: faTag },
-                                    label: { label: 'Label', icon: faTag }
-                                  };
-                                  for (const [key, meta] of Object.entries(fieldMap)) {
-                                    if (d[key] !== undefined && d[key] !== null && d[key] !== '') {
-                                      asoChips.push({ label: meta.label, icon: meta.icon, value: String(d[key]) });
-                                    }
-                                  }
-                                } else if (evtStage === 'tool.invoke' && d.name) {
-                                  displayBadge = 'Agent';
-                                  displayLabel = `Invoking ${titleCase(d.name.replace(/_/g, ' '))}`;
-                                  const argIcons = { tissue: faMicroscope, page: faFileCode, value_type: faHashtag, unit: faHashtag, gene: faDna, chart_type: faChartBar, mode: faTag, label: faTag, top_x: faHashtag, dataset_id: faFileCode, dataset_a: faFileCode, dataset_b: faFileCode, source_ids: faFileCode, source_dataset: faFileCode };
-                                  const artifactArgKeys = new Set(['dataset_id', 'dataset_a', 'dataset_b', 'source_dataset', 'source_ids']);
-                                  if (d.args) {
-                                    for (const [key, val] of Object.entries(d.args)) {
-                                      if (val === null || val === undefined || val === '') continue;
-                                      const lbl = titleCase(key.replace(/_/g, ' '));
-                                      if (Array.isArray(val)) {
-                                        for (const item of val) {
-                                          if (item && typeof item === 'object') {
-                                            const chip = { label: lbl, icon: argIcons[key] || faTag, value: item.label || item.dataset_id || JSON.stringify(item) };
-                                            if (item.dataset_id) { chip.artifactId = item.dataset_id; chip.format = 'json'; }
-                                            asoChips.push(chip);
-                                          } else {
-                                            const chip = { label: lbl, icon: argIcons[key] || faTag, value: String(item) };
-                                            if (artifactArgKeys.has(key)) { chip.artifactId = String(item); chip.format = 'json'; }
-                                            asoChips.push(chip);
-                                          }
-                                        }
-                                      } else {
-                                        const chip = { label: lbl, icon: argIcons[key] || faTag, value: String(val) };
-                                        if (artifactArgKeys.has(key)) { chip.artifactId = String(val); chip.format = 'json'; }
-                                        asoChips.push(chip);
-                                      }
-                                    }
-                                  }
-                                } else if (evtStage === 'tool.result' && d.name) {
-                                  displayLabel = 'Tool Result';
-                                  const resultIcons = { ok: faCheckCircle, artifact_id: faFileCode, rows_found: faHashtag, row_count: faHashtag, search_url: faSearch, validation_passed: faCheckCircle, chart_count: faChartBar, type: faTag, title: faTag, images_rendered: faChartBar, label: faTag, numeric_count: faHashtag, mode: faTag, investigator_calls: faHashtag, page_fetches: faHashtag };
-                                  const skipKeys = new Set(['name', 'datasets', 'sample', 'scout', 'top_3']);
-                                  for (const [key, val] of Object.entries(d)) {
-                                    if (skipKeys.has(key) || val === null || val === undefined || val === '') continue;
-                                    const lbl = titleCase(key.replace(/_/g, ' '));
-                                    if (typeof val === 'boolean') {
-                                      asoChips.push({ label: lbl, icon: resultIcons[key] || faTag, value: val ? 'Yes' : 'No' });
-                                    } else if (typeof val === 'object') {
-                                      continue;
-                                    } else {
-                                      const chip = { label: lbl, icon: resultIcons[key] || faTag, value: String(val) };
-                                      if (key === 'artifact_id') {
-                                        chip.artifactId = String(val);
-                                        chip.format = (d.images_rendered || d.type === 'heatmap' || d.type === 'bar' || d.type === 'scatter') ? 'json' : 'json';
-                                      }
-                                      asoChips.push(chip);
-                                    }
-                                  }
-                                  if (d.datasets && Array.isArray(d.datasets)) {
-                                    for (const ds of d.datasets) {
-                                      asoChips.push({ label: 'Dataset', icon: faCubes, value: ds.label || 'Untitled' });
-                                      if (ds.row_count !== undefined) {
-                                        asoChips.push({ label: 'Rows', icon: faHashtag, value: String(ds.row_count) });
-                                      }
-                                      if (ds.sample_genes?.length) {
-                                        asoChips.push({ label: 'Sample', icon: faDna, value: ds.sample_genes.slice(0, 3).join(', ') + (ds.sample_genes.length > 3 ? '…' : '') });
-                                      }
-                                    }
-                                  }
-                                } else if (evtStage === 'state.snapshot') {
-                                  displayLabel = 'State Snapshot';
-                                  const countIcons = { tool_results: faCheckCircle, datasets: faCubes, measurements: faHashtag, analyses: faList, charts: faChartBar };
-                                  if (d.counts) {
-                                    for (const [key, val] of Object.entries(d.counts)) {
-                                      const lbl = titleCase(key.replace(/_/g, ' '));
-                                      asoChips.push({ label: lbl, icon: countIcons[key] || faTag, value: String(val) });
-                                    }
-                                  }
-                                } else if (evtStage === 'start.workspace_created') {
-                                  displayLabel = 'Workspace Initialized';
-                                  if (d.workspace_uuid) {
-                                    asoChips.push({ label: 'Workspace', icon: faFileCode, value: d.workspace_uuid });
-                                  }
-                                } else if (evtStage === 'final.complete' && d.summary) {
-                                  displayLabel = 'Completion';
-                                  asoTextContent = d.summary;
-                                } else if (evtStage === 'final.report') {
-                                  displayLabel = 'Compiling Report';
-                                  if (d.report_written) {
-                                    asoChips.push({ label: 'Status', icon: faCheckCircle, value: 'OK' });
-                                  }
-                                } else if (evtStage === 'understand.objective' && d.objective) {
-                                  displayBadge = 'Think';
-                                  displayLabel = 'Understanding Objective';
-                                  asoTextContent = d.objective;
-                                }
-                              } catch (_) {}
-                            }
-
-                            return (
-                              <div key={message.id} className="HPAG-tool-line">
-                                <div className={`HPAG-tool-timeline ${!isFirst ? 'HPAG-has-line-above' : ''} ${!isLast ? 'HPAG-has-line-below' : ''}`}>
-                                  <div className="HPAG-tool-timeline-dot" />
-                                </div>
-                                <div className={`HPAG-tool-stage-badge ${stageBadgeClass}`}>
-                                  {displayBadge}
-                                </div>
-                                <div className="HPAG-tool-line-body">
-                                  <div className="HPAG-tool-line-label">
-                                    {displayLabel}
-                                  </div>
-                                  {hasUrl && (
-                                    <a href={toolEvent.meta.url} target="_blank" rel="noopener noreferrer" className="HPAG-navigate-box">
-                                      <FontAwesomeIcon icon={faExternalLinkAlt} className="HPAG-navigate-box-icon" />
-                                      <span className="HPAG-navigate-box-page">{toolEvent.message || 'Page'}</span>
-                                    </a>
-                                  )}
-                                  {hasScanVisual && (
-                                    <div className="HPAG-scan-box">
-                                      <div className="HPAG-scan-box-icon"><FontAwesomeIcon icon={faSearch} /></div>
-                                      <span className="HPAG-scan-box-text">{toolEvent.message || 'Searching...'}</span>
-                                    </div>
-                                  )}
-                                  {asoTextContent ? (
-                                    <div className="HPAG-aso-think-text" style={{ whiteSpace: 'pre-line', fontSize: '12px', color: '#374151', marginTop: '4px', lineHeight: '1.5' }}>{asoTextContent}</div>
-                                  ) : asoChips.length > 0 ? (
-                                    <div className="HPAG-tool-options-row">
-                                      {asoChips.sort((a, b) => a.value.length - b.value.length).map((chip, ci) => (
-                                        <span key={ci} className="HPAG-aso-chip-group">
-                                          <span className="HPAG-aso-chip-label">{chip.label}</span>
-                                          <span
-                                            className={`HPAG-aso-data-chip ${chip.artifactId ? 'HPAG-aso-data-chip-artifact' : ''}`}
-                                            onMouseEnter={chip.artifactId ? (e) => handleArtifactChipEnter(e, chip, runWorkspaceUuid) : undefined}
-                                            onMouseLeave={chip.artifactId ? handleArtifactChipLeave : undefined}
-                                          >
-                                            <FontAwesomeIcon icon={chip.icon} style={{ marginRight: '3px', fontSize: '10px' }} />{chip.value}
-                                          </span>
-                                        </span>
-                                      ))}
-                                    </div>
-                                  ) : shouldShowToolMessage ? (
-                                    <div className="HPAG-tool-line-message">{linkifyInline(toolEvent.message)}</div>
-                                  ) : null}
-                                  {toolOptions.length > 0 && (
-                                    <div className="HPAG-tool-options-row">
-                                      {toolOptions.map((opt, idx) => {
-                                        const isSelected = selectionsForThisRow.has(opt.toLowerCase().trim());
-                                        return (
-                                          <span key={idx} className={`HPAG-tool-option-chip ${isSelected ? 'HPAG-selected' : ''}`}>{titleCase(opt)}</span>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-                                  {toolSelections.length > 0 && (
-                                    <div className="HPAG-tool-selections-row">
-                                      {toolSelections.map((sel, idx) => (
-                                        <span key={idx} className="HPAG-tool-selection-chip" style={{ animationDelay: `${idx * 0.1}s` }}>{titleCase(sel)}</span>
-                                      ))}
-                                    </div>
-                                  )}
-                                  {toolMetaLine && (
-                                    <div className="HPAG-tool-line-meta">{toolMetaLine}</div>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          });
-                        })()}
+                        {isAsoRun && (
+                          <StudyRun
+                            events={group.messages.map(m => m.toolEvent).filter(Boolean)}
+                            apiBaseUrl={apiBaseUrl}
+                            workspaceUuid={runWorkspaceUuid}
+                            isComplete={group.isComplete}
+                            onArtifactEnter={handleArtifactChipEnter}
+                            onArtifactLeave={handleArtifactChipLeave}
+                          />
+                        )}
                         {/* Non-ASO runs: original per-message timeline */}
                         {!isAsoRun && group.messages.map((message, msgIndex) => {
                           const nextMsg = group.messages[msgIndex + 1];
@@ -1765,68 +1310,35 @@ function HPA() {
                       </div>
                     </div>
                     )}
-                    {/* ASO charts + download button outside run container */}
-                    {isAsoRun && (() => {
-                      const charts = [];
-                      let lastChartInvokeSource = null;
-                      for (const m of group.messages) {
-                        const evt = m.toolEvent;
-                        const st = (evt?.stage || '').toLowerCase();
-                        if (st === 'tool.invoke' && evt?.message) {
-                          try { const iv = JSON.parse(evt.message); if (iv.name === 'chart') lastChartInvokeSource = iv.args?.source_dataset || null; } catch (_) {}
-                        }
-                        if (st === 'tool.result' && evt?.message) {
-                          try {
-                            const rd = JSON.parse(evt.message);
-                            if (rd.name === 'chart' && rd.artifact_id) {
-                              charts.push({ artifactId: rd.artifact_id, title: rd.title || '', sourceDatasetId: lastChartInvokeSource });
-                              lastChartInvokeSource = null;
-                            }
-                          } catch (_) {}
-                        }
-                      }
-                      if (!charts.length && !(group.isComplete && runWorkspaceUuid)) return null;
-                      return (
-                        <>
-                          {charts.length > 0 && runWorkspaceUuid && (
-                            <div className="HPAG-aso-run-charts">
-                              {charts.map((c, ci) => (
-                                <AsoChart key={c.artifactId || ci} apiBaseUrl={apiBaseUrl} workspaceUuid={runWorkspaceUuid} artifactId={c.artifactId} title={c.title} sourceDatasetId={c.sourceDatasetId} onArtifactEnter={handleArtifactChipEnter} onArtifactLeave={handleArtifactChipLeave} />
-                              ))}
-                            </div>
-                          )}
-                          {group.isComplete && runWorkspaceUuid && (
-                            <>
-                              <div className="HPAG-tool-run-actions">
-                                <button
-                                  type="button"
-                                  onClick={() => downloadWorkspace(runWorkspaceUuid)}
-                                  className="HPAG-tool-run-download"
-                                >
-                                  <FontAwesomeIcon icon={faDownload} /> Download Workspace
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setProvenanceRuns(prev => ({ ...prev, [group.runId]: !prev[group.runId] }))}
-                                  className={`HPAG-tool-run-download ${provenanceRuns[group.runId] ? 'HPAG-tool-run-download-active' : ''}`}
-                                  aria-expanded={Boolean(provenanceRuns[group.runId])}
-                                >
-                                  <FontAwesomeIcon icon={faProjectDiagram} /> {provenanceRuns[group.runId] ? 'Hide provenance' : 'Show provenance'}
-                                </button>
-                              </div>
-                              {provenanceRuns[group.runId] && (
-                                <ProvenanceGraph
-                                  apiBaseUrl={apiBaseUrl}
-                                  workspaceUuid={runWorkspaceUuid}
-                                  onOpenArtifact={(node, event) => handleArtifactChipEnter(event, { artifactId: node.id, format: node.format }, runWorkspaceUuid)}
-                                  onLeaveArtifact={handleArtifactChipLeave}
-                                />
-                              )}
-                            </>
-                          )}
-                        </>
-                      );
-                    })()}
+                    {isAsoRun && group.isComplete && runWorkspaceUuid && (
+                      <>
+                        <div className="HPAG-tool-run-actions">
+                          <button
+                            type="button"
+                            onClick={() => downloadWorkspace(runWorkspaceUuid)}
+                            className="HPAG-tool-run-download"
+                          >
+                            <FontAwesomeIcon icon={faDownload} /> Download Workspace
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setProvenanceRuns(prev => ({ ...prev, [group.runId]: !prev[group.runId] }))}
+                            className={`HPAG-tool-run-download ${provenanceRuns[group.runId] ? 'HPAG-tool-run-download-active' : ''}`}
+                            aria-expanded={Boolean(provenanceRuns[group.runId])}
+                          >
+                            <FontAwesomeIcon icon={faProjectDiagram} /> {provenanceRuns[group.runId] ? 'Hide provenance' : 'Show provenance'}
+                          </button>
+                        </div>
+                        {provenanceRuns[group.runId] && (
+                          <ProvenanceGraph
+                            apiBaseUrl={apiBaseUrl}
+                            workspaceUuid={runWorkspaceUuid}
+                            onOpenArtifact={(node, event) => handleArtifactChipEnter(event, { artifactId: node.id, format: node.format }, runWorkspaceUuid)}
+                            onLeaveArtifact={handleArtifactChipLeave}
+                          />
+                        )}
+                      </>
+                    )}
                     </React.Fragment>
                   );
                 } else {

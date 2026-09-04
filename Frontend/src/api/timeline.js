@@ -3,6 +3,7 @@
 // No React, no fetch: everything here is testable in isolation.
 
 const INVESTIGATOR = 'investigator_hpa';
+const STUDY = 'aso_hpa';
 
 export function formatTimestamp(unixMs) {
   const date = Number.isFinite(unixMs) ? new Date(unixMs) : new Date();
@@ -10,16 +11,21 @@ export function formatTimestamp(unixMs) {
 }
 
 function startLabel(toolName) {
-  return toolName === INVESTIGATOR ? 'Investigating gene' : 'Deep Research initiated';
+  if (toolName === INVESTIGATOR) return 'Investigating gene';
+  if (toolName === STUDY) return 'Study started';
+  return 'Deep Research initiated';
 }
 
 function startMessage(toolName, live) {
   if (toolName === INVESTIGATOR) return 'Resolving gene in HPA…';
-  return live ? 'Calibrating schema-aware plan…' : 'Starting research…';
+  if (toolName === STUDY) return 'Planning the study…';
+  return live ? 'Reading the search schema…' : 'Starting research…';
 }
 
 function completeLabel(toolName) {
-  return toolName === INVESTIGATOR ? 'Investigation complete' : 'Deep Research complete';
+  if (toolName === INVESTIGATOR) return 'Investigation complete';
+  if (toolName === STUDY) return 'Study complete';
+  return 'Deep Research complete';
 }
 
 function finishedMessage(steps) {

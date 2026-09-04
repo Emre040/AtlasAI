@@ -56,7 +56,7 @@ function runAttachments(run) {
   }
   if (run.toolKey === 'aso_hpa' && Array.isArray(result.artifacts) && run.workspacePublicId) {
     const charts = result.artifacts
-      .filter(artifact => artifact?.kind === 'figure')
+      .filter(artifact => artifact?.kind === 'figure' && /\.json$/.test(String(artifact.storage_uri || '')))
       .map(artifact => ({
         artifact_uuid: artifact.artifact_uuid,
         url: `/workspaces/${run.workspacePublicId}/artifacts/${baseName(artifact.storage_uri)}`,

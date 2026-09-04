@@ -81,7 +81,8 @@ async function registerArtifact(db, {
   storageUriOverride = null,
   skipWrite = false
 }) {
-  const category = KIND_CATEGORY[kind];
+  // Any operation may name its own analysis type ("analysis_filter"); the column stores the category.
+  const category = KIND_CATEGORY[kind] || (/^analysis_[a-z_]+$/.test(String(kind)) ? 'analysis' : null);
   if (!category) throw new Error(`Unsupported artifact kind '${kind}'.`);
   if (!CONTENT_TYPES[format]) throw new Error(`Unsupported artifact format '${format}'.`);
 

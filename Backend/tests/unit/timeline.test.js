@@ -101,15 +101,18 @@ test('run attachments mirror what query.js streams live for each tool', () => {
     toolKey: 'aso_hpa',
     searchUrl: null,
     workspacePublicId: '0192aaaa-0000-7000-8000-000000000000',
+    // A chart node stores its specification (json) and its rendered image (png); only the
+    // specification is a chart attachment, the image sits next to it in the workspace.
     result: { status: 'ok', artifacts: [
-      { artifact_uuid: 'a1', kind: 'figure', storage_uri: 'artifacts/chart_1.png', summary: { title: 'Heatmap' } },
+      { artifact_uuid: 'a1', kind: 'figure', storage_uri: 'artifacts/a1.json', summary: { node: 'n7', label: 'Heatmap' } },
+      { artifact_uuid: 'a3', kind: 'figure', storage_uri: 'artifacts/n7.png', summary: { node: 'n7', label: 'Heatmap', image: 'artifacts/n7.png' } },
       { artifact_uuid: 'a2', kind: 'dataset', storage_uri: 'artifacts/data.json' }
     ] }
   }));
   assert.deepEqual(aso.aso_charts, [{
     artifact_uuid: 'a1',
-    url: '/workspaces/0192aaaa-0000-7000-8000-000000000000/artifacts/chart_1.png',
-    summary: { title: 'Heatmap' }
+    url: '/workspaces/0192aaaa-0000-7000-8000-000000000000/artifacts/a1.json',
+    summary: { node: 'n7', label: 'Heatmap' }
   }]);
 });
 

@@ -1,8 +1,8 @@
 # AtlasAI
 
 Human Protein Atlas research agent: a Node/Express API that runs HPA search, gene investigation,
-dictionary, inclusion-check, and ASO analysis agents against a catalog of language models, and a
-React app that streams the runs.
+dictionary, inclusion-check, and study (ASO) agents against a catalog of language models, and a
+React app that streams the runs, including a study's graph of steps as it executes.
 
 ```text
 AtlasAI/

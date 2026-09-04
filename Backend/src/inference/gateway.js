@@ -534,6 +534,7 @@ class InferenceGateway {
     const row = {
       ...record,
       status: 'failed',
+      tool_call_count: 0,
       error_status: Number.isInteger(error?.status) ? error.status : null,
       error_code: typeof error?.code === 'string' ? error.code.slice(0, 128) : null,
       error_message: String(error?.message || error || 'Inference request failed.').slice(0, 65535),

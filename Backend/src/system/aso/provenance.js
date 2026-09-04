@@ -18,7 +18,22 @@ const PRODUCER_LABELS = Object.freeze({
   aso_hpa: 'ASO operation',
   chart: 'Chart rendering',
   explicit_request: 'Requested chart',
-  report: 'Final report'
+  report: 'Final report',
+  // Study (ASO v2) operations: the node's producer is the operation that made it.
+  search: 'Search agent',
+  lookup: 'Reading agent',
+  measure: 'Measure',
+  union: 'Union',
+  intersect: 'Intersect',
+  difference: 'Difference',
+  join: 'Join',
+  filter: 'Filter',
+  select: 'Select',
+  rank: 'Rank',
+  top_per_group: 'Top per group',
+  aggregate: 'Aggregate',
+  compute: 'Compute',
+  pivot: 'Pivot'
 });
 
 const TYPE_LABELS = Object.freeze({
@@ -35,6 +50,14 @@ const TYPE_LABELS = Object.freeze({
   analysis_scatter: 'Scatter join',
   analysis_concat: 'Concatenation',
   analysis_matrix: 'Matrix',
+  analysis_union: 'Union',
+  analysis_intersect: 'Intersection',
+  analysis_difference: 'Difference',
+  analysis_join: 'Join',
+  analysis_filter: 'Filter',
+  analysis_select: 'Selection',
+  analysis_top_per_group: 'Top per group',
+  analysis_compute: 'Computed column',
   figure: 'Figure',
   summary: 'Report',
   inspection: 'Inspection'
@@ -69,16 +92,17 @@ function detailsFromPayload(artifact, payload) {
     if (payload.compact?.answer_snippet) details.answer = String(payload.compact.answer_snippet).slice(0, 200);
   }
   if (artifact.kind === 'measurement') {
-    Object.assign(details, pick(payload, ['label', 'tissue', 'mode', 'value_type', 'unit', 'row_count', 'numeric_count']));
+    Object.assign(details, pick(payload, ['label', 'tissue', 'mode', 'value_type', 'unit', 'row_count', 'numeric_count', 'node_id', 'op']));
   }
   if (artifact.kind === 'dataset' || artifact.kind === 'cleaned' || artifact.kind === 'analysis') {
-    Object.assign(details, pick(payload, ['label', 'row_count', 'count', 'unit', 'value_type']));
+    Object.assign(details, pick(payload, ['label', 'row_count', 'count', 'unit', 'value_type', 'node_id', 'op']));
     if (Array.isArray(payload.rows) && details.row_count === undefined) details.row_count = payload.rows.length;
     if (Array.isArray(payload.genes) && details.row_count === undefined) details.row_count = payload.genes.length;
   }
   if (artifact.kind === 'figure' && Array.isArray(payload.charts)) {
     const chart = payload.charts[0] || {};
     Object.assign(details, pick(chart, ['type', 'title', 'x_label', 'y_label']));
+    Object.assign(details, pick(payload, ['node_id', 'label']));
     details.chart_count = payload.charts.length;
   }
   return details;

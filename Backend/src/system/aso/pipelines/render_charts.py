@@ -144,16 +144,19 @@ def render_heatmap(chart, out_path):
     col_labels = chart.get('col_labels', [])
     n_rows = len(matrix)
     n_cols = len(matrix[0]) if matrix else 0
-    fig_w = max(8, n_cols * 1.2 + 3)
-    fig_h = max(4, n_rows * 0.35 + 2)
+    # Wide matrices keep a printable width; labels shrink and thin out instead of the figure growing.
+    fig_w = min(24, max(8, n_cols * 0.6 + 3))
+    fig_h = min(20, max(4, n_rows * 0.3 + 2))
     plt.figure(figsize=(fig_w, fig_h))
     plt.imshow(matrix, aspect='auto', cmap='YlOrRd')
     _apply_title(chart)
     _apply_labels(chart)
     if col_labels:
-        plt.xticks(range(len(col_labels)), col_labels, rotation=45, ha='right')
+        step = max(1, int(round(n_cols / 40)))
+        plt.xticks(range(0, len(col_labels), step), col_labels[::step], rotation=90 if n_cols > 12 else 45, ha='right', fontsize=max(4, min(9, 300 / max(1, n_cols))))
     if row_labels:
-        plt.yticks(range(len(row_labels)), row_labels)
+        rstep = max(1, int(round(n_rows / 60)))
+        plt.yticks(range(0, len(row_labels), rstep), row_labels[::rstep], fontsize=max(4, min(9, 400 / max(1, n_rows))))
     plt.colorbar(shrink=0.8)
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)

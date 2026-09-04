@@ -482,7 +482,8 @@ CRITICAL RULES:
 
         // Send ASO chart artifacts BEFORE synthesis (so images appear above text)
         if (toolName === 'aso_hpa' && toolResult?.result?.artifacts) {
-          const chartArtifacts = (toolResult.result.artifacts || []).filter(a => a.kind === 'figure');
+          // Chart specifications only; the rendered PNGs sit next to them in the workspace.
+          const chartArtifacts = (toolResult.result.artifacts || []).filter(a => a.kind === 'figure' && /\.json$/.test(String(a.storage_uri || '')));
           const wsUuid = toolResult.result.workspace_uuid;
           if (chartArtifacts.length > 0 && wsUuid) {
             const charts = chartArtifacts.map(a => ({
@@ -541,12 +542,11 @@ if (toolName === 'dictionary_expert_hpa') {
         } else if (toolName === 'aso_hpa') {
           // For ASO: Summarize the scientific analysis and reference charts
           styleSystemMessage =
-            "The Autonomous Scientific Orchestrator (ASO) completed a multi-step analysis. " +
-            "Summarize what was done and the key findings from the result. " +
-            "If charts/figures were generated, mention them — they are displayed as images above your text. " +
-            "Reference specific chart numbers (e.g., 'As shown in Chart 1…'). " +
-            "Keep it concise (3-6 sentences) but informative. Highlight the most interesting findings. " +
-            "Do NOT list raw gene names or data tables.";
+            "A study just completed: a planned graph of operations over the Human Protein Atlas whose full report, " +
+            "figures and graph are displayed above your text. Give the reader the answer in 3-6 sentences: the main " +
+            "finding, the strongest candidates or numbers with their node ids in brackets as the report cites them " +
+            "(for example [n16]), and any limitation the report states (steps that failed, requirements the database " +
+            "could not express). Use only what the report says. Do not repeat the report or list every gene.";
         } else {
           // For deep_research and others: Brief confirmation style
           styleSystemMessage =

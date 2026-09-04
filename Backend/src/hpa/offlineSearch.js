@@ -11,8 +11,9 @@ const { localData, FILES } = require('./localData');
 const NOT_DETECTED_BELOW = 1; // proteinatlas.org calls anything under 1 nTPM "not detected"
 const SET_TTL_MS = 10 * 60 * 1000;
 
+// The search option lists carry one misspelling that the data files do not.
 function lower(value) {
-  return String(value ?? '').trim().toLowerCase();
+  return String(value ?? '').trim().toLowerCase().replace('cuteneous', 'cutaneous');
 }
 
 function asList(value) {
@@ -35,7 +36,13 @@ function specificEntities(text) {
   for (const part of String(text || '').split(';')) {
     const at = part.lastIndexOf(':');
     if (at < 0) continue;
-    map.set(lower(part.slice(0, at)), Number(part.slice(at + 1)));
+    const name = lower(part.slice(0, at));
+    const value = Number(part.slice(at + 1));
+    map.set(name, value);
+    // The master file may qualify an entity with a source in parentheses ("(TCGA)") that the
+    // search option omits; the bare name matches too.
+    const bare = name.replace(/\s*\([^)]*\)\s*$/, '');
+    if (bare !== name && !map.has(bare)) map.set(bare, value);
   }
   return map;
 }
@@ -106,11 +113,6 @@ const EQUALITY_FIELDS = Object.freeze({
 
 const RELIABILITY_SEARCHES = new Set(['enhanced', 'supported', 'approved', 'uncertain']);
 
-function tauBin(text) {
-  const match = /^(\d(?:\.\d+)?)-(\d(?:\.\d+)?)$/.exec(String(text || '').trim());
-  return match ? [Number(match[1]), Number(match[2])] : null;
-}
-
 function countBin(text) {
   const trimmed = String(text || '').trim();
   if (/^\d+$/.test(trimmed)) return [Number(trimmed), Number(trimmed)];
@@ -125,6 +127,7 @@ class OfflineSearch {
   constructor(data = localData) {
     this.data = data;
     this.sets = new Map();
+    this.entityIndexes = new Map();
   }
 
   async cachedSet(key, build) {
@@ -135,31 +138,57 @@ class OfflineSearch {
     return set;
   }
 
+  // One pass over a long-format file gives, per entity, the genes below and at or above the
+  // detection threshold, and per gene the entity with the highest value. Built once per file.
+  async entityIndex(long) {
+    const dataset = typeof this.data.describe === 'function' ? await this.data.describe(long.file) : null;
+    const identity = dataset ? `${long.file}:${dataset.unpackedBytes}:${dataset.downloadedUnixMs}` : long.file;
+    const cached = this.entityIndexes.get(long.file);
+    if (cached && cached.identity === identity) return cached.index;
+    const below = new Map();
+    const atLeast = new Map();
+    const best = new Map();
+    for await (const row of this.data.rows(long.file)) {
+      const value = number(row[long.value]);
+      if (value === null) continue;
+      const entity = lower(row[long.entity]);
+      const bucket = value < NOT_DETECTED_BELOW ? below : atLeast;
+      let set = bucket.get(entity);
+      if (!set) { set = new Set(); bucket.set(entity, set); }
+      set.add(row.Gene);
+      const current = best.get(row.Gene);
+      if (current === undefined || value > current.value) best.set(row.Gene, { entity, value });
+    }
+    const highest = new Map();
+    for (const [gene, top] of best) {
+      let set = highest.get(top.entity);
+      if (!set) { set = new Set(); highest.set(top.entity, set); }
+      set.add(gene);
+    }
+    const index = Object.freeze({ below, atLeast, highest });
+    this.entityIndexes.set(long.file, { identity, index });
+    return index;
+  }
+
   // Genes whose value for one of the entities is below / at least the detection threshold, or
-  // whose highest value across all entities is one of them, from a long-format file.
-  entityGeneSet(long, entities, kind) {
-    const key = JSON.stringify(['entity', long.file, kind, [...entities].sort()]);
-    return this.cachedSet(key, async () => {
-      const wanted = new Set(entities);
+  // whose highest value across all entities is one of them.
+  async entityGeneSet(long, entities, kind) {
+    const index = await this.entityIndex(long);
+    const source = kind === 'highest' ? index.highest : kind === 'below' ? index.below : index.atLeast;
+    const set = new Set();
+    for (const entity of entities) for (const gene of source.get(entity) || []) set.add(gene);
+    return set;
+  }
+
+  // Whether every wanted protein-class name occurs in the master file's "Protein class" column.
+  async hasProteinClassTokens(wanted) {
+    const tokens = await this.cachedSet('protein_class_tokens', async () => {
+      const master = await this.data.master();
       const set = new Set();
-      if (kind === 'highest') {
-        const best = new Map();
-        for await (const row of this.data.rows(long.file)) {
-          const value = number(row[long.value]);
-          if (value === null) continue;
-          const current = best.get(row.Gene);
-          if (!current || value > current.value) best.set(row.Gene, { entity: lower(row[long.entity]), value });
-        }
-        for (const [gene, top] of best) if (wanted.has(top.entity)) set.add(gene);
-        return set;
-      }
-      for await (const row of this.data.rows(long.file, { where: r => wanted.has(lower(r[long.entity])) })) {
-        const value = number(row[long.value]);
-        if (value === null) continue;
-        if (kind === 'below' ? value < NOT_DETECTED_BELOW : value >= NOT_DETECTED_BELOW) set.add(row.Gene);
-      }
+      for (const row of master.rows) for (const token of splitList(row['Protein class'])) set.add(lower(token));
       return set;
     });
+    return wanted.every(w => tokens.has(w));
   }
 
   // Genes annotated by immunohistochemistry in a tissue (and cell type) at any of the levels.
@@ -232,21 +261,20 @@ class OfflineSearch {
     }
 
     if (TAU_FIELDS[key]) {
-      const bins = classes.map(tauBin);
-      if (bins.some(b => b === null)) return null;
-      const column = TAU_FIELDS[key];
-      return row => {
-        const value = number(row[column]);
-        return value !== null && bins.some(([low, high]) => value >= low && (value < high || (high >= 1 && value <= 1)));
-      };
+      // The "specificity score" columns of the master file are fold changes (0 to thousands),
+      // not the 0-1 Tau score the search bins; Tau is not in any local file.
+      return null;
     }
 
     if (CLUSTER_FIELDS[key]) {
       const column = CLUSTER_FIELDS[key];
-      const wanted = classes.map(lower);
+      // Cluster numbers are renumbered between releases ("11:Liver - Plasma proteins" in the
+      // search form, "Cluster 53: Liver - Plasma proteins" in the data); the name is stable.
+      const clusterName = s => lower(s).replace(/^cluster\s*/, '').replace(/^\d+\s*:\s*/, '').trim();
+      const wanted = classes.map(clusterName);
       return row => {
-        const value = lower(row[column]);
-        return wanted.some(w => value === w || value.endsWith(`: ${w}`) || value.includes(w));
+        const value = clusterName(row[column]);
+        return Boolean(value) && wanted.some(w => value === w);
       };
     }
 
@@ -269,6 +297,9 @@ class OfflineSearch {
       case 'predicted_location': {
         const wantedClasses = anyClass ? [] : classes.map(lower);
         const wantedSub = anySub ? [] : subclasses.map(lower);
+        // The master file lists top-level protein classes only; a subclass (Kinases under
+        // Enzymes, a disease group under Human disease related genes) is not in any local file.
+        if (wantedSub.length && !(await this.hasProteinClassTokens(wantedSub))) return null;
         return row => {
           const listed = splitList(row['Protein class']).map(lower);
           return (wantedClasses.length === 0 || wantedClasses.some(c => listed.includes(c)))

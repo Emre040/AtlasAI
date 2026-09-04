@@ -26,7 +26,7 @@ Backend/
 │   ├── shared/                  # stable IDs and network canonicalization
 │   └── system/
 │       ├── agents/              # current HPA agent implementations
-│       ├── aso/                 # ASO storage, analysis, and rendering
+│       ├── aso/                 # study workspaces, artifacts, operations, provenance, chart rendering
 │       ├── deployment/          # authenticated release queue
 │       └── orchestrator.js      # application tool dispatch
 ├── data/                        # local HPM source data
@@ -148,7 +148,7 @@ It holds spending budgets (platform and per visitor, per day/week/month, USD), v
 caps), what happens over budget (`block` or `fallback_model` with `fallback_inference_model_id`),
 whether visitors may pick a model or bring their own provider keys, request shaping
 (`query_max_characters`, `model_history_messages`, batch size and concurrency), agent defaults
-(deep research retries, ASO steps, parallelism, top-x) and the active HPA data release. A limit
+(study parallelism; the older step and top-x columns are no longer read) and the active HPA data release. A limit
 set to `NULL` is not enforced. `budget_window_mode` chooses rolling windows (last 24 h / 7 d /
 30 d) or UTC calendar periods. Edits are picked up within five seconds; no restart.
 
@@ -189,15 +189,25 @@ deployment runs it before switching releases (`--check` only reports). To ship a
 HPA team inserts the new rows, sets `active_hpa_version`, and redeploys; the first deployment
 after that downloads the release.
 
+The three research agents are schema-walking "trail" agents that never carry atlas rules in
+code or prompts. `deep_research_hpa` (`src/system/agents/deepResearchTrail.js`) plans which
+search fields answer the goal from the schema the search adapter exposes
+(`src/hpa/searchAdapter.js` over `hpaSchema.js`, `searchOptions.js` and the atlas's own
+definitions in `searchDocs.js`), fills each field from its option tree, composes the URL and
+executes it. `investigator_hpa` (`investigatorTrail.js`) reads the gene's rows from the per-gene
+tables the gene data adapter catalogs (`src/hpa/geneDataAdapter.js`) and answers with the row it
+cites. `aso_hpa` (`asoStudy.js`) plans a graph of operations (`src/system/aso/studyTools.js`:
+search, lookup, measure, set operations, join, filter, rank, aggregate, compute, pivot, chart),
+runs independent nodes in parallel, stores every node as an artifact linked to its inputs, may
+add nodes after reviewing the results, and writes a report that cites nodes.
+
 `deep_research_hpa`, `investigator_hpa` and `aso_hpa` accept `mode: "online" | "offline"`.
-Online is unchanged and the default for the first two. Offline evaluates the same search plan
-against the local release (`src/hpa/offlineSearch.js` reproduces the proteinatlas.org search
-semantics for category, class, location, evidence, cluster, prognostic, IHC and interaction
-fields) and builds the investigator's page structures from the local expression tables
-(`src/hpa/localPages.js`). ASO defaults to offline when the local release is ready: its batch
-measurements become table lookups and skip the scout call. A field or page the bulk files cannot
-answer falls back to proteinatlas.org and says so in the run events; `offline_agents_enabled`
-turns the whole mode off. The dictionary expert is always online.
+Offline evaluates the composed search against the local release (`src/hpa/offlineSearch.js`
+reproduces the proteinatlas.org search semantics for category, class, location, evidence,
+cluster, prognostic, IHC and interaction fields) and is the default; a search field the bulk
+files cannot express falls back to proteinatlas.org and says so in the run events. The
+investigator and the study read the local release only; `offline_agents_enabled` turns the mode
+off. The dictionary expert is always online.
 
 ## ASO provenance
 
@@ -206,7 +216,10 @@ turns the whole mode off. The dictionary expert is always online.
 artifacts (kind, operation that produced them, purpose, size, and whitelisted facts such as rows
 found, tissue, join keys or chart type), edges are `derived_from` links from inputs to outputs,
 `layers` is the longest-path depth used for drawing, and `outputs` lists the final figures,
-analyses and report. The frontend renders it as an SVG next to the workspace download.
+analyses and report. The frontend renders it as an SVG next to the workspace download. While a
+study runs, the frontend draws the planned graph from the run events themselves (`plan.graph`,
+`node.start`, `node.done`, `node.failed`, `reflect`, `report.written`) and lights nodes up as they
+finish; the provenance graph is the stored, audited view of the same study.
 
 ## Cloudflare metadata
 

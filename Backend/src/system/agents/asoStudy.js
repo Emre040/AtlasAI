@@ -14,7 +14,6 @@ const { inference, getActiveModel } = require('../../inference/gateway');
 const { platformConfig } = require('../../policy/config');
 const tools = require('../aso/studyTools');
 const geneData = require('../../hpa/geneDataAdapter');
-const searchAdapter = require('../../hpa/searchAdapter');
 const { createWorkspace, updateWorkspace } = require('../aso/workspaceStore');
 const { registerArtifact } = require('../aso/artifactStore');
 const { createLogger } = require('../aso/logger');
@@ -40,6 +39,10 @@ const STUDY_TOOLS = [
     parameters: { type: 'object', properties: { item: { type: 'integer', description: '1-based item number' }, status: { type: 'string', enum: ['todo', 'doing', 'done', 'dropped'] }, note: { type: 'string' } }, required: ['item', 'status'] } },
   { name: 'note', description: 'Write a short note to yourself; it stays in the NOTES block of every later turn.',
     parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
+  { name: 'list_tables', description: 'The tables the database has, one line each with what it holds. Look here before measure when you do not know which table holds a value.',
+    parameters: { type: 'object', properties: {}, required: [] } },
+  { name: 'describe_table', description: 'One table\'s columns, what each category term means, and a couple of example rows. Look here before naming a column or an entity for measure.',
+    parameters: { type: 'object', properties: { table: { type: 'string', description: 'a table name from list_tables' } }, required: ['table'] } },
   { name: 'measure', description: 'Read a value from a named table of the database for every gene of an artifact: exact, no model. With an entity ("liver") one row per gene; without, one row per gene per entity. Name the value column with "as" (liver_nTPM) so later steps can refer to it.',
     parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, table: { type: 'string' }, value_column: { type: 'string' }, entity_column: { type: 'string' }, entity: { type: 'string' }, as: { type: 'string' } }, required: ['artifact', 'table', 'value_column'] } },
   { name: 'union', description: 'Genes in either artifact, one row per gene.', parameters: { type: 'object', properties: { a: ARTIFACT_ARG, b: ARTIFACT_ARG }, required: ['a', 'b'] } },
@@ -74,25 +77,18 @@ const STUDY_TOOLS = [
 const STUDY_TOOL_NAMES = new Set(STUDY_TOOLS.map(t => t.name));
 const TABLE_TOOLS = new Set(['measure', 'union', 'intersect', 'difference', 'concat', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'compute', 'pivot', 'chart']);
 
-function systemPrompt(dataOverview, searchOverview) {
-  return `You run a study over a database for a researcher. You work in turns. Each turn you see the goal, your plan, every artifact in the workspace with where it came from, what is still running, and what came back since your last turn. You act by calling tools; you never state a value, gene or count yourself: a tool produces it and it becomes an artifact.
+function systemPrompt() {
+  return `You run a study over a database for a researcher, the way a careful person would at a desk. You work in turns. Each turn you see the goal, your plan, the artifacts on your desk and where each came from, what is still running, and what came back since your last turn. You act by calling tools; you never state a value, gene or count yourself: a tool produces it and it becomes an artifact.
 
 How the turns work:
 - Your first turn does one thing: call set_plan, alone, with a few high-level items (what to find out, not which operation). Nothing else runs in that turn; agents and tools come in the turns after, once the plan exists. Keep the plan honest: mark items done when an artifact shows they are, drop items that turn out wrong, rewrite the plan when the study changes direction.
-- Call as many tools in one turn as can run independently; they run in parallel. Agents (deep_research_hpa, investigator_hpa, check_inclusion_hpa, dictionary_expert_hpa) run in the background and you are woken when each returns. Table tools return at once.
+- Call as many tools in one turn as can run independently; they run in parallel. Agents (deep_research_hpa, investigator_hpa, check_inclusion_hpa, dictionary_expert_hpa) run in the background and you are woken when each returns. Everything else returns at once.
 - When nothing useful can be done until something running returns, call skip with the reason. Do not repeat a tool that is still running.
-- Refer to artifacts by their id. Use only column names an artifact actually has (they are listed). Name measure outputs with "as".
-- deep_research_hpa finds gene sets from a description and builds the database query itself. investigator_hpa answers one question about one gene and cites the row it rests on; use measure instead when the value sits in a table column you can name, it is exact and free.
-- A tool that fails tells you why under SINCE YOUR LAST TURN; fix the call rather than repeating it.
-- inspect lists more rows of an artifact under it in ARTIFACTS, where they stay; one inspect per artifact is enough. Two rows are always shown.
-- Do not verify a table tool's output with an agent; table tools are exact. If a value looks wrong, check the arguments (the entity, the column, the table) and call the tool again.
-- Call finish when the goal is met, with a summary that cites artifact ids; also finish, saying what is missing, when the database cannot express what is left.
-
-What a search can express (the search agent fills the fields in itself):
-${searchOverview}
-
-Tables that measure can read, with their columns:
-${dataOverview}`;
+- You know nothing about the data until you look. list_tables shows which tables the database has; describe_table shows one table's columns and example rows; inspect shows an artifact's columns and rows. What you looked at stays on your desk in later turns. Look before you name a table, a column or an entity in a tool call.
+- deep_research_hpa finds gene sets from a description and builds the database query itself; it knows the search fields and tells you when something cannot be expressed. investigator_hpa answers one question about one gene and cites the row it rests on; when the value sits in a table column you can name, measure is exact and free, so prefer it.
+- Refer to artifacts by their id. Name measure outputs with "as" so later steps can refer to the column.
+- A tool that fails tells you why under SINCE YOUR LAST TURN; fix the call rather than repeating it. Table tools are exact: if a value looks wrong, the arguments were wrong (the entity, the column, the table), not the data.
+- Call finish when the goal is met, with a summary that cites artifact ids; also finish, saying what is missing, when the database cannot express what is left.`;
 }
 
 // ---- context rendering -----------------------------------------------------------------------------
@@ -111,14 +107,18 @@ function describeArgs(args) {
   return Object.entries(args || {}).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ');
 }
 
+// An artifact as it sits on the desk: what it is and where it came from. Its columns and rows
+// appear only once the model has opened it with inspect.
 function artifactLine(a) {
-  const lines = [`${a.id}  ${a.kind.padEnd(7)} "${a.label}"  ${a.size}`];
-  lines.push(`    from ${a.tool}(${describeArgs(a.args)})${a.inputs.length ? `  reads ${a.inputs.join(', ')}` : ''}`);
-  if (a.meta?.search_url) lines.push(`    ${a.meta.query ? a.meta.query + '  ' : ''}${a.meta.search_url}`);
+  const lines = [`${a.id}  ${a.kind.padEnd(7)} "${a.label}"  ${a.size}  from ${a.tool}(${describeArgs(a.args).slice(0, 160)})${a.inputs.length ? `  reads ${a.inputs.join(', ')}` : ''}`];
+  if (a.meta?.query) lines.push(`    ${a.meta.query}`);
   if (a.meta?.not_expressible?.length) lines.push(`    not expressible: ${a.meta.not_expressible.join('; ')}`);
-  if (a.columns?.length) lines.push(`    columns ${a.columns.slice(0, 14).join(', ')}${a.columns.length > 14 ? `, … (${a.columns.length})` : ''}`);
-  if (a.rows?.length) for (const l of sampleLines(a.rows, a.columns, a.shown || SAMPLE_ROWS)) lines.push(`    ${l}`);
-  if (a.shown && a.rows && a.rows.length > a.shown) lines.push(`    … ${a.rows.length - a.shown} more rows`);
+  if (a.tool === 'deep_research_hpa' && a.rows?.length && !a.shown) lines.push(`    ${a.rows.slice(0, 6).map(r => r.gene).filter(Boolean).join(', ')}${a.rows.length > 6 ? ', …' : ''}`);
+  if (a.shown) {
+    lines.push(`    columns ${a.columns.join(', ')}`);
+    for (const l of sampleLines(a.rows || [], a.columns, a.shown)) lines.push(`    ${l}`);
+    if (a.rows && a.rows.length > a.shown) lines.push(`    … ${a.rows.length - a.shown} more rows`);
+  }
   if (a.text) lines.push(`    ${cell(a.text).slice(0, 300)}`);
   return lines.join('\n');
 }
@@ -133,6 +133,7 @@ function renderContext(state, turn, startedAt) {
     : '(nothing)';
   const recent = state.recent.length ? state.recent.map(r => `- ${r}`).join('\n') : '(nothing new)';
   const notes = state.notes.length ? state.notes.map(n => `- ${n}`).join('\n') : '(none)';
+  const tables = state.tablesSeen.size ? [...state.tablesSeen.values()].join('\n') : null;
   return `GOAL
 ${state.goal}
 
@@ -147,7 +148,7 @@ ${running}
 
 SINCE YOUR LAST TURN
 ${recent}
-
+${tables ? `\nTABLES YOU HAVE LOOKED AT\n${tables}\n` : ''}
 NOTES
 ${notes}
 
@@ -214,7 +215,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
   let registrations = Promise.resolve();
   const register = args => { const next = registrations.then(() => registerArtifact(db, args)); registrations = next.catch(() => {}); return next; };
 
-  const state = { goal, plan: [], artifacts: [], byId: new Map(), running: new Map(), recent: [], notes: [], toolCalls: 0, failed: 0, ids: { a: 0, t: 0 } };
+  const state = { goal, plan: [], artifacts: [], byId: new Map(), running: new Map(), recent: [], notes: [], tablesSeen: new Map(), toolCalls: 0, failed: 0, ids: { a: 0, t: 0 } };
   const wake = { resolve: null };
   const wakeUp = () => { if (wake.resolve) { const r = wake.resolve; wake.resolve = null; r(); } };
   const artifactsSummary = () => state.artifacts.map(a => ({ artifact_uuid: a.uuid, kind: a.kind === 'figure' ? 'figure' : a.kind === 'note' ? 'inspection' : a.kind === 'answer' ? 'measurement' : 'dataset', tool: a.tool, summary: { id: a.id, label: a.label, row_count: a.rows?.length }, storage_uri: a.storageUri }));
@@ -222,8 +223,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
   const agentSpecs = orchestrator.getToolSpecs().filter(t => t.function.name !== 'aso_hpa');
   const agentNames = new Set(agentSpecs.map(t => t.function.name));
   const toolSpecs = [...agentSpecs, ...STUDY_TOOLS.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }))];
-  const [dataOverview] = await Promise.all([geneData.overview()]);
-  const system = systemPrompt(dataOverview, searchAdapter.overview());
+  const system = systemPrompt();
 
   const get = id => {
     const a = state.byId.get(String(id || '').trim());
@@ -375,6 +375,32 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
           await log('plan', { items: state.plan, changed: Number(call.args.item) }); continue;
         }
         if (call.name === 'note') { state.notes.push(String(call.args.text || '')); await log('note', { text: String(call.args.text || '') }); continue; }
+        if (call.name === 'list_tables') {
+          const entries = (await geneData.catalog()).filter(e => e.key !== 'unreadable');
+          state.recent.push(`tables:\n  ${entries.map(e => `${e.file} — ${e.title}. ${e.description}`.slice(0, 200)).join('\n  ')}`);
+          await log('note', { text: `listed ${entries.length} tables` });
+          sync++; continue;
+        }
+        if (call.name === 'describe_table') {
+          try {
+            const entry = await geneData.entry(String(call.args.table || ''));
+            if (!entry || entry.key === 'unreadable') throw new Error(`no readable table "${call.args.table}"; list_tables shows the names`);
+            // Example rows come from a gene already on the desk, so the model sees real entities.
+            const sampleGene = state.artifacts.flatMap(a => a.rows || []).map(r => r.ensembl || r.gene).find(Boolean);
+            let example = '';
+            if (entry.key !== 'lookup' && sampleGene) {
+              const gene = await geneData.resolveGene(sampleGene);
+              if (gene) { const reading = await geneData.read(gene, entry.file); example = sampleLines(reading.rows, entry.columns, 3).map(l => `  ${l}`).join('\n'); }
+            } else if (entry.key === 'lookup') {
+              const reading = await geneData.read({ gene: '', ensembl: '' }, entry.file); example = sampleLines(reading.rows, entry.columns, 3).map(l => `  ${l}`).join('\n');
+            }
+            const terms = entry.columns.map(c => geneData.definition(c)).filter(Boolean);
+            const text = `${entry.file} — ${entry.title}. ${entry.description}\n  columns: ${entry.columns.join(' | ')}${example ? `\n${example}` : ''}${terms.length ? `\n  terms: ${terms.slice(0, 6).join('; ')}` : ''}`;
+            state.tablesSeen.set(entry.file, text);
+            state.recent.push(`${entry.file} is now under TABLES YOU HAVE LOOKED AT`);
+          } catch (err) { state.recent.push(`describe_table failed: ${err.message}`); }
+          sync++; continue;
+        }
         if (call.name === 'inspect') {
           // The rows stay listed under the artifact from now on, so one look is enough.
           try { const a = get(call.args.artifact); const n = Math.min(INSPECT_MAX, Number(call.args.rows) || 20); a.shown = Math.max(a.shown || 0, n); state.recent.push(`${a.id}: ${Math.min(n, (a.rows || []).length)} rows now listed under it in ARTIFACTS`); }

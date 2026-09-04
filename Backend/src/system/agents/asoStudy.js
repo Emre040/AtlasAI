@@ -31,46 +31,33 @@ const CELL = 60;                  // characters per shown cell
 
 // ---- tools of the study itself ---------------------------------------------------------------------
 
-const ARTIFACT_ARG = { type: 'string', description: 'an artifact id from the ARTIFACTS block, such as a3' };
+const A = { type: 'string', description: 'artifact id' };
+const S = { type: 'string' };
+const N = { type: 'integer' };
+const tool = (name, description, properties = {}, required = []) => ({ name, description, parameters: { type: 'object', properties, required } });
+// One line each: the rules in the prompt do the teaching.
 const STUDY_TOOLS = [
-  { name: 'set_plan', description: 'Write or rewrite the plan: a short list of high-level items (what to find out, not which operation). Write one first when the workspace is empty and there is no plan; rewrite it when the study changes direction.',
-    parameters: { type: 'object', properties: { items: { type: 'array', items: { type: 'string' } } }, required: ['items'] } },
-  { name: 'update_plan', description: 'Mark one plan item todo, doing, done or dropped, with an optional note on why.',
-    parameters: { type: 'object', properties: { item: { type: 'integer', description: '1-based item number' }, status: { type: 'string', enum: ['todo', 'doing', 'done', 'dropped'] }, note: { type: 'string' } }, required: ['item', 'status'] } },
-  { name: 'note', description: 'Write a short note to yourself; it stays in the NOTES block of every later turn.',
-    parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
-  { name: 'datasets', description: 'The datasets on disk, one line each with what they hold. Look here when you need a value the artifacts do not have yet.',
-    parameters: { type: 'object', properties: {}, required: [] } },
-  { name: 'open', description: 'Open something and read it: an artifact by id, or a dataset by name. You see what it holds, its columns and a few rows. The columns stay on your desk; the rows are shown this turn only.',
-    parameters: { type: 'object', properties: { what: { type: 'string', description: 'an artifact id (a3) or a dataset name' }, rows: { type: 'integer', description: 'how many rows to read (default 10, at most 40)' } }, required: ['what'] } },
-  { name: 'measure', description: 'Read a value from a dataset for every gene of an artifact: exact, no model. With an entity ("liver") one row per gene; without, one row per gene per entity. Name the value column with "as" (liver_nTPM) so later steps can refer to it.',
-    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, table: { type: 'string', description: 'a dataset name from datasets' }, value_column: { type: 'string' }, entity_column: { type: 'string' }, entity: { type: 'string' }, as: { type: 'string' } }, required: ['artifact', 'table', 'value_column'] } },
-  { name: 'union', description: 'Genes in either artifact, one row per gene.', parameters: { type: 'object', properties: { a: ARTIFACT_ARG, b: ARTIFACT_ARG }, required: ['a', 'b'] } },
-  { name: 'intersect', description: 'The rows of a whose gene is also in b.', parameters: { type: 'object', properties: { a: ARTIFACT_ARG, b: ARTIFACT_ARG }, required: ['a', 'b'] } },
-  { name: 'difference', description: 'The rows of a whose gene is absent from b.', parameters: { type: 'object', properties: { a: ARTIFACT_ARG, b: ARTIFACT_ARG }, required: ['a', 'b'] } },
-  { name: 'concat', description: 'All rows of a followed by all rows of b; no matching on gene (for tables that share no key).', parameters: { type: 'object', properties: { a: ARTIFACT_ARG, b: ARTIFACT_ARG }, required: ['a', 'b'] } },
-  { name: 'join', description: 'Each row of a combined with every row of b for the same gene (or the "on" column); b\'s clashing column names get _2.',
-    parameters: { type: 'object', properties: { a: ARTIFACT_ARG, b: ARTIFACT_ARG, how: { type: 'string', enum: ['inner', 'left'] }, on: { type: 'string' } }, required: ['a', 'b'] } },
-  { name: 'filter', description: 'Keep the rows of an artifact that satisfy every clause. Numbers compare numerically, text by case-insensitive equality or containment.',
-    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, where: { type: 'array', items: { type: 'object', properties: { column: { type: 'string' }, op: { type: 'string', enum: ['>', '>=', '<', '<=', '=', '!=', 'contains', 'in'] }, value: {} }, required: ['column', 'op'] } } }, required: ['artifact', 'where'] } },
-  { name: 'select', description: 'Keep and rename columns; add a constant column to label rows.',
-    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, columns: { type: 'array', items: { type: 'string' } }, rename: { type: 'object', additionalProperties: { type: 'string' } }, add: { type: 'object', additionalProperties: {} } }, required: ['artifact'] } },
-  { name: 'rank', description: 'Sort the rows by a numeric column (adds rank), optionally cut to the top N.',
-    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, by: { type: 'string' }, order: { type: 'string', enum: ['desc', 'asc'] }, top: { type: 'integer' } }, required: ['artifact', 'by'] } },
-  { name: 'top_per_group', description: 'Keep the n highest (or lowest) rows within each group: for example the entity with the highest value for every gene.',
-    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, group_by: { type: 'string' }, by: { type: 'string' }, n: { type: 'integer' }, order: { type: 'string', enum: ['desc', 'asc'] } }, required: ['artifact', 'by'] } },
-  { name: 'aggregate', description: 'Summarise a column (count, sum, mean, median, min, max), optionally per group.',
-    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, group_by: { type: 'string' }, column: { type: 'string' }, metrics: { type: 'array', items: { type: 'string', enum: ['count', 'sum', 'mean', 'median', 'min', 'max'] } } }, required: ['artifact', 'metrics'] } },
-  { name: 'compute', description: 'Add a column computed from numeric columns and numbers: + - * / parentheses and log2, log10, ln, abs, sqrt, exp, min, max; for example "log2((pancreas_nTPM + 1) / (liver_nTPM + 1))". Rows with a missing value or a non-finite result get null.',
-    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, name: { type: 'string' }, expr: { type: 'string' } }, required: ['artifact', 'name', 'expr'] } },
-  { name: 'pivot', description: 'Turn long rows (gene, entity, value) into a matrix; cap rows and columns for a readable heatmap.',
-    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, row: { type: 'string' }, column: { type: 'string' }, value: { type: 'string' }, top: { type: 'integer' }, top_columns: { type: 'integer' } }, required: ['artifact'] } },
-  { name: 'chart', description: 'Draw an artifact as a figure. A heatmap takes a pivot output; the other types take rows with the named columns.',
-    parameters: { type: 'object', properties: { artifact: ARTIFACT_ARG, type: { type: 'string', enum: ['bar', 'lollipop', 'dot_plot', 'diverging_bar', 'grouped_bar', 'scatter', 'bubble', 'heatmap', 'radar', 'line', 'volcano'] }, x: { type: 'string' }, y: { type: 'string' }, group: { type: 'string' }, size: { type: 'string' }, title: { type: 'string' }, x_label: { type: 'string' }, y_label: { type: 'string' } }, required: ['artifact', 'type'] } },
-  { name: 'skip', description: 'Nothing useful can be done until something running returns. Say why. You are woken again when it returns.',
-    parameters: { type: 'object', properties: { reason: { type: 'string' } }, required: ['reason'] } },
-  { name: 'finish', description: 'The goal is met, or cannot be met further. Give the summary: the findings with the artifact ids they rest on, and what could not be done.',
-    parameters: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] } }
+  tool('set_plan', 'Write or rewrite the plan: a few high-level items.', { items: { type: 'array', items: S } }, ['items']),
+  tool('update_plan', 'Mark a plan item (1-based) todo, doing, done or dropped.', { item: N, status: { type: 'string', enum: ['todo', 'doing', 'done', 'dropped'] }, note: S }, ['item', 'status']),
+  tool('note', 'Write a note to yourself; it stays in NOTES.', { text: S }, ['text']),
+  tool('datasets', 'List the datasets on disk.'),
+  tool('open', 'Read an artifact (by id) or a dataset (by name): its columns and some rows.', { what: S, rows: N }, ['what']),
+  tool('measure', 'Read a dataset value for every gene of an artifact; with entity one row per gene, without one row per gene and entity; "as" names the value column.', { artifact: A, table: { type: 'string', description: 'dataset name' }, value_column: S, entity_column: S, entity: S, as: S }, ['artifact', 'table', 'value_column']),
+  tool('union', 'Genes in either artifact.', { a: A, b: A }, ['a', 'b']),
+  tool('intersect', 'Rows of a whose gene is in b.', { a: A, b: A }, ['a', 'b']),
+  tool('difference', 'Rows of a whose gene is not in b.', { a: A, b: A }, ['a', 'b']),
+  tool('concat', 'All rows of a then all rows of b.', { a: A, b: A }, ['a', 'b']),
+  tool('join', 'Rows of a combined with matching rows of b by gene (or "on"); clashing names of b get _2.', { a: A, b: A, how: { type: 'string', enum: ['inner', 'left'] }, on: S }, ['a', 'b']),
+  tool('filter', 'Keep rows satisfying every clause.', { artifact: A, where: { type: 'array', items: { type: 'object', properties: { column: S, op: { type: 'string', enum: ['>', '>=', '<', '<=', '=', '!=', 'contains', 'in'] }, value: {} }, required: ['column', 'op'] } } }, ['artifact', 'where']),
+  tool('select', 'Keep columns, rename them, add constant columns.', { artifact: A, columns: { type: 'array', items: S }, rename: { type: 'object', additionalProperties: S }, add: { type: 'object', additionalProperties: {} } }, ['artifact']),
+  tool('rank', 'Sort by a numeric column (adds rank); top keeps the first N.', { artifact: A, by: S, order: { type: 'string', enum: ['desc', 'asc'] }, top: N }, ['artifact', 'by']),
+  tool('top_per_group', 'Keep the n highest rows per group (default group gene).', { artifact: A, group_by: S, by: S, n: N, order: { type: 'string', enum: ['desc', 'asc'] } }, ['artifact', 'by']),
+  tool('aggregate', 'count, sum, mean, median, min, max of a column, optionally per group.', { artifact: A, group_by: S, column: S, metrics: { type: 'array', items: { type: 'string', enum: ['count', 'sum', 'mean', 'median', 'min', 'max'] } } }, ['artifact', 'metrics']),
+  tool('compute', 'Add a column from an expression over columns and numbers: + - * / ( ) log2 log10 ln abs sqrt exp min max.', { artifact: A, name: S, expr: S }, ['artifact', 'name', 'expr']),
+  tool('pivot', 'Long rows (gene, entity, value) to a matrix; top and top_columns cap it.', { artifact: A, row: S, column: S, value: S, top: N, top_columns: N }, ['artifact']),
+  tool('chart', 'Draw an artifact; heatmap takes a pivot.', { artifact: A, type: { type: 'string', enum: ['bar', 'lollipop', 'dot_plot', 'diverging_bar', 'grouped_bar', 'scatter', 'bubble', 'heatmap', 'radar', 'line', 'volcano'] }, x: S, y: S, group: S, size: S, title: S, x_label: S, y_label: S }, ['artifact', 'type']),
+  tool('skip', 'Nothing to do until something running returns.', { reason: S }, ['reason']),
+  tool('finish', 'The goal is met or cannot be met further; summary cites artifact ids.', { summary: S }, ['summary'])
 ];
 const STUDY_TOOL_NAMES = new Set(STUDY_TOOLS.map(t => t.name));
 const TABLE_TOOLS = new Set(['measure', 'union', 'intersect', 'difference', 'concat', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'compute', 'pivot', 'chart']);

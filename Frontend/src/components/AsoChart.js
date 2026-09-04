@@ -108,7 +108,7 @@ export function specToPlotly(chart) {
   return { data, layout };
 }
 
-export default function AsoChart({ apiBaseUrl, workspaceUuid, artifactId, title, sourceDatasetId, onArtifactEnter, onArtifactLeave }) {
+export default function AsoChart({ apiBaseUrl, workspaceUuid, artifactId, title, sourceDatasetId, onArtifactEnter, onArtifactLeave, height = 380 }) {
   const [spec, setSpec] = useState(null);
   const [error, setError] = useState(null);
   useEffect(() => {
@@ -130,7 +130,7 @@ export default function AsoChart({ apiBaseUrl, workspaceUuid, artifactId, title,
   const chartTitle = title || chart.title || '';
   return (
     <div className="HPAG-aso-chart-item" style={{ position: 'relative' }}>
-      <Plot data={data} layout={{ ...layout, title: '' }} useResizeHandler style={{ width: '100%', height: 380 }}
+      <Plot data={data} layout={{ ...layout, title: '' }} useResizeHandler style={{ width: '100%', height }}
         config={{ displayModeBar: true, displaylogo: false, modeBarButtonsToRemove: ['lasso2d','select2d'], responsive: true }} />
       {sourceDatasetId && (
         <span className="HPAG-aso-data-chip HPAG-aso-data-chip-artifact HPAG-aso-chart-source"

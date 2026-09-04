@@ -1,22 +1,28 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faExternalLinkAlt, faSpinner } from '@fortawesome/free-solid-svg-icons';
+import { faCheck, faExternalLinkAlt, faSpinner, faTimes, faMinus } from '@fortawesome/free-solid-svg-icons';
 import AsoChart from './AsoChart';
 import './StudyRun.css';
 
-// A study run (aso_hpa) as it happens: the planned graph appears at once, nodes light up as they
-// run, finish or fail, figures render as their chart nodes complete, and the report arrives last.
-// Live SSE steps and stored run events share one shape (stage + JSON message), so the same
-// reducer draws a run in progress and a run reloaded from history.
+// A study run (aso_hpa) as a live map. The plan is a checklist in the corner; the map starts empty
+// and grows an island for every step as it runs, each island holding the data the step produced:
+// a table preview, the search result, or the figure itself. Live SSE steps and stored run events
+// share one shape (stage + JSON message), so the same reducer draws a run in progress and a run
+// reloaded from history.
 
-const NODE_W = 172;
-const NODE_H = 48;
-const COL_GAP = 58;
-const ROW_GAP = 14;
-const PAD = 20;
-
-const FAMILY = { search: 'search', lookup: 'agent', measure: 'measure', chart: 'figure' };
+const KIND = {
+  search: { name: 'Deep research', family: 'agent-search' },
+  lookup: { name: 'Investigator', family: 'agent-gene' },
+  measure: { name: 'Measure', family: 'measure' },
+  chart: { name: 'Figure', family: 'figure' }
+};
+const ISLAND_W = 240;
+const CHART_W = 380;
+const COL_GAP = 64;
+const ROW_GAP = 22;
+const PAD = 24;
+const HEIGHT = { running: 78, failed: 104, blocked: 78, data: 128, matrix: 96, figure: 292, search: 132 };
 
 function parse(message) {
   if (!message || typeof message !== 'string') return null;
@@ -29,18 +35,22 @@ function stageOf(event) {
   return String(event?.stage || '').toLowerCase();
 }
 
+function kindOf(node) {
+  return KIND[node.op] || { name: node.op, family: 'table' };
+}
+
 // The study's state after every event so far.
 export function studyStateFromEvents(events) {
   const state = {
     phase: 'starting', workspaceUuid: null, mode: null, hpaVersion: null, understanding: '', cannot: [],
     nodes: [], byId: new Map(), reflections: [], report: null, final: null, error: null, agentSteps: new Map(),
-    failed: false, complete: false, planErrors: []
+    failed: false, complete: false, planErrors: [], order: 0
   };
   const upsert = (raw, round) => {
-    if (!raw?.id) return;
+    if (!raw?.id) return null;
     let node = state.byId.get(raw.id);
     if (!node) {
-      node = { id: raw.id, op: raw.op, label: raw.label || raw.id, inputs: raw.inputs || [], why: raw.why || '', args: raw.args || {}, status: 'pending', round };
+      node = { id: raw.id, op: raw.op, label: raw.label || raw.id, inputs: raw.inputs || [], why: raw.why || '', args: raw.args || {}, status: 'pending', round: round || 0, appeared: null };
       state.byId.set(node.id, node);
       state.nodes.push(node);
     } else {
@@ -66,15 +76,18 @@ export function studyStateFromEvents(events) {
       for (const raw of d.nodes || []) upsert(raw, 0);
       state.phase = 'running';
     } else if (stage === 'node.start') {
-      const node = upsert({ id: d.node, op: d.op, label: d.label, inputs: d.inputs, args: d.args }, undefined);
-      if (node) { node.status = 'running'; node.startedAt = event.createdAt || Date.now(); }
+      const node = upsert({ id: d.node, op: d.op, label: d.label, inputs: d.inputs, args: d.args });
+      if (node) { node.status = 'running'; if (node.appeared === null) node.appeared = state.order++; }
       state.phase = 'running';
     } else if (stage === 'node.done') {
       const node = upsert({ id: d.node, op: d.op, label: d.label });
-      if (node) Object.assign(node, { status: 'done', rows: d.rows, ms: d.ms, columns: d.columns, sample: d.sample, sampleColumns: d.sample_columns, matrix: d.matrix, images: d.images || [], artifactUuid: d.artifact_uuid, searchUrl: d.search_url, query: d.query, asked: d.asked, found: d.found });
+      if (node) {
+        if (node.appeared === null) node.appeared = state.order++;
+        Object.assign(node, { status: 'done', rows: d.rows, ms: d.ms, columns: d.columns, sample: d.sample, sampleColumns: d.sample_columns, matrix: d.matrix, images: d.images || [], artifactUuid: d.artifact_uuid, searchUrl: d.search_url, query: d.query, asked: d.asked, found: d.found });
+      }
     } else if (stage === 'node.failed') {
       const node = upsert({ id: d.node, op: d.op, label: d.label });
-      if (node) Object.assign(node, { status: 'failed', error: d.error, ms: d.ms });
+      if (node) { if (node.appeared === null) node.appeared = state.order++; Object.assign(node, { status: 'failed', error: d.error, ms: d.ms }); }
     } else if (stage === 'node.blocked') {
       const node = upsert({ id: d.node });
       if (node) Object.assign(node, { status: 'blocked', error: d.input ? `waiting on ${d.input}, which failed` : 'an input never completed' });
@@ -106,40 +119,53 @@ export function studyStatusLine(events) {
   if (s.phase === 'planning') return 'Planning the study';
   if (s.phase === 'reviewing') return `Reviewing results · ${done}/${s.nodes.length} steps done`;
   if (s.phase === 'reporting') return 'Writing the report';
-  if (s.phase === 'running') return running.length ? `Running ${running.map(n => `${n.id} ${n.op}`).slice(0, 3).join(', ')}${running.length > 3 ? ` +${running.length - 3}` : ''} · ${done}/${s.nodes.length} done` : `${done}/${s.nodes.length} steps done`;
+  if (s.phase === 'running') return running.length ? `${running.map(n => `${n.id} ${kindOf(n).name.toLowerCase()}`).slice(0, 3).join(', ')}${running.length > 3 ? ` +${running.length - 3}` : ''} · ${done}/${s.nodes.length} done` : `${done}/${s.nodes.length} steps done`;
   if (s.phase === 'failed') return 'Study failed';
   return 'Study complete';
 }
 
-// Longest-path layers from the plan's inputs, so every arrow points right.
-function layoutNodes(nodes) {
-  const depth = new Map();
-  const byId = new Map(nodes.map(n => [n.id, n]));
-  const resolve = (id, seen = new Set()) => {
-    if (depth.has(id)) return depth.get(id);
-    if (seen.has(id)) return 0;
-    seen.add(id);
-    const node = byId.get(id);
-    const parents = (node?.inputs || []).filter(i => byId.has(i));
-    const value = parents.length ? Math.max(...parents.map(p => resolve(p, seen))) + 1 : 0;
-    depth.set(id, value);
-    return value;
-  };
-  for (const n of nodes) resolve(n.id);
-  const columns = new Map();
-  for (const n of nodes) { const l = depth.get(n.id) || 0; if (!columns.has(l)) columns.set(l, []); columns.get(l).push(n); }
-  const layers = Math.max(0, ...columns.keys()) + 1;
-  const maxRows = Math.max(1, ...[...columns.values()].map(c => c.length));
-  const positions = new Map();
-  for (const [layer, list] of columns) {
-    const offset = ((maxRows - list.length) * (NODE_H + ROW_GAP)) / 2;
-    list.forEach((n, row) => positions.set(n.id, { x: PAD + layer * (NODE_W + COL_GAP), y: PAD + offset + row * (NODE_H + ROW_GAP) }));
+function bodyKind(node) {
+  if (node.status === 'running' || node.status === 'failed' || node.status === 'blocked') return node.status;
+  if (node.op === 'chart') return 'figure';
+  if (node.op === 'search') return 'search';
+  if (node.matrix) return 'matrix';
+  return 'data';
+}
+
+// Islands are the steps that have started. Each sits one column right of its inputs and keeps its
+// row once placed, so the map grows without rearranging what is already there.
+function layoutIslands(nodes) {
+  const islands = nodes.filter(n => n.appeared !== null).sort((a, b) => a.appeared - b.appeared);
+  const layer = new Map();
+  for (const n of islands) {
+    const parents = (n.inputs || []).filter(i => layer.has(i));
+    layer.set(n.id, parents.length ? Math.max(...parents.map(p => layer.get(p))) + 1 : 0);
   }
-  return { positions, width: PAD * 2 + layers * NODE_W + Math.max(0, layers - 1) * COL_GAP, height: PAD * 2 + maxRows * NODE_H + Math.max(0, maxRows - 1) * ROW_GAP };
+  const columns = new Map();
+  for (const n of islands) { const l = layer.get(n.id); if (!columns.has(l)) columns.set(l, []); columns.get(l).push(n); }
+  const layers = Math.max(-1, ...columns.keys()) + 1;
+  const colWidth = [];
+  for (let l = 0; l < layers; l++) colWidth.push((columns.get(l) || []).some(n => n.op === 'chart') ? CHART_W : ISLAND_W);
+  const colX = [];
+  let x = PAD;
+  for (let l = 0; l < layers; l++) { colX.push(x); x += colWidth[l] + COL_GAP; }
+  const boxes = new Map();
+  let height = 0;
+  for (let l = 0; l < layers; l++) {
+    let y = PAD;
+    for (const n of columns.get(l) || []) {
+      const h = HEIGHT[bodyKind(n)] || HEIGHT.data;
+      const w = n.op === 'chart' ? CHART_W : ISLAND_W;
+      boxes.set(n.id, { x: colX[l], y, w, h });
+      y += h + ROW_GAP;
+    }
+    height = Math.max(height, y);
+  }
+  return { islands, boxes, width: layers ? x - COL_GAP + PAD : 0, height: islands.length ? height - ROW_GAP + PAD : 0 };
 }
 
 function edgePath(from, to) {
-  const x1 = from.x + NODE_W, y1 = from.y + NODE_H / 2, x2 = to.x, y2 = to.y + NODE_H / 2;
+  const x1 = from.x + from.w, y1 = from.y + Math.min(from.h, 60) / 2 + 8, x2 = to.x, y2 = to.y + Math.min(to.h, 60) / 2 + 8;
   const bend = Math.max(24, (x2 - x1) / 2);
   return `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`;
 }
@@ -154,20 +180,44 @@ function seconds(ms) {
 }
 
 // The report body without the title, goal, workspace line, figure links and the node table, which
-// the view already shows.
+// the map already shows.
 function reportBody(md) {
   const cut = md.indexOf('\n## Figures');
   const body = (cut === -1 ? md : md.slice(0, cut)).split('\n').filter(line => !/^# /.test(line) && !/^\*\*(Goal|Workspace):\*\*/.test(line));
   return body.join('\n').trim();
 }
 
-function useTicker(active) {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    if (!active) return undefined;
-    const id = setInterval(() => setTick(t => t + 1), 1000);
-    return () => clearInterval(id);
-  }, [active]);
+function IslandBody({ node, apiBaseUrl, workspaceUuid, onArtifactEnter, onArtifactLeave }) {
+  const kind = bodyKind(node);
+  if (kind === 'running') return <div className="HPAG-map-working"><FontAwesomeIcon icon={faSpinner} spin /> working…</div>;
+  if (kind === 'failed' || kind === 'blocked') return <div className="HPAG-map-fail">{truncate(node.error, 120)}</div>;
+  if (kind === 'figure') {
+    return workspaceUuid && node.artifactUuid
+      ? <div className="HPAG-map-figure"><AsoChart apiBaseUrl={apiBaseUrl} workspaceUuid={workspaceUuid} artifactId={node.artifactUuid} title="" height={210} onArtifactEnter={onArtifactEnter} onArtifactLeave={onArtifactLeave} /></div>
+      : <div className="HPAG-map-working">figure rendered</div>;
+  }
+  if (kind === 'search') {
+    return (
+      <div className="HPAG-map-search">
+        <div className="HPAG-map-count">{node.rows} genes</div>
+        <div className="HPAG-map-query">{truncate(node.query, 110)}</div>
+        {node.sample?.length > 0 && <div className="HPAG-map-genes">{node.sample.map(r => r[0]).filter(Boolean).join(', ')}{node.rows > node.sample.length ? ', …' : ''}</div>}
+      </div>
+    );
+  }
+  if (kind === 'matrix') return <div className="HPAG-map-count">{node.matrix[0]} × {node.matrix[1]} matrix</div>;
+  const cols = node.sampleColumns || [];
+  return (
+    <div className="HPAG-map-sheet">
+      <div className="HPAG-map-count">{node.rows} rows{node.asked !== undefined ? ` · ${node.found} of ${node.asked} answered` : ''}</div>
+      {cols.length > 0 && (
+        <table>
+          <thead><tr>{cols.slice(0, 4).map(c => <th key={c}>{truncate(c, 14)}</th>)}</tr></thead>
+          <tbody>{(node.sample || []).slice(0, 3).map((row, i) => <tr key={i}>{row.slice(0, 4).map((cell, j) => <td key={j}>{truncate(cell, 16)}</td>)}</tr>)}</tbody>
+        </table>
+      )}
+    </div>
+  );
 }
 
 function NodeDetail({ node, steps }) {
@@ -177,7 +227,7 @@ function NodeDetail({ node, steps }) {
       <div className="HPAG-study-detail-head">
         <span className={`HPAG-study-pill HPAG-study-pill-${node.status}`}>{node.status}</span>
         <span className="HPAG-study-detail-id">{node.id}</span>
-        <span className="HPAG-study-detail-op">{node.op}</span>
+        <span className="HPAG-study-detail-op">{kindOf(node).name}</span>
         <span className="HPAG-study-detail-label">{node.label}</span>
         {node.ms !== undefined && <span className="HPAG-study-detail-meta">{seconds(node.ms)}</span>}
         {node.rows !== undefined && <span className="HPAG-study-detail-meta">{node.rows} rows</span>}
@@ -197,7 +247,6 @@ function NodeDetail({ node, steps }) {
           <a href={node.searchUrl} target="_blank" rel="noopener noreferrer">open on proteinatlas.org <FontAwesomeIcon icon={faExternalLinkAlt} /></a>
         </div>
       )}
-      {node.asked !== undefined && <div className="HPAG-study-detail-line">{node.found} of {node.asked} genes answered with a cited row</div>}
       {node.sample?.length > 0 && (
         <div className="HPAG-study-sample">
           <table>
@@ -221,111 +270,122 @@ function NodeDetail({ node, steps }) {
   );
 }
 
+function TodoIcon({ status }) {
+  if (status === 'done') return <FontAwesomeIcon icon={faCheck} className="HPAG-todo-icon HPAG-todo-icon-done" />;
+  if (status === 'running') return <FontAwesomeIcon icon={faSpinner} spin className="HPAG-todo-icon HPAG-todo-icon-running" />;
+  if (status === 'failed') return <FontAwesomeIcon icon={faTimes} className="HPAG-todo-icon HPAG-todo-icon-failed" />;
+  if (status === 'blocked') return <FontAwesomeIcon icon={faMinus} className="HPAG-todo-icon HPAG-todo-icon-blocked" />;
+  return <span className="HPAG-todo-icon HPAG-todo-icon-pending" />;
+}
+
 export default function StudyRun({ events, apiBaseUrl, workspaceUuid, isComplete, onArtifactEnter, onArtifactLeave }) {
   const state = useMemo(() => studyStateFromEvents(events), [events]);
-  const layout = useMemo(() => layoutNodes(state.nodes), [state.nodes]);
+  const layout = useMemo(() => layoutIslands(state.nodes), [state.nodes]);
   const [selected, setSelected] = useState(null);
   const [hovered, setHovered] = useState(null);
-  useTicker(!isComplete && state.phase !== 'done' && state.phase !== 'failed');
   const ws = workspaceUuid || state.workspaceUuid;
 
   const counts = { done: 0, failed: 0, running: 0 };
   for (const n of state.nodes) { if (n.status === 'done') counts.done++; else if (n.status === 'failed' || n.status === 'blocked') counts.failed++; else if (n.status === 'running') counts.running++; }
-  const phaseText = { starting: 'Starting', planning: 'Planning the study', running: 'Running the graph', reviewing: 'Reviewing results', reporting: 'Writing the report', done: 'Complete', failed: 'Failed' }[state.phase] || state.phase;
+  const phaseText = { starting: 'Starting', planning: 'Planning', running: 'Running', reviewing: 'Reviewing results', reporting: 'Writing the report', done: 'Complete', failed: 'Failed' }[state.phase] || state.phase;
+  const live = !isComplete && state.phase !== 'done' && state.phase !== 'failed';
   const selectedNode = selected ? state.byId.get(selected) : null;
-  const neighbours = new Set();
   const focus = hovered || selected;
-  if (focus) {
-    neighbours.add(focus);
-    for (const n of state.nodes) {
-      if (n.inputs?.includes(focus)) neighbours.add(n.id);
-      if (n.id === focus) for (const i of n.inputs || []) neighbours.add(i);
-    }
-  }
-  const figures = state.nodes.filter(n => n.op === 'chart' && n.status === 'done' && n.artifactUuid);
   const elapsed = state.final?.seconds !== undefined ? `${Number(state.final.seconds).toFixed(1)}s` : null;
+  const reviewFor = round => state.reflections.find(r => r.round === round);
 
   return (
     <div className="HPAG-study">
       <div className="HPAG-study-head">
-        <span className={`HPAG-study-phase HPAG-study-phase-${state.phase}`}>
-          {!isComplete && state.phase !== 'done' && state.phase !== 'failed' && <FontAwesomeIcon icon={faSpinner} spin />} {phaseText}
-        </span>
+        <span className={`HPAG-study-phase HPAG-study-phase-${state.phase}`}>{live && <FontAwesomeIcon icon={faSpinner} spin />} {phaseText}</span>
         {state.nodes.length > 0 && (
-          <span className="HPAG-study-counts">
-            <b>{counts.done}</b> of {state.nodes.length} steps done{counts.running ? `, ${counts.running} running` : ''}{counts.failed ? `, ${counts.failed} failed` : ''}
-          </span>
+          <span className="HPAG-study-counts"><b>{counts.done}</b> of {state.nodes.length} steps done{counts.running ? `, ${counts.running} running` : ''}{counts.failed ? `, ${counts.failed} failed` : ''}</span>
         )}
         <span className="HPAG-study-meta">
           {elapsed && `${elapsed} · `}{state.final?.tokens?.total ? `${Number(state.final.tokens.total).toLocaleString()} tokens · ` : ''}{state.mode ? `${state.mode} data` : ''}{state.hpaVersion ? ` (HPA ${state.hpaVersion})` : ''}
         </span>
       </div>
-      {state.understanding && <div className="HPAG-study-understanding">{state.understanding}</div>}
-      {state.planErrors.length > 0 && <div className="HPAG-study-note">The first plan was corrected: {state.planErrors.slice(0, 3).join('; ')}</div>}
       {state.error && <div className="HPAG-study-error">{state.error}</div>}
 
-      {state.nodes.length > 0 && (
-        <div className="HPAG-study-scroll">
-          <svg className="HPAG-study-svg" width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-label="Study graph">
-            <defs>
-              <marker id="HPAG-study-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />
-              </marker>
-            </defs>
-            {state.nodes.map(n => (n.inputs || []).map(i => {
-              const from = layout.positions.get(i);
-              const to = layout.positions.get(n.id);
-              if (!from || !to) return null;
-              const hot = focus && (i === focus || n.id === focus);
-              const dim = focus && !hot;
-              return <path key={`${i}-${n.id}`} className={`HPAG-study-edge ${hot ? 'HPAG-study-edge-hot' : ''} ${dim ? 'HPAG-study-edge-dim' : ''}`} d={edgePath(from, to)} markerEnd="url(#HPAG-study-arrow)" />;
-            }))}
-            {state.nodes.map(n => {
-              const p = layout.positions.get(n.id);
-              if (!p) return null;
-              const family = FAMILY[n.op] || 'table';
-              const dim = focus && !neighbours.has(n.id);
-              const sub = n.status === 'done' ? (n.rows !== undefined ? `${n.rows} rows` : n.matrix ? `${n.matrix[0]} × ${n.matrix[1]}` : n.images?.length ? 'figure' : '') : n.status === 'running' ? 'running…' : n.status === 'failed' ? 'failed' : n.status === 'blocked' ? 'blocked' : n.round ? `added in review ${n.round}` : 'waiting';
+      <div className="HPAG-study-body">
+        <div className="HPAG-map-wrap">
+          {layout.islands.length === 0 ? (
+            <div className="HPAG-map-empty">{state.phase === 'planning' || state.phase === 'starting' ? 'The map fills in as steps run.' : 'No step has run.'}</div>
+          ) : (
+            <div className="HPAG-map-scroll">
+              <div className="HPAG-map" style={{ width: layout.width, height: layout.height }}>
+                <svg className="HPAG-map-edges" width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} aria-hidden="true">
+                  <defs>
+                    <marker id="HPAG-map-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                      <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />
+                    </marker>
+                  </defs>
+                  {layout.islands.map(n => (n.inputs || []).map(i => {
+                    const from = layout.boxes.get(i);
+                    const to = layout.boxes.get(n.id);
+                    if (!from || !to) return null;
+                    const hot = focus && (i === focus || n.id === focus);
+                    return <path key={`${i}-${n.id}`} className={`HPAG-map-edge ${hot ? 'HPAG-map-edge-hot' : ''} ${focus && !hot ? 'HPAG-map-edge-dim' : ''}`} d={edgePath(from, to)} markerEnd="url(#HPAG-map-arrow)" />;
+                  }))}
+                </svg>
+                {layout.islands.map(n => {
+                  const box = layout.boxes.get(n.id);
+                  const kind = kindOf(n);
+                  return (
+                    <div
+                      key={n.id}
+                      className={`HPAG-map-island HPAG-map-island-${n.status} HPAG-map-family-${kind.family} ${selected === n.id ? 'HPAG-map-island-selected' : ''}`}
+                      style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
+                      onMouseEnter={() => setHovered(n.id)}
+                      onMouseLeave={() => setHovered(null)}
+                      onClick={() => setSelected(selected === n.id ? null : n.id)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(selected === n.id ? null : n.id); } }}
+                    >
+                      <div className="HPAG-map-island-head">
+                        <span className="HPAG-map-island-id">{n.id}</span>
+                        <span className="HPAG-map-island-kind">{kind.name}</span>
+                        {n.ms !== undefined && <span className="HPAG-map-island-time">{seconds(n.ms)}</span>}
+                      </div>
+                      <div className="HPAG-map-island-label">{truncate(n.label, n.op === 'chart' ? 60 : 34)}</div>
+                      <IslandBody node={n} apiBaseUrl={apiBaseUrl} workspaceUuid={ws} onArtifactEnter={onArtifactEnter} onArtifactLeave={onArtifactLeave} />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="HPAG-todo">
+          <div className="HPAG-todo-head">Plan{state.nodes.length ? ` · ${counts.done}/${state.nodes.length}` : ''}</div>
+          {state.understanding && <div className="HPAG-todo-understanding">{state.understanding}</div>}
+          {state.nodes.length === 0 && <div className="HPAG-todo-empty">{state.phase === 'planning' ? 'Planning…' : 'No plan yet.'}</div>}
+          <ol className="HPAG-todo-list">
+            {state.nodes.map((n, i) => {
+              const review = n.round ? reviewFor(n.round) : null;
+              const firstOfRound = n.round && (i === 0 || state.nodes[i - 1].round !== n.round);
               return (
-                <g key={n.id} className={`HPAG-study-node HPAG-study-node-${n.status} HPAG-study-family-${family} ${dim ? 'HPAG-study-node-dim' : ''} ${selected === n.id ? 'HPAG-study-node-selected' : ''}`}
-                  transform={`translate(${p.x}, ${p.y})`}
-                  onMouseEnter={() => setHovered(n.id)} onMouseLeave={() => setHovered(null)}
-                  onClick={() => setSelected(selected === n.id ? null : n.id)}>
-                  <rect className="HPAG-study-node-box" width={NODE_W} height={NODE_H} rx="8" ry="8" />
-                  <rect className="HPAG-study-node-bar" width="5" height={NODE_H} rx="2.5" ry="2.5" />
-                  <text x="13" y="18" className="HPAG-study-node-id">{n.id}</text>
-                  <text x={NODE_W - 9} y="18" textAnchor="end" className="HPAG-study-node-op">{n.op}</text>
-                  <text x="13" y="36" className="HPAG-study-node-label">{truncate(n.label, 22)}</text>
-                  <text x={NODE_W - 9} y="36" textAnchor="end" className="HPAG-study-node-sub">{truncate(sub, 11)}</text>
-                  <title>{n.id} {n.op}: {n.label}{n.why ? `\n${n.why}` : ''}{n.error ? `\n${n.error}` : ''}</title>
-                </g>
+                <React.Fragment key={n.id}>
+                  {firstOfRound && review && <li className="HPAG-todo-review"><b>Review {n.round}</b> {truncate(review.assessment, 220)}</li>}
+                  <li className={`HPAG-todo-item HPAG-todo-item-${n.status} ${selected === n.id ? 'HPAG-todo-item-selected' : ''}`} onClick={() => setSelected(selected === n.id ? null : n.id)}>
+                    <TodoIcon status={n.status} />
+                    <span className="HPAG-todo-id">{n.id}</span>
+                    <span className="HPAG-todo-text">{n.label}</span>
+                    <span className="HPAG-todo-kind">{kindOf(n).name}</span>
+                  </li>
+                </React.Fragment>
               );
             })}
-          </svg>
+            {state.reflections.filter(r => r.done && !r.added.length).map(r => <li key={`r${r.round}`} className="HPAG-todo-review"><b>Review {r.round}</b> {truncate(r.assessment, 220)}</li>)}
+            {state.cannot.map((c, i) => <li key={`c${i}`} className="HPAG-todo-item HPAG-todo-item-cannot"><FontAwesomeIcon icon={faMinus} className="HPAG-todo-icon HPAG-todo-icon-blocked" /><span className="HPAG-todo-text">{c.requirement}</span><span className="HPAG-todo-kind">not expressible</span></li>)}
+          </ol>
+          {state.planErrors.length > 0 && <div className="HPAG-todo-note">The first plan was corrected: {state.planErrors.slice(0, 2).join('; ')}</div>}
         </div>
-      )}
-      {state.nodes.length > 0 && !selectedNode && <div className="HPAG-study-hint">Click a step to see what it did: its arguments, rows, the agent's trail, and any error.</div>}
+      </div>
+
       {selectedNode && <NodeDetail node={selectedNode} steps={state.agentSteps.get(selectedNode.id)} />}
-
-      {state.reflections.map(r => (
-        <div key={r.round} className="HPAG-study-review">
-          <span className="HPAG-study-review-label">Review {r.round}{r.done ? ' · done' : r.added.length ? ` · added ${r.added.map(a => a.id).join(', ')}` : ''}</span>
-          <span className="HPAG-study-review-text">{r.assessment}</span>
-        </div>
-      ))}
-      {state.cannot.length > 0 && (
-        <div className="HPAG-study-note">Not expressible in this database: {state.cannot.map(c => c.requirement).join('; ')}</div>
-      )}
-
-      {figures.length > 0 && ws && (
-        <div className="HPAG-study-figures">
-          {figures.map(n => (
-            <div key={n.id} className="HPAG-study-figure">
-              <AsoChart apiBaseUrl={apiBaseUrl} workspaceUuid={ws} artifactId={n.artifactUuid} title={`${n.id} · ${n.args?.title || n.label}`} onArtifactEnter={onArtifactEnter} onArtifactLeave={onArtifactLeave} />
-            </div>
-          ))}
-        </div>
-      )}
 
       {state.report && (
         <div className="HPAG-study-report">

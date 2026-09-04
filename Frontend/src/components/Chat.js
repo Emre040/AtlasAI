@@ -1208,18 +1208,19 @@ function HPA() {
                     return runTitle;
                   })();
 
-                  const isExpanded = collapsedRuns[group.runId] === false;
+                  // A study is its map: always open, never folded.
+                  const isExpanded = isAsoRun || collapsedRuns[group.runId] === false;
 
                   return (
                     <React.Fragment key={group.runId}>
                     <div
-                      className={`HPAG-shimmer-bar ${group.isComplete ? 'HPAG-shimmer-done' : ''}`}
-                      onClick={() => toggleRunCollapsed(group.runId)}
+                      className={`HPAG-shimmer-bar ${group.isComplete ? 'HPAG-shimmer-done' : ''} ${isAsoRun ? 'HPAG-shimmer-static' : ''}`}
+                      onClick={isAsoRun ? undefined : () => toggleRunCollapsed(group.runId)}
                     >
                       <span className="HPAG-shimmer-text">
                         {group.isComplete ? `${runTitle} complete` : <>Working<span className="HPAG-shimmer-dot">{'\u00B7'}</span>{lastStepMsg}</>}
                       </span>
-                      <FontAwesomeIcon icon={isExpanded ? faChevronDown : faChevronRight} className="HPAG-shimmer-chevron" />
+                      {!isAsoRun && <FontAwesomeIcon icon={isExpanded ? faChevronDown : faChevronRight} className="HPAG-shimmer-chevron" />}
                     </div>
                     {isExpanded && (
                     <div className="HPAG-tool-run-container">

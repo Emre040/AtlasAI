@@ -133,7 +133,7 @@ function renderContext(state, turn, startedAt) {
     : '(nothing)';
   const recent = state.recent.length ? state.recent.map(r => `- ${r}`).join('\n') : '(nothing new)';
   const notes = state.notes.length ? state.notes.map(n => `- ${n}`).join('\n') : '(none)';
-  const tables = state.tablesSeen.size ? [...state.tablesSeen.values()].join('\n') : null;
+  const tables = [state.tableList ? `TABLES (from list_tables)\n${state.tableList.join('\n')}` : '', state.tablesSeen.size ? `TABLES YOU HAVE LOOKED AT\n${[...state.tablesSeen.values()].join('\n')}` : ''].filter(Boolean).join('\n\n') || null;
   return `GOAL
 ${state.goal}
 
@@ -148,7 +148,7 @@ ${running}
 
 SINCE YOUR LAST TURN
 ${recent}
-${tables ? `\nTABLES YOU HAVE LOOKED AT\n${tables}\n` : ''}
+${tables ? `\n${tables}\n` : ''}
 NOTES
 ${notes}
 
@@ -215,7 +215,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
   let registrations = Promise.resolve();
   const register = args => { const next = registrations.then(() => registerArtifact(db, args)); registrations = next.catch(() => {}); return next; };
 
-  const state = { goal, plan: [], artifacts: [], byId: new Map(), running: new Map(), recent: [], notes: [], tablesSeen: new Map(), toolCalls: 0, failed: 0, ids: { a: 0, t: 0 } };
+  const state = { goal, plan: [], artifacts: [], byId: new Map(), running: new Map(), recent: [], notes: [], tablesSeen: new Map(), tableList: null, toolCalls: 0, failed: 0, ids: { a: 0, t: 0 } };
   const wake = { resolve: null };
   const wakeUp = () => { if (wake.resolve) { const r = wake.resolve; wake.resolve = null; r(); } };
   const artifactsSummary = () => state.artifacts.map(a => ({ artifact_uuid: a.uuid, kind: a.kind === 'figure' ? 'figure' : a.kind === 'note' ? 'inspection' : a.kind === 'answer' ? 'measurement' : 'dataset', tool: a.tool, summary: { id: a.id, label: a.label, row_count: a.rows?.length }, storage_uri: a.storageUri }));
@@ -345,7 +345,9 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
       turn++;
       const context = renderContext(state, turn, startedAt);
       // Until a plan exists the only tool on offer is set_plan: the first turn plans, alone.
-      const offered = state.plan.length ? toolSpecs : toolSpecs.filter(t => t.function.name === 'set_plan');
+      const lastTurn = turn >= maxTurns;
+      if (lastTurn) state.recent.push('This is your last turn: call finish now with the summary of what the artifacts show and what is missing.');
+      const offered = lastTurn ? toolSpecs.filter(t => t.function.name === 'finish') : state.plan.length ? toolSpecs : toolSpecs.filter(t => t.function.name === 'set_plan');
       const res = await inference.chat.completions.create({ messages: [{ role: 'system', content: system }, { role: 'user', content: context }], tools: offered, temperature: 0 });
       addUsage(res.usage);
       const message = res.choices?.[0]?.message || {};
@@ -377,8 +379,8 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
         if (call.name === 'note') { state.notes.push(String(call.args.text || '')); await log('note', { text: String(call.args.text || '') }); continue; }
         if (call.name === 'list_tables') {
           const entries = (await geneData.catalog()).filter(e => e.key !== 'unreadable');
-          state.recent.push(`tables:\n  ${entries.map(e => `${e.file} — ${e.title}. ${e.description}`.slice(0, 200)).join('\n  ')}`);
-          await log('note', { text: `listed ${entries.length} tables` });
+          state.tableList = entries.map(e => `${e.file} — ${e.title}. ${e.description}`.slice(0, 160));
+          state.recent.push(`${entries.length} tables are now listed under TABLES for every later turn`);
           sync++; continue;
         }
         if (call.name === 'describe_table') {

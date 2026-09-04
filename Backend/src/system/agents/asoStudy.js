@@ -42,7 +42,7 @@ function planSystem(allowSearch, dataOverview, searchOverview, masterEntry) {
 Operations:
 ${catalog.map(t => `- ${t.name}: ${t.description} Inputs: ${t.inputs}. Args: ${JSON.stringify(t.args)}. Produces: ${t.produces}.`).join('\n')}
 
-Row shapes: search rows carry gene, ensembl and every non-empty column of the "${masterEntry?.title || 'summary'}" table below; measure rows carry gene, ensembl, entity, value; lookup rows carry gene, ensembl, found, answer, value, entity, table.
+Row shapes: search rows carry gene, ensembl and every non-empty column of the "${masterEntry?.title || 'summary'}" table below; measure rows carry gene, ensembl, entity and the value under the name given in "as" (default value); lookup rows carry gene, ensembl, found, answer, the value under "as" (default value), entity, table. A join keeps the first input's columns and adds the second's, suffixing a clashing name with _2; give each measure its own "as" name (liver_nTPM, pancreas_nTPM) so later steps can name columns that exist. Every later step's column names are checked against its real input before it runs.
 
 What "search" can express (the database's search fields; the search agent fills them in itself):
 ${searchOverview}
@@ -68,6 +68,8 @@ Rules:
 const REFLECT_SUFFIX = `
 
 You are now reviewing the study in progress: the graph and what each node produced. Decide whether the goal is answered or more nodes are needed: to repair a failed node (a different table, column, question or argument), to follow what the results show, or to add a missing figure. Return JSON {"done": true|false, "assessment": "what the results show so far and what is missing", "nodes": [new nodes with fresh ids; inputs may reference any existing node]}. Do not repeat a node that succeeded and do not add nodes that only restate what exists; return done: true with no nodes when the goal is answered.`;
+
+const REPAIR_SYSTEM = `One operation of a study names columns its input does not have. Return JSON {"args": {...}} with the corrected arguments: keep the operation's intent, name only columns from the list given, and change nothing else.`;
 
 const REPORT_SYSTEM = `Write the report of a completed study in Markdown. You are given the goal and every node with what it produced: row counts, columns, its rows or a sample of them, or its error. Every statement of fact ends with the id of the node it comes from, like [n4]. Use only values that appear in the node outputs; when only a sample of a node is shown, say so and point to the node for the rest. Sections: "Summary" (answers the goal in a few sentences), "Findings" (one bullet per line of evidence, each with its node), "Methods" (how the graph answered the goal, in words, naming the operations), "Limitations" (failed or blocked nodes, requirements the database could not express, sampling). Do not invent numbers or genes. Return JSON {"title": "a short title", "report_md": "the report"}.`;
 
@@ -129,38 +131,76 @@ async function parallelMap(items, limit, fn) {
   return out;
 }
 
+// The columns an operation's arguments name, checked against the real input before it runs.
+function columnRefs(op, args) {
+  switch (op) {
+    case 'filter': return (Array.isArray(args.where) ? args.where : []).map(w => w?.column);
+    case 'select': return [...(Array.isArray(args.columns) ? args.columns : []), ...Object.keys(args.rename || {})];
+    case 'rank': return [args.by];
+    case 'top_per_group': return [args.group_by || 'gene', args.by];
+    case 'aggregate': return [args.group_by, args.column];
+    case 'compute': return String(args.expr || '').replace(/log2|abs/g, '').split(/[-+*/()]/).map(s => s.trim()).filter(s => s && !/^[\d.]+$/.test(s));
+    case 'pivot': return [args.row || 'gene', args.column || 'entity', args.value || 'value'];
+    case 'chart': return args.type === 'heatmap' ? [] : [args.x, args.y, args.group, args.size];
+    case 'join': return args.on ? [args.on] : [];
+    default: return [];
+  }
+}
+
+const ROW_OPS = new Set(['filter', 'select', 'rank', 'top_per_group', 'aggregate', 'compute', 'pivot', 'chart', 'join', 'measure', 'lookup']);
+
+// Arguments that name columns the input does not have are repaired once, from the real columns.
+async function checkColumns(node, args, rows, ctx) {
+  const missing = [...new Set(columnRefs(node.op, args).filter(c => c && !tools.findColumn(rows, c)))];
+  if (!missing.length) return args;
+  const columns = tools.columnsOf(rows);
+  const repaired = await ctx.repairArgs(node, args, missing, columns, rows.slice(0, 2));
+  const still = [...new Set(columnRefs(node.op, repaired).filter(c => c && !tools.findColumn(rows, c)))];
+  if (still.length) throw new Error(`${node.op}: no column named "${still[0]}" (columns: ${columns.slice(0, 20).join(', ')})`);
+  return repaired;
+}
+
 async function runNode(node, inputs, ctx) {
-  const args = node.args || {};
+  let args = node.args || {};
   const first = inputs[0];
+  if (node.op === 'search') {
+    const r = await deepResearchTrail({ goal: String(args.question), mode: ctx.mode }, { onStep: ctx.forward(node.id), includeRows: true });
+    ctx.addTokens(r.tokens);
+    if (r.status !== 'ok') throw new Error(r.error || 'search failed');
+    return { rows: (r.result.rows || []).map(normalizeSearchRow), meta: { search_url: r.result.search_urls[0], query: r.result.plan, trail: r.result.trail, not_expressible: r.result.not_expressible, mode: r.result.mode, hpa_version: r.result.hpa_version } };
+  }
+  const rows = ROW_OPS.has(node.op) && !(node.op === 'chart' && first?.output?.matrix) ? rowsOf(first, node.id) : null;
+  // An empty input yields an empty output rather than a failure over columns that never existed.
+  if (rows && !rows.length) {
+    if (node.op === 'chart') throw new Error(`${node.id}: nothing to draw, ${first.id} has no rows`);
+    if (node.op === 'pivot') return { matrix: { matrix: [], row_labels: [], col_labels: [] }, meta: { note: `${first.id} had no rows` } };
+    return { rows: [], meta: { note: `${first.id} had no rows` } };
+  }
+  if (rows) args = await checkColumns(node, args, rows, ctx);
   switch (node.op) {
-    case 'search': {
-      const r = await deepResearchTrail({ goal: String(args.question), mode: ctx.mode }, { onStep: ctx.forward(node.id), includeRows: true });
-      ctx.addTokens(r.tokens);
-      if (r.status !== 'ok') throw new Error(r.error || 'search failed');
-      return { rows: (r.result.rows || []).map(normalizeSearchRow), meta: { search_url: r.result.search_urls[0], query: r.result.plan, trail: r.result.trail, not_expressible: r.result.not_expressible, mode: r.result.mode, hpa_version: r.result.hpa_version } };
-    }
     case 'lookup': {
       const cap = Math.min(MAX_LOOKUP_GENES, Number(args.max_genes) > 0 ? Number(args.max_genes) : MAX_LOOKUP_GENES);
-      const genes = rowsOf(first, node.id).slice(0, cap);
-      const rows = await parallelMap(genes, ctx.parallel, async g => {
+      const valueName = String(args.as || '').trim() || 'value';
+      const genes = rows.slice(0, cap);
+      const out = await parallelMap(genes, ctx.parallel, async g => {
         const question = String(args.question).replace(/\{gene\}/g, g.gene || g.ensembl);
         const r = await investigatorTrail({ gene: g.ensembl || g.gene, question, mode: ctx.mode }, { onStep: ctx.forward(`${node.id}:${g.gene || g.ensembl}`) });
         ctx.addTokens(r.tokens);
-        return { gene: r.gene || g.gene, ensembl: r.ensembl || g.ensembl || null, found: r.found === true, answer: r.answer || '', value: r.extracted_value ?? null, entity: r.exact_label ?? null, table: r.source_section || null, cited_row: r.cited_row || null, confidence: r.confidence || null, ...(r.error ? { error: r.error } : {}) };
+        return { gene: r.gene || g.gene, ensembl: r.ensembl || g.ensembl || null, found: r.found === true, answer: r.answer || '', [valueName]: r.extracted_value ?? null, entity: r.exact_label ?? null, table: r.source_section || null, cited_row: r.cited_row || null, confidence: r.confidence || null, ...(r.error ? { error: r.error } : {}) };
       });
-      return { rows, meta: { question: args.question, asked: genes.length, found: rows.filter(r => r.found).length } };
+      return { rows: out, meta: { question: args.question, asked: genes.length, found: out.filter(r => r.found).length } };
     }
-    case 'measure': return { rows: await tools.measure(rowsOf(first, node.id), args, ctx.parallel), meta: { table: args.table, value_column: args.value_column, entity_column: args.entity_column || null, entity: args.entity || null } };
+    case 'measure': return { rows: await tools.measure(rows, args, ctx.parallel), meta: { table: args.table, value_column: args.value_column, entity_column: args.entity_column || null, entity: args.entity || null } };
     case 'union': case 'intersect': case 'difference': case 'concat': return { rows: tools.setOp(node.op, rowsOf(inputs[0], node.id), rowsOf(inputs[1], node.id), args.on || null) };
-    case 'join': return { rows: tools.join(rowsOf(inputs[0], node.id), rowsOf(inputs[1], node.id), args.how, args.on || null) };
-    case 'filter': return { rows: tools.applyWhere(rowsOf(first, node.id), args.where) };
-    case 'select': return { rows: tools.select(rowsOf(first, node.id), args.columns, args.rename || {}, args.add || {}) };
-    case 'rank': return { rows: tools.rank(rowsOf(first, node.id), args.by, args.order, Number(args.top) || 0) };
-    case 'top_per_group': return { rows: tools.topPerGroup(rowsOf(first, node.id), args) };
-    case 'aggregate': return { rows: tools.aggregate(rowsOf(first, node.id), args) };
-    case 'compute': return { rows: tools.compute(rowsOf(first, node.id), String(args.name), String(args.expr)) };
-    case 'pivot': return { matrix: tools.pivot(rowsOf(first, node.id), args) };
-    case 'chart': return { figure: tools.chartSpec(args, first?.output?.matrix ? first.output.matrix : rowsOf(first, node.id)) };
+    case 'join': return { rows: tools.join(rows, rowsOf(inputs[1], node.id), args.how, args.on || null) };
+    case 'filter': return { rows: tools.applyWhere(rows, args.where) };
+    case 'select': return { rows: tools.select(rows, args.columns, args.rename || {}, args.add || {}) };
+    case 'rank': return { rows: tools.rank(rows, args.by, args.order, Number(args.top) || 0) };
+    case 'top_per_group': return { rows: tools.topPerGroup(rows, args) };
+    case 'aggregate': return { rows: tools.aggregate(rows, args) };
+    case 'compute': return { rows: tools.compute(rows, String(args.name), String(args.expr)) };
+    case 'pivot': return { matrix: tools.pivot(rows, args) };
+    case 'chart': return { figure: tools.chartSpec(args, first?.output?.matrix ? first.output.matrix : rows) };
     default: throw new Error(`${node.id}: unknown operation ${node.op}`);
   }
 }
@@ -310,7 +350,14 @@ async function asoStudy({ goal, allow_search = true, mode: requestedMode, parall
   // deadlock on the workspace's artifact counter.
   let registrations = Promise.resolve();
   const register = args => { const next = registrations.then(() => registerArtifact(db, args)); registrations = next.catch(() => {}); return next; };
-  const nodeCtx = { db, workspace, mode, parallel, log, forward, addTokens, register };
+  const repairArgs = async (node, args, missing, columns, sample) => {
+    const user = `Operation: ${node.op}\nArguments: ${JSON.stringify(args)}\nMissing columns: ${missing.join(', ')}\nColumns the input has: ${columns.join(', ')}\nFirst rows: ${JSON.stringify(sample)}`;
+    const fixed = await jsonCall(REPAIR_SYSTEM, user, ctx.onStep, 'repair', stats);
+    const next = fixed && fixed.args && typeof fixed.args === 'object' ? fixed.args : args;
+    await log('node.repair', { node: node.id, op: node.op, missing, columns: columns.slice(0, 20), args_before: args, args_after: next }, node.id);
+    return next;
+  };
+  const nodeCtx = { db, workspace, mode, parallel, log, forward, addTokens, register, repairArgs };
 
   const finish = async (status, fields) => { await updateWorkspace(db, workspace.id, { status, finishedUnixMs: Date.now(), ...fields }); await logger.close(); };
   const graphSummary = () => state.nodes.map(n => ({ id: n.id, op: n.op, label: n.label, inputs: n.inputs, status: state.outputs[n.id] ? 'done' : state.failed[n.id] ? 'failed' : 'pending', rows: state.outputs[n.id]?.output?.rows?.length, artifact_uuid: state.outputs[n.id]?.artifact_uuid || null, error: state.failed[n.id] || null, ms: state.outputs[n.id]?.ms }));

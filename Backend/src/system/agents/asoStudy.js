@@ -78,7 +78,7 @@ function systemPrompt(dataOverview, searchOverview) {
   return `You run a study over a database for a researcher. You work in turns. Each turn you see the goal, your plan, every artifact in the workspace with where it came from, what is still running, and what came back since your last turn. You act by calling tools; you never state a value, gene or count yourself: a tool produces it and it becomes an artifact.
 
 How the turns work:
-- If the workspace is empty and there is no plan, write the plan first with set_plan: a few high-level items, what to find out, not which operation. Keep it honest: mark items done when an artifact shows they are, drop items that turn out wrong, rewrite the plan when the study changes direction.
+- Your first turn does one thing: call set_plan, alone, with a few high-level items (what to find out, not which operation). Nothing else runs in that turn; agents and tools come in the turns after, once the plan exists. Keep the plan honest: mark items done when an artifact shows they are, drop items that turn out wrong, rewrite the plan when the study changes direction.
 - Call as many tools in one turn as can run independently; they run in parallel. Agents (deep_research_hpa, investigator_hpa, check_inclusion_hpa, dictionary_expert_hpa) run in the background and you are woken when each returns. Table tools return at once.
 - When nothing useful can be done until something running returns, call skip with the reason. Do not repeat a tool that is still running.
 - Refer to artifacts by their id. Use only column names an artifact actually has (they are listed). Name measure outputs with "as".
@@ -344,7 +344,9 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
     while (turn < maxTurns) {
       turn++;
       const context = renderContext(state, turn, startedAt);
-      const res = await inference.chat.completions.create({ messages: [{ role: 'system', content: system }, { role: 'user', content: context }], tools: toolSpecs, temperature: 0 });
+      // Until a plan exists the only tool on offer is set_plan: the first turn plans, alone.
+      const offered = state.plan.length ? toolSpecs : toolSpecs.filter(t => t.function.name === 'set_plan');
+      const res = await inference.chat.completions.create({ messages: [{ role: 'system', content: system }, { role: 'user', content: context }], tools: offered, temperature: 0 });
       addUsage(res.usage);
       const message = res.choices?.[0]?.message || {};
       const calls = (message.tool_calls || []).map(c => { let args = {}; try { args = JSON.parse(c.function?.arguments || '{}'); } catch { args = {}; } return { name: c.function?.name, args }; });
@@ -352,6 +354,16 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
       state.recent = [];
       let sync = 0;
       let waiting = false;
+      if (!state.plan.length) {
+        // The planning turn: set_plan and nothing else; anything else waits for the next turn.
+        const plan = calls.find(c => c.name === 'set_plan');
+        const others = calls.filter(c => c.name !== 'set_plan').map(c => c.name);
+        if (plan) { state.plan = (plan.args.items || []).map(text => ({ text: String(text), status: 'todo', note: '' })); await log('plan', { items: state.plan }); }
+        if (others.length) state.recent.push(`Not run: ${others.join(', ')}. The first turn writes the plan alone; call tools from the next turn on.`);
+        if (!plan) { stalls++; state.recent.push('Write the plan first with set_plan, alone.'); if (stalls > MAX_STALLS) break; }
+        else stalls = 0;
+        continue;
+      }
       for (const call of calls) {
         if (call.name === 'finish') { finishSummary = String(call.args.summary || ''); break; }
         if (call.name === 'skip') { waiting = true; await log('skip', { reason: call.args.reason || '' }); continue; }

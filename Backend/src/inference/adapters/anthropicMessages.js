@@ -347,7 +347,8 @@ function buildRequest(request, model) {
     'max_completion_tokens',
     'response_format',
     'model',
-    'prompt_cache'
+    'prompt_cache',
+    'reasoning_effort'
   ]);
   const unsupported = Object.keys(request || {}).filter(key => !supportedKeys.has(key));
   if (unsupported.length > 0) {

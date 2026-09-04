@@ -257,7 +257,7 @@ function buildRequest(request, model) {
     generationConfig.responseMimeType = 'application/json';
     generationConfig.responseSchema = convertSchema(request.response_format.json_schema.schema);
   }
-  const thinking = thinkingConfig(model.reasoningEffort);
+  const thinking = thinkingConfig(request.reasoning_effort || model.reasoningEffort);
   if (thinking) generationConfig.thinkingConfig = thinking;
   return {
     system: converted.system,

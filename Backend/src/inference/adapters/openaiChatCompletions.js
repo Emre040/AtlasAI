@@ -15,12 +15,13 @@ class OpenAIChatCompletionsAdapter {
   create(request, model) {
     // prompt_cache is the gateway's hint for adapters with explicit caching; OpenAI caches
     // repeated prefixes on its own.
-    const { prompt_cache: _promptCache, ...rest } = request;
+    const { prompt_cache: _promptCache, reasoning_effort: requestedEffort, ...rest } = request;
+    const effort = requestedEffort || model.reasoningEffort;
     return this.client.chat.completions.create({
       ...rest,
       model: model.modelId,
       // Catalog-driven: e.g. GPT-5.6 on Chat Completions only accepts function tools with 'none'.
-      ...(model.reasoningEffort ? { reasoning_effort: model.reasoningEffort } : {})
+      ...(effort ? { reasoning_effort: effort } : {})
     });
   }
 }

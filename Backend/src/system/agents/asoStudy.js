@@ -26,7 +26,9 @@ const MAX_STALLS = 2;             // turns in a row with nothing to do before th
 const WAKE_DEBOUNCE_MS = 300;     // completions this close together wake the loop once
 const JOB_WAIT_MS = 15 * 60_000;  // longest the loop waits for a running agent
 const SAMPLE_ROWS = 2;            // rows of each artifact shown in the context
-const INSPECT_MAX = 40;           // rows inspect may show
+const INSPECT_MAX = 200;          // rows open may show at once
+const FINISH_ROWS = 40;           // rows of each cited artifact shown when a finish is refused
+const MAX_FINISH_REFUSALS = 2;    // a summary with numbers from nowhere is sent back this many times
 const CELL = 60;                  // characters per shown cell
 
 // ---- tools of the study itself ---------------------------------------------------------------------
@@ -48,19 +50,22 @@ const STUDY_TOOLS = [
   tool('difference', 'Rows of a whose gene is not in b.', { a: A, b: A }, ['a', 'b']),
   tool('concat', 'All rows of a then all rows of b.', { a: A, b: A }, ['a', 'b']),
   tool('join', 'Rows of a combined with matching rows of b by gene (or "on"); clashing names of b get _2.', { a: A, b: A, how: { type: 'string', enum: ['inner', 'left'] }, on: S }, ['a', 'b']),
-  tool('filter', 'Keep rows satisfying every clause.', { artifact: A, where: { type: 'array', items: { type: 'object', properties: { column: S, op: { type: 'string', enum: ['>', '>=', '<', '<=', '=', '!=', 'contains', 'in'] }, value: {} }, required: ['column', 'op'] } } }, ['artifact', 'where']),
+  tool('filter', 'Keep rows satisfying every clause; op in takes a list of values. Streams a whole dataset.', { artifact: A, where: { type: 'array', items: { type: 'object', properties: { column: S, op: { type: 'string', enum: ['>', '>=', '<', '<=', '=', '!=', 'contains', 'in'] }, value: { description: 'a value, or a list of values for in' } }, required: ['column', 'op'] } } }, ['artifact', 'where']),
   tool('select', 'Keep columns, rename them, add constant columns.', { artifact: A, columns: { type: 'array', items: S }, rename: { type: 'object', additionalProperties: S }, add: { type: 'object', additionalProperties: {} } }, ['artifact']),
   tool('rank', 'Sort by a numeric column (adds rank); top keeps the first N.', { artifact: A, by: S, order: { type: 'string', enum: ['desc', 'asc'] }, top: N }, ['artifact', 'by']),
-  tool('top_per_group', 'Keep the n highest rows per group (default group gene).', { artifact: A, group_by: S, by: S, n: N, order: { type: 'string', enum: ['desc', 'asc'] } }, ['artifact', 'by']),
-  tool('aggregate', 'count, sum, mean, median, min, max of a column, optionally per group.', { artifact: A, group_by: S, column: S, metrics: { type: 'array', items: { type: 'string', enum: ['count', 'sum', 'mean', 'median', 'min', 'max'] } } }, ['artifact', 'metrics']),
+  tool('top_per_group', 'Keep the n highest rows per group (default group gene). Streams a whole dataset.', { artifact: A, group_by: S, by: S, n: N, order: { type: 'string', enum: ['desc', 'asc'] } }, ['artifact', 'by']),
+  tool('aggregate', 'count, sum, mean, median, sd, q1, q3, min, max, missing of a column, optionally per group. Streams a whole dataset.', { artifact: A, group_by: S, column: S, metrics: { type: 'array', items: { type: 'string', enum: ['count', 'sum', 'mean', 'median', 'sd', 'q1', 'q3', 'min', 'max', 'missing'] } } }, ['artifact', 'metrics']),
   tool('compute', 'Add a column from an expression over columns and numbers: + - * / ( ) log2 log10 ln abs sqrt exp min max.', { artifact: A, name: S, expr: S }, ['artifact', 'name', 'expr']),
   tool('pivot', 'Long rows to a matrix: row (default gene), column and value name the columns; top and top_columns cap it.', { artifact: A, row: S, column: S, value: S, top: N, top_columns: N }, ['artifact', 'column', 'value']),
-  tool('chart', 'Draw an artifact; heatmap takes a pivot.', { artifact: A, type: { type: 'string', enum: ['bar', 'lollipop', 'dot_plot', 'diverging_bar', 'grouped_bar', 'scatter', 'bubble', 'heatmap', 'radar', 'line', 'volcano'] }, x: S, y: S, group: S, size: S, title: S, x_label: S, y_label: S }, ['artifact', 'type']),
+  tool('chart', 'Draw an artifact: x the label column and y the value column (bar family), both numeric for scatter; heatmap takes a pivot.', { artifact: A, type: { type: 'string', enum: ['bar', 'lollipop', 'dot_plot', 'diverging_bar', 'grouped_bar', 'scatter', 'bubble', 'heatmap', 'radar', 'line', 'volcano'] }, x: S, y: S, group: S, size: S, title: S, x_label: S, y_label: S }, ['artifact', 'type']),
+  tool('correlate', 'Pearson or Spearman correlation of two numeric columns: r, p and n.', { artifact: A, x: S, y: S, method: { type: 'string', enum: ['pearson', 'spearman'] } }, ['artifact', 'x', 'y']),
+  tool('overlap', 'Genes two tables share, against a universe (an artifact or a dataset such as proteinatlas.tsv): shared, expected, fold and a hypergeometric p.', { a: A, b: A, universe: A }, ['a', 'b', 'universe']),
+  tool('standardize', 'Add a column with a numeric column rescaled: zscore, minmax or percentile.', { artifact: A, column: S, method: { type: 'string', enum: ['zscore', 'minmax', 'percentile'] }, as: S }, ['artifact', 'column', 'method']),
   tool('skip', 'Nothing to do until something running returns.', { reason: S }, ['reason']),
   tool('finish', 'The goal is met or cannot be met further; summary cites artifact ids.', { summary: S }, ['summary'])
 ];
 const STUDY_TOOL_NAMES = new Set(STUDY_TOOLS.map(t => t.name));
-const TABLE_TOOLS = new Set(['measure', 'union', 'intersect', 'difference', 'concat', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'compute', 'pivot', 'chart']);
+const TABLE_TOOLS = new Set(['measure', 'union', 'intersect', 'difference', 'concat', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'compute', 'pivot', 'chart', 'correlate', 'overlap', 'standardize']);
 
 function systemPrompt() {
   return `You run a study over a database for a researcher, the way a careful person would at a desk. You work in turns. Each turn you see the goal, your plan, the artifacts on your desk and where each came from, what is still running, and what came back since your last turn. You act by calling tools; you never state a value, gene or count yourself: a tool produces it and it becomes an artifact.
@@ -70,7 +75,7 @@ How the turns work:
 - Call as many tools in one turn as can run independently; they run in parallel. Agents (deep_research_hpa, investigator_hpa, check_inclusion_hpa, dictionary_expert_hpa) run in the background and you are woken when each returns. Everything else returns at once.
 - When nothing useful can be done until something running returns, call skip with the reason. Do not repeat a tool that is still running.
 - You know nothing about the data until you look. datasets shows what is on disk; open reads a dataset or an artifact and shows every column name and some rows, in that turn (columns picks which columns the rows show). A result you make shows its new columns first, with two rows, as it lands; a dataset or artifact you opened keeps a short column line on the desk. Rows you must remember, open again or write in a note. Name only columns you have seen.
-- A dataset name works wherever a tool takes an artifact id: filter proteinatlas.tsv directly, or join, intersect or difference an artifact with a per-gene dataset to get that dataset's rows for those genes.
+- A dataset name works wherever a tool takes an artifact id: filter proteinatlas.tsv directly; join, intersect or difference an artifact with a per-gene dataset to get that dataset's rows for those genes; filter, aggregate and top_per_group stream a whole per-gene dataset however large, so a study can start from every gene.
 - deep_research_hpa finds gene sets from a description and builds the database query itself; it knows the search fields and tells you when something cannot be expressed. investigator_hpa answers one question about one gene and cites the row it rests on; when the value sits in a table column you can name, measure is exact and free, so prefer it.
 - Refer to artifacts by their id. measure adds a column to the rows it is given, so measuring pancreas then liver on the same artifact leaves both columns in the result; name each with "as".
 - Do the bookkeeping in the same turn as the work: update_plan alongside the tools that complete the item, and finish in the same turn as the last piece of work. A turn spent only on update_plan is a turn wasted.
@@ -105,7 +110,7 @@ function sampleBlock(rows, columns, n, pick = null) {
   return [cols.join(' | '), ...sampleLines(rows, columns, n, pick)].join('\n  ');
 }
 
-const MAX_DATASET_ROWS = 200000;
+const MAX_HELD_ROWS = 5000000;    // rows held in memory at once; streaming tools have no limit
 
 // Gene and ensembl keys for a row read straight from a dataset, so set operations and joins work.
 function geneKeys(entry, row) {
@@ -116,9 +121,13 @@ function geneKeys(entry, row) {
   return { gene: name || null, ensembl: column ? row[column] || null : null };
 }
 
+// Every row of a dataset, keyed, as they stream from disk.
+async function* datasetStream(entry) {
+  for await (const row of localData.rows(entry.file)) yield { ...geneKeys(entry, row), ...row };
+}
+
 // A dataset used where an artifact goes. Gene-level files come whole; a per-gene file comes
-// restricted to the genes of the other input, or filtered while it streams, since whole it
-// would not fit on any desk.
+// restricted to the genes of the other input, filtered while it streams, or whole when it fits.
 async function datasetRows(entry, { genes = null, where = null, limit = 3 } = {}) {
   if (entry.key === 'master') {
     const master = await localData.master();
@@ -136,7 +145,6 @@ async function datasetRows(entry, { genes = null, where = null, limit = 3 } = {}
         if (!gene) continue;
         const reading = await geneData.read(gene, entry.file);
         for (const row of reading.rows) out.push({ gene: gene.gene, ensembl: gene.ensembl, ...row });
-        if (out.length > MAX_DATASET_ROWS) throw new Error(`${entry.file} gives more than ${MAX_DATASET_ROWS} rows for these genes; filter it or use fewer genes`);
       }
     };
     await Promise.all(Array.from({ length: Math.min(limit, Math.max(1, queue.length)) }, worker));
@@ -145,13 +153,15 @@ async function datasetRows(entry, { genes = null, where = null, limit = 3 } = {}
   if (where) {
     const keep = tools.wherePredicate(entry.columns, where);
     const out = [];
-    for await (const row of localData.rows(entry.file, { where: keep })) {
-      out.push({ ...geneKeys(entry, row), ...row });
-      if (out.length > MAX_DATASET_ROWS) throw new Error(`filter on ${entry.file} keeps more than ${MAX_DATASET_ROWS} rows; make it stricter`);
-    }
+    for await (const row of localData.rows(entry.file, { where: keep })) out.push({ ...geneKeys(entry, row), ...row });
     return out;
   }
-  throw new Error(`${entry.file} has a row per gene and entity, too many to take whole: filter it, or use it with an artifact (join, intersect, difference) so it is read for those genes`);
+  const out = [];
+  for await (const row of datasetStream(entry)) {
+    out.push(row);
+    if (out.length > MAX_HELD_ROWS) throw new Error(`${entry.file} has more than ${MAX_HELD_ROWS} rows, more than fits in memory at once: filter, aggregate or top_per_group stream it, or use it with an artifact (join, intersect, difference) so only those genes are read`);
+  }
+  return out;
 }
 
 // Arguments as they appear on the desk: whole, cut only between arguments. A cut inside a value
@@ -251,7 +261,8 @@ function agentArtifact(tool, args, result) {
 
 // ---- the loop --------------------------------------------------------------------------------------
 
-async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
+async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort }, ctx = {}) {
+  const effort = reasoning_effort || ctx.reasoning_effort || null;
   const db = ctx.db;
   if (!db) throw new Error('The study requires db in context.');
   getActiveModel();
@@ -329,7 +340,62 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
     return a;
   }
 
-  // What a person sees when a result lands: its shape and a couple of rows, once.
+  // Numbers a summary states, with the precision they were written at: a decimal, a number of a
+// thousand or more, or scientific notation. Small whole numbers (counts, ranks, list markers)
+// are too ambiguous to check.
+const NUMBER = /(?<![\w.])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+]?\d+)?(?![\w])/g;
+function statedNumbers(text) {
+  const out = [];
+  for (const m of String(text || '').matchAll(NUMBER)) {
+    const raw = m[0];
+    const clean = raw.replace(/,/g, '');
+    const value = Number(clean);
+    if (!Number.isFinite(value)) continue;
+    const mantissa = clean.split(/[eE]/)[0];
+    const exponent = /[eE]/.test(clean) ? Number(clean.split(/[eE]/)[1]) : 0;
+    const decimals = mantissa.includes('.') ? mantissa.split('.')[1].length : 0;
+    if (!mantissa.includes('.') && !exponent && Math.abs(value) < 1000) continue;
+    out.push({ raw, value, tolerance: 0.5 * 10 ** (exponent - decimals) });
+  }
+  return out;
+}
+
+// Every number on the desk, sorted: numeric cells, numbers inside text cells, matrix cells,
+// artifact sizes and the goal's own numbers.
+function deskNumbers(state) {
+  const values = [];
+  const push = v => { if (Number.isFinite(v)) values.push(v); };
+  for (const a of state.artifacts) {
+    if (a.rows) for (const r of a.rows) for (const v of Object.values(r)) {
+      if (typeof v === 'number') push(v);
+      else if (typeof v === 'string' && v && /\d/.test(v)) { const n = Number(v.replace(/,/g, '')); if (Number.isFinite(n)) push(n); else for (const m of v.matchAll(NUMBER)) push(Number(m[0].replace(/,/g, ''))); }
+    }
+    if (a.matrix) for (const row of a.matrix.matrix) for (const v of row) push(Number(v));
+    if (a.rows) push(a.rows.length);
+  }
+  for (const m of String(state.goal || '').matchAll(NUMBER)) push(Number(m[0].replace(/,/g, '')));
+  return Float64Array.from(values).sort();
+}
+
+// Numbers in a summary that match no number on the desk, allowing rounding at the precision
+// written and a change of unit prefix (a power of ten).
+function unverifiedNumbers(summary, state) {
+  const desk = deskNumbers(state);
+  const near = (x, tol) => {
+    let lo = 0, hi = desk.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (desk[mid] < x - tol) lo = mid + 1; else hi = mid; }
+    return lo < desk.length && desk[lo] <= x + tol + 1e-9 * Math.abs(x);
+  };
+  const missing = [];
+  for (const { raw, value, tolerance } of statedNumbers(summary)) {
+    let found = false;
+    for (let k = -12; k <= 12 && !found; k++) { const scale = 10 ** k; found = near(value * scale, tolerance * scale); }
+    if (!found && !missing.includes(raw)) missing.push(raw);
+  }
+  return missing;
+}
+
+// What a person sees when a result lands: its shape and a couple of rows, once.
 const receipt = a => {
   if (a.matrix) return `${a.id} (${a.size}; rows ${a.matrix.row_labels.slice(0, 8).join(', ')}${a.matrix.row_labels.length > 8 ? ', …' : ''}; columns ${a.matrix.col_labels.slice(0, 8).join(', ')}${a.matrix.col_labels.length > 8 ? ', …' : ''})`;
   if (a.text) return `${a.id}: ${a.text.slice(0, 300)}`;
@@ -369,7 +435,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
     const id = `t${++state.ids.t}`;
     const t0 = Date.now();
     state.toolCalls++;
-    const inputs = ['artifact', 'a', 'b'].map(k => args[k]).filter(Boolean).map(String);
+    const inputs = ['artifact', 'a', 'b', 'universe'].map(k => args[k]).filter(Boolean).map(String);
     const label = tool === 'chart' ? String(args.title || 'figure').slice(0, 80) : `${tool}(${describeArgs(args, 100)})`;
     await log('tool.start', { id, tool, kind: tool === 'chart' ? 'chart' : 'tool', label, args, inputs }, id);
     try {
@@ -396,6 +462,15 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         for (const c of ['gene', 'ensembl', ...entry.columns]) inputColumns.add(c);
         return rows;
       };
+      // A whole per-gene dataset named as the input of a streaming tool.
+      const wholeDataset = async key => {
+        const ref = String(args[key] ?? '').trim();
+        if (!ref || state.byId.has(ref)) return null;
+        const entry = await geneData.entry(ref);
+        if (!entry || !['ensembl', 'name'].includes(entry.key)) return null;
+        for (const c of ['gene', 'ensembl', ...entry.columns]) inputColumns.add(c);
+        return entry;
+      };
       let out;
       switch (tool) {
         case 'measure': out = { rows: await tools.measure(await rowsOf('artifact'), args, parallel) }; break;
@@ -404,8 +479,11 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         case 'filter': { const rows = await rowsOf('artifact'); out = { rows: streamed ? rows : tools.applyWhere(rows, args.where) }; break; }
         case 'select': { const obj = v => (typeof v === 'string' ? (JSON.parse(v || '{}') || {}) : (v || {})); out = { rows: tools.select(await rowsOf('artifact'), args.columns, obj(args.rename), obj(args.add)) }; break; }
         case 'rank': out = { rows: tools.rank(await rowsOf('artifact'), args.by, args.order, Number(args.top) || 0) }; break;
-        case 'top_per_group': out = { rows: tools.topPerGroup(await rowsOf('artifact'), args) }; break;
-        case 'aggregate': out = { rows: tools.aggregate(await rowsOf('artifact'), args) }; break;
+        case 'top_per_group': { const entry = await wholeDataset('artifact'); out = { rows: entry ? await tools.topPerGroupStream(datasetStream(entry), args, ['gene', 'ensembl', ...entry.columns]) : tools.topPerGroup(await rowsOf('artifact'), args) }; break; }
+        case 'aggregate': { const entry = await wholeDataset('artifact'); out = { rows: entry ? await tools.aggregateStream(datasetStream(entry), args, ['gene', 'ensembl', ...entry.columns]) : tools.aggregate(await rowsOf('artifact'), args) }; break; }
+        case 'correlate': out = { rows: tools.correlate(await rowsOf('artifact'), args) }; break;
+        case 'overlap': out = { rows: tools.overlap(await rowsOf('a', 'b'), await rowsOf('b', 'a'), await rowsOf('universe')) }; break;
+        case 'standardize': out = { rows: tools.standardize(await rowsOf('artifact'), args) }; break;
         case 'compute': out = { rows: tools.compute(await rowsOf('artifact'), String(args.name), String(args.expr)) }; break;
         case 'pivot': out = { matrix: tools.pivot(await rowsOf('artifact'), args) }; break;
         case 'chart': { const a = state.byId.get(String(args.artifact ?? '').trim()); out = { figure: tools.chartSpec(args, a?.matrix ? a.matrix : await rowsOf('artifact')) }; break; }
@@ -430,6 +508,8 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
   });
 
   let finishSummary = null;
+  let finishRefusals = 0;
+  let unverified = [];
   let turn = 0;
   let stalls = 0;
   try {
@@ -448,7 +528,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
       const lastTurn = turn >= maxTurns;
       if (lastTurn) state.recent.push('This is your last turn: call finish now with the summary of what the artifacts show and what is missing.');
       const offered = lastTurn ? toolSpecs.filter(t => t.function.name === 'finish') : state.plan.length ? toolSpecs : toolSpecs.filter(t => t.function.name === 'set_plan');
-      const res = await inference.chat.completions.create({ messages: [{ role: 'system', content: system }, { role: 'user', content: context }], tools: offered, temperature: 0, prompt_cache: { key: `study ${workspace.uuid}` } });
+      const res = await inference.chat.completions.create({ messages: [{ role: 'system', content: system }, { role: 'user', content: context }], tools: offered, temperature: 0, prompt_cache: { key: `study ${workspace.uuid}` }, ...(effort ? { reasoning_effort: effort } : {}) });
       addUsage(res.usage);
       const message = res.choices?.[0]?.message || {};
       const calls = (message.tool_calls || []).map(c => { let args = {}; try { args = JSON.parse(c.function?.arguments || '{}'); } catch { args = {}; } return { name: c.function?.name, args }; });
@@ -467,7 +547,28 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         continue;
       }
       for (const call of calls) {
-        if (call.name === 'finish') { finishSummary = String(call.args.summary || ''); break; }
+        if (call.name === 'finish') {
+          const summary = String(call.args.summary || '');
+          const missing = unverifiedNumbers(summary, state);
+          if (missing.length && finishRefusals < MAX_FINISH_REFUSALS && !lastTurn) {
+            finishRefusals++;
+            const cited = [...new Set(summary.match(/\ba\d+\b/g) || [])].filter(id => state.byId.has(id));
+            state.recent.push(`finish refused: these numbers are in no artifact: ${missing.slice(0, 20).join(', ')}${missing.length > 20 ? ', …' : ''}. Every number in the summary must come from an artifact. The artifacts you cite are shown below; take the numbers from them (open one with columns to see other columns, aggregate or compute for derived numbers), or leave them out, then finish again.`);
+            for (const id of cited) {
+              const a = get(id);
+              if (a.rows) state.recent.push(`${a.id} (${a.size}) columns: ${a.columns.join(' | ')}\n  ${sampleBlock(a.rows, a.columns, FINISH_ROWS)}${a.rows.length > FINISH_ROWS ? `\n  … ${a.rows.length - FINISH_ROWS} more rows` : ''}`);
+              else if (a.matrix) state.recent.push(`${a.id} is a ${a.size}; rows ${a.matrix.row_labels.slice(0, 12).join(', ')}${a.matrix.row_labels.length > 12 ? ', …' : ''}; columns ${a.matrix.col_labels.slice(0, 12).join(', ')}${a.matrix.col_labels.length > 12 ? ', …' : ''}`);
+              else if (a.text) state.recent.push(`${a.id}: ${a.text.slice(0, 1500)}`);
+            }
+            remember('finish refused: numbers not in any artifact');
+            await log('finish.refused', { numbers: missing, attempt: finishRefusals });
+            sync++;
+            continue;
+          }
+          finishSummary = summary;
+          unverified = missing;
+          break;
+        }
         if (call.name === 'skip') { waiting = true; remember(`waited: ${String(call.args.reason || '').slice(0, 80)}`); await log('skip', { reason: call.args.reason || '' }); continue; }
         if (call.name === 'set_plan') { state.plan = (call.args.items || []).map(text => ({ text: String(text), status: 'todo', note: '' })); remember('rewrote the plan'); await log('plan', { items: state.plan }); continue; }
         if (call.name === 'update_plan') {
@@ -537,16 +638,18 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
     // Agents still out when the loop ends are given a moment to land their artifacts.
     if (state.running.size) await Promise.race([new Promise(r => { wake.resolve = r; }), new Promise(r => setTimeout(r, 30_000))]);
     if (finishSummary === null) finishSummary = turn >= maxTurns ? `The study stopped after ${turn} turns without calling finish.` : 'The study stopped with nothing left to do.';
+    // Numbers still unverified when the study ends are marked where the reader sees them.
+    for (const raw of unverified) finishSummary = finishSummary.replace(new RegExp(`(?<![\\w.,])${raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w.,]*\\d)(?! \\[unverified\\])`, 'g'), `${raw} [unverified]`);
 
     const seconds = (Date.now() - startedAt) / 1000;
     const summaryMd = [`# Study`, '', `**Goal:** ${goal}`, '', finishSummary, '', '## Artifacts', '', ...state.artifacts.map(a => `- ${a.id} ${a.kind} "${a.label}" (${a.size}) from ${a.tool}${a.inputs.length ? ` of ${a.inputs.join(', ')}` : ''}`), '', '## Plan', '', ...state.plan.map((p, i) => `${i + 1}. [${p.status}] ${p.text}`)].join('\n');
     const reportPath = path.join(workspace.workspaceDir, 'report.md');
     await fs.writeFile(reportPath, summaryMd, { mode: 0o600 });
     await register({ workspaceId: workspace.id, artifactsDir: workspace.artifactsDir, kind: 'summary', format: 'md', schemaJson: { type: 'report' }, provenance: { tool: 'report', sources: state.artifacts.map(a => a.uuid), purpose: 'Study summary' }, payload: null, storageUriOverride: reportPath, skipWrite: true });
-    await log('finish', { summary: finishSummary, turns: turn, tool_calls: state.toolCalls, failed: state.failed, artifacts: state.artifacts.length, seconds, tokens });
+    await log('finish', { summary: finishSummary, turns: turn, tool_calls: state.toolCalls, failed: state.failed, artifacts: state.artifacts.length, seconds, tokens, unverified_numbers: unverified });
     await updateWorkspace(db, workspace.id, { status: 'completed', finishedUnixMs: Date.now(), planJson: { goal, mode, hpa_version: agentMode.hpaVersion, version: 'loop', plan: state.plan, turns: turn } });
     await logger.close();
-    return { status: 'ok', workspace_uuid: workspace.uuid, summary: finishSummary, summary_md: summaryMd, artifacts: artifactsSummary(), plan: state.plan, turns: turn, tool_calls: state.toolCalls, failed: state.failed, tokens, seconds, mode, hpa_version: agentMode.hpaVersion };
+    return { status: 'ok', workspace_uuid: workspace.uuid, summary: finishSummary, summary_md: summaryMd, artifacts: artifactsSummary(), plan: state.plan, turns: turn, tool_calls: state.toolCalls, failed: state.failed, unverified_numbers: unverified, tokens, seconds, mode, hpa_version: agentMode.hpaVersion };
   } catch (err) {
     await log('error', { message: err.message });
     await updateWorkspace(db, workspace.id, { status: 'failed', finishedUnixMs: Date.now(), errorCode: 'study_failed', errorMessage: err.message });

@@ -12,7 +12,15 @@ const geneData = require('../../hpa/geneDataAdapter');
 
 const OPS = ['>', '>=', '<', '<=', '=', '!=', 'contains', 'in'];
 
-function num(v) { const n = Number(String(v ?? '').replace(/,/g, '')); return Number.isFinite(n) ? n : null; }
+// A number from a cell; an empty cell, NA or text is null, never zero.
+function num(v) {
+  if (v === null || v === undefined || typeof v === 'boolean') return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  const text = String(v).replace(/,/g, '').trim();
+  if (!text) return null;
+  const n = Number(text);
+  return Number.isFinite(n) ? n : null;
+}
 function lower(s) { return String(s ?? '').toLowerCase().trim(); }
 function keyOf(row, on = null) {
   if (on) { const v = row[on]; return v === undefined || v === null || String(v).trim() === '' ? null : lower(v); }
@@ -72,7 +80,13 @@ function wherePredicate(columns, where = []) {
     const op = String(w?.op || '=').trim();
     if (!column) throw new Error(`filter: no column named "${w?.column}" (columns: ${columns.slice(0, 30).join(', ')})`);
     if (!OPS.includes(op)) throw new Error(`filter: unknown op "${op}"`);
-    clauses.push({ column, op, value: w.value });
+    let value = w.value;
+    if (op === 'in' && typeof value === 'string') {
+      const text = value.trim();
+      if (text.startsWith('[')) { try { value = JSON.parse(text); } catch { value = text; } }
+      if (typeof value === 'string') value = value.split(/\s*[|,]\s*/).filter(Boolean);
+    }
+    clauses.push({ column, op, value });
   }
   return r => clauses.every(({ column, op, value }) => {
     const cell = r[column];
@@ -156,45 +170,256 @@ function rank(rows, by, order = 'desc', top = 0) {
   return top > 0 ? sorted.slice(0, top) : sorted;
 }
 
-function topPerGroup(rows, { group_by = 'gene', by, n = 1, order = 'desc' } = {}) {
-  const groupCol = findColumn(rows, group_by);
-  const column = findColumn(rows, by);
-  if (!groupCol) throw new Error(`top_per_group: no column named "${group_by}"`);
-  if (!column) throw new Error(`top_per_group: no column named "${by}"`);
+function resolveIn(columns, name) {
+  if (!name) return null;
+  return columns.find(c => c === name) || columns.find(c => lower(c) === lower(name)) || null;
+}
+
+// Keeps the n highest (or lowest) rows of each group as rows arrive, so a million-row dataset
+// needs only groups × n rows of memory.
+function topKeeper({ group_by = 'gene', by, n = 1, order = 'desc' } = {}, columns) {
+  const groupCol = resolveIn(columns, group_by);
+  const column = resolveIn(columns, by);
+  if (!groupCol) throw new Error(`top_per_group: no column named "${group_by}" (columns: ${columns.slice(0, 30).join(', ')})`);
+  if (!column) throw new Error(`top_per_group: no column named "${by}" (columns: ${columns.slice(0, 30).join(', ')})`);
   const keep = Math.max(1, Number(n) || 1);
+  const asc = order === 'asc';
   const groups = new Map();
-  for (const r of rows) { const g = String(r[groupCol] ?? ''); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(r); }
-  const out = [];
-  for (const rs of groups.values()) {
-    const sorted = rs.map(r => ({ r, v: num(r[column]) })).filter(x => x.v !== null).sort((a, b) => order === 'asc' ? a.v - b.v : b.v - a.v);
-    sorted.slice(0, keep).forEach((x, i) => out.push({ ...x.r, rank: i + 1 }));
+  return {
+    add(r) {
+      const v = num(r[column]);
+      if (v === null) return;
+      const g = String(r[groupCol] ?? '');
+      let arr = groups.get(g);
+      if (!arr) { arr = []; groups.set(g, arr); }
+      const last = arr[arr.length - 1];
+      if (arr.length < keep || (asc ? v < last.v : v > last.v)) {
+        arr.push({ r, v });
+        arr.sort((a, b) => asc ? a.v - b.v : b.v - a.v);
+        if (arr.length > keep) arr.pop();
+      }
+    },
+    result() { const out = []; for (const arr of groups.values()) arr.forEach((x, i) => out.push({ ...x.r, rank: i + 1 })); return out; }
+  };
+}
+
+function topPerGroup(rows, args = {}) {
+  const keeper = topKeeper(args, columnsOf(rows));
+  for (const r of rows) keeper.add(r);
+  return keeper.result();
+}
+
+async function topPerGroupStream(iterable, args, columns) {
+  const keeper = topKeeper(args, columns);
+  for await (const r of iterable) keeper.add(r);
+  return keeper.result();
+}
+
+function quantile(sorted, q) {
+  if (!sorted.length) return null;
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos), hi = Math.ceil(pos);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+
+const METRICS = ['count', 'sum', 'mean', 'median', 'sd', 'q1', 'q3', 'min', 'max', 'missing'];
+
+// Summarises a column per group as rows arrive; values are kept per group for the order
+// statistics, nothing else is held.
+function aggregator({ group_by, column, metrics = ['count'] } = {}, columns) {
+  const col = column ? resolveIn(columns, column) : null;
+  if (column && !col) throw new Error(`aggregate: no column named "${column}" (columns: ${columns.slice(0, 30).join(', ')})`);
+  const groupCol = group_by ? resolveIn(columns, group_by) : null;
+  if (group_by && !groupCol) throw new Error(`aggregate: no column named "${group_by}" (columns: ${columns.slice(0, 30).join(', ')})`);
+  const wanted = (Array.isArray(metrics) ? metrics : [metrics]).map(m => lower(m));
+  const unknown = wanted.filter(m => !METRICS.includes(m));
+  if (unknown.length) throw new Error(`aggregate: unknown metric ${unknown.join(', ')} (metrics: ${METRICS.join(', ')})`);
+  if (!col && wanted.some(m => m !== 'count')) throw new Error('aggregate: name the column to summarise (only count works without one)');
+  const groups = new Map();
+  return {
+    add(r) {
+      const g = groupCol ? String(r[groupCol] ?? '') : 'all';
+      let st = groups.get(g);
+      if (!st) { st = { count: 0, missing: 0, vals: [] }; groups.set(g, st); }
+      st.count++;
+      if (col) { const v = num(r[col]); if (v === null) st.missing++; else st.vals.push(v); }
+    },
+    result() {
+      const out = [];
+      for (const [g, st] of groups) {
+        const vals = st.vals;
+        const sorted = [...vals].sort((a, b) => a - b);
+        const sum = vals.reduce((a, v) => a + v, 0);
+        const mean = vals.length ? sum / vals.length : null;
+        const o = groupCol ? { [groupCol]: g } : {};
+        for (const m of wanted) {
+          if (m === 'count') o.count = st.count;
+          else if (m === 'sum') o.sum = sum;
+          else if (m === 'mean') o.mean = mean;
+          else if (m === 'median') o.median = quantile(sorted, 0.5);
+          else if (m === 'sd') o.sd = vals.length > 1 ? Math.sqrt(vals.reduce((a, v) => a + (v - mean) ** 2, 0) / (vals.length - 1)) : null;
+          else if (m === 'q1') o.q1 = quantile(sorted, 0.25);
+          else if (m === 'q3') o.q3 = quantile(sorted, 0.75);
+          else if (m === 'min') o.min = sorted.length ? sorted[0] : null;
+          else if (m === 'max') o.max = sorted.length ? sorted[sorted.length - 1] : null;
+          else if (m === 'missing') o.missing = st.missing;
+        }
+        out.push(o);
+      }
+      return out;
+    }
+  };
+}
+
+function aggregate(rows, args = {}) {
+  const acc = aggregator(args, columnsOf(rows));
+  for (const r of rows) acc.add(r);
+  return acc.result();
+}
+
+async function aggregateStream(iterable, args, columns) {
+  const acc = aggregator(args, columns);
+  for await (const r of iterable) acc.add(r);
+  return acc.result();
+}
+
+// ---- statistics: whole-column and between-column maths, defined on tables only ----------------
+
+const LANCZOS = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059, 12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+function lgamma(z) {
+  if (z < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * z)) - lgamma(1 - z);
+  z -= 1;
+  let x = LANCZOS[0];
+  for (let i = 1; i < 9; i++) x += LANCZOS[i] / (z + i);
+  const t = z + 7.5;
+  return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t) - t + Math.log(x);
+}
+
+// Continued fraction for the regularized incomplete beta function (Numerical Recipes betacf).
+function betacf(a, b, x) {
+  const MAXIT = 300, EPS = 3e-14, FPMIN = 1e-300;
+  const qab = a + b, qap = a + 1, qam = a - 1;
+  let c = 1, d = 1 - qab * x / qap;
+  if (Math.abs(d) < FPMIN) d = FPMIN;
+  d = 1 / d;
+  let h = d;
+  for (let m = 1; m <= MAXIT; m++) {
+    const m2 = 2 * m;
+    let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d; h *= d * c;
+    aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+    d = 1 + aa * d; if (Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1 / d;
+    const del = d * c;
+    h *= del;
+    if (Math.abs(del - 1) < EPS) break;
+  }
+  return h;
+}
+
+function ibeta(x, a, b) {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  const bt = Math.exp(lgamma(a + b) - lgamma(a) - lgamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+  return x < (a + 1) / (a + b + 2) ? bt * betacf(a, b, x) / a : 1 - bt * betacf(b, a, 1 - x) / b;
+}
+
+// Two-sided p of a t statistic with df degrees of freedom.
+function tTestP(t, df) { return ibeta(df / (df + t * t), df / 2, 0.5); }
+
+function logChoose(n, k) { return lgamma(n + 1) - lgamma(k + 1) - lgamma(n - k + 1); }
+
+// P(X >= k) when a genes are drawn from N of which b belong to the other set.
+function hypergeomUpper(k, a, b, N) {
+  if (k <= 0) return 1;
+  const denom = logChoose(N, a);
+  let p = 0;
+  for (let i = k; i <= Math.min(a, b); i++) {
+    if (a - i > N - b) continue;
+    p += Math.exp(logChoose(b, i) + logChoose(N - b, a - i) - denom);
+  }
+  return Math.min(1, p);
+}
+
+// Average ranks, ties sharing their mean rank.
+function ranks(values) {
+  const idx = values.map((v, i) => ({ v, i })).sort((p, q) => p.v - q.v);
+  const out = new Array(values.length);
+  let i = 0;
+  while (i < idx.length) {
+    let j = i;
+    while (j + 1 < idx.length && idx[j + 1].v === idx[i].v) j++;
+    const r = (i + j) / 2 + 1;
+    for (let k = i; k <= j; k++) out[idx[k].i] = r;
+    i = j + 1;
   }
   return out;
 }
 
-function aggregate(rows, { group_by, column, metrics = ['count'] }) {
-  const col = column ? findColumn(rows, column) : null;
-  if (column && !col) throw new Error(`aggregate: no column named "${column}"`);
-  const groupCol = group_by ? findColumn(rows, group_by) : null;
-  if (group_by && !groupCol) throw new Error(`aggregate: no column named "${group_by}"`);
-  const groups = new Map();
-  for (const r of rows) { const g = groupCol ? String(r[groupCol] ?? '') : 'all'; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(r); }
-  const out = [];
-  for (const [g, rs] of groups) {
-    const vals = col ? rs.map(r => num(r[col])).filter(v => v !== null) : [];
-    const sorted = [...vals].sort((a, b) => a - b);
-    const o = groupCol ? { [groupCol]: g } : {};
-    for (const m of metrics) {
-      if (m === 'count') o.count = rs.length;
-      else if (m === 'sum') o.sum = vals.reduce((s, v) => s + v, 0);
-      else if (m === 'mean') o.mean = vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
-      else if (m === 'median') o.median = sorted.length ? (sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2) : null;
-      else if (m === 'min') o.min = sorted.length ? sorted[0] : null;
-      else if (m === 'max') o.max = sorted.length ? sorted[sorted.length - 1] : null;
-    }
-    out.push(o);
-  }
-  return out;
+const round = (v, d) => (v === null || v === undefined || !Number.isFinite(v) ? null : Number(v.toFixed(d)));
+const sig = p => (p === null || p === undefined || !Number.isFinite(p) ? null : Number(p.toPrecision(3)));
+
+function correlate(rows, { x, y, method = 'pearson' } = {}) {
+  const xc = findColumn(rows, x), yc = findColumn(rows, y);
+  if (!xc || !yc) throw new Error(`correlate: needs two numeric columns (asked for ${x || '?'}, ${y || '?'}); columns: ${columnsOf(rows).slice(0, 30).join(', ')}`);
+  const pairs = rows.map(r => [num(r[xc]), num(r[yc])]).filter(([a, b]) => a !== null && b !== null);
+  const n = pairs.length;
+  if (n < 3) throw new Error(`correlate: only ${n} rows have both "${xc}" and "${yc}" as numbers; at least 3 are needed`);
+  const how = lower(method) === 'spearman' ? 'spearman' : 'pearson';
+  let xs = pairs.map(q => q[0]), ys = pairs.map(q => q[1]);
+  if (how === 'spearman') { xs = ranks(xs); ys = ranks(ys); }
+  const mx = xs.reduce((a, v) => a + v, 0) / n, my = ys.reduce((a, v) => a + v, 0) / n;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++) { const dx = xs[i] - mx, dy = ys[i] - my; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
+  if (sxx === 0 || syy === 0) return [{ x: xc, y: yc, method: how, n, r: null, p_value: null, note: 'a column has no variation' }];
+  const r = sxy / Math.sqrt(sxx * syy);
+  const p = Math.abs(r) >= 1 ? 0 : tTestP(r * Math.sqrt((n - 2) / (1 - r * r)), n - 2);
+  return [{ x: xc, y: yc, method: how, n, r: round(r, 4), p_value: sig(p) }];
+}
+
+// How many genes two tables share against a universe, with the hypergeometric (one-sided,
+// over-representation) p. Genes are identified through the universe, so a table keyed by name
+// meets one keyed by ensembl id.
+function overlap(a, b, universe) {
+  requireKeys(a, null, 'overlap'); requireKeys(b, null, 'overlap'); requireKeys(universe, null, 'overlap');
+  const canon = new Map();
+  for (const r of universe) { const ks = keysOf(r); for (const k of ks) if (!canon.has(k)) canon.set(k, ks[0]); }
+  const ids = rows => { const s = new Set(); for (const r of rows) { for (const k of keysOf(r)) { const c = canon.get(k); if (c) { s.add(c); break; } } } return s; };
+  const A = ids(a), B = ids(b);
+  const N = new Set(canon.values()).size;
+  let shared = 0;
+  for (const k of A) if (B.has(k)) shared++;
+  const expected = N ? A.size * B.size / N : null;
+  const rest = N - A.size - B.size + shared;
+  const odds = (A.size - shared) > 0 && (B.size - shared) > 0 && rest > 0 ? (shared * rest) / ((A.size - shared) * (B.size - shared)) : null;
+  return [{ a: A.size, b: B.size, shared, universe: N, expected: round(expected, 2), fold: expected ? round(shared / expected, 3) : null, odds_ratio: round(odds, 3), p_value: sig(N ? hypergeomUpper(shared, A.size, B.size, N) : null), test: 'hypergeometric, one-sided (over-representation)' }];
+}
+
+function standardize(rows, { column, method = 'zscore', as } = {}) {
+  const col = findColumn(rows, column);
+  if (!col) throw new Error(`standardize: no column named "${column}" (columns: ${columnsOf(rows).slice(0, 30).join(', ')})`);
+  const how = lower(method);
+  const name = String(as || '').trim() || `${col}_${how}`;
+  const vals = rows.map(r => num(r[col]));
+  const present = vals.filter(v => v !== null);
+  if (!present.length) throw new Error(`standardize: no numeric values in "${col}"`);
+  let f;
+  if (how === 'zscore') {
+    const mean = present.reduce((a, v) => a + v, 0) / present.length;
+    const sd = present.length > 1 ? Math.sqrt(present.reduce((a, v) => a + (v - mean) ** 2, 0) / (present.length - 1)) : 0;
+    f = v => (sd ? (v - mean) / sd : 0);
+  } else if (how === 'minmax') {
+    const lo = Math.min(...present), hi = Math.max(...present);
+    f = v => (hi > lo ? (v - lo) / (hi - lo) : 0);
+  } else if (how === 'percentile') {
+    const byValue = new Map();
+    ranks(present).forEach((rk, i) => byValue.set(present[i], (rk - 0.5) / present.length * 100));
+    f = v => byValue.get(v);
+  } else throw new Error(`standardize: unknown method "${method}" (zscore, minmax, percentile)`);
+  return rows.map((r, i) => ({ ...r, [name]: vals[i] === null ? null : round(f(vals[i]), 4) }));
 }
 
 // A small arithmetic language for compute: column names (quote names with spaces), numbers,
@@ -204,7 +429,8 @@ const FUNCTIONS = { log2: Math.log2, log10: Math.log10, ln: Math.log, log: Math.
 
 function parseExpression(text) {
   const tokens = [];
-  const re = /\s*(?:(\d+\.?\d*(?:[eE][-+]?\d+)?)|("[^"]*"|'[^']*')|([A-Za-z_][\w.]*)|([-+*/(),]))/y;
+  // Column names with spaces or symbols go in double, single or back quotes.
+  const re = /\s*(?:(\d+\.?\d*(?:[eE][-+]?\d+)?)|("[^"]*"|'[^']*'|`[^`]*`)|([A-Za-z_][\w.]*)|([-+*/(),]))/y;
   let i = 0;
   while (i < text.length) {
     re.lastIndex = i;
@@ -269,8 +495,19 @@ function evaluate(tree, row, resolved) {
   return b === 0 ? null : a / b;
 }
 
+// Column names with spaces or symbols may appear bare in an expression; they are quoted here,
+// longest first and only outside existing quotes, so "Conc. blood IM [pg/L] + 0" reads as meant.
+function autoQuote(expr, columns) {
+  const needs = columns.filter(c => c && !/^[A-Za-z_][\w.]*$/.test(c)).sort((a, b) => b.length - a.length);
+  let out = String(expr);
+  for (const c of needs) {
+    out = out.split(/("[^"]*"|'[^']*'|`[^`]*`)/).map((part, i) => (i % 2 ? part : part.split(c).join(`"${c}"`))).join('');
+  }
+  return out;
+}
+
 function compute(rows, name, expr) {
-  const tree = parseExpression(String(expr || ''));
+  const tree = parseExpression(autoQuote(String(expr || ''), columnsOf(rows)));
   const resolved = new Map();
   for (const c of columnsIn(tree)) {
     const found = findColumn(rows, c);
@@ -366,4 +603,4 @@ async function measure(rows, { table, value_column, entity_column, entity, as },
   return out;
 }
 
-module.exports = { TOOL_CATALOG, catalogText, applyWhere, wherePredicate, freshFirst, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, findColumn, keyOf, num };
+module.exports = { TOOL_CATALOG, catalogText, applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, findColumn, keyOf, num };

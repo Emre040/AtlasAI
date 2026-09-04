@@ -19,8 +19,14 @@ function keyOf(row, on = null) {
   const v = row.ensembl || row.Ensembl || row.gene || row.Gene;
   return v ? lower(v) : null;
 }
+// The keys a row can match on: the named column, or else its ensembl id and its gene name, so a
+// table without ensembl ids (an aggregate, a count table) still meets one that has them.
+function keysOf(row, on = null) {
+  if (on) { const k = keyOf(row, on); return k === null ? [] : [k]; }
+  return [row.ensembl || row.Ensembl, row.gene || row.Gene].filter(v => v !== undefined && v !== null && String(v).trim() !== '').map(v => lower(v));
+}
 function requireKeys(rows, on, opName) {
-  if (rows.some(r => keyOf(r, on) === null)) throw new Error(`${opName}: every row needs a ${on ? `"${on}"` : 'gene or ensembl'} column to match on (use concat to stack tables that share no key)`);
+  if (rows.some(r => !keysOf(r, on).length)) throw new Error(`${opName}: every row needs a ${on ? `"${on}"` : 'gene or ensembl'} column to match on (use concat to stack tables that share no key)`);
 }
 function columnsOf(rows) { const set = new Set(); for (const r of rows.slice(0, 200)) for (const k of Object.keys(r)) set.add(k); return [...set]; }
 function findColumn(rows, name) {
@@ -36,7 +42,7 @@ const TOOL_CATALOG = [
     description: 'Finds genes by a question ("kinases enriched in the pancreas that are secreted to blood"). Runs a search agent that knows the database\'s search grammar and returns the matching genes with their facts.' },
   { name: 'lookup', inputs: 1, args: { question: 'a question about one gene with {gene} where the gene name goes', max_genes: 'optional cap on how many genes of the input table to ask about', as: 'optional name for the value column (default value)' }, produces: 'the input genes with columns answer, value (or the "as" name), entity, table, found',
     description: 'Asks a reading agent one factual question about each gene of the input table, in parallel; each answer cites the database row it rests on. Use it for questions that need reading and judgement; for a plain value from a known table use measure, which is exact and free, and for "which entity is highest per gene" use measure of all entities followed by top_per_group. Not for summaries or conclusions: the report does those.' },
-  { name: 'measure', inputs: 1, args: { table: 'a per-gene table of the database', value_column: 'the column to read', entity_column: 'optional: the column that names the entity (tissue, cell type, cancer)', entity: 'optional: which entity to read; omit to read every entity as separate rows', as: 'name for the value column in the output (default value); name it after what it holds, such as liver_nTPM, so later steps can refer to it' }, produces: 'the input rows with entity (if any) and the value added under the "as" name',
+  { name: 'measure', inputs: 1, args: { table: 'a per-gene table of the database', value_column: 'the column to read', entity_column: 'optional: the column that names the entity (tissue, cell type, cancer)', entity: 'optional: which entity to read; omit to read every entity as separate rows', as: 'name for the value column in the output (default value); name it after what it holds, such as liver_nTPM, so later steps can refer to it' }, produces: 'the input rows with the value added first under the "as" name (and, when every entity is read, the entity column under its dataset name)',
     description: 'Reads a value straight from a named table for every gene of the input table: exact, no model call. With an entity ("liver") one row per gene; without, one row per gene per entity, which pivot can turn into a matrix. Two measures joined later keep both values apart when each names its column with "as".' },
   { name: 'union', inputs: 2, args: {}, produces: 'genes present in either input (one row per gene)', description: 'Genes in either table.' },
   { name: 'intersect', inputs: 2, args: {}, produces: 'the rows of the first input whose gene is also in the second', description: 'Genes in both tables (rows and columns of the first; join to add the second\'s columns).' },
@@ -59,16 +65,16 @@ function catalogText() {
 
 // ---- table operations ----------------------------------------------------------------------------
 
-function applyWhere(rows, where = []) {
+function wherePredicate(columns, where = []) {
   const clauses = [];
   for (const w of Array.isArray(where) ? where : []) {
-    const column = findColumn(rows, w?.column);
+    const column = columns.find(c => c === w?.column) || columns.find(c => lower(c) === lower(w?.column)) || null;
     const op = String(w?.op || '=').trim();
-    if (!column) throw new Error(`filter: no column named "${w?.column}" (columns: ${columnsOf(rows).slice(0, 20).join(', ')})`);
+    if (!column) throw new Error(`filter: no column named "${w?.column}" (columns: ${columns.slice(0, 30).join(', ')})`);
     if (!OPS.includes(op)) throw new Error(`filter: unknown op "${op}"`);
     clauses.push({ column, op, value: w.value });
   }
-  return rows.filter(r => clauses.every(({ column, op, value }) => {
+  return r => clauses.every(({ column, op, value }) => {
     const cell = r[column];
     if (op === 'in') return (Array.isArray(value) ? value : [value]).some(v => lower(v) === lower(cell));
     if (op === 'contains') return lower(cell).includes(lower(value));
@@ -76,16 +82,34 @@ function applyWhere(rows, where = []) {
     const a = num(cell), b = num(value);
     if (a === null || b === null) return false;
     return op === '>' ? a > b : op === '>=' ? a >= b : op === '<' ? a < b : a <= b;
-  }));
+  });
+}
+
+function applyWhere(rows, where = []) {
+  if (!rows.length) return [];
+  return rows.filter(wherePredicate(columnsOf(rows), where));
+}
+
+// A result's new columns go right after gene and ensembl, so the first look at it shows what
+// the step added rather than the identity columns it carried along.
+function freshFirst(rows, inputColumns = []) {
+  if (!rows.length) return rows;
+  const cols = columnsOf(rows);
+  const carried = new Set(inputColumns);
+  const fresh = cols.filter(c => !carried.has(c) && c !== 'gene' && c !== 'ensembl');
+  if (!fresh.length) return rows;
+  const order = [...new Set(['gene', 'ensembl', ...fresh, ...cols])];
+  return rows.map(r => { const o = {}; for (const k of order) if (k in r) o[k] = r[k]; return o; });
 }
 
 function setOp(kind, left, right, on = null) {
   if (kind === 'concat') return [...left, ...right];
   requireKeys(left, on, kind); requireKeys(right, on, kind);
-  const rightKeys = new Set(right.map(r => keyOf(r, on)));
-  if (kind === 'union') { const seen = new Set(); return [...left, ...right].filter(r => { const k = keyOf(r, on); if (seen.has(k)) return false; seen.add(k); return true; }); }
-  if (kind === 'intersect') return left.filter(r => rightKeys.has(keyOf(r, on)));
-  if (kind === 'difference') return left.filter(r => !rightKeys.has(keyOf(r, on)));
+  const rightKeys = new Set(right.flatMap(r => keysOf(r, on)));
+  const inRight = r => keysOf(r, on).some(k => rightKeys.has(k));
+  if (kind === 'union') { const seen = new Set(); return [...left, ...right].filter(r => { const keys = keysOf(r, on); if (keys.some(k => seen.has(k))) return false; for (const k of keys) seen.add(k); return true; }); }
+  if (kind === 'intersect') return left.filter(inRight);
+  if (kind === 'difference') return left.filter(r => !inRight(r));
   throw new Error(`unknown set operation ${kind}`);
 }
 
@@ -96,11 +120,14 @@ function join(left, right, how = 'inner', on = null) {
   const onRight = on ? (findColumn(right, on) || on) : null;
   requireKeys(left, onCol, 'join'); requireKeys(right, onRight, 'join');
   const groups = new Map();
-  for (const r of right) { const k = keyOf(r, onRight); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); }
+  for (const r of right) for (const k of keysOf(r, onRight)) { if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); }
   const leftCols = new Set(columnsOf(left));
   const out = [];
   for (const l of left) {
-    const matches = groups.get(keyOf(l, onCol)) || [];
+    // Ensembl ids first; the gene name only when that finds nothing, so a right table with both
+    // keys does not match twice.
+    let matches = [];
+    for (const k of keysOf(l, onCol)) { matches = groups.get(k) || []; if (matches.length) break; }
     if (!matches.length) { if (how === 'left') out.push({ ...l }); continue; }
     for (const r of matches) {
       const merged = { ...l };
@@ -115,7 +142,9 @@ function join(left, right, how = 'inner', on = null) {
 }
 
 function select(rows, columns = [], rename = {}, add = {}) {
-  const keep = (Array.isArray(columns) && columns.length ? columns : columnsOf(rows)).map(c => findColumn(rows, c)).filter(Boolean);
+  if (!rows.length) return [];
+  const wanted = Array.isArray(columns) && columns.length ? columns : columnsOf(rows);
+  const keep = wanted.map(c => { const found = findColumn(rows, c); if (!found) throw new Error(`select: no column named "${c}" (columns: ${columnsOf(rows).slice(0, 30).join(', ')})`); return found; });
   const constants = add && typeof add === 'object' ? Object.entries(add) : [];
   return rows.map(r => { const o = {}; for (const c of keep) o[rename[c] || c] = r[c]; if (r.gene !== undefined && o.gene === undefined) o.gene = r.gene; if (r.ensembl !== undefined && o.ensembl === undefined) o.ensembl = r.ensembl; for (const [k, v] of constants) o[k] = v; return o; });
 }
@@ -251,9 +280,9 @@ function compute(rows, name, expr) {
   return rows.map(r => { const v = evaluate(tree, r, resolved); return { ...r, [name]: v === null || !Number.isFinite(v) ? null : Number(v.toFixed(4)) }; });
 }
 
-function pivot(rows, { row = 'gene', column = 'entity', value = 'value', top = 0, top_columns = 0 } = {}) {
+function pivot(rows, { row = 'gene', column, value, top = 0, top_columns = 0 } = {}) {
   const rc = findColumn(rows, row), cc = findColumn(rows, column), vc = findColumn(rows, value);
-  if (!rc || !cc || !vc) throw new Error(`pivot: needs columns ${row}, ${column}, ${value}`);
+  if (!rc || !cc || !vc) throw new Error(`pivot: needs row, column and value columns (asked for ${row}, ${column || '?'}, ${value || '?'}); columns: ${columnsOf(rows).slice(0, 30).join(', ')}`);
   const rowLabels = [], colLabels = [], ri = new Map(), ci = new Map();
   for (const r of rows) { const a = String(r[rc] ?? ''), b = String(r[cc] ?? ''); if (!ri.has(a)) { ri.set(a, rowLabels.length); rowLabels.push(a); } if (!ci.has(b)) { ci.set(b, colLabels.length); colLabels.push(b); } }
   const matrix = rowLabels.map(() => Array(colLabels.length).fill(0));
@@ -316,18 +345,20 @@ async function measure(rows, { table, value_column, entity_column, entity, as },
       const r = queue.shift();
       const gene = await geneData.resolveGene(r.ensembl || r.gene);
       // The input row travels along: a measure adds a column to the table it was given.
-      const base = { ...r, gene: gene ? gene.gene : r.gene, ensembl: gene ? gene.ensembl : (r.ensembl || null) };
-      delete base.note;
-      if (!gene) { out.push({ ...base, entity: entity || null, [valueName]: null, note: 'gene not in release' }); continue; }
+      const ident = { gene: gene ? gene.gene : r.gene, ensembl: gene ? gene.ensembl : (r.ensembl || null) };
+      const rest = { ...r };
+      for (const k of ['gene', 'ensembl', 'note', valueName]) delete rest[k];
+      const make = (fresh, extra = {}) => { const o = { ...ident, ...fresh }; for (const [k, v] of Object.entries(rest)) if (!(k in o)) o[k] = v; return Object.assign(o, extra); };
+      if (!gene) { out.push(make({ [valueName]: null }, { note: 'gene not in release' })); continue; }
       let reading;
-      try { reading = await geneData.read(gene, entry.file); } catch (e) { out.push({ ...base, entity: entity || null, [valueName]: null, note: e.message }); continue; }
-      try { inferEntityColumn(reading.rows); } catch (e) { out.push({ ...base, entity: entity || null, [valueName]: null, note: e.message }); continue; }
+      try { reading = await geneData.read(gene, entry.file); } catch (e) { out.push(make({ [valueName]: null }, { note: e.message })); continue; }
+      try { inferEntityColumn(reading.rows); } catch (e) { out.push(make({ [valueName]: null }, { note: e.message })); continue; }
       const rowsFor = entityCol && entity ? reading.rows.filter(x => lower(x[entityCol]) === lower(entity)) : reading.rows;
       if (entity || !entityCol) {
         const row = rowsFor[0];
-        out.push({ ...base, entity: entity || base.entity || null, [valueName]: row ? (num(row[valueCol]) ?? row[valueCol] ?? null) : null, ...(row ? {} : { note: 'no row' }) });
+        out.push(make({ [valueName]: row ? (num(row[valueCol]) ?? row[valueCol] ?? null) : null }, row ? {} : { note: 'no row' }));
       } else {
-        for (const row of rowsFor) out.push({ ...base, entity: row[entityCol], [valueName]: num(row[valueCol]) ?? row[valueCol] ?? null });
+        for (const row of rowsFor) out.push(make({ [entityCol]: row[entityCol], [valueName]: num(row[valueCol]) ?? row[valueCol] ?? null }));
       }
     }
   };
@@ -335,4 +366,4 @@ async function measure(rows, { table, value_column, entity_column, entity, as },
   return out;
 }
 
-module.exports = { TOOL_CATALOG, catalogText, applyWhere, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, findColumn, keyOf, num };
+module.exports = { TOOL_CATALOG, catalogText, applyWhere, wherePredicate, freshFirst, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, findColumn, keyOf, num };

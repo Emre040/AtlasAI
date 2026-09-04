@@ -19,7 +19,7 @@ const { registerArtifact } = require('../aso/artifactStore');
 const { createLogger } = require('../aso/logger');
 const { renderCharts } = require('../aso/pipelines/renderCharts');
 const { resolveAgentMode } = require('../../hpa/agentMode');
-const { FILES } = require('../../hpa/localData');
+const { localData, FILES } = require('../../hpa/localData');
 
 const MAX_TURNS_DEFAULT = 40;     // platform_config.aso_max_steps overrides
 const MAX_STALLS = 2;             // turns in a row with nothing to do before the loop ends
@@ -31,7 +31,7 @@ const CELL = 60;                  // characters per shown cell
 
 // ---- tools of the study itself ---------------------------------------------------------------------
 
-const A = { type: 'string', description: 'artifact id' };
+const A = { type: 'string', description: 'artifact id, or a dataset name' };
 const S = { type: 'string' };
 const N = { type: 'integer' };
 const tool = (name, description, properties = {}, required = []) => ({ name, description, parameters: { type: 'object', properties, required } });
@@ -41,8 +41,8 @@ const STUDY_TOOLS = [
   tool('update_plan', 'Mark a plan item (1-based) todo, doing, done or dropped.', { item: N, status: { type: 'string', enum: ['todo', 'doing', 'done', 'dropped'] }, note: S }, ['item', 'status']),
   tool('note', 'Write a note to yourself; it stays in NOTES.', { text: S }, ['text']),
   tool('datasets', 'List the datasets on disk.'),
-  tool('open', 'Read an artifact (by id) or a dataset (by name): its columns and some rows, shown this turn.', { what: S, rows: N }, ['what']),
-  tool('measure', 'Add a dataset value to every row of an artifact (the rows keep their columns); with entity one row per gene, without one row per gene and entity; "as" names the new column.', { artifact: A, table: { type: 'string', description: 'dataset name' }, value_column: S, entity_column: S, entity: S, as: S }, ['artifact', 'table', 'value_column']),
+  tool('open', 'Read an artifact (by id) or a dataset (by name): every column name and some rows, shown this turn; columns picks which columns the rows show.', { what: S, rows: N, columns: { type: 'array', items: S } }, ['what']),
+  tool('measure', 'Add a dataset value to every row of an artifact (the rows keep their columns; the new column comes first); with entity one row per gene, without one row per gene and entity, the entity column keeping its dataset name; "as" names the new column.', { artifact: A, table: { type: 'string', description: 'dataset name' }, value_column: S, entity_column: S, entity: S, as: S }, ['artifact', 'table', 'value_column']),
   tool('union', 'Genes in either artifact.', { a: A, b: A }, ['a', 'b']),
   tool('intersect', 'Rows of a whose gene is in b.', { a: A, b: A }, ['a', 'b']),
   tool('difference', 'Rows of a whose gene is not in b.', { a: A, b: A }, ['a', 'b']),
@@ -54,7 +54,7 @@ const STUDY_TOOLS = [
   tool('top_per_group', 'Keep the n highest rows per group (default group gene).', { artifact: A, group_by: S, by: S, n: N, order: { type: 'string', enum: ['desc', 'asc'] } }, ['artifact', 'by']),
   tool('aggregate', 'count, sum, mean, median, min, max of a column, optionally per group.', { artifact: A, group_by: S, column: S, metrics: { type: 'array', items: { type: 'string', enum: ['count', 'sum', 'mean', 'median', 'min', 'max'] } } }, ['artifact', 'metrics']),
   tool('compute', 'Add a column from an expression over columns and numbers: + - * / ( ) log2 log10 ln abs sqrt exp min max.', { artifact: A, name: S, expr: S }, ['artifact', 'name', 'expr']),
-  tool('pivot', 'Long rows (gene, entity, value) to a matrix; top and top_columns cap it.', { artifact: A, row: S, column: S, value: S, top: N, top_columns: N }, ['artifact']),
+  tool('pivot', 'Long rows to a matrix: row (default gene), column and value name the columns; top and top_columns cap it.', { artifact: A, row: S, column: S, value: S, top: N, top_columns: N }, ['artifact', 'column', 'value']),
   tool('chart', 'Draw an artifact; heatmap takes a pivot.', { artifact: A, type: { type: 'string', enum: ['bar', 'lollipop', 'dot_plot', 'diverging_bar', 'grouped_bar', 'scatter', 'bubble', 'heatmap', 'radar', 'line', 'volcano'] }, x: S, y: S, group: S, size: S, title: S, x_label: S, y_label: S }, ['artifact', 'type']),
   tool('skip', 'Nothing to do until something running returns.', { reason: S }, ['reason']),
   tool('finish', 'The goal is met or cannot be met further; summary cites artifact ids.', { summary: S }, ['summary'])
@@ -69,7 +69,8 @@ How the turns work:
 - Your first turn does one thing: call set_plan, alone, with a few high-level items (what to find out, not which operation). Nothing else runs in that turn; agents and tools come in the turns after, once the plan exists. Do not write the plan again unless the study changes direction; from the second turn on, work. Keep the plan honest: mark items done when an artifact shows they are, drop items that turn out wrong, rewrite the plan when the study changes direction.
 - Call as many tools in one turn as can run independently; they run in parallel. Agents (deep_research_hpa, investigator_hpa, check_inclusion_hpa, dictionary_expert_hpa) run in the background and you are woken when each returns. Everything else returns at once.
 - When nothing useful can be done until something running returns, call skip with the reason. Do not repeat a tool that is still running.
-- You know nothing about the data until you look. datasets shows what is on disk; open reads a dataset or an artifact and shows what it holds, in that turn. An artifact you opened keeps a short column line on the desk; anything else you must remember, open again or write in a note. Look before you name a dataset, a column or an entity in a tool call.
+- You know nothing about the data until you look. datasets shows what is on disk; open reads a dataset or an artifact and shows every column name and some rows, in that turn (columns picks which columns the rows show). A result you make shows its new columns first, with two rows, as it lands; a dataset or artifact you opened keeps a short column line on the desk. Rows you must remember, open again or write in a note. Name only columns you have seen.
+- A dataset name works wherever a tool takes an artifact id: filter proteinatlas.tsv directly, or join, intersect or difference an artifact with a per-gene dataset to get that dataset's rows for those genes.
 - deep_research_hpa finds gene sets from a description and builds the database query itself; it knows the search fields and tells you when something cannot be expressed. investigator_hpa answers one question about one gene and cites the row it rests on; when the value sits in a table column you can name, measure is exact and free, so prefer it.
 - Refer to artifacts by their id. measure adds a column to the rows it is given, so measuring pancreas then liver on the same artifact leaves both columns in the result; name each with "as".
 - Do the bookkeeping in the same turn as the work: update_plan alongside the tools that complete the item, and finish in the same turn as the last piece of work. A turn spent only on update_plan is a turn wasted.
@@ -79,27 +80,99 @@ How the turns work:
 
 // ---- context rendering -----------------------------------------------------------------------------
 
+function columnList(columns) {
+  return `${columns.slice(0, 12).join(', ')}${columns.length > 12 ? ` … ${columns.length} in all` : ''}`;
+}
+
 function cell(v) {
   const s = v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
   return s.length > CELL ? `${s.slice(0, CELL - 1)}…` : s;
 }
 
-function sampleLines(rows, columns, n) {
-  const cols = columns.slice(0, 7);
+function shownColumns(columns, pick = null) {
+  if (Array.isArray(pick) && pick.length) return pick.map(p => columns.find(c => c === p) || columns.find(c => c.toLowerCase() === String(p).toLowerCase())).filter(Boolean);
+  return columns.slice(0, 7);
+}
+
+function sampleLines(rows, columns, n, pick = null) {
+  const cols = shownColumns(columns, pick);
   return rows.slice(0, n).map(r => cols.map(c => cell(r[c])).join(' | '));
 }
 
-function describeArgs(args) {
-  return Object.entries(args || {}).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ');
+// A sample with its header line: the names of the columns the rows show.
+function sampleBlock(rows, columns, n, pick = null) {
+  const cols = shownColumns(columns, pick);
+  return [cols.join(' | '), ...sampleLines(rows, columns, n, pick)].join('\n  ');
+}
+
+const MAX_DATASET_ROWS = 200000;
+
+// Gene and ensembl keys for a row read straight from a dataset, so set operations and joins work.
+function geneKeys(entry, row) {
+  const isEnsembl = v => /^ENSG\d{5,}$/.test(String(v || ''));
+  if (entry.key === 'name') return { gene: row[entry.columns[0]] || null, ensembl: row[entry.columns[1]] || null };
+  const column = entry.geneColumn || entry.columns.find(c => isEnsembl(row[c]));
+  const name = row['Gene name'] ?? (isEnsembl(row.Gene) ? null : row.Gene) ?? null;
+  return { gene: name || null, ensembl: column ? row[column] || null : null };
+}
+
+// A dataset used where an artifact goes. Gene-level files come whole; a per-gene file comes
+// restricted to the genes of the other input, or filtered while it streams, since whole it
+// would not fit on any desk.
+async function datasetRows(entry, { genes = null, where = null, limit = 3 } = {}) {
+  if (entry.key === 'master') {
+    const master = await localData.master();
+    return master.rows.map(r => { const { Gene, Ensembl, ...rest } = r; return { gene: Gene, ensembl: Ensembl, ...rest }; });
+  }
+  if (entry.key === 'lookup' || entry.key === 'scan') return (await localData.table(entry.file)).rows.map(r => ({ ...geneKeys(entry, r), ...r }));
+  if (genes) {
+    const seen = new Set();
+    const queue = [];
+    for (const r of genes) { const k = r.ensembl || r.gene; if (k && !seen.has(k)) { seen.add(k); queue.push(k); } }
+    const out = [];
+    const worker = async () => {
+      while (queue.length) {
+        const gene = await geneData.resolveGene(queue.shift());
+        if (!gene) continue;
+        const reading = await geneData.read(gene, entry.file);
+        for (const row of reading.rows) out.push({ gene: gene.gene, ensembl: gene.ensembl, ...row });
+        if (out.length > MAX_DATASET_ROWS) throw new Error(`${entry.file} gives more than ${MAX_DATASET_ROWS} rows for these genes; filter it or use fewer genes`);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, Math.max(1, queue.length)) }, worker));
+    return out;
+  }
+  if (where) {
+    const keep = tools.wherePredicate(entry.columns, where);
+    const out = [];
+    for await (const row of localData.rows(entry.file, { where: keep })) {
+      out.push({ ...geneKeys(entry, row), ...row });
+      if (out.length > MAX_DATASET_ROWS) throw new Error(`filter on ${entry.file} keeps more than ${MAX_DATASET_ROWS} rows; make it stricter`);
+    }
+    return out;
+  }
+  throw new Error(`${entry.file} has a row per gene and entity, too many to take whole: filter it, or use it with an artifact (join, intersect, difference) so it is read for those genes`);
+}
+
+// Arguments as they appear on the desk: whole, cut only between arguments. A cut inside a value
+// once turned as=pancreas_nTPM into as=pancreas, and the study chased a column that never existed.
+function describeArgs(args, max = 160) {
+  const parts = Object.entries(args || {}).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => { const text = typeof v === 'string' ? v : JSON.stringify(v); return `${k}=${text.length > 80 ? `${text.slice(0, 79)}…` : text}`; });
+  let out = '';
+  for (const part of parts) {
+    if (out && out.length + part.length + 2 > max) { out += ', …'; break; }
+    out += (out ? ', ' : '') + part;
+  }
+  return out;
 }
 
 // An artifact as it sits on the desk: what it is and where it came from. Its columns appear
 // once the model has opened it; rows are shown only in the turn it read them.
 function artifactLine(a) {
-  const lines = [`${a.id}  ${a.kind.padEnd(7)} "${a.label}"  ${a.size}  from turn ${a.turn}: ${a.tool}(${describeArgs(a.args).slice(0, 60)})`];
+  const lines = [`${a.id}  ${a.kind.padEnd(7)} "${a.label}"  ${a.size}  from turn ${a.turn}: ${a.tool}(${describeArgs(a.args)})`];
   if (a.meta?.query) lines.push(`    ${a.meta.query}`);
   if (a.meta?.not_expressible?.length) lines.push(`    not expressible: ${a.meta.not_expressible.join('; ')}`);
-  if (a.opened && a.columns?.length) lines.push(`    columns ${a.columns.slice(0, 12).join(', ')}${a.columns.length > 12 ? ` … ${a.columns.length} in all (open it to see them)` : ''}`);
+  if (a.opened && a.columns?.length) lines.push(`    columns ${columnList(a.columns)}`);
   if (a.text) lines.push(`    ${cell(a.text).slice(0, 300)}`);
   return lines.join('\n');
 }
@@ -114,7 +187,8 @@ function renderContext(state, turn, startedAt) {
     : '(nothing)';
   const recent = state.recent.length ? state.recent.map(r => `- ${r}`).join('\n') : '(nothing new)';
   const notes = state.notes.length ? state.notes.map(n => `- ${n}`).join('\n') : '(none)';
-  const tables = state.tableList ? `DATASETS ON DISK  (open one to see what it holds)\n${state.tableList.join('  ')}` : null;
+  const opened = state.tablesSeen.size ? `\nDATASETS YOU HAVE OPENED  (first columns; open one again to see all of them, or rows)\n${[...state.tablesSeen.values()].join('\n')}` : '';
+  const tables = state.tableList ? `DATASETS ON DISK  (open one to see what it holds)\n${state.tableList.join('  ')}${opened}` : (opened ? opened.trim() : null);
   const history = state.history.length ? state.history.map(h => `turn ${h.turn}: ${h.items.join('; ')}`).join('\n') : '(nothing yet)';
   return `GOAL
 ${state.goal}
@@ -200,7 +274,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
   let registrations = Promise.resolve();
   const register = args => { const next = registrations.then(() => registerArtifact(db, args)); registrations = next.catch(() => {}); return next; };
 
-  const state = { goal, plan: [], artifacts: [], byId: new Map(), running: new Map(), recent: [], notes: [], tableList: null, history: [], turn: 0, toolCalls: 0, failed: 0, ids: { a: 0, t: 0 } };
+  const state = { goal, plan: [], artifacts: [], byId: new Map(), running: new Map(), recent: [], notes: [], tableList: null, tablesSeen: new Map(), history: [], turn: 0, toolCalls: 0, failed: 0, ids: { a: 0, t: 0 } };
   const remember = (text) => { const entry = state.history[state.history.length - 1]; if (entry && entry.turn === state.turn) entry.items.push(text); else state.history.push({ turn: state.turn, items: [text] }); };
   const wake = { resolve: null };
   const wakeUp = () => { if (wake.resolve) { const r = wake.resolve; wake.resolve = null; r(); } };
@@ -255,7 +329,14 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
     return a;
   }
 
-  const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.size, rows: a.rows ? a.rows.length : undefined, columns: a.columns.slice(0, 12), sample: a.rows ? sampleLines(a.rows, a.columns, 3).map(l => l.split(' | ')) : undefined, sample_columns: a.columns.slice(0, 7), text: a.text ? a.text.slice(0, 600) : undefined, images: a.images, artifact_uuid: a.uuid, search_url: a.meta?.search_url, query: a.meta?.query, inputs: a.inputs });
+  // What a person sees when a result lands: its shape and a couple of rows, once.
+const receipt = a => {
+  if (a.matrix) return `${a.id} (${a.size}; rows ${a.matrix.row_labels.slice(0, 8).join(', ')}${a.matrix.row_labels.length > 8 ? ', …' : ''}; columns ${a.matrix.col_labels.slice(0, 8).join(', ')}${a.matrix.col_labels.length > 8 ? ', …' : ''})`;
+  if (a.text) return `${a.id}: ${a.text.slice(0, 300)}`;
+  if (!a.rows || !a.rows.length) return `${a.id} (${a.size})`;
+  return `${a.id} (${a.size}; columns ${columnList(a.columns)}):\n  ${sampleBlock(a.rows, a.columns, 2)}`;
+};
+const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.size, rows: a.rows ? a.rows.length : undefined, columns: a.columns.slice(0, 12), sample: a.rows ? sampleLines(a.rows, a.columns, 3).map(l => l.split(' | ')) : undefined, sample_columns: a.columns.slice(0, 7), text: a.text ? a.text.slice(0, 600) : undefined, images: a.images, artifact_uuid: a.uuid, search_url: a.meta?.search_url, query: a.meta?.query, inputs: a.inputs });
 
   // An agent runs in the background through the orchestrator, exactly as a chat message would.
   function startAgent(tool, args) {
@@ -270,7 +351,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
       .then(async ({ result }) => {
         const built = agentArtifact(tool, args, result);
         const a = await addArtifact({ ...built, tool, args, inputs: [], toolId: id });
-        state.recent.push(`${id} ${tool} returned: ${a.id} (${a.size})${a.meta?.search_url ? `, ${a.meta.search_url}` : ''}${a.meta?.not_expressible?.length ? `, not expressible: ${a.meta.not_expressible.join('; ')}` : ''}`);
+        state.recent.push(`${id} ${tool} returned ${receipt(a)}${a.meta?.search_url ? `\n  ${a.meta.search_url}` : ''}${a.meta?.not_expressible?.length ? `\n  not expressible: ${a.meta.not_expressible.join('; ')}` : ''}`);
         remember(`${tool} → ${a.id} (${a.size})`);
         await log('tool.done', { id, tool, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);
       })
@@ -289,27 +370,50 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
     const t0 = Date.now();
     state.toolCalls++;
     const inputs = ['artifact', 'a', 'b'].map(k => args[k]).filter(Boolean).map(String);
-    const label = tool === 'chart' ? String(args.title || 'figure').slice(0, 80) : `${tool}(${describeArgs(args).slice(0, 60)})`;
+    const label = tool === 'chart' ? String(args.title || 'figure').slice(0, 80) : `${tool}(${describeArgs(args, 100)})`;
     await log('tool.start', { id, tool, kind: tool === 'chart' ? 'chart' : 'tool', label, args, inputs }, id);
     try {
-      const rowsOf = key => { const a = get(args[key]); if (a.matrix) throw new Error(`${a.id} is a matrix; only a heatmap chart can take it`); if (!a.rows) throw new Error(`${a.id} has no rows`); return a.rows; };
+      const parallel = config.asoParallelLimit || 3;
+      const inputColumns = new Set();
+      let streamed = false;
+      // An input is an artifact on the desk or a dataset on disk; a per-gene dataset is read for
+      // the genes of the other input (join, set operations) or filtered as it streams.
+      const rowsOf = async (key, other = null) => {
+        const ref = String(args[key] ?? '').trim();
+        if (state.byId.has(ref)) {
+          const a = get(ref);
+          if (a.matrix) throw new Error(`${a.id} is a matrix; only a heatmap chart can take it`);
+          if (!a.rows) throw new Error(`${a.id} has no rows`);
+          for (const c of a.columns) inputColumns.add(c);
+          return a.rows;
+        }
+        const entry = ref ? await geneData.entry(ref) : null;
+        if (!entry || entry.key === 'unreadable') throw new Error(`nothing called "${ref || '(no name)'}" on the desk or on disk (artifacts: ${[...state.byId.keys()].join(', ') || 'none'}; datasets lists what is on disk)`);
+        const otherRef = other ? String(args[other] ?? '').trim() : '';
+        const genes = otherRef && state.byId.has(otherRef) ? get(otherRef).rows || null : null;
+        const rows = await datasetRows(entry, { genes, where: tool === 'filter' ? args.where : null, limit: parallel });
+        streamed = tool === 'filter' && !genes && !['master', 'lookup', 'scan'].includes(entry.key);
+        for (const c of ['gene', 'ensembl', ...entry.columns]) inputColumns.add(c);
+        return rows;
+      };
       let out;
       switch (tool) {
-        case 'measure': out = { rows: await tools.measure(rowsOf('artifact'), args, config.asoParallelLimit || 3) }; break;
-        case 'union': case 'intersect': case 'difference': case 'concat': out = { rows: tools.setOp(tool, rowsOf('a'), rowsOf('b'), args.on || null) }; break;
-        case 'join': out = { rows: tools.join(rowsOf('a'), rowsOf('b'), args.how, args.on || null) }; break;
-        case 'filter': out = { rows: tools.applyWhere(rowsOf('artifact'), args.where) }; break;
-        case 'select': { const obj = v => (typeof v === 'string' ? (JSON.parse(v || '{}') || {}) : (v || {})); out = { rows: tools.select(rowsOf('artifact'), args.columns, obj(args.rename), obj(args.add)) }; break; }
-        case 'rank': out = { rows: tools.rank(rowsOf('artifact'), args.by, args.order, Number(args.top) || 0) }; break;
-        case 'top_per_group': out = { rows: tools.topPerGroup(rowsOf('artifact'), args) }; break;
-        case 'aggregate': out = { rows: tools.aggregate(rowsOf('artifact'), args) }; break;
-        case 'compute': out = { rows: tools.compute(rowsOf('artifact'), String(args.name), String(args.expr)) }; break;
-        case 'pivot': out = { matrix: tools.pivot(rowsOf('artifact'), args) }; break;
-        case 'chart': { const a = get(args.artifact); out = { figure: tools.chartSpec(args, a.matrix ? a.matrix : rowsOf('artifact')) }; break; }
+        case 'measure': out = { rows: await tools.measure(await rowsOf('artifact'), args, parallel) }; break;
+        case 'union': case 'intersect': case 'difference': case 'concat': out = { rows: tools.setOp(tool, await rowsOf('a', 'b'), await rowsOf('b', 'a'), args.on || null) }; break;
+        case 'join': out = { rows: tools.join(await rowsOf('a', 'b'), await rowsOf('b', 'a'), args.how, args.on || null) }; break;
+        case 'filter': { const rows = await rowsOf('artifact'); out = { rows: streamed ? rows : tools.applyWhere(rows, args.where) }; break; }
+        case 'select': { const obj = v => (typeof v === 'string' ? (JSON.parse(v || '{}') || {}) : (v || {})); out = { rows: tools.select(await rowsOf('artifact'), args.columns, obj(args.rename), obj(args.add)) }; break; }
+        case 'rank': out = { rows: tools.rank(await rowsOf('artifact'), args.by, args.order, Number(args.top) || 0) }; break;
+        case 'top_per_group': out = { rows: tools.topPerGroup(await rowsOf('artifact'), args) }; break;
+        case 'aggregate': out = { rows: tools.aggregate(await rowsOf('artifact'), args) }; break;
+        case 'compute': out = { rows: tools.compute(await rowsOf('artifact'), String(args.name), String(args.expr)) }; break;
+        case 'pivot': out = { matrix: tools.pivot(await rowsOf('artifact'), args) }; break;
+        case 'chart': { const a = state.byId.get(String(args.artifact ?? '').trim()); out = { figure: tools.chartSpec(args, a?.matrix ? a.matrix : await rowsOf('artifact')) }; break; }
         default: throw new Error(`unknown tool ${tool}`);
       }
+      if (out.rows) out.rows = tools.freshFirst(out.rows, [...inputColumns]);
       const a = await addArtifact({ kind: out.figure ? 'figure' : 'data', label: tool === 'chart' ? label : `${tool} of ${inputs.join(', ')}`, rows: out.rows, matrix: out.matrix, figure: out.figure, tool, args, inputs, toolId: id });
-      state.recent.push(`${id} ${tool} -> ${a.id} (${a.size})`);
+      state.recent.push(`${id} ${tool} -> ${receipt(a)}`);
       remember(`${tool}(${inputs.join(', ')}) → ${a.id} (${a.size})`);
       await log('tool.done', { id, tool, kind: out.figure ? 'chart' : 'tool', artifact: artifactEvent(a), ms: Date.now() - t0 }, id);
     } catch (err) {
@@ -381,15 +485,16 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
         }
         if (call.name === 'open') {
           const n = Math.min(INSPECT_MAX, Number(call.args.rows) || 10);
-          const what = String(call.args.what || '').trim();
+          const what = String(call.args.what ?? call.args.artifact ?? call.args.dataset ?? call.args.name ?? call.args.id ?? call.args.file ?? '').trim();
+          const pick = Array.isArray(call.args.columns) ? call.args.columns.map(String) : (typeof call.args.columns === 'string' && call.args.columns.trim() ? call.args.columns.split(/\s*[|,]\s*/) : null);
           try {
-            remember(`opened ${what}`);
             if (state.byId.has(what)) {
               const a = get(what);
               a.opened = true;
+              remember(`opened ${a.id}`);
               if (a.matrix) state.recent.push(`${a.id} is a ${a.size}; rows ${a.matrix.row_labels.slice(0, 12).join(', ')}${a.matrix.row_labels.length > 12 ? ', …' : ''}; columns ${a.matrix.col_labels.slice(0, 12).join(', ')}${a.matrix.col_labels.length > 12 ? ', …' : ''}`);
               else if (a.text) state.recent.push(`${a.id}: ${a.text.slice(0, 1500)}`);
-              else state.recent.push(`${a.id} (${a.size}; columns ${a.columns.join(', ')}):\n  ${sampleLines(a.rows || [], a.columns, n).join('\n  ')}${(a.rows || []).length > n ? `\n  … ${a.rows.length - n} more rows` : ''}`);
+              else state.recent.push(`${a.id} (${a.size}) columns: ${a.columns.join(' | ')}\n  ${sampleBlock(a.rows || [], a.columns, n, pick)}${(a.rows || []).length > n ? `\n  … ${a.rows.length - n} more rows` : ''}`);
             } else {
               const entry = await geneData.entry(what);
               if (!entry || entry.key === 'unreadable') throw new Error(`nothing called "${what}" on the desk or on disk; datasets lists what is on disk`);
@@ -399,9 +504,11 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
               if (entry.key === 'lookup') rows = (await geneData.read({ gene: '', ensembl: '' }, entry.file)).rows;
               else if (sampleGene) { const gene = await geneData.resolveGene(sampleGene); if (gene) rows = (await geneData.read(gene, entry.file)).rows; }
               const terms = entry.columns.map(c => geneData.definition(c)).filter(Boolean);
-              state.recent.push(`${entry.file} — ${entry.title} (columns ${entry.columns.join(' | ')})${terms.length ? `\n  terms: ${terms.slice(0, 4).join('; ')}` : ''}${rows.length ? `:\n  ${sampleLines(rows, entry.columns, n).join('\n  ')}${rows.length > n ? `\n  … ${rows.length - n} more rows for this gene` : ''}` : ' (no rows to show yet; nothing on the desk names a gene)'}`);
+              state.tablesSeen.set(entry.file, `${entry.file}: ${columnList(entry.columns)}`);
+              remember(`opened ${entry.file}`);
+              state.recent.push(`${entry.file} — ${entry.title} columns: ${entry.columns.join(' | ')}${terms.length ? `\n  terms: ${terms.slice(0, 4).join('; ')}` : ''}${rows.length ? `\n  ${sampleBlock(rows, entry.columns, n, pick)}${rows.length > n ? `\n  … ${rows.length - n} more rows for this gene` : ''}` : '\n  (no rows to show yet; nothing on the desk names a gene)'}`);
             }
-          } catch (err) { state.recent.push(`open failed: ${err.message}`); }
+          } catch (err) { state.recent.push(`open failed: ${err.message}`); remember(`open ${what || '(no name)'} failed`); }
           sync++; continue;
         }
         if (agentNames.has(call.name)) { startAgent(call.name, call.args); continue; }

@@ -82,16 +82,22 @@ function wherePredicate(columns, where = []) {
     const op = String(w?.op || '=').trim();
     if (!column) throw new Error(`filter: no column named "${w?.column}" (columns: ${columns.slice(0, 30).join(', ')})`);
     if (!OPS.includes(op)) throw new Error(`filter: unknown op "${op}"`);
+    // column_b compares with another column of the same row instead of a fixed value.
+    const otherName = w.column_b ?? w.other ?? w.versus ?? w.against ?? null;
+    const columnB = otherName ? (columns.find(c => c === otherName) || columns.find(c => lower(c) === lower(otherName)) || null) : null;
+    if (otherName && !columnB) throw new Error(`filter: no column named "${otherName}" (columns: ${columns.slice(0, 30).join(', ')})`);
     let value = w.value;
     if (op === 'in' && typeof value === 'string') {
       const text = value.trim();
       if (text.startsWith('[')) { try { value = JSON.parse(text); } catch { value = text; } }
       if (typeof value === 'string') value = value.split(/\s*[|,]\s*/).filter(Boolean);
     }
-    clauses.push({ column, op, value });
+    clauses.push({ column, op, value, columnB });
   }
-  return r => clauses.every(({ column, op, value }) => {
+  return r => clauses.every(({ column, op, value: fixed, columnB }) => {
     const cell = r[column];
+    const value = columnB ? r[columnB] : fixed;
+    if (columnB && (value === null || value === undefined || String(value).trim() === '')) return false;
     if (op === 'in') return (Array.isArray(value) ? value : [value]).some(v => lower(v) === lower(cell));
     if (op === 'contains') return lower(cell).includes(lower(value));
     if (op === '=' || op === '!=') { const same = lower(cell) === lower(value) || (num(cell) !== null && num(cell) === num(value)); return op === '=' ? same : !same; }
@@ -224,7 +230,7 @@ function quantile(sorted, q) {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
 }
 
-const METRICS = ['count', 'sum', 'mean', 'median', 'sd', 'q1', 'q3', 'min', 'max', 'missing'];
+const METRICS = ['count', 'sum', 'mean', 'median', 'sd', 'q1', 'q3', 'min', 'max', 'missing', 'distinct'];
 
 // Summarises a column per group as rows arrive; values are kept per group for the order
 // statistics, nothing else is held.
@@ -242,9 +248,13 @@ function aggregator({ group_by, column, metrics = ['count'] } = {}, columns) {
     add(r) {
       const g = groupCol ? String(r[groupCol] ?? '') : 'all';
       let st = groups.get(g);
-      if (!st) { st = { count: 0, missing: 0, vals: [] }; groups.set(g, st); }
+      if (!st) { st = { count: 0, missing: 0, vals: [], distinct: new Set() }; groups.set(g, st); }
       st.count++;
-      if (col) { const v = num(r[col]); if (v === null) st.missing++; else st.vals.push(v); }
+      if (col) {
+        const raw = r[col];
+        if (raw === null || raw === undefined || String(raw).trim() === '') st.missing++;
+        else { st.distinct.add(String(raw)); const v = num(raw); if (v !== null) st.vals.push(v); }
+      }
     },
     result() {
       const out = [];
@@ -265,6 +275,7 @@ function aggregator({ group_by, column, metrics = ['count'] } = {}, columns) {
           else if (m === 'min') o.min = sorted.length ? sorted[0] : null;
           else if (m === 'max') o.max = sorted.length ? sorted[sorted.length - 1] : null;
           else if (m === 'missing') o.missing = st.missing;
+          else if (m === 'distinct') o.distinct = st.distinct.size;
         }
         out.push(o);
       }
@@ -364,40 +375,67 @@ function ranks(values) {
 const round = (v, d) => (v === null || v === undefined || !Number.isFinite(v) ? null : Number(v.toFixed(d)));
 const sig = p => (p === null || p === undefined || !Number.isFinite(p) ? null : Number(p.toPrecision(3)));
 
-function correlate(rows, { x, y, method = 'pearson' } = {}) {
-  const xc = findColumn(rows, x), yc = findColumn(rows, y);
-  if (!xc || !yc) throw new Error(`correlate: needs two numeric columns (asked for ${x || '?'}, ${y || '?'}); columns: ${columnsOf(rows).slice(0, 30).join(', ')}`);
-  const pairs = rows.map(r => [num(r[xc]), num(r[yc])]).filter(([a, b]) => a !== null && b !== null);
+function correlatePairs(pairs, how) {
   const n = pairs.length;
-  if (n < 3) throw new Error(`correlate: only ${n} rows have both "${xc}" and "${yc}" as numbers; at least 3 are needed`);
-  const how = lower(method) === 'spearman' ? 'spearman' : 'pearson';
+  if (n < 3) return { n, r: null, p_value: null, note: 'fewer than 3 rows with both values' };
   let xs = pairs.map(q => q[0]), ys = pairs.map(q => q[1]);
   if (how === 'spearman') { xs = ranks(xs); ys = ranks(ys); }
   const mx = xs.reduce((a, v) => a + v, 0) / n, my = ys.reduce((a, v) => a + v, 0) / n;
   let sxy = 0, sxx = 0, syy = 0;
   for (let i = 0; i < n; i++) { const dx = xs[i] - mx, dy = ys[i] - my; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
-  if (sxx === 0 || syy === 0) return [{ x: xc, y: yc, method: how, n, r: null, p_value: null, note: 'a column has no variation' }];
+  if (sxx === 0 || syy === 0) return { n, r: null, p_value: null, note: 'a column has no variation' };
   const r = sxy / Math.sqrt(sxx * syy);
   const p = Math.abs(r) >= 1 ? 0 : tTestP(r * Math.sqrt((n - 2) / (1 - r * r)), n - 2);
-  return [{ x: xc, y: yc, method: how, n, r: round(r, 4), p_value: sig(p) }];
+  return { n, r: round(r, 4), p_value: sig(p) };
+}
+
+// One correlation for the table, or one per group (a gene's RNA against its protein across
+// tissues, say) when group_by names a column.
+function correlate(rows, { x, y, method = 'pearson', group_by } = {}) {
+  const xc = findColumn(rows, x), yc = findColumn(rows, y);
+  if (!xc || !yc) throw new Error(`correlate: needs two numeric columns (asked for ${x || '?'}, ${y || '?'}); columns: ${columnsOf(rows).slice(0, 30).join(', ')}`);
+  const groupCol = group_by ? findColumn(rows, group_by) : null;
+  if (group_by && !groupCol) throw new Error(`correlate: no column named "${group_by}" (columns: ${columnsOf(rows).slice(0, 30).join(', ')})`);
+  const how = lower(method) === 'spearman' ? 'spearman' : 'pearson';
+  const groups = new Map();
+  for (const r of rows) { const g = groupCol ? String(r[groupCol] ?? '') : 'all'; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(r); }
+  const out = [];
+  for (const [g, rs] of groups) {
+    const pairs = rs.map(r => [num(r[xc]), num(r[yc])]).filter(([a, b]) => a !== null && b !== null);
+    const stat = correlatePairs(pairs, how);
+    if (!groupCol && stat.n < 3) throw new Error(`correlate: only ${stat.n} rows have both "${xc}" and "${yc}" as numbers; at least 3 are needed`);
+    out.push({ ...(groupCol ? { [groupCol]: g } : {}), x: xc, y: yc, method: how, ...stat });
+  }
+  return out;
 }
 
 // How many genes two tables share against a universe, with the hypergeometric (one-sided,
 // over-representation) p. Genes are identified through the universe, so a table keyed by name
 // meets one keyed by ensembl id.
-function overlap(a, b, universe) {
-  requireKeys(a, null, 'overlap'); requireKeys(b, null, 'overlap'); requireKeys(universe, null, 'overlap');
-  const canon = new Map();
-  for (const r of universe) { const ks = keysOf(r); for (const k of ks) if (!canon.has(k)) canon.set(k, ks[0]); }
-  const ids = rows => { const s = new Set(); for (const r of rows) { for (const k of keysOf(r)) { const c = canon.get(k); if (c) { s.add(c); break; } } } return s; };
-  const A = ids(a), B = ids(b);
-  const N = new Set(canon.values()).size;
+function overlapStats(A, B, N) {
   let shared = 0;
   for (const k of A) if (B.has(k)) shared++;
   const expected = N ? A.size * B.size / N : null;
   const rest = N - A.size - B.size + shared;
   const odds = (A.size - shared) > 0 && (B.size - shared) > 0 && rest > 0 ? (shared * rest) / ((A.size - shared) * (B.size - shared)) : null;
-  return [{ a: A.size, b: B.size, shared, universe: N, expected: round(expected, 2), fold: expected ? round(shared / expected, 3) : null, odds_ratio: round(odds, 3), p_value: sig(N ? hypergeomUpper(shared, A.size, B.size, N) : null), test: 'hypergeometric, one-sided (over-representation)' }];
+  return { a: A.size, b: B.size, shared, universe: N, expected: round(expected, 2), fold: expected ? round(shared / expected, 3) : null, odds_ratio: round(odds, 3), p_value: sig(N ? hypergeomUpper(shared, A.size, B.size, N) : null), test: 'hypergeometric, one-sided (over-representation)' };
+}
+
+// group_by tests each group of a (every cancer, every tissue) against b in one call.
+function overlap(a, b, universe, on = null, group_by = null) {
+  const onA = on ? (findColumn(a, on) || on) : null, onB = on ? (findColumn(b, on) || on) : null, onU = on ? (findColumn(universe, on) || on) : null;
+  requireKeys(a, onA, 'overlap'); requireKeys(b, onB, 'overlap'); requireKeys(universe, onU, 'overlap');
+  const groupCol = group_by ? findColumn(a, group_by) : null;
+  if (group_by && !groupCol) throw new Error(`overlap: no column named "${group_by}" in a (columns: ${columnsOf(a).slice(0, 30).join(', ')})`);
+  const canon = new Map();
+  for (const r of universe) { const ks = keysOf(r, onU); for (const k of ks) if (!canon.has(k)) canon.set(k, ks[0]); }
+  const ids = (rows, col) => { const s = new Set(); for (const r of rows) { for (const k of keysOf(r, col)) { const c = canon.get(k); if (c) { s.add(c); break; } } } return s; };
+  const B = ids(b, onB);
+  const N = new Set(canon.values()).size;
+  if (!groupCol) return [overlapStats(ids(a, onA), B, N)];
+  const groups = new Map();
+  for (const r of a) { const g = String(r[groupCol] ?? ''); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(r); }
+  return [...groups].map(([g, rows]) => ({ [groupCol]: g, ...overlapStats(ids(rows, onA), B, N) }));
 }
 
 function standardize(rows, { column, method = 'zscore', as } = {}) {

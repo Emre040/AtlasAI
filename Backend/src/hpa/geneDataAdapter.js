@@ -51,10 +51,11 @@ async function catalog() {
     const file = dataset.localPath;
     const base = { file, title: dataset.datasetName || file, description: dataset.description || '', bytes: dataset.unpackedBytes || 0 };
     if (!file.endsWith('.tsv')) { entries.push({ ...base, columns: [], key: 'unreadable', why: 'not a table' }); continue; }
-    if (base.bytes > MAX_FILE_BYTES) { entries.push({ ...base, columns: [], key: 'unreadable', why: `${Math.round(base.bytes / 1e9)} GB, sample-level export` }); continue; }
     let head;
     try { head = await peek(localData.filePath(file)); } catch { continue; }
     const columns = head.header;
+    // Too large to index per gene; it still streams through filter, aggregate and top_per_group.
+    if (base.bytes > MAX_FILE_BYTES) { entries.push({ ...base, columns, key: 'stream', why: `${Math.round(base.bytes / 1e9)} GB sample-level export; no per-gene reads` }); continue; }
     if (file === FILES.master) { entries.push({ ...base, columns, key: 'master' }); continue; }
     const geneColumn = head.first.findIndex(v => HUMAN_GENE_ID.test(v || ''));
     const nameKeyed = /^gene$/i.test(columns[0] || '') && geneColumn === 1;
@@ -62,9 +63,9 @@ async function catalog() {
     else if (nameKeyed) entries.push({ ...base, columns, key: 'name' });
     else if (geneColumn > 0 && base.bytes <= MAX_SCAN_BYTES) entries.push({ ...base, columns, key: 'scan', geneColumn: columns[geneColumn] });
     else if (geneColumn < 0 && !GENE_ID.test(head.first[0] || '') && base.bytes <= MAX_LOOKUP_BYTES && !/^ens/i.test(columns[0] || '')) entries.push({ ...base, columns, key: 'lookup' });
-    else entries.push({ ...base, columns, key: 'unreadable', why: geneColumn < 0 ? 'rows are not keyed by a human gene' : 'too large to scan for one gene' });
+    else entries.push({ ...base, columns, key: 'stream', why: geneColumn < 0 ? 'not keyed by a gene; no per-gene reads' : 'too large to scan for one gene; no per-gene reads' });
   }
-  const rank = { master: 0, ensembl: 1, name: 1, scan: 1, lookup: 2, unreadable: 3 };
+  const rank = { master: 0, ensembl: 1, name: 1, scan: 1, lookup: 2, stream: 3, unreadable: 4 };
   entries.sort((a, b) => rank[a.key] - rank[b.key] || a.file.localeCompare(b.file));
   cached = { at: Date.now(), entries };
   return entries;
@@ -110,6 +111,7 @@ async function read(gene, file) {
   const e = await entry(file);
   if (!e) throw new Error(`no table named "${file}" in the release`);
   if (e.key === 'unreadable') throw new Error(`"${e.file}" is in the release but not readable here: ${e.why}`);
+  if (e.key === 'stream') throw new Error(`"${e.file}" has no per-gene reads (${e.why}); filter, aggregate or top_per_group stream it whole`);
   if (e.key === 'master') {
     const master = await localData.master();
     const row = master.byEnsembl.get(gene.ensembl);

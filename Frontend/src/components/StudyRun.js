@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCheck, faExternalLinkAlt, faSpinner, faTimes, faMinus } from '@fortawesome/free-solid-svg-icons';
 import AsoChart from './AsoChart';
@@ -283,6 +284,7 @@ export default function StudyRun({ events, apiBaseUrl, workspaceUuid, isComplete
   const layout = useMemo(() => layoutIslands(state.nodes), [state.nodes]);
   const [selected, setSelected] = useState(null);
   const [hovered, setHovered] = useState(null);
+  const [planOpen, setPlanOpen] = useState(true);
   const ws = workspaceUuid || state.workspaceUuid;
 
   const counts = { done: 0, failed: 0, running: 0 };
@@ -358,17 +360,19 @@ export default function StudyRun({ events, apiBaseUrl, workspaceUuid, isComplete
           )}
         </div>
 
-        <div className="HPAG-todo">
-          <div className="HPAG-todo-head">Plan{state.nodes.length ? ` · ${counts.done}/${state.nodes.length}` : ''}</div>
-          {state.understanding && <div className="HPAG-todo-understanding">{state.understanding}</div>}
-          {state.nodes.length === 0 && <div className="HPAG-todo-empty">{state.phase === 'planning' ? 'Planning…' : 'No plan yet.'}</div>}
-          <ol className="HPAG-todo-list">
+        <div className={`HPAG-todo ${planOpen ? '' : 'HPAG-todo-collapsed'}`}>
+          <button type="button" className="HPAG-todo-head" onClick={() => setPlanOpen(o => !o)} aria-expanded={planOpen}>
+            Plan{state.nodes.length ? ` · ${counts.done}/${state.nodes.length}` : ''}<span className="HPAG-todo-toggle">{planOpen ? '−' : '+'}</span>
+          </button>
+          {planOpen && state.understanding && <div className="HPAG-todo-understanding">{state.understanding}</div>}
+          {planOpen && state.nodes.length === 0 && <div className="HPAG-todo-empty">{state.phase === 'planning' ? 'Planning…' : 'No plan yet.'}</div>}
+          {planOpen && <ol className="HPAG-todo-list">
             {state.nodes.map((n, i) => {
               const review = n.round ? reviewFor(n.round) : null;
-              const firstOfRound = n.round && (i === 0 || state.nodes[i - 1].round !== n.round);
+              const firstOfRound = Boolean(n.round) && (i === 0 || state.nodes[i - 1].round !== n.round);
               return (
                 <React.Fragment key={n.id}>
-                  {firstOfRound && review && <li className="HPAG-todo-review"><b>Review {n.round}</b> {truncate(review.assessment, 220)}</li>}
+                  {firstOfRound && review ? <li className="HPAG-todo-review"><b>Review {n.round}</b> {truncate(review.assessment, 220)}</li> : null}
                   <li className={`HPAG-todo-item HPAG-todo-item-${n.status} ${selected === n.id ? 'HPAG-todo-item-selected' : ''}`} onClick={() => setSelected(selected === n.id ? null : n.id)}>
                     <TodoIcon status={n.status} />
                     <span className="HPAG-todo-id">{n.id}</span>
@@ -380,8 +384,8 @@ export default function StudyRun({ events, apiBaseUrl, workspaceUuid, isComplete
             })}
             {state.reflections.filter(r => r.done && !r.added.length).map(r => <li key={`r${r.round}`} className="HPAG-todo-review"><b>Review {r.round}</b> {truncate(r.assessment, 220)}</li>)}
             {state.cannot.map((c, i) => <li key={`c${i}`} className="HPAG-todo-item HPAG-todo-item-cannot"><FontAwesomeIcon icon={faMinus} className="HPAG-todo-icon HPAG-todo-icon-blocked" /><span className="HPAG-todo-text">{c.requirement}</span><span className="HPAG-todo-kind">not expressible</span></li>)}
-          </ol>
-          {state.planErrors.length > 0 && <div className="HPAG-todo-note">The first plan was corrected: {state.planErrors.slice(0, 2).join('; ')}</div>}
+          </ol>}
+          {planOpen && state.planErrors.length > 0 && <div className="HPAG-todo-note">The first plan was corrected: {state.planErrors.slice(0, 2).join('; ')}</div>}
         </div>
       </div>
 
@@ -390,7 +394,7 @@ export default function StudyRun({ events, apiBaseUrl, workspaceUuid, isComplete
       {state.report && (
         <div className="HPAG-study-report">
           <div className="HPAG-study-report-title">{state.report.title}</div>
-          <ReactMarkdown>{reportBody(state.report.md)}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{reportBody(state.report.md)}</ReactMarkdown>
         </div>
       )}
     </div>

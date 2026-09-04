@@ -96,7 +96,7 @@ function describeArgs(args) {
 // An artifact as it sits on the desk: what it is and where it came from. Its columns appear
 // once the model has opened it; rows are shown only in the turn it read them.
 function artifactLine(a) {
-  const lines = [`${a.id}  ${a.kind.padEnd(7)} "${a.label}"  ${a.size}  from turn ${a.turn}: ${a.tool}(${describeArgs(a.args).slice(0, 110)})${a.inputs.length ? `  reads ${a.inputs.join(', ')}` : ''}`];
+  const lines = [`${a.id}  ${a.kind.padEnd(7)} "${a.label}"  ${a.size}  from turn ${a.turn}: ${a.tool}(${describeArgs(a.args).slice(0, 60)})`];
   if (a.meta?.query) lines.push(`    ${a.meta.query}`);
   if (a.meta?.not_expressible?.length) lines.push(`    not expressible: ${a.meta.not_expressible.join('; ')}`);
   if (a.opened && a.columns?.length) lines.push(`    columns ${a.columns.slice(0, 12).join(', ')}${a.columns.length > 12 ? ` … ${a.columns.length} in all (open it to see them)` : ''}`);
@@ -114,7 +114,7 @@ function renderContext(state, turn, startedAt) {
     : '(nothing)';
   const recent = state.recent.length ? state.recent.map(r => `- ${r}`).join('\n') : '(nothing new)';
   const notes = state.notes.length ? state.notes.map(n => `- ${n}`).join('\n') : '(none)';
-  const tables = state.tableList ? `DATASETS ON DISK\n${state.tableList.join('\n')}` : null;
+  const tables = state.tableList ? `DATASETS ON DISK  (open one to see what it holds)\n${state.tableList.join('  ')}` : null;
   const history = state.history.length ? state.history.map(h => `turn ${h.turn}: ${h.items.join('; ')}`).join('\n') : '(nothing yet)';
   return `GOAL
 ${state.goal}
@@ -375,7 +375,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
         if (call.name === 'note') { state.notes.push(String(call.args.text || '')); remember('wrote a note'); await log('note', { text: String(call.args.text || '') }); continue; }
         if (call.name === 'datasets') {
           const entries = (await geneData.catalog()).filter(e => e.key !== 'unreadable');
-          state.tableList = entries.map(e => `${e.file} — ${e.title}`);
+          state.tableList = entries.map(e => e.file);
           state.recent.push(`${entries.length} datasets are now listed under DATASETS ON DISK for every later turn`);
           remember('listed the datasets'); sync++; continue;
         }

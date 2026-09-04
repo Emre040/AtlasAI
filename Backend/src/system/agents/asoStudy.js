@@ -299,7 +299,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
         case 'union': case 'intersect': case 'difference': case 'concat': out = { rows: tools.setOp(tool, rowsOf('a'), rowsOf('b'), args.on || null) }; break;
         case 'join': out = { rows: tools.join(rowsOf('a'), rowsOf('b'), args.how, args.on || null) }; break;
         case 'filter': out = { rows: tools.applyWhere(rowsOf('artifact'), args.where) }; break;
-        case 'select': out = { rows: tools.select(rowsOf('artifact'), args.columns, args.rename || {}, args.add || {}) }; break;
+        case 'select': { const obj = v => (typeof v === 'string' ? (JSON.parse(v || '{}') || {}) : (v || {})); out = { rows: tools.select(rowsOf('artifact'), args.columns, obj(args.rename), obj(args.add)) }; break; }
         case 'rank': out = { rows: tools.rank(rowsOf('artifact'), args.by, args.order, Number(args.top) || 0) }; break;
         case 'top_per_group': out = { rows: tools.topPerGroup(rowsOf('artifact'), args) }; break;
         case 'aggregate': out = { rows: tools.aggregate(rowsOf('artifact'), args) }; break;
@@ -344,7 +344,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns }, ctx = {}) {
       const lastTurn = turn >= maxTurns;
       if (lastTurn) state.recent.push('This is your last turn: call finish now with the summary of what the artifacts show and what is missing.');
       const offered = lastTurn ? toolSpecs.filter(t => t.function.name === 'finish') : state.plan.length ? toolSpecs : toolSpecs.filter(t => t.function.name === 'set_plan');
-      const res = await inference.chat.completions.create({ messages: [{ role: 'system', content: system }, { role: 'user', content: context }], tools: offered, temperature: 0 });
+      const res = await inference.chat.completions.create({ messages: [{ role: 'system', content: system }, { role: 'user', content: context }], tools: offered, temperature: 0, prompt_cache: { key: `study ${workspace.uuid}` } });
       addUsage(res.usage);
       const message = res.choices?.[0]?.message || {};
       const calls = (message.tool_calls || []).map(c => { let args = {}; try { args = JSON.parse(c.function?.arguments || '{}'); } catch { args = {}; } return { name: c.function?.name, args }; });

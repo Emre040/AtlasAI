@@ -1,10 +1,12 @@
 'use strict';
 
 const { AnthropicMessagesAdapter } = require('./anthropicMessages');
+const { GeminiGenerateContentAdapter } = require('./geminiGenerateContent');
 const { OpenAIChatCompletionsAdapter } = require('./openaiChatCompletions');
 
 const ADAPTERS = Object.freeze({
   anthropic_messages: AnthropicMessagesAdapter,
+  gemini_generate_content: GeminiGenerateContentAdapter,
   openai_chat_completions: OpenAIChatCompletionsAdapter
 });
 

@@ -68,8 +68,8 @@ const STUDY_TOOLS = [
 ];
 const STUDY_TOOL_NAMES = new Set(STUDY_TOOLS.map(t => t.name));
 const TABLE_TOOLS = new Set(['measure', 'union', 'intersect', 'difference', 'concat', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'compute', 'pivot', 'chart', 'correlate', 'overlap', 'standardize', 'explode']);
-const FOR_EACH = { type: 'object', description: 'run the operation once per value ("$item" in any argument stands for the value): values, or the distinct values of column in the artifact or dataset of; the results are one table with an item column (as names it)', properties: { values: { type: 'array', items: S }, column: S, of: A, as: S } };
-const NODE = { type: 'integer', description: 'the plan item this call carries out; it is marked done when the result lands' };
+const FOR_EACH = { type: 'object', description: 'once per value; $item stands for it', properties: { values: { type: 'array', items: S }, column: S, of: S, as: S } };
+const NODE = { type: 'integer', description: 'plan item carried out' };
 const MAX_FOR_EACH = 1000;
 const LOOK_TOOLS = new Set(['open', 'describe', 'datasets']);
 const REPLAN_AFTER = 3;           // look-only turns in a row before a turn must run a step or change the plan
@@ -80,11 +80,11 @@ function systemPrompt() {
   return `You run a study over a database for a researcher, the way a careful person would at a desk. You work in turns. Each turn you see the goal, your plan, the artifacts on your desk and where each came from, what is still running, and what came back since your last turn. You act by calling tools; you never state a value, gene or count yourself: a tool produces it and it becomes an artifact.
 
 How the turns work:
-- Your first turn does one thing: call set_plan, alone. A plan is the next few steps, each saying what it finds out, the tool or agent it uses, on what, and what it produces; not the whole study, and not fifty steps. Add, rewrite or drop steps as you learn; set_plan rewrites it whole. Nothing else runs in that turn. From the second turn on, work: the NEXT STEP at the bottom of the desk is the first step not done; run it, tagging the call with node=its number so it is ticked off when its artifact lands, or change the plan. Mark items done when an artifact shows they are, drop items that turn out wrong.
+- Your first turn does one thing: call set_plan, alone. A plan is the next few steps, each saying what it finds out, the tool or agent it uses, on what, and what it produces; not the whole study, and not fifty steps. Add, rewrite or drop steps as you learn; set_plan rewrites it whole. Nothing else runs in that turn. From the second turn on, work: the NEXT STEP at the bottom of the desk is the first step not done; run it, tagging the call with node=its number so it is ticked off by itself when its artifact lands (no update_plan needed for it), or change the plan. Use update_plan only to drop a step, to mark a step done that no artifact shows, or to add or rewrite a step. A step that is the finish itself needs no ticking: finish does it.
 - Call as many tools in one turn as can run independently; they run in parallel. Agents (deep_research_hpa, investigator_hpa, check_inclusion_hpa, dictionary_expert_hpa) run in the background and you are woken when each returns. Everything else returns at once.
 - When nothing useful can be done until something running returns, call skip with the reason. Do not repeat a tool that is still running.
 - You know nothing about the data until you look. The names of every dataset on disk are on the desk; datasets about=word shows the columns of the files matching a word. describe is the first look at a table: per column its kind, blank share, distinct count, example values, range and the grammar of list cells; a dataset's card stays on the desk. open shows rows when you need to see them, in that turn only. NOTES is what stays otherwise: write down what you will need again. A result you make shows its new columns first, with two rows, as it lands; a small result stays on the desk whole. Name only columns you have seen.
-- When the same step repeats over many groups (every cancer, every tissue): aggregate, correlate, overlap and top_per_group take group_by and do every group in one call; for_each runs any table operation once per value, or per distinct value of a column, and gives one table with an item column; explode turns list cells ("liver: 12.0; kidney: 3.1") into rows. One call, not one call per group per turn.
+- When the same step repeats over many groups (every cancer, every tissue): aggregate, correlate, overlap and top_per_group take group_by and do every group in one call; for_each runs any table operation once per value (values, or the distinct values of column in the artifact or dataset of), "$item" in any argument standing for the value, and gives one table with an item column (as names it); explode turns list cells ("liver: 12.0; kidney: 3.1") into rows. One call, not one call per group per turn.
 - A dataset name works wherever a tool takes an artifact id: filter proteinatlas.tsv directly; join, intersect or difference an artifact with a per-gene dataset to get that dataset's rows for those genes; filter, aggregate and top_per_group stream a whole dataset however large, so a study can start from every gene; the largest files (marked large) have no per-gene reads and only those three tools take them.
 - deep_research_hpa finds gene sets from a description and builds the database query itself; it knows the search fields and tells you when something cannot be expressed. investigator_hpa answers one question about one gene and cites the row it rests on; when the value sits in a table column you can name, measure is exact and free, so prefer it.
 - Refer to artifacts by their id. measure adds a column to the rows it is given, so measuring pancreas then liver on the same artifact leaves both columns in the result; name each with "as".
@@ -678,7 +678,8 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         if (call.name === 'finish') {
           const summary = String(call.args.summary || '');
           const missing = unverifiedNumbers(summary, state);
-          const undone = state.plan.map((p, i) => ({ ...p, n: i + 1 })).filter(p => p.status !== 'done' && p.status !== 'dropped');
+          const isFinishStep = p => /^(finish|summari[sz]e|report|write[- ]?up)/i.test(String(p.op || '')) || /^(finish|summari[sz]e|report|write[- ]?up)\b/i.test(String(p.text || ''));
+          const undone = state.plan.map((p, i) => ({ ...p, n: i + 1 })).filter(p => p.status !== 'done' && p.status !== 'dropped' && !isFinishStep(p));
           if (undone.length && finishRefusals < MAX_FINISH_REFUSALS) {
             finishRefusals++;
             state.recent.push(`finish refused: the plan says ${undone.map(p => `item ${p.n}`).join(', ')} ${undone.length === 1 ? 'is' : 'are'} not done. A report can only state what was done. Do the work, mark an item dropped with a note saying why, or mark it done only if an artifact shows it is; then finish again.`);
@@ -702,6 +703,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
             sync++;
             continue;
           }
+          for (const p of state.plan) if (isFinishStep(p) && p.status !== 'done' && p.status !== 'dropped') { p.status = 'done'; p.note = 'finished'; }
           finishSummary = undone.length ? `Not done according to the plan: ${undone.map(p => `${p.n}. ${p.text}`).join('; ')}.\n\n${summary}` : summary;
           unverified = missing;
           break;

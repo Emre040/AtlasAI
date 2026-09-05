@@ -39,11 +39,13 @@ const N = { type: 'integer' };
 const tool = (name, description, properties = {}, required = []) => ({ name, description, parameters: { type: 'object', properties, required } });
 // One line each: the rules in the prompt do the teaching.
 const STUDY_TOOLS = [
-  tool('set_plan', 'Write or rewrite the plan: a few high-level items.', { items: { type: 'array', items: S } }, ['items']),
-  tool('update_plan', 'Mark a plan item (1-based) todo, doing, done or dropped.', { item: N, status: { type: 'string', enum: ['todo', 'doing', 'done', 'dropped'] }, note: S }, ['item', 'status']),
+  tool('set_plan', 'Write or rewrite the plan: the next few steps, each with what it finds out (step), the tool or agent it uses (op), on what (inputs) and what it produces.', { items: { type: 'array', items: { type: 'object', properties: { step: S, op: S, inputs: S, produces: S }, required: ['step'] } } }, ['items']),
+  tool('update_plan', 'Change a plan item (1-based): its status (todo, doing, done, dropped) and note, or its step, op, inputs, produces; an item number past the end appends a step.', { item: N, status: { type: 'string', enum: ['todo', 'doing', 'done', 'dropped'] }, note: S, step: S, op: S, inputs: S, produces: S }, ['item']),
   tool('note', 'Write a note to yourself. NOTES stays on the desk every turn, what you open does not: mappings, names, values, which columns hold what. replace overwrites note N; empty text with replace removes it.', { text: S, replace: N }, ['text']),
   tool('datasets', 'With about, show the files whose name or columns contain that word, with their columns (this turn). The names of all datasets are on the desk already.', { about: S }),
-  tool('open', 'Show a dataset (by name) or an artifact (by id) this turn: every column name and some rows; rows and columns choose how much. Write what you will need again in a note.', { what: S, rows: N, columns: { type: 'array', items: S } }, ['what']),
+  tool('describe', 'The first look at a dataset (by name) or an artifact (by id): per column its kind, blank share, distinct count, example values, range and the grammar of list cells; columns narrows it. A dataset card stays on the desk.', { what: S, columns: { type: 'array', items: S } }, ['what']),
+  tool('open', 'Show rows of a dataset (by name) or an artifact (by id) this turn: rows and columns choose how much. Write what you will need again in a note.', { what: S, rows: N, columns: { type: 'array', items: S } }, ['what']),
+  tool('explode', 'One row per item of a list cell: "key: number" items give <as>_key and <as>_value columns, "label (number)" gives <as>_label and <as>_value, plain items <as>_item.', { artifact: A, column: S, as: S }, ['artifact', 'column']),
   tool('measure', 'Add a dataset value to every row of an artifact (the rows keep their columns; the new column comes first); with entity one row per gene, without one row per gene and entity, the entity column keeping its dataset name; "as" names the new column.', { artifact: A, table: { type: 'string', description: 'dataset name' }, value_column: S, entity_column: S, entity: S, as: S }, ['artifact', 'table', 'value_column']),
   tool('union', 'Genes in either artifact.', { a: A, b: A }, ['a', 'b']),
   tool('intersect', 'Rows of a whose gene is in b.', { a: A, b: A }, ['a', 'b']),
@@ -65,23 +67,30 @@ const STUDY_TOOLS = [
   tool('finish', 'The goal is met or cannot be met further; summary cites artifact ids.', { summary: S }, ['summary'])
 ];
 const STUDY_TOOL_NAMES = new Set(STUDY_TOOLS.map(t => t.name));
-const TABLE_TOOLS = new Set(['measure', 'union', 'intersect', 'difference', 'concat', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'compute', 'pivot', 'chart', 'correlate', 'overlap', 'standardize']);
+const TABLE_TOOLS = new Set(['measure', 'union', 'intersect', 'difference', 'concat', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'compute', 'pivot', 'chart', 'correlate', 'overlap', 'standardize', 'explode']);
+const FOR_EACH = { type: 'object', description: 'run the operation once per value ("$item" in any argument stands for the value): values, or the distinct values of column in the artifact or dataset of; the results are one table with an item column (as names it)', properties: { values: { type: 'array', items: S }, column: S, of: A, as: S } };
+const NODE = { type: 'integer', description: 'the plan item this call carries out; it is marked done when the result lands' };
+const MAX_FOR_EACH = 1000;
+const LOOK_TOOLS = new Set(['open', 'describe', 'datasets']);
+const REPLAN_AFTER = 3;           // look-only turns in a row before a turn must run a step or change the plan
+const PROFILE_MAX_ROWS = 200000;  // rows a describe scans in one file
+const profileCache = new Map();   // file|columns → card, for this process
 
 function systemPrompt() {
   return `You run a study over a database for a researcher, the way a careful person would at a desk. You work in turns. Each turn you see the goal, your plan, the artifacts on your desk and where each came from, what is still running, and what came back since your last turn. You act by calling tools; you never state a value, gene or count yourself: a tool produces it and it becomes an artifact.
 
 How the turns work:
-- Your first turn does one thing: call set_plan, alone, with a few high-level items (what to find out, not which operation). Nothing else runs in that turn; agents and tools come in the turns after, once the plan exists. Do not write the plan again unless the study changes direction; from the second turn on, work. Keep the plan honest: mark items done when an artifact shows they are, drop items that turn out wrong, rewrite the plan when the study changes direction.
+- Your first turn does one thing: call set_plan, alone. A plan is the next few steps, each saying what it finds out, the tool or agent it uses, on what, and what it produces; not the whole study, and not fifty steps. Add, rewrite or drop steps as you learn; set_plan rewrites it whole. Nothing else runs in that turn. From the second turn on, work: the NEXT STEP at the bottom of the desk is the first step not done; run it, tagging the call with node=its number so it is ticked off when its artifact lands, or change the plan. Mark items done when an artifact shows they are, drop items that turn out wrong.
 - Call as many tools in one turn as can run independently; they run in parallel. Agents (deep_research_hpa, investigator_hpa, check_inclusion_hpa, dictionary_expert_hpa) run in the background and you are woken when each returns. Everything else returns at once.
 - When nothing useful can be done until something running returns, call skip with the reason. Do not repeat a tool that is still running.
-- You know nothing about the data until you look. The names of every dataset on disk are on the desk; datasets about=word shows the columns of the files matching a word; open shows a dataset or an artifact with every column name and some rows (rows and columns choose how much). What you open is shown in that turn only; the desk keeps one column line per dataset you looked at, and nothing else. NOTES is what stays. The moment you read something you will need again, a mapping, a list of names, which columns hold what, a value, write it in a note in the same turn; do not open the same thing again later. A result you make shows its new columns first, with two rows, as it lands. Name only columns you have seen.
-- When the same step repeats over many groups (every cancer, every tissue), aggregate, correlate, overlap and top_per_group take group_by and do every group in one call; otherwise make all the calls in one turn.
+- You know nothing about the data until you look. The names of every dataset on disk are on the desk; datasets about=word shows the columns of the files matching a word. describe is the first look at a table: per column its kind, blank share, distinct count, example values, range and the grammar of list cells; a dataset's card stays on the desk. open shows rows when you need to see them, in that turn only. NOTES is what stays otherwise: write down what you will need again. A result you make shows its new columns first, with two rows, as it lands; a small result stays on the desk whole. Name only columns you have seen.
+- When the same step repeats over many groups (every cancer, every tissue): aggregate, correlate, overlap and top_per_group take group_by and do every group in one call; for_each runs any table operation once per value, or per distinct value of a column, and gives one table with an item column; explode turns list cells ("liver: 12.0; kidney: 3.1") into rows. One call, not one call per group per turn.
 - A dataset name works wherever a tool takes an artifact id: filter proteinatlas.tsv directly; join, intersect or difference an artifact with a per-gene dataset to get that dataset's rows for those genes; filter, aggregate and top_per_group stream a whole dataset however large, so a study can start from every gene; the largest files (marked large) have no per-gene reads and only those three tools take them.
 - deep_research_hpa finds gene sets from a description and builds the database query itself; it knows the search fields and tells you when something cannot be expressed. investigator_hpa answers one question about one gene and cites the row it rests on; when the value sits in a table column you can name, measure is exact and free, so prefer it.
 - Refer to artifacts by their id. measure adds a column to the rows it is given, so measuring pancreas then liver on the same artifact leaves both columns in the result; name each with "as".
 - Do the bookkeeping in the same turn as the work: update_plan alongside the tools that complete the item, and finish in the same turn as the last piece of work. A turn spent only on update_plan is a turn wasted.
 - A tool that fails tells you why under SINCE YOUR LAST TURN; fix the call rather than repeating it. Table tools are exact: if a value looks wrong, the arguments were wrong (the entity, the column, the table), not the data.
-- Call finish when the goal is met, with a summary that states every number beside the id of the artifact it comes from; each number is checked against that artifact. Also finish, saying what is missing, when the database cannot express what is left.`;
+- Call finish when the plan is done, with a summary that states every number in the same sentence as the id of the artifact it comes from; each number is checked against that artifact, and a report may only state what the plan shows was done. When something cannot be done, mark the item dropped with the reason, then finish saying what is missing.`;
 }
 
 // ---- context rendering -----------------------------------------------------------------------------
@@ -193,19 +202,29 @@ function artifactLine(a) {
   if (a.meta?.query) lines.push(`    ${a.meta.query}`);
   if (a.meta?.not_expressible?.length) lines.push(`    not expressible: ${a.meta.not_expressible.join('; ')}`);
   if (a.opened && a.columns?.length) lines.push(`    columns ${columnList(a.columns)}`);
+  // A small result is its own card: a handful of rows and columns stay on the desk whole.
+  if (a.rows && a.rows.length && a.rows.length <= 40 && a.columns.length <= 3) lines.push(`    ${a.columns.join(' | ')}`, ...a.rows.map(r => `    ${a.columns.map(c => cell(r[c])).join(' | ')}`));
   if (a.text) lines.push(`    ${cell(a.text).slice(0, 300)}`);
   return lines.join('\n');
 }
 
+function planLine(p) {
+  return `${p.text}${p.op ? `  — ${p.op}${p.inputs ? `(${p.inputs})` : ''}` : ''}${p.produces ? ` → ${p.produces}` : ''}${p.note ? `  (${p.note})` : ''}`;
+}
+
 function renderContext(state, turn, startedAt) {
   const plan = state.plan.length
-    ? state.plan.map((p, i) => `${i + 1}. [${p.status === 'done' ? 'done' : p.status === 'doing' ? 'doing' : p.status === 'dropped' ? 'dropped' : ' '}]  ${p.text}${p.note ? `  (${p.note})` : ''}`).join('\n')
+    ? state.plan.map((p, i) => `${i + 1}. [${p.status === 'done' ? 'done' : p.status === 'doing' ? 'doing' : p.status === 'dropped' ? 'dropped' : ' '}]  ${planLine(p)}`).join('\n')
     : 'No plan yet. The workspace is empty. Start by writing one with set_plan.';
   const artifacts = state.artifacts.length ? state.artifacts.map(artifactLine).join('\n') : '(none)';
   const running = state.running.size
     ? [...state.running.values()].map(j => `${j.id}  ${j.tool}(${describeArgs(j.args)})  ${Math.round((Date.now() - j.startedAt) / 1000)} s`).join('\n')
     : '(nothing)';
   const recent = state.recent.length ? state.recent.map(r => `- ${r}`).join('\n') : '(nothing new)';
+  const clip = (items, max) => { const text = items.map(r => `- ${r}`).join('\n'); return text.length > max ? `${text.slice(0, max)}\n  …` : text; };
+  const earlier = (state.recentPast || []).map((items, i) => (items.length ? `${i === 0 ? 'TWO' : 'THREE'} TURNS AGO\n${clip(items, 2500)}` : null)).filter(Boolean).join('\n\n');
+  const next = state.plan.find(p => p.status !== 'done' && p.status !== 'dropped');
+  const nextStep = next ? `NEXT STEP  (the first step not done: run it, tagging the call with node=${state.plan.indexOf(next) + 1}, or change the plan)\n${state.plan.indexOf(next) + 1}. ${planLine(next)}` : (state.plan.length ? 'NEXT STEP\nEvery step is done or dropped: finish, or add steps.' : '');
   const notes = state.notes.length ? state.notes.map(n => `- ${n}`).join('\n') : '(none)';
   const seen = state.tablesSeen.size ? `\nDATASETS YOU HAVE LOOKED AT  (first columns; open one to see all of them, or rows)\n${[...state.tablesSeen.values()].join('\n')}` : '';
   const tables = state.tableNames ? `DATASETS ON DISK  (open one to see its columns and rows; datasets about=word shows columns of the files matching a word)\n${state.tableNames.join('  ')}${seen}` : (seen.trim() || null);
@@ -227,10 +246,10 @@ ${history}
 
 SINCE YOUR LAST TURN
 ${recent}
-${tables ? `\n${tables}\n` : ''}
+${earlier ? `\n${earlier}\n` : ''}${tables ? `\n${tables}\n` : ''}
 NOTES
 ${notes}
-
+${nextStep ? `\n${nextStep}\n` : ''}
 turn ${turn} · ${Math.round((Date.now() - startedAt) / 1000)} s elapsed · ${state.toolCalls} tools called · ${state.failed} failed`;
 }
 
@@ -295,15 +314,42 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
   let registrations = Promise.resolve();
   const register = args => { const next = registrations.then(() => registerArtifact(db, args)); registrations = next.catch(() => {}); return next; };
 
-  const state = { goal, plan: [], artifacts: [], byId: new Map(), running: new Map(), recent: [], notes: [], tablesSeen: new Map(), tableNames: null, history: [], turn: 0, toolCalls: 0, failed: 0, ids: { a: 0, t: 0 } };
-  const remember = (text) => { const entry = state.history[state.history.length - 1]; if (entry && entry.turn === state.turn) entry.items.push(text); else state.history.push({ turn: state.turn, items: [text] }); };
+  const state = { goal, plan: [], artifacts: [], byId: new Map(), running: new Map(), recent: [], notes: [], tablesSeen: new Map(), tableNames: null, recentPast: [], history: [], turn: 0, toolCalls: 0, failed: 0, ids: { a: 0, t: 0 } };
+  // History collapses a repeated action within a turn ("opened a3 ×4"), so a repeat is not a pattern to copy.
+  const remember = (text) => {
+    const entry = state.history[state.history.length - 1];
+    if (entry && entry.turn === state.turn) {
+      const last = entry.items[entry.items.length - 1] || '';
+      const m = last.match(/^(.*) ×(\d+)$/);
+      if (last === text) entry.items[entry.items.length - 1] = `${text} ×2`;
+      else if (m && m[1] === text) entry.items[entry.items.length - 1] = `${text} ×${Number(m[2]) + 1}`;
+      else entry.items.push(text);
+    } else state.history.push({ turn: state.turn, items: [text] });
+  };
+  const planItem = x => (typeof x === 'string' ? { text: x, status: 'todo', note: '' } : { text: String(x.step || x.text || ''), op: x.op ? String(x.op) : undefined, inputs: x.inputs ? String(x.inputs) : undefined, produces: x.produces ? String(x.produces) : undefined, status: 'todo', note: '' });
+  // A plan item is ticked off when the call that carries it out lands its artifact.
+  const markNode = async (n, artifactId) => {
+    const item = state.plan[n - 1];
+    if (!item || item.status === 'done') return;
+    item.status = 'done';
+    item.note = `→ ${artifactId}`;
+    planTouched = true;
+    remember(`plan item ${n} done (${artifactId})`);
+    await log('plan', { items: state.plan, changed: n });
+  };
   const wake = { resolve: null };
   const wakeUp = () => { if (wake.resolve) { const r = wake.resolve; wake.resolve = null; r(); } };
   const artifactsSummary = () => state.artifacts.map(a => ({ artifact_uuid: a.uuid, kind: a.kind === 'figure' ? 'figure' : a.kind === 'note' ? 'inspection' : a.kind === 'answer' ? 'measurement' : 'dataset', tool: a.tool, summary: { id: a.id, label: a.label, row_count: a.rows?.length }, storage_uri: a.storageUri }));
 
   const agentSpecs = orchestrator.getToolSpecs().filter(t => t.function.name !== 'aso_hpa');
   const agentNames = new Set(agentSpecs.map(t => t.function.name));
-  const toolSpecs = [...agentSpecs, ...STUDY_TOOLS.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }))];
+  const toolSpecs = [...agentSpecs, ...STUDY_TOOLS.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }))]
+    .map(t => {
+      const name = t.function.name;
+      if (!TABLE_TOOLS.has(name) && !agentNames.has(name)) return t;
+      const properties = { ...t.function.parameters.properties, node: NODE, ...(TABLE_TOOLS.has(name) && !['chart', 'pivot'].includes(name) ? { for_each: FOR_EACH } : {}) };
+      return { ...t, function: { ...t.function, parameters: { ...t.function.parameters, properties } } };
+    });
   const system = systemPrompt();
 
   const get = id => {
@@ -394,12 +440,10 @@ function nearIn(sorted, x, tol) {
 }
 const holds = (sorted, value, tolerance) => SCALES.some(scale => nearIn(sorted, value * scale, tolerance * scale));
 
-// A number a summary states is traced to the artifact cited in the same sentence, or, when the
-// sentence cites none, to the artifacts the summary cites anywhere. Artifact sizes and the goal's
-// own numbers count everywhere. A summary that cites nothing can verify nothing.
+// A number a summary states is traced to an artifact cited in the same sentence. Artifact sizes
+// and the goal's own numbers count everywhere. A sentence that cites nothing verifies nothing.
 function unverifiedNumbers(summary, state) {
   const text = String(summary || '');
-  const citedAll = [...new Set(text.match(/\ba\d+\b/g) || [])].filter(id => state.byId.has(id));
   const common = Float64Array.from([
     ...state.artifacts.filter(a => a.rows).map(a => a.rows.length),
     ...[...String(state.goal || '').matchAll(NUMBER)].map(m => Number(m[0].replace(/,/g, '')))
@@ -407,7 +451,7 @@ function unverifiedNumbers(summary, state) {
   const missing = [];
   for (const segment of text.split(/\n+|(?<=[.;:])\s+(?=[A-Z(*\-–•\d])/)) {
     const here = [...new Set(segment.match(/\ba\d+\b/g) || [])].filter(id => state.byId.has(id));
-    const sources = (here.length ? here : citedAll).map(id => state.byId.get(id));
+    const sources = here.map(id => state.byId.get(id));
     for (const { raw, value, tolerance } of statedNumbers(segment)) {
       const ok = holds(common, value, tolerance) || sources.some(a => holds(artifactNumbers(a), value, tolerance));
       if (!ok && !missing.includes(raw)) missing.push(raw);
@@ -427,6 +471,8 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
 
   // An agent runs in the background through the orchestrator, exactly as a chat message would.
   function startAgent(tool, args) {
+    const node = Number(args?.node) || 0;
+    if (node) { args = { ...args }; delete args.node; }
     const id = `t${++state.ids.t}`;
     const job = { id, tool, args, startedAt: Date.now(), kind: 'agent' };
     state.running.set(id, job);
@@ -438,6 +484,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
       .then(async ({ result }) => {
         const built = agentArtifact(tool, args, result);
         const a = await addArtifact({ ...built, tool, args, inputs: [], toolId: id });
+        if (node) await markNode(node, a.id);
         state.recent.push(`${id} ${tool} returned ${receipt(a)}${a.meta?.search_url ? `\n  ${a.meta.search_url}` : ''}${a.meta?.not_expressible?.length ? `\n  not expressible: ${a.meta.not_expressible.join('; ')}` : ''}`);
         remember(`${tool} → ${a.id} (${a.size})`);
         await log('tool.done', { id, tool, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);
@@ -452,16 +499,8 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
   }
 
   // Table tools run at once on the artifacts named in the call.
-  async function runTableTool(tool, args) {
-    // A two-table tool called with artifact instead of a: read it as a.
-    if (['union', 'intersect', 'difference', 'concat', 'join', 'overlap'].includes(tool) && args && args.a === undefined && args.artifact !== undefined) args = { ...args, a: args.artifact };
-    const id = `t${++state.ids.t}`;
-    const t0 = Date.now();
-    state.toolCalls++;
-    const inputs = ['artifact', 'a', 'b', 'universe'].map(k => args[k]).filter(Boolean).map(String);
-    const label = tool === 'chart' ? String(args.title || 'figure').slice(0, 80) : `${tool}(${describeArgs(args, 100)})`;
-    await log('tool.start', { id, tool, kind: tool === 'chart' ? 'chart' : 'tool', label, args, inputs }, id);
-    try {
+  // One table operation: inputs resolved (artifacts, datasets, streams), the operation applied.
+  async function computeOut(tool, args) {
       const parallel = config.asoParallelLimit || 3;
       const inputColumns = new Set();
       let streamed = false;
@@ -507,15 +546,74 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         case 'correlate': out = { rows: tools.correlate(await rowsOf('artifact'), args) }; break;
         case 'overlap': out = { rows: tools.overlap(await rowsOf('a', 'b'), await rowsOf('b', 'a'), await rowsOf('universe'), args.on || null, args.group_by || null) }; break;
         case 'standardize': out = { rows: tools.standardize(await rowsOf('artifact'), args) }; break;
+        case 'explode': out = { rows: tools.explode(await rowsOf('artifact'), args.column, args.as) }; break;
         case 'compute': out = { rows: tools.compute(await rowsOf('artifact'), String(args.name), String(args.expr)) }; break;
         case 'pivot': out = { matrix: tools.pivot(await rowsOf('artifact'), args) }; break;
         case 'chart': { const a = state.byId.get(String(args.artifact ?? '').trim()); out = { figure: tools.chartSpec(args, a?.matrix ? a.matrix : await rowsOf('artifact')) }; break; }
         default: throw new Error(`unknown tool ${tool}`);
       }
+    return { out, inputColumns };
+  }
+
+  // The same operation once per value, "$item" standing for the value; one table results.
+  async function forEach(tool, args) {
+    if (['chart', 'pivot'].includes(tool)) throw new Error(`${tool} cannot run for_each; run it on the combined result`);
+    const spec = args.for_each && typeof args.for_each === 'object' ? args.for_each : {};
+    let values = Array.isArray(spec.values) ? spec.values.map(String) : (typeof spec.values === 'string' && spec.values.trim() ? spec.values.split(/\s*[|,]\s*/) : null);
+    if (!values && spec.column) {
+      const ref = String(spec.of ?? args.artifact ?? args.a ?? '').trim();
+      let rows;
+      if (state.byId.has(ref)) rows = get(ref).rows || [];
+      else {
+        const entry = await geneData.entry(ref);
+        if (!entry || entry.key === 'unreadable') throw new Error(`for_each: nothing called "${ref}" to take ${spec.column} from`);
+        const seen = new Set();
+        for await (const row of datasetStream(entry)) { const v = String(row[spec.column] ?? '').trim(); if (v) seen.add(v); if (seen.size > MAX_FOR_EACH) break; }
+        rows = [...seen].map(v => ({ [spec.column]: v }));
+      }
+      const col = tools.findColumn(rows, spec.column);
+      if (!col) throw new Error(`for_each: no column named "${spec.column}" in ${ref}`);
+      values = [...new Set(rows.map(r => String(r[col] ?? '').trim()).filter(Boolean))];
+    }
+    if (!values || !values.length) throw new Error('for_each: give values, or column (and of) to take the distinct values of a column');
+    if (values.length > MAX_FOR_EACH) throw new Error(`for_each over ${values.length} values would run the operation ${values.length} times; use a group_by tool, or narrow the values`);
+    const itemCol = String(spec.as || 'item');
+    const { for_each: _spec, ...rest } = args;
+    const sub = (v, x) => (typeof x === 'string' ? x.split('$item').join(v).split('${item}').join(v) : Array.isArray(x) ? x.map(y => sub(v, y)) : x && typeof x === 'object' ? Object.fromEntries(Object.entries(x).map(([k, y]) => [k, sub(v, y)])) : x);
+    const rows = [];
+    const failed = [];
+    const inputColumns = new Set();
+    for (const v of values) {
+      try {
+        const r = await computeOut(tool, sub(v, rest));
+        if (!r.out.rows) throw new Error('the operation gave no rows');
+        for (const row of r.out.rows) rows.push({ [itemCol]: v, ...row });
+        for (const c of r.inputColumns) inputColumns.add(c);
+      } catch (err) { failed.push(`${v}: ${err.message.slice(0, 80)}`); }
+    }
+    if (failed.length === values.length) throw new Error(`for_each: every value failed; first: ${failed[0]}`);
+    if (failed.length) state.recent.push(`for_each: ${failed.length} of ${values.length} values failed: ${failed.slice(0, 5).join('; ')}`);
+    return { out: { rows }, inputColumns };
+  }
+
+  async function runTableTool(tool, args) {
+    // A two-table tool called with artifact instead of a: read it as a.
+    if (['union', 'intersect', 'difference', 'concat', 'join', 'overlap'].includes(tool) && args && args.a === undefined && args.artifact !== undefined) args = { ...args, a: args.artifact };
+    const node = Number(args?.node) || 0;
+    if (node) { args = { ...args }; delete args.node; }
+    const id = `t${++state.ids.t}`;
+    const t0 = Date.now();
+    state.toolCalls++;
+    const inputs = ['artifact', 'a', 'b', 'universe'].map(k => args[k]).filter(Boolean).map(String);
+    const label = tool === 'chart' ? String(args.title || 'figure').slice(0, 80) : `${tool}(${describeArgs(args, 100)})`;
+    await log('tool.start', { id, tool, kind: tool === 'chart' ? 'chart' : 'tool', label, args, inputs }, id);
+    try {
+      const { out, inputColumns } = args.for_each ? await forEach(tool, args) : await computeOut(tool, args);
       if (out.rows) out.rows = tools.freshFirst(out.rows, [...inputColumns]);
       const a = await addArtifact({ kind: out.figure ? 'figure' : 'data', label: tool === 'chart' ? label : `${tool} of ${inputs.join(', ')}`, rows: out.rows, matrix: out.matrix, figure: out.figure, tool, args, inputs, toolId: id });
       state.recent.push(`${id} ${tool} -> ${receipt(a)}`);
       remember(`${tool}(${inputs.join(', ')}) → ${a.id} (${a.size})`);
+      if (node) await markNode(node, a.id);
       await log('tool.done', { id, tool, kind: out.figure ? 'chart' : 'tool', artifact: artifactEvent(a), ms: Date.now() - t0 }, id);
     } catch (err) {
       state.failed++;
@@ -534,6 +632,8 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
   state.tableNames = (await geneData.catalog()).filter(e => e.key !== 'unreadable').map(e => e.file);
   let finishRefusals = 0;
   let unverified = [];
+  let lookOnly = 0;
+  let planTouched = false;
   let turn = 0;
   let stalls = 0;
   try {
@@ -548,13 +648,19 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
       await fs.mkdir(path.join(workspace.workspaceDir, 'context'), { recursive: true });
       await fs.writeFile(path.join(workspace.workspaceDir, 'context', `turn-${String(turn).padStart(2, '0')}.txt`), context, { mode: 0o600 });
       await logger.logEvent({ event: 'context', data: { turn, chars: context.length } });
-      // Until a plan exists the only tool on offer is set_plan: the first turn plans, alone.
-      const offered = state.plan.length ? toolSpecs : toolSpecs.filter(t => t.function.name === 'set_plan');
+      // Until a plan exists the only tool on offer is set_plan: the first turn plans, alone. After
+      // several turns that only looked, a turn must run a step or change the plan: looking is off.
+      const replan = state.plan.length > 0 && lookOnly >= REPLAN_AFTER;
+      if (replan) state.recent.push(`${lookOnly} turns in a row looked without making anything or changing the plan. This turn looking is off: run the NEXT STEP (tag it node=N), run another step, or change the plan.`);
+      const offered = state.plan.length ? (replan ? toolSpecs.filter(t => !LOOK_TOOLS.has(t.function.name)) : toolSpecs) : toolSpecs.filter(t => t.function.name === 'set_plan');
+      const artifactsBefore = state.artifacts.length;
+      planTouched = false;
       const res = await inference.chat.completions.create({ messages: [{ role: 'system', content: system }, { role: 'user', content: context }], tools: offered, temperature: 0, prompt_cache: { key: `study ${workspace.uuid}` }, ...(effort ? { reasoning_effort: effort } : {}) });
       addUsage(res.usage);
       const message = res.choices?.[0]?.message || {};
       const calls = (message.tool_calls || []).map(c => { let args = {}; try { args = JSON.parse(c.function?.arguments || '{}'); } catch { args = {}; } return { name: c.function?.name, args }; });
       await log('turn', { turn, text: message.content ? String(message.content).slice(0, 600) : null, calls: calls.map(c => ({ tool: c.name, args: c.args })), offered: offered.length });
+      state.recentPast = [state.recent, ...(state.recentPast || [])].slice(0, 2);
       state.recent = [];
       let sync = 0;
       let waiting = false;
@@ -562,7 +668,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         // The planning turn: set_plan and nothing else; anything else waits for the next turn.
         const plan = calls.find(c => c.name === 'set_plan');
         const others = calls.filter(c => c.name !== 'set_plan').map(c => c.name);
-        if (plan) { state.plan = (plan.args.items || []).map(text => ({ text: String(text), status: 'todo', note: '' })); remember('wrote the plan'); await log('plan', { items: state.plan }); }
+        if (plan) { state.plan = (plan.args.items || []).map(planItem); remember('wrote the plan'); await log('plan', { items: state.plan }); }
         if (others.length) state.recent.push(`Not run: ${others.join(', ')}. The first turn writes the plan alone; call tools from the next turn on.`);
         if (!plan) { stalls++; state.recent.push('Write the plan first with set_plan, alone.'); if (stalls > MAX_STALLS) break; }
         else stalls = 0;
@@ -572,6 +678,15 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         if (call.name === 'finish') {
           const summary = String(call.args.summary || '');
           const missing = unverifiedNumbers(summary, state);
+          const undone = state.plan.map((p, i) => ({ ...p, n: i + 1 })).filter(p => p.status !== 'done' && p.status !== 'dropped');
+          if (undone.length && finishRefusals < MAX_FINISH_REFUSALS) {
+            finishRefusals++;
+            state.recent.push(`finish refused: the plan says ${undone.map(p => `item ${p.n}`).join(', ')} ${undone.length === 1 ? 'is' : 'are'} not done. A report can only state what was done. Do the work, mark an item dropped with a note saying why, or mark it done only if an artifact shows it is; then finish again.`);
+            remember('finish refused: plan items not done');
+            await log('finish.refused', { plan_items: undone.map(p => p.n), attempt: finishRefusals });
+            sync++;
+            continue;
+          }
           if (missing.length && finishRefusals < MAX_FINISH_REFUSALS) {
             finishRefusals++;
             const cited = [...new Set(summary.match(/\ba\d+\b/g) || [])].filter(id => state.byId.has(id));
@@ -587,17 +702,24 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
             sync++;
             continue;
           }
-          finishSummary = summary;
+          finishSummary = undone.length ? `Not done according to the plan: ${undone.map(p => `${p.n}. ${p.text}`).join('; ')}.\n\n${summary}` : summary;
           unverified = missing;
           break;
         }
         if (call.name === 'skip') { waiting = true; remember(`waited: ${String(call.args.reason || '').slice(0, 80)}`); await log('skip', { reason: call.args.reason || '' }); continue; }
-        if (call.name === 'set_plan') { state.plan = (call.args.items || []).map(text => ({ text: String(text), status: 'todo', note: '' })); remember('rewrote the plan'); await log('plan', { items: state.plan }); continue; }
+        if (call.name === 'set_plan') { state.plan = (call.args.items || []).map(planItem); planTouched = true; remember('rewrote the plan'); await log('plan', { items: state.plan }); continue; }
         if (call.name === 'update_plan') {
-          const item = state.plan[Number(call.args.item) - 1];
-          if (item) { item.status = call.args.status || item.status; if (call.args.note) item.note = String(call.args.note); remember(`plan item ${call.args.item} ${item.status}`); }
-          else state.recent.push(`update_plan failed: there is no item ${call.args.item}`);
-          await log('plan', { items: state.plan, changed: Number(call.args.item) }); continue;
+          const n = Number(call.args.item);
+          let item = state.plan[n - 1];
+          if (!item && n === state.plan.length + 1 && call.args.step) { item = planItem(call.args); state.plan.push(item); remember(`added plan item ${n}`); }
+          if (item) {
+            if (call.args.status) item.status = call.args.status;
+            if (call.args.note) item.note = String(call.args.note);
+            for (const k of ['step', 'op', 'inputs', 'produces']) if (call.args[k]) item[k === 'step' ? 'text' : k] = String(call.args[k]);
+            planTouched = true;
+            remember(`plan item ${n} ${call.args.status || 'edited'}`);
+          } else state.recent.push(`update_plan failed: there is no item ${call.args.item} (add the next one with item=${state.plan.length + 1} and a step)`);
+          await log('plan', { items: state.plan, changed: n }); continue;
         }
         if (call.name === 'note') {
           const text = String(call.args.text || '').trim();
@@ -617,6 +739,34 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
           else state.recent.push(`datasets matching "${about}" (${entries.length}):\n${entries.slice(0, 40).map(e => `  ${e.file} — ${e.title}${large(e)}: ${columnList(e.columns)}`).join('\n')}${entries.length > 40 ? `\n  … ${entries.length - 40} more; narrow the word` : ''}`);
           remember(about ? `browsed the datasets about ${about}` : 'listed the datasets'); sync++; continue;
         }
+        if (call.name === 'describe') {
+          const what = String(call.args.what ?? call.args.artifact ?? call.args.dataset ?? call.args.name ?? '').trim();
+          const pick = Array.isArray(call.args.columns) ? call.args.columns.map(String) : (typeof call.args.columns === 'string' && call.args.columns.trim() ? call.args.columns.split(/\s*[|,]\s*/) : null);
+          const cardLine = c => `${c.column} — ${c.kind}; ${c.blank_pct}% blank; distinct ${c.distinct}${c.examples.length ? `; e.g. ${c.examples.join(' | ')}` : ''}${c.min !== undefined ? `; ${c.min} to ${c.max}` : ''}${c.list ? `; ${c.list}` : ''}`;
+          try {
+            if (state.byId.has(what)) {
+              const a = get(what);
+              if (!a.rows) throw new Error(`${a.id} has no rows to describe`);
+              const cols = pick ? shownColumns(a.columns, pick) : a.columns.slice(0, 40);
+              state.recent.push(`${a.id} (${a.size}) described:\n  ${tools.profile(a.rows, cols).map(cardLine).join('\n  ')}${a.columns.length > cols.length ? `\n  … ${a.columns.length - cols.length} more columns (describe with columns)` : ''}`);
+              remember(`described ${a.id}`);
+            } else {
+              const entry = await geneData.entry(what);
+              if (!entry || entry.key === 'unreadable') throw new Error(`nothing called "${what}" on the desk or on disk; datasets lists what is on disk`);
+              const cols = pick ? shownColumns(entry.columns, pick) : entry.columns.slice(0, 40);
+              const key = `${entry.file}|${cols.join('|')}`;
+              let card = profileCache.get(key);
+              if (!card) { card = await tools.profileStream(datasetStream(entry), cols, PROFILE_MAX_ROWS); profileCache.set(key, card); }
+              const scanned = card.rows >= PROFILE_MAX_ROWS ? ` (first ${PROFILE_MAX_ROWS.toLocaleString('en-US')} rows)` : ` (${card.rows.toLocaleString('en-US')} rows)`;
+              const lines = card.profile.map(cardLine);
+              const text = `${entry.file} — ${entry.title}. ${entry.description || ''}${scanned}\n  ${lines.join('\n  ')}${entry.columns.length > cols.length ? `\n  … ${entry.columns.length - cols.length} more columns (describe with columns)` : ''}`;
+              state.tablesSeen.set(entry.file, `${entry.file}${scanned}:\n  ${lines.slice(0, 12).join('\n  ')}${lines.length > 12 ? `\n  … ${lines.length - 12} more described` : ''}`);
+              state.recent.push(text);
+              remember(`described ${entry.file}`);
+            }
+          } catch (err) { state.recent.push(`describe failed: ${err.message}`); remember(`describe ${what || '(no name)'} failed`); }
+          sync++; continue;
+        }
         if (call.name === 'open') {
           const n = Math.min(INSPECT_MAX, Number(call.args.rows) || 10);
           const what = String(call.args.what ?? call.args.artifact ?? call.args.dataset ?? call.args.name ?? call.args.id ?? call.args.file ?? '').trim();
@@ -632,18 +782,26 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
             } else {
               const entry = await geneData.entry(what);
               if (!entry || entry.key === 'unreadable') throw new Error(`nothing called "${what}" on the desk or on disk; datasets lists what is on disk`);
-              // Rows come from a gene already on the desk, so the model sees real entities.
+              // The head of the file, as a person sees it, plus the rows of a gene already on the
+              // desk when the file has one row per gene and entity.
+              const head = [];
+              for await (const row of localData.rows(entry.file)) { head.push(row); if (head.length >= n) break; }
               const sampleGene = state.artifacts.flatMap(a => a.rows || []).map(r => r.ensembl || r.gene).find(Boolean);
-              let rows = [];
-              if (entry.key === 'lookup') rows = (await geneData.read({ gene: '', ensembl: '' }, entry.file)).rows;
-              else if (entry.key !== 'stream' && sampleGene) { const gene = await geneData.resolveGene(sampleGene); if (gene) rows = (await geneData.read(gene, entry.file)).rows; }
-              const terms = entry.columns.map(c => geneData.definition(c)).filter(Boolean);
-              state.tablesSeen.set(entry.file, `${entry.file}: ${columnList(entry.columns)}`);
+              let geneRows = [];
+              if (['ensembl', 'name', 'scan'].includes(entry.key) && sampleGene) { const gene = await geneData.resolveGene(sampleGene); if (gene) geneRows = (await geneData.read(gene, entry.file)).rows; }
+              // The atlas defines its category terms; the ones that appear in the rows shown are explained.
+              const shown = shownColumns(entry.columns, pick);
+              const seenTerms = new Map();
+              for (const row of [...head, ...geneRows]) for (const c of shown) for (const term of String(row[c] ?? '').split(/\s*[;,]\s*/)) { const d = term && geneData.definition(term); if (d && !seenTerms.has(term)) seenTerms.set(term, d); }
+              if (entry.key === 'lookup' && head.length <= 40) state.tablesSeen.set(entry.file, `${entry.file} (${head.length} rows, whole):\n  ${sampleBlock(head, entry.columns, 40, pick)}`);
+              else if (!state.tablesSeen.has(entry.file)) state.tablesSeen.set(entry.file, `${entry.file}: ${columnList(entry.columns)}`);
               remember(`opened ${entry.file}`);
-              const tail = rows.length
-                ? `\n  ${sampleBlock(rows, entry.columns, n, pick)}${rows.length > n ? `\n  … ${rows.length - n} more rows (open it with rows=${rows.length} to see all)` : ''}`
-                : (entry.key === 'stream' ? '\n  (large file, no per-gene reads: filter, aggregate or top_per_group stream it whole)' : '\n  (no rows to show yet; nothing on the desk names a gene)');
-              state.recent.push(`${entry.file} — ${entry.title} columns: ${entry.columns.join(' | ')}${terms.length ? `\n  terms: ${terms.slice(0, 4).join('; ')}` : ''}${tail}`);
+              const parts = [`${entry.file} — ${entry.title}. ${entry.description || ''} columns: ${entry.columns.join(' | ')}`];
+              if (seenTerms.size) parts.push(`  terms: ${[...seenTerms].slice(0, 8).map(([t, d]) => `${t}: ${d}`).join('; ')}`);
+              if (entry.key === 'stream') parts.push('  (large file, no per-gene reads: filter, aggregate or top_per_group stream it whole)');
+              parts.push(`  first ${head.length} rows:\n  ${sampleBlock(head, entry.columns, n, pick)}`);
+              if (geneRows.length) { const g = geneRows[0]; parts.push(`  rows for ${g['Gene name'] || g.Gene || sampleGene} (${geneRows.length}):\n  ${sampleBlock(geneRows, entry.columns, n, pick)}${geneRows.length > n ? `\n  … ${geneRows.length - n} more` : ''}`); }
+              state.recent.push(parts.join('\n'));
             }
           } catch (err) { state.recent.push(`open failed: ${err.message}`); remember(`open ${what || '(no name)'} failed`); }
           sync++; continue;
@@ -653,6 +811,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         state.recent.push(`unknown tool ${call.name}`);
       }
       if (finishSummary !== null) break;
+      lookOnly = state.artifacts.length > artifactsBefore || planTouched || state.running.size ? 0 : lookOnly + 1;
       if (!calls.length) {
         stalls++;
         state.recent.push('You called no tool. Call tools, skip while waiting, or finish.');

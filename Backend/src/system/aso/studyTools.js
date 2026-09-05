@@ -296,6 +296,99 @@ async function aggregateStream(iterable, args, columns) {
   return acc.result();
 }
 
+// ---- list cells: their grammar, exploding them into rows, and profiling columns -------------------
+
+const LIST_SEPS = [';', ',', '|'];
+
+// How the text cells of a column are built: a separator (when most cells have one) and the
+// shape of an item: "key: number", "label (number)" or a plain item.
+function listGrammar(values) {
+  const sample = values.slice(0, 300);
+  if (!sample.length) return null;
+  let best = null;
+  for (const sep of LIST_SEPS) {
+    const count = sample.filter(v => v.includes(sep)).length;
+    if (count / sample.length >= 0.3 && (!best || count > best.count)) best = { sep, count };
+  }
+  const items = best ? sample.flatMap(v => v.split(best.sep).map(x => x.trim()).filter(Boolean)) : sample;
+  const kv = items.filter(x => /^[^:]+:\s*[-+]?\d/.test(x)).length / Math.max(1, items.length);
+  const paren = items.filter(x => /^.+\s\(([-+]?\d[^)]*)\)$/.test(x)).length / Math.max(1, items.length);
+  return { sep: best ? best.sep : null, shape: kv >= 0.6 ? 'key: number' : paren >= 0.6 ? 'label (number)' : 'item' };
+}
+
+// One row per item of a list cell; "key: number" items become two columns, "label (number)" too.
+function explode(rows, column, as) {
+  const col = findColumn(rows, column);
+  if (!col) throw new Error(`explode: no column named "${column}" (columns: ${columnsOf(rows).slice(0, 30).join(', ')})`);
+  const values = rows.map(r => r[col]).filter(v => v !== null && v !== undefined && String(v).trim() !== '').map(String);
+  const grammar = listGrammar(values) || { sep: null, shape: 'item' };
+  const base = String(as || col).trim();
+  const out = [];
+  for (const r of rows) {
+    const raw = r[col];
+    if (raw === null || raw === undefined || String(raw).trim() === '') continue;
+    const items = grammar.sep ? String(raw).split(grammar.sep).map(x => x.trim()).filter(Boolean) : [String(raw).trim()];
+    for (const item of items) {
+      const o = { ...r };
+      delete o[col];
+      if (grammar.shape === 'key: number') { const i = item.indexOf(':'); o[`${base}_key`] = item.slice(0, i).trim(); const v = item.slice(i + 1).trim(); o[`${base}_value`] = num(v) ?? v; }
+      else if (grammar.shape === 'label (number)') { const m = item.match(/^(.+)\s\(([^)]*)\)$/); o[`${base}_label`] = m ? m[1].trim() : item; o[`${base}_value`] = m ? (num(m[2]) ?? m[2]) : null; }
+      else o[`${base}_item`] = item;
+      out.push(o);
+    }
+  }
+  return out;
+}
+
+// A column card per column as rows arrive: kind, blanks, distinct values, examples, range, grammar.
+function profiler(columns) {
+  const st = new Map(columns.map(c => [c, { n: 0, blank: 0, nums: 0, min: Infinity, max: -Infinity, distinct: new Map(), samples: [] }]));
+  return {
+    add(r) {
+      for (const c of columns) {
+        const s = st.get(c);
+        s.n++;
+        const v = r[c];
+        const t = v === null || v === undefined ? '' : String(v).trim();
+        if (!t) { s.blank++; continue; }
+        const x = num(t);
+        if (x !== null) { s.nums++; if (x < s.min) s.min = x; if (x > s.max) s.max = x; }
+        if (s.distinct.has(t)) s.distinct.set(t, s.distinct.get(t) + 1); else if (s.distinct.size < 1000) s.distinct.set(t, 1);
+        if (s.samples.length < 300) s.samples.push(t);
+      }
+    },
+    result() {
+      return columns.map(c => {
+        const s = st.get(c);
+        const filled = s.n - s.blank;
+        const kind = filled === 0 ? 'empty' : s.nums / filled >= 0.95 ? 'number' : 'text';
+        const top = [...s.distinct.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([v]) => (v.length > 40 ? `${v.slice(0, 39)}…` : v));
+        const grammar = kind === 'text' ? listGrammar(s.samples) : null;
+        return {
+          column: c, kind, rows: s.n, blank_pct: s.n ? Math.round(100 * s.blank / s.n) : 0,
+          distinct: s.distinct.size >= 1000 ? '1000+' : String(s.distinct.size), examples: top,
+          min: kind === 'number' ? s.min : undefined, max: kind === 'number' ? s.max : undefined,
+          list: grammar && grammar.sep ? `list of '${grammar.shape}' items separated by '${grammar.sep}'` : (grammar && grammar.shape !== 'item' ? `'${grammar.shape}'` : undefined)
+        };
+      });
+    }
+  };
+}
+
+function profile(rows, columns) {
+  const cols = columns && columns.length ? columns : columnsOf(rows);
+  const p = profiler(cols);
+  for (const r of rows) p.add(r);
+  return p.result();
+}
+
+async function profileStream(iterable, columns, maxRows = Infinity) {
+  const p = profiler(columns);
+  let n = 0;
+  for await (const r of iterable) { p.add(r); if (++n >= maxRows) break; }
+  return { profile: p.result(), rows: n };
+}
+
 // ---- statistics: whole-column and between-column maths, defined on tables only ----------------
 
 const LANCZOS = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059, 12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
@@ -660,4 +753,4 @@ async function measure(rows, { table, value_column, entity_column, entity, as },
   return out;
 }
 
-module.exports = { TOOL_CATALOG, catalogText, applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, findColumn, keyOf, num };
+module.exports = { TOOL_CATALOG, catalogText, applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, findColumn, keyOf, num };

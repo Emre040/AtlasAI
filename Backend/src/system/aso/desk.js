@@ -106,7 +106,10 @@ function namedColumns(columns) {
 // A produced result as a line: id, title, size, columns, what made it; then its description.
 // A result of a few rows shows them whole, with indices; anything larger is opened on request.
 const NOTE_CHARS = 600;   // characters of a text result shown on its line
-const INLINE_ROWS = 10;   // a result this small is shown whole (a top ten): cheaper than a turn spent opening it
+const INLINE_CELLS = 160; // a result this small (rows × shown columns) is shown whole: cheaper than a turn spent opening it
+
+// Whether a result is small enough to sit on the desk whole.
+function inline(rows, columns) { return rows.length > 0 && rows.length * Math.min(columns.length, ROW_COLUMNS) <= INLINE_CELLS; }
 
 function resultLine({ id, title = '', description = '', origin, rows = [], columns = [], matrix, figure, images, text }) {
   const head = title ? `${id} "${title}"` : id;
@@ -121,7 +124,7 @@ function resultLine({ id, title = '', description = '', origin, rows = [], colum
   }
   const lines = [`${head} (${count(rows.length)} rows: ${namedColumns(columns)}) ← ${origin}`];
   if (description) lines.push(`  ${description}`);
-  if (rows.length && rows.length <= INLINE_ROWS) lines.push(...sampleLines(rows, columns, rows.length).map((l, i) => `  ${i}: ${l}`));
+  if (inline(rows, columns)) lines.push(...sampleLines(rows, columns, rows.length).map((l, i) => `  ${i}: ${l}`));
   return lines.join('\n');
 }
 
@@ -135,4 +138,4 @@ function historyText(lines) {
 
 function section(title, body) { return `${title}\n${body}`; }
 
-module.exports = { cell, shown, rowLine, sampleLines, argsLine, tableCard, columnLine, namedColumns, resultLine, historyText, section, count, INLINE_ROWS, WIDE_COLUMNS, ROW_COLUMNS };
+module.exports = { cell, shown, rowLine, sampleLines, argsLine, tableCard, columnLine, namedColumns, resultLine, inline, historyText, section, count, WIDE_COLUMNS, ROW_COLUMNS };

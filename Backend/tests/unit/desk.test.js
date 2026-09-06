@@ -18,12 +18,14 @@ test('a result is one line: id, title, size, columns, origin, then its descripti
   const rows = [{ gene: 'EGFR', nTPM: 32.2 }, { gene: 'ERBB2', nTPM: 30.7 }, { gene: 'MET', nTPM: null }];
   const line = desk.resultLine({ id: 'a1', title: 'Liver nTPM', description: 'Consensus liver nTPM of the three genes', origin: 'investigator_hpa t1 "liver nTPM"', rows, columns: ['gene', 'nTPM'] });
   assert.equal(line, 'a1 "Liver nTPM" (3 rows: gene, nTPM) ← investigator_hpa t1 "liver nTPM"\n  Consensus liver nTPM of the three genes\n  0: EGFR | 32.2\n  1: ERBB2 | 30.7\n  2: MET | ');
-  const big = desk.resultLine({ id: 'a5', title: 'All', description: 'Every gene', origin: 'filter of a1', rows: Array.from({ length: 70 }, (_, i) => ({ gene: `G${i}`, nTPM: i / 3 })), columns: ['gene', 'nTPM'] });
-  assert.equal(big, 'a5 "All" (70 rows: gene, nTPM) ← filter of a1\n  Every gene', 'a larger result shows no rows until opened');
+  const big = desk.resultLine({ id: 'a5', title: 'All', description: 'Every gene', origin: 'filter of a1', rows: Array.from({ length: 100 }, (_, i) => ({ gene: `G${i}`, nTPM: i / 3 })), columns: ['gene', 'nTPM'] });
+  assert.equal(big, 'a5 "All" (100 rows: gene, nTPM) ← filter of a1\n  Every gene', 'a larger result shows no rows until opened');
+  const narrow = desk.resultLine({ id: 'a8', title: 'Few', origin: 'x', rows: Array.from({ length: 60 }, (_, i) => ({ gene: `G${i}`, nTPM: i })), columns: ['gene', 'nTPM'] });
+  assert.match(narrow, /\n  59: G59 \| 59$/, 'a narrow table of sixty rows is within the cell budget and shows whole');
   assert.match(desk.resultLine({ id: 'a2', title: 'T', origin: 'chart(x=gene)', rows: [], columns: [], figure: { type: 'bar', title: 'T' }, images: ['a2.png'] }), /^a2 "T" figure bar ← chart\(x=gene\) \(rendered\)$/);
   assert.match(desk.resultLine({ id: 'a3', title: 'Heat', origin: 'pivot of a1', rows: [], columns: [], matrix: { row_labels: ['EGFR'], col_labels: ['liver', 'lung'], matrix: [[1, null]] } }), /^a3 "Heat" matrix 1 × 2 \(rows: EGFR; columns: liver, lung\) ← pivot of a1; a heatmap input$/);
-  const wide = desk.resultLine({ id: 'a9', title: 'Wide', origin: 'x', rows: Array.from({ length: 12 }, () => ({})), columns: Array.from({ length: 30 }, (_, i) => `c${i}`) });
-  assert.match(wide, /^a9 "Wide" \(12 rows: c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, … \+18 more columns\) ← x$/);
+  const wide = desk.resultLine({ id: 'a9', title: 'Wide', origin: 'x', rows: Array.from({ length: 30 }, () => ({})), columns: Array.from({ length: 30 }, (_, i) => `c${i}`) });
+  assert.match(wide, /^a9 "Wide" \(30 rows: c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, … \+18 more columns\) ← x$/);
 });
 
 test('a table opened for particular columns details those and names the rest', () => {

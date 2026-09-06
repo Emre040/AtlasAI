@@ -835,11 +835,12 @@ function overlap(a, b, universe, on = null, group_by = null) {
 // + - * / and parentheses, and the functions log2, log10, ln, abs, sqrt, exp, min, max.
 // Every row gets the value, or null where a column it needs is missing or the result is not finite.
 const FUNCTIONS = { log2: Math.log2, log10: Math.log10, ln: Math.log, log: Math.log, abs: Math.abs, sqrt: Math.sqrt, exp: Math.exp, min: Math.min, max: Math.max };
+const COMPARISONS = ['<', '<=', '>', '>=', '=', '!='];
 
 function parseExpression(text) {
   const tokens = [];
   // Column names with spaces or symbols go in double, single or back quotes.
-  const re = /\s*(?:(\d+\.?\d*(?:[eE][-+]?\d+)?)|("[^"]*"|'[^']*'|`[^`]*`)|([A-Za-z_][\w.]*)|([-+*/(),]))/y;
+  const re = /\s*(?:(\d+\.?\d*(?:[eE][-+]?\d+)?)|("[^"]*"|'[^']*'|`[^`]*`)|([A-Za-z_][\w.]*)|(<=|>=|!=|[-+*/(),<>=]))/y;
   let i = 0;
   while (i < text.length) {
     re.lastIndex = i;
@@ -856,6 +857,8 @@ function parseExpression(text) {
   const peek = () => tokens[pos];
   const take = () => tokens[pos++];
   const expect = v => { const tok = take(); if (!tok || tok.v !== v) throw new Error(`compute: expected "${v}" in "${text}"`); };
+  // A comparison (< <= > >= = !=) is a condition for if(condition, then, else).
+  const parseComparison = () => { let node = parseSum(); if (peek() && COMPARISONS.includes(peek().v)) { const cmp = take().v; node = { cmp, a: node, b: parseSum() }; } return node; };
   const parseSum = () => { let node = parseProduct(); while (peek() && (peek().v === '+' || peek().v === '-')) { const op = take().v; node = { op, a: node, b: parseProduct() }; } return node; };
   const parseProduct = () => { let node = parseUnary(); while (peek() && (peek().v === '*' || peek().v === '/')) { const op = take().v; node = { op, a: node, b: parseUnary() }; } return node; };
   const parseUnary = () => { if (peek() && peek().v === '-') { take(); return { op: 'neg', a: parseUnary() }; } return parseAtom(); };
@@ -863,27 +866,30 @@ function parseExpression(text) {
     const tok = take();
     if (!tok) throw new Error(`compute: unexpected end of "${text}"`);
     if (tok.t === 'num') return { num: tok.v };
-    if (tok.t === 'op' && tok.v === '(') { const node = parseSum(); expect(')'); return node; }
+    if (tok.t === 'op' && tok.v === '(') { const node = parseComparison(); expect(')'); return node; }
     if (tok.t === 'id') {
-      if (peek() && peek().v === '(' && FUNCTIONS[tok.v.toLowerCase()]) {
+      const name = tok.v.toLowerCase();
+      if (peek() && peek().v === '(' && (FUNCTIONS[name] || name === 'if')) {
         take();
-        const args = [parseSum()];
-        while (peek() && peek().v === ',') { take(); args.push(parseSum()); }
+        const args = [parseComparison()];
+        while (peek() && peek().v === ',') { take(); args.push(parseComparison()); }
         expect(')');
-        return { fn: tok.v.toLowerCase(), args };
+        if (name === 'if' && args.length !== 3) throw new Error(`compute: if takes a condition, a then value and an else value in "${text}"`);
+        return { fn: name, args };
       }
       return { col: tok.v, quoted: !!tok.quoted };
     }
     throw new Error(`compute: unexpected "${tok.v}" in "${text}"`);
   };
-  const tree = parseSum();
+  const tree = parseComparison();
+  if (tree.cmp) throw new Error(`compute: a comparison goes inside if(condition, then, else) in "${text}"; classify makes category columns`);
   if (pos < tokens.length) throw new Error(`compute: unexpected "${tokens[pos].v}" in "${text}"`);
   return tree;
 }
 
 function colNodes(tree, out = []) {
   if (!tree || typeof tree !== 'object') return out;
-  if (tree.col) out.push(tree);
+  if (tree.col !== undefined) out.push(tree);
   for (const k of ['a', 'b']) if (tree[k]) colNodes(tree[k], out);
   for (const a of tree.args || []) colNodes(a, out);
   return out;
@@ -891,7 +897,7 @@ function colNodes(tree, out = []) {
 
 function columnsIn(tree, out = []) {
   if (!tree) return out;
-  if (tree.col) out.push(tree.col);
+  if (tree.col !== undefined) out.push(tree.col);
   if (tree.a) columnsIn(tree.a, out);
   if (tree.b) columnsIn(tree.b, out);
   for (const a of tree.args || []) columnsIn(a, out);
@@ -901,18 +907,26 @@ function columnsIn(tree, out = []) {
 function evaluate(tree, row, resolved) {
   if (tree.num !== undefined) return tree.num;
   if (tree.str !== undefined) return tree.str;
-  if (tree.col) {
+  if (tree.col !== undefined) {
     const raw = row[resolved.get(tree.col)];
     if (raw !== null && typeof raw === 'object') throw new Error(`compute: ${tree.col} contains structured values; use select to copy or rename the column`);
     if (raw === null || raw === undefined || String(raw).trim() === '') return null;
     const n = num(raw);
     return n === null ? String(raw) : n;
   }
+  // if(condition, then, else): a condition that cannot be decided (a missing value) takes the else branch.
+  if (tree.fn === 'if') return evaluate(tree.args[0], row, resolved) === true ? evaluate(tree.args[1], row, resolved) : evaluate(tree.args[2], row, resolved);
   if (tree.fn) { const vals = tree.args.map(a => evaluate(a, row, resolved)); return vals.some(v => typeof v !== 'number') ? null : FUNCTIONS[tree.fn](...vals); }
   const a = evaluate(tree.a, row, resolved);
   if (tree.op === 'neg') return typeof a === 'number' ? -a : null;
   const b = evaluate(tree.b, row, resolved);
   if (a === null || b === null) return null;
+  if (tree.cmp) {
+    if (tree.cmp === '=') return String(a) === String(b);
+    if (tree.cmp === '!=') return String(a) !== String(b);
+    if (typeof a !== 'number' || typeof b !== 'number') return null;
+    return tree.cmp === '<' ? a < b : tree.cmp === '<=' ? a <= b : tree.cmp === '>' ? a > b : a >= b;
+  }
   if (tree.op === '+') return typeof a === 'string' || typeof b === 'string' ? `${a}${b}` : a + b;
   if (typeof a !== 'number' || typeof b !== 'number') return null;
   if (tree.op === '-') return a - b;

@@ -113,18 +113,24 @@ const INLINE_CELLS = 160; // a result this small (rows × shown columns) is show
 // Whether a result is small enough to sit on the desk whole.
 function inline(rows, columns) { return rows.length > 0 && rows.length * Math.min(columns.length, ROW_COLUMNS) <= INLINE_CELLS; }
 
-function resultLine({ id, title = '', description = '', origin, rows = [], columns = [], matrix, figure, images, text, consumed = false }) {
+// Point labels a rendering could not fit beside their points, when there were any.
+function labelsFit(figure) {
+  const fit = figure?.labels_fit;
+  return fit && fit.placed < fit.labels ? `; ${count(fit.placed)} of ${count(fit.labels)} point labels fit beside their points` : '';
+}
+
+function resultLine({ id, title = '', description = '', origin, rows = [], columns = [], spread = '', matrix, figure, images, text, consumed = false }) {
   const head = title ? `${id} "${title}"` : id;
   if (text && !rows.length && !matrix && !figure) {
     const body = String(text).replace(/\s+/g, ' ').trim();
     return `${head} note ← ${origin}\n  ${body.length > NOTE_CHARS ? `${body.slice(0, NOTE_CHARS - 1)}… (open ${id} for the rest)` : body}`;
   }
-  if (figure) return `${head} figure ${figure.type} ← ${origin}${images?.length ? ' (rendered)' : ' (not rendered)'}${figure.omitted_rows ? `; ${figure.omitted_rows} rows omitted for missing values` : ''}`;
+  if (figure) return `${head} figure ${figure.type} ← ${origin}${images?.length ? ' (rendered)' : ' (not rendered)'}${figure.omitted_rows ? `; ${figure.omitted_rows} rows omitted for missing values` : ''}${labelsFit(figure)}`;
   if (matrix) {
     const head2 = `${head} matrix ${matrix.row_labels.length} × ${matrix.col_labels.length} (rows: ${matrix.row_labels.slice(0, 6).map(cell).join(', ')}${matrix.row_labels.length > 6 ? ', …' : ''}; columns: ${matrix.col_labels.slice(0, 6).map(cell).join(', ')}${matrix.col_labels.length > 6 ? ', …' : ''}) ← ${origin}; a heatmap input`;
     return description ? `${head2}\n  ${description}` : head2;
   }
-  const lines = [`${head} (${count(rows.length)} rows: ${namedColumns(columns)}) ← ${origin}`];
+  const lines = [`${head} (${count(rows.length)} rows${spread}: ${namedColumns(columns)}) ← ${origin}`];
   if (description) lines.push(`  ${description}`);
   // Rows sit inline while nothing has read the result yet; once an operation consumed it, its
   // rows live on in the successor and the line stays a line (open shows them again).
@@ -142,4 +148,4 @@ function historyText(lines) {
 
 function section(title, body) { return `${title}\n${body}`; }
 
-module.exports = { cell, shown, rowLine, sampleLines, argsLine, tableCard, columnLine, namedColumns, resultLine, inline, historyText, section, count, WIDE_COLUMNS, ROW_COLUMNS };
+module.exports = { cell, shown, rowLine, sampleLines, argsLine, tableCard, columnLine, namedColumns, resultLine, inline, labelsFit, historyText, section, count, WIDE_COLUMNS, ROW_COLUMNS };

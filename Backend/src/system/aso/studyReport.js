@@ -8,7 +8,8 @@
  * imply). A claim that cannot be bound is not accepted.
  */
 
-const { shown } = require('./desk');
+const desk = require('./desk');
+const { shown } = desk;
 const escapeCell = value => String(value === null || value === undefined ? '—' : typeof value === 'object' ? JSON.stringify(value) : shown(value)).replaceAll('|', '\\|').replace(/\r?\n/g, '<br>');
 const S = { type: 'string' };
 const N = { type: 'integer' };
@@ -112,7 +113,19 @@ function claimIssue(claim, state) {
   const argNumbers = bound.parts.flatMap(b => lineage(b.artifact));
   const unmatched = statedNumbers(claim.text).filter(({ value, tolerance }) => !near(bound.values, value, tolerance) && !near(argNumbers, value, tolerance) && !(Number.isInteger(value) && bound.counts.includes(value)));
   if (!unmatched.length) return null;
-  const where = unmatched.map(u => { const hits = locate(state, u.value, u.tolerance); return `${u.raw}${hits.length ? ` is at ${hits.join(', ')}` : ' is in no saved artifact'}`; });
+  // A number that sits in a bound row, in a column the claim did not name, only needs the column.
+  const inBoundRows = u => {
+    for (const part of bound.parts) {
+      const rows = part.artifact.rows || [], named = new Set(part.columns || []);
+      for (const cell of part.cells) for (const c of part.artifact.columns) {
+        if (named.has(c)) continue;
+        const n = typeof rows[cell.index][c] === 'number' ? rows[cell.index][c] : typeof rows[cell.index][c] === 'string' && /\d/.test(rows[cell.index][c]) ? Number(String(rows[cell.index][c]).replace(/,/g, '')) : NaN;
+        if (Number.isFinite(n) && Math.abs(n - u.value) <= u.tolerance + 1e-9 * Math.abs(u.value)) return `${u.raw} is at ${part.artifact.id} row ${cell.index} column ${c}; add the column to the claim`;
+      }
+    }
+    return null;
+  };
+  const where = unmatched.map(u => { const inRows = inBoundRows(u); if (inRows) return inRows; const hits = locate(state, u.value, u.tolerance); return `${u.raw}${hits.length ? ` is at ${hits.join(', ')}` : ' is in no saved artifact'}`; });
   const boundTo = bound.parts.map(b => `${b.artifact.id} rows ${[...new Set(b.cells.map(c => c.index))].join(', ') || '(none)'}${b.columns ? ` columns ${b.columns.join(', ')}` : ''}`).join('; ');
   return `${JSON.stringify(claim.text.length > 160 ? `${claim.text.slice(0, 159)}…` : claim.text)} states ${unmatched.map(u => u.raw).join(', ')}, not among the cells it is bound to (${boundTo}): ${where.join('; ')}. Add those rows to the claim's evidence, or compute the number with an operation and cite that result.`;
 }
@@ -163,7 +176,7 @@ function figureLine(artifact) {
   const f = artifact.figure || {};
   const axis = (label, scale) => label ? `${label}${scale === 'log' ? ' (log)' : ''}` : '';
   const axes = [axis(f.x_label, f.x_scale), axis(f.y_label, f.y_scale)].filter(Boolean);
-  return `Figure ${artifact.id}: ${f.type}${f.title ? ` "${f.title}"` : ''}${axes.length ? ` (${axes.join(' vs ')})` : ''}${f.scale === 'log' ? ' (log colour scale)' : ''}${artifact.inputs?.length ? ` from ${artifact.inputs.join(', ')}` : ''}`;
+  return `Figure ${artifact.id}: ${f.type}${f.title ? ` "${f.title}"` : ''}${axes.length ? ` (${axes.join(' vs ')})` : ''}${f.scale === 'log' ? ' (log colour scale)' : ''}${artifact.inputs?.length ? ` from ${artifact.inputs.join(', ')}` : ''}${desk.labelsFit(f)}`;
 }
 
 function evidenceText(bound) {

@@ -75,6 +75,19 @@ test('a profile lists the keys or labels inside structured cells', () => {
   assert.deepEqual(prog.parts, { kind: 'labels', values: ['potential prognostic favorable', 'unprognostic', 'validated prognostic unfavorable'] });
 });
 
+test('compute chooses per row with if(condition, then, else); a condition that cannot be decided takes the else branch', () => {
+  const ranked = tools.withColumns([
+    { gene: 'TP53', rank: 1, Tissue: 'liver', nTPM: 12 },
+    { gene: 'MDM2', rank: null, Tissue: 'lung', nTPM: 0.5 },
+    { gene: 'EP300', rank: 3, Tissue: 'liver', nTPM: 'x' }
+  ], ['gene', 'rank', 'Tissue', 'nTPM']);
+  assert.deepEqual(tools.compute(ranked, 'label', 'if(rank > 0, gene, "")').map(r => r.label), ['TP53', '', 'EP300']);
+  assert.deepEqual(tools.compute(ranked, 'liver', 'if(Tissue = "liver", nTPM, 0)').map(r => r.liver), [12, 0, 'x'], 'the chosen branch is evaluated as usual, text passing through');
+  assert.deepEqual(tools.compute(ranked, 'high', 'if(nTPM >= 1, "high", "low")').map(r => r.high), ['high', 'low', 'low']);
+  assert.throws(() => tools.compute(ranked, 'flag', 'rank > 0'), /a comparison goes inside if\(condition, then, else\)/);
+  assert.throws(() => tools.compute(ranked, 'flag', 'if(rank > 0, gene)'), /if takes a condition, a then value and an else value/);
+});
+
 test('an in list may be an array, a JSON list, or values separated by | or commas', () => {
   assert.deepEqual(tools.inList(['a', 'b']), ['a', 'b']);
   assert.deepEqual(tools.inList('["a", "b"]'), ['a', 'b']);

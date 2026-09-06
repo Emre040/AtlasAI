@@ -62,7 +62,7 @@ const STUDY_TOOLS = [
   TABLE_OPERATIONS.get('classify'),
   TABLE_OPERATIONS.get('compute'),
   op('pivot', 'A matrix for a heatmap: rows from row, columns from column, cells from value (aggregate duplicates first).', { artifact: A, row: S, column: S, value: S }, ['artifact', 'column', 'value']),
-  op('chart', 'Draw an artifact; the title is the figure title. Bar family: x labels, y values, group for series (grouped_bar needs it). scatter/bubble: numeric x and y, label names points, group colours them. heatmap takes a pivot. Values spanning orders of magnitude (expression) read on a log scale: x_scale, y_scale for axes, scale for heatmap cells. missing=omit skips rows with a missing number.', { artifact: A, type: { type: 'string', enum: studyPlan.CHART_KINDS }, x: S, y: S, group: S, size: S, label: S, x_label: S, y_label: S, x_scale: SCALE, y_scale: SCALE, scale: SCALE, missing: { type: 'string', enum: ['error', 'omit'] } }, ['artifact', 'type']),
+  op('chart', 'Draw an artifact; the title is the figure title. Bar family: x labels, y values, group for series (grouped_bar needs it). scatter/bubble: numeric x and y, label names points (a blank label leaves a point unnamed; labels are drawn where they fit beside their points), group colours them. heatmap takes a pivot. Values spanning orders of magnitude (expression) read on a log scale: x_scale, y_scale for axes, scale for heatmap cells. missing=omit skips rows with a missing number.', { artifact: A, type: { type: 'string', enum: studyPlan.CHART_KINDS }, x: S, y: S, group: S, size: S, label: S, x_label: S, y_label: S, x_scale: SCALE, y_scale: SCALE, scale: SCALE, missing: { type: 'string', enum: ['error', 'omit'] } }, ['artifact', 'type']),
   TABLE_OPERATIONS.get('correlate'),
   op('overlap', 'Entities a and b share, against every entity of the database or a universe artifact: shared, expected, fold, hypergeometric p; group_by tests each group of a.', { a: A, b: A, universe: A, on: S, group_by: S }, ['a', 'b']),
   op('explode', 'One row per item of a list cell; "key: number" items become <as>_key and <as>_value, "label (number)" <as>_label and <as>_value, others <as>_item.', { artifact: A, column: S, as: S }, ['artifact', 'column']),
@@ -214,6 +214,8 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
       await fs.mkdir(renderDir, { recursive: true });
       try {
         const rendered = await renderCharts(reg.storageUri, renderDir);
+        // What the rendering could not show stays with the figure: the desk and the report say it.
+        if (rendered?.notes?.[0]?.labels !== undefined) figure.labels_fit = rendered.notes[0];
         for (const [i, img] of (rendered?.images || []).entries()) {
           const target = path.join(workspace.artifactsDir, `${id}${i ? `_${i + 1}` : ''}.png`);
           await fs.rename(img, target);
@@ -438,7 +440,15 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     const consumed = new Set(state.artifacts.flatMap(a => a.inputs || []));
     // The artifacts whose every row is on the desk this turn; open answers for them from the desk.
     state.wholeOnDesk = new Set(state.artifacts.filter(a => Array.isArray(a.rows) && !consumed.has(a.id) && desk.inline(a.rows, a.columns)).map(a => a.id));
-    const lines = state.artifacts.map(a => desk.resultLine({ id: a.id, title: a.label, description: a.description, origin: origin(a), rows: a.rows || [], columns: a.columns, matrix: a.matrix, figure: a.figure, images: a.images, text: a.text, consumed: consumed.has(a.id) }));
+    // A table with more rows than entities says so: ranking or counting it counts rows, not entities.
+    const spread = a => {
+      if (!Array.isArray(a.rows) || a.rows.length < 2) return '';
+      const key = [...identity.keys].reverse().find(k => a.columns.includes(k));
+      if (!key) return '';
+      const n = new Set(a.rows.map(r => r[key]).filter(v => !(v === null || v === undefined || v === ''))).size;
+      return n && n < a.rows.length ? ` over ${desk.count(n)} ${identity.entity}s` : '';
+    };
+    const lines = state.artifacts.map(a => desk.resultLine({ id: a.id, title: a.label, description: a.description, origin: origin(a), rows: a.rows || [], columns: a.columns, spread: spread(a), matrix: a.matrix, figure: a.figure, images: a.images, text: a.text, consumed: consumed.has(a.id) }));
     // A view stays whole until a later turn's operation consumes its artifact; then it folds to
     // its receipt, since the rows live on in the successor and open shows them again.
     const consumedAfter = new Map();

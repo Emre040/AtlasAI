@@ -107,72 +107,51 @@ def render_line(chart, out_path):
 
 
 def _place_scatter_labels(ax, data):
-    """Place complete labels in measured free space, keeping raw coordinates unchanged."""
-    from matplotlib.transforms import Bbox
+    """Label points where a label fits beside its point. Eight spots around the point are tried,
+    nearest first; a label that would cover another point or label, or leave the axes, is not
+    drawn. The figure keeps its size; the caller learns how many labels fit."""
     fig = ax.figure
     labels = [(i, str(point.get('label', ''))) for i, point in enumerate(data)
               if point.get('label') and point.get('x') is not None and point.get('y') is not None]
     if not labels:
-        return []
-    padding = 4.0
-    while True:
-        fig.canvas.draw()
-        renderer = fig.canvas.get_renderer()
-        bounds = ax.get_window_extent(renderer)
-        sizes = {}
-        for i, label in labels:
-            text = ax.text(0, 0, label, fontsize=7)
-            box = text.get_window_extent(renderer)
-            sizes[i] = (box.width, box.height)
-            text.remove()
-        placed = []
-        crowded = False
-        ordered = sorted(labels, key=lambda item: (data[item[0]]['y'], data[item[0]]['x'], item[1]))
-        for i, label in ordered:
-            point = data[i]
-            px, py = ax.transData.transform((point['x'], point['y']))
-            width, height = sizes[i]
-            x = min(max(px + padding, bounds.x0 + padding), bounds.x1 - width - padding)
-            target_y = py + padding + height / 2
-            candidates = {target_y, bounds.y0 + padding + height / 2, bounds.y1 - padding - height / 2}
-            for prior in placed:
-                box = prior['box']
-                candidates.update([box.y0 - padding - height / 2, box.y1 + padding + height / 2])
-            selected = None
-            for y in sorted(candidates, key=lambda value: (abs(value - target_y), value)):
-                box = Bbox.from_bounds(x, y - height / 2, width, height)
-                if box.x0 < bounds.x0 or box.x1 > bounds.x1 or box.y0 < bounds.y0 or box.y1 > bounds.y1:
-                    continue
-                def separated(other):
-                    return (box.x1 + padding <= other.x0 + 1e-6 or other.x1 + padding <= box.x0 + 1e-6
-                            or box.y1 + padding <= other.y0 + 1e-6 or other.y1 + padding <= box.y0 + 1e-6)
-                if any(not separated(prior['box']) for prior in placed):
-                    continue
-                selected = {'index': i, 'label': label, 'box': box, 'x': x, 'y': y,
-                            'displaced': abs(y - target_y) > padding or x < px}
-                break
-            if selected is None:
-                crowded = True
-                break
-            placed.append(selected)
-        if not crowded:
+        return [], 0, 0
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    bounds = ax.get_window_extent(renderer)
+    padding, marker = 2.0, 4.0
+    sizes = {}
+    for i, label in labels:
+        text = ax.text(0, 0, label, fontsize=7)
+        box = text.get_window_extent(renderer)
+        sizes[i] = (box.width, box.height)
+        text.remove()
+    points = np.array([ax.transData.transform((p['x'], p['y'])) for p in data
+                       if p.get('x') is not None and p.get('y') is not None], dtype=float).reshape(-1, 2)
+    # Boxes nothing may cover: every point (a square around its marker), then each placed label.
+    taken = np.column_stack([points[:, 0] - marker, points[:, 1] - marker, points[:, 0] + marker, points[:, 1] + marker]) if len(points) else np.zeros((0, 4))
+    placed = []
+    for i, label in labels:
+        px, py = ax.transData.transform((data[i]['x'], data[i]['y']))
+        w, h = sizes[i]
+        gap = marker + padding
+        spots = [(px + gap, py - h / 2), (px - gap - w, py - h / 2), (px - w / 2, py + gap), (px - w / 2, py - gap - h),
+                 (px + gap, py + gap), (px + gap, py - gap - h), (px - gap - w, py + gap), (px - gap - w, py - gap - h)]
+        for x0, y0 in spots:
+            x1, y1 = x0 + w, y0 + h
+            if x0 < bounds.x0 or x1 > bounds.x1 or y0 < bounds.y0 or y1 > bounds.y1:
+                continue
+            overlaps = (x0 < taken[:, 2] + padding) & (x1 + padding > taken[:, 0]) & (y0 < taken[:, 3] + padding) & (y1 + padding > taken[:, 1])
+            if overlaps.any():
+                continue
+            taken = np.vstack([taken, [x0, y0, x1, y1]])
+            placed.append((i, label, x0, y0))
             break
-        # Label area is derived from the actual text. No label count cutoff or data transform.
-        width_px = max(width for width, _ in sizes.values()) + 2 * padding
-        height_px = sum(height + 2 * padding for _, height in sizes.values())
-        current_width, current_height = fig.get_size_inches()
-        fig.set_size_inches(max(current_width, current_width * (width_px + bounds.width) / bounds.width),
-                            max(current_height, current_height * (height_px + bounds.height) / bounds.height))
-        fig.tight_layout()
     annotations = []
-    for item in placed:
-        point = data[item['index']]
-        position = ax.transAxes.inverted().transform((item['x'], item['y']))
-        arrow = {'arrowstyle': '-', 'color': '0.5', 'lw': 0.55} if item['displaced'] else None
-        annotations.append(ax.annotate(item['label'], (point['x'], point['y']),
-                          xytext=position, textcoords='axes fraction', ha='left', va='center',
-                          fontsize=7, alpha=0.9, arrowprops=arrow))
-    return annotations
+    for i, label, x0, y0 in placed:
+        position = ax.transAxes.inverted().transform((x0, y0))
+        annotations.append(ax.annotate(label, (data[i]['x'], data[i]['y']), xytext=position, textcoords='axes fraction',
+                                       ha='left', va='bottom', fontsize=7, alpha=0.9))
+    return annotations, len(placed), len(labels)
 
 
 def _groups(data):
@@ -211,9 +190,10 @@ def render_scatter(chart, out_path):
     _apply_title(chart)
     _apply_labels(chart)
     fig.tight_layout()
-    _place_scatter_labels(ax, data)
+    _, placed, total = _place_scatter_labels(ax, data)
     _save_figure(fig, out_path)
     plt.close(fig)
+    return {'labels': total, 'placed': placed} if total else None
 
 def render_dot_plot(chart, out_path):
     data = chart.get('data', [])
@@ -621,13 +601,13 @@ def render_chart(chart, out_path):
     }
     renderer = renderers.get(chart_type)
     if renderer:
-        renderer(chart, out_path)
-    else:
-        plt.figure(figsize=(6, 3))
-        plt.title(f'Unsupported chart type: {chart_type}')
-        plt.tight_layout()
-        _save_figure(plt.gcf(), out_path)
-        plt.close()
+        return renderer(chart, out_path)
+    plt.figure(figsize=(6, 3))
+    plt.title(f'Unsupported chart type: {chart_type}')
+    plt.tight_layout()
+    _save_figure(plt.gcf(), out_path)
+    plt.close()
+    return None
 
 
 def main():
@@ -645,13 +625,14 @@ def main():
     charts = spec.get('charts', [])
     existing = list(out_dir.glob('chart_*.png'))
     start_idx = len(existing)
-    outputs = []
+    outputs, notes = [], []
     for i, chart in enumerate(charts):
         out_path = out_dir / f'chart_{start_idx + i + 1}.png'
-        render_chart(chart, out_path)
+        notes.append(render_chart(chart, out_path) or {})
         outputs.append(str(out_path))
 
-    print(json.dumps({'images': outputs}))
+    # A note per chart says what the rendering could not show, such as labels that did not fit.
+    print(json.dumps({'images': outputs, 'notes': notes}))
 
 
 if __name__ == '__main__':

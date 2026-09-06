@@ -18,7 +18,7 @@ async function investigator(script, options = {}) {
 test('the investigator opens a table, asks for a column\'s values, fetches for the whole list and returns the raw rows', async () => {
   const steps = [];
   const { run, requests } = await investigator([
-    response(call('open', { table: 'rna_tissue_consensus.tsv' }), call('values', { table: 'rna_tissue_consensus.tsv', column: 'Tissue' })),
+    response(call('open', { table: 'rna_tissue_consensus.tsv' }), call('columns', { table: 'rna_tissue_consensus.tsv', about: 'tpm' }), call('values', { table: 'rna_tissue_consensus.tsv', column: 'Tissue' })),
     response(call('fetch', { title: 'Liver and lung nTPM', description: 'Consensus nTPM in liver and lung for the list', table: 'rna_tissue_consensus.tsv', fields: ['Tissue', 'nTPM'], where: [{ column: 'Tissue', op: 'in', value: 'liver,lung' }] })),
     response(call('finish', { results: ['Liver and lung nTPM'] }))
   ]);
@@ -33,16 +33,17 @@ test('the investigator opens a table, asks for a column\'s values, fetches for t
   assert.equal(result.calls, 3);
   // The desk of the second turn: the table as its column names plus the one column asked for.
   const desk2 = requests[1].messages[1].content;
-  assert.match(desk2, /OPENED\nrna_tissue_consensus\.tsv — Consensus tissue RNA\. Consensus nTPM per tissue \[rows per gene\]; 4 columns \(values from 6 rows\)\n  columns: Gene \| Gene name \| Tissue \| nTPM\n  Tissue: 3 values: liver \| lung \| heart\n/);
+  assert.match(desk2, /OPENED\nrna_tissue_consensus\.tsv — Consensus tissue RNA\. Consensus nTPM per tissue \[rows per gene\]; 4 columns \(values from 6 rows\)\n  columns: Gene, Gene name, Tissue, nTPM\n  Tissue: 3 values: liver \| lung \| heart\n/);
+  assert.match(desk2, /turn 1: columns of rna_tissue_consensus\.tsv about "tpm": nTPM\n/);
   assert.doesNotMatch(desk2, /nTPM: number/, 'a column not asked for shows no values');
   // The desk of the third turn: the result as one line, no rows.
   const desk3 = requests[2].messages[1].content;
   assert.match(desk3, /RESULTS\nLiver and lung nTPM \(6 rows: gene, ensembl, Tissue, nTPM, source_rows, source_status\) ← fetch table=rna_tissue_consensus\.tsv, fields=\["Tissue","nTPM"\]/);
   assert.match(desk3, /\n  Consensus nTPM in liver and lung for the list\n  0: EGFR \| ENSG1 \| liver \| 32\.2 \| 2 \| ok\n/, 'a result of a few rows sits on the desk whole');
-  assert.match(desk3, /HISTORY\nturn 1: opened rna_tissue_consensus\.tsv \(on the desk\)\nturn 1: values of rna_tissue_consensus\.tsv Tissue \(on its card\)\nturn 2: fetch → "Liver and lung nTPM" \(6 rows; 3 points with rows, 1 not in the release\)/);
+  assert.match(desk3, /HISTORY\nturn 1: opened rna_tissue_consensus\.tsv \(on the desk\)\nturn 1: columns of rna_tissue_consensus\.tsv about "tpm": nTPM\nturn 1: values of rna_tissue_consensus\.tsv Tissue \(on its card\)\nturn 2: fetch → "Liver and lung nTPM" \(6 rows; 3 points with rows, 1 not in the release\)/);
   assert.match(requests[0].messages[0].content, /You are the Investigator in a study over the Test Atlas/);
   assert.match(requests[0].messages[0].content, /TABLES \(2; find_tables narrows them by a word, open one for its columns\)\nrna_tissue_consensus\.tsv, tissues\.tsv/);
-  assert.equal(requests[0].tools.length, 5);
+  assert.equal(requests[0].tools.length, 6);
   assert.ok(steps.some(s => s.stage === 'complete'));
 });
 

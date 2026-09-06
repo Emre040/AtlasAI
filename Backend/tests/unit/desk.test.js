@@ -30,10 +30,12 @@ test('a table opened for particular columns details those and names the rest', (
   const card = desk.tableCard({ name: 'wide.tsv', title: 'Wide', columns: ['Gene', 'Tissue', 'nTPM', 'Note'], scanned: 6, focus: ['nTPM', 'Tissue'],
     profile: [{ column: 'Tissue', kind: 'text', blank_pct: 0, distinct: '3', observed_values: ['liver', 'lung', 'heart'] }, { column: 'nTPM', kind: 'number', blank_pct: 0, distinct: '5', min: 0, max: 34.1 }, { column: 'Note', kind: 'text', distinct: '6', observed_values: ['a', 'b', 'c', 'd', 'e', 'f'] }],
     sample: [{ Gene: 'ENSG1', Tissue: 'liver', nTPM: '32.2', Note: 'a' }] });
-  assert.match(card, /^wide\.tsv — Wide; 4 columns \(values from 6 rows\)\n  columns: Gene \| Tissue \| nTPM \| Note\n  Tissue: 3 values: liver \| lung \| heart\n  nTPM: number 0 to 34\.1; 5 distinct\n  rows \(Tissue \| nTPM\): liver \| 32\.2$/);
+  assert.match(card, /^wide\.tsv — Wide; 4 columns \(values from 6 rows\)\n  columns: Gene, Tissue, nTPM, Note\n  Tissue: 3 values: liver \| lung \| heart\n  nTPM: number 0 to 34\.1; 5 distinct\n  rows \(Tissue \| nTPM\): liver \| 32\.2$/);
   assert.doesNotMatch(card, /Note: 6 values/, 'a column not asked for is named, not detailed');
   const names = desk.tableCard({ name: 'wide.tsv', title: 'Wide', columns: ['Gene', 'Tissue'], focus: [], whole: false });
-  assert.equal(names, 'wide.tsv — Wide; 2 columns\n  columns: Gene | Tissue', 'opened without values, a table is its column names');
+  assert.equal(names, 'wide.tsv — Wide; 2 columns\n  columns: Gene, Tissue', 'opened without values, a table is its column names');
+  const many = desk.tableCard({ name: 'm.tsv', title: 'Many', columns: Array.from({ length: 119 }, (_, i) => `c${i}`), focus: [], whole: false });
+  assert.equal(many, 'm.tsv — Many; 119 columns\n  columns: c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, … +107 more columns', 'a wide table names its first columns; the rest are found by a word');
 });
 
 test('a wide table opened whole shows what each column holds, and every value for the columns asked for', () => {

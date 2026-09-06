@@ -89,7 +89,7 @@ function tableCard({ name, title, description, access, columns, profile, sample,
   const profiled = new Map((profile || []).map(c => [c.column, c]));
   const asked = new Set(focus || []);
   const detailed = whole ? columns : columns.filter(c => asked.has(c));
-  if (!whole) lines.push(`  columns: ${columns.join(' | ')}`);
+  if (!whole) lines.push(`  columns: ${namedColumns(columns)}`);
   for (const column of detailed) lines.push(`  ${profiled.has(column) ? columnLine(profiled.get(column), asked.has(column) || !wide ? VOCAB_MAX : CARD_VOCAB, wide && !asked.has(column)) : column}`);
   // Sample rows of a wide table show its first columns; the column lines above show the rest.
   const rowColumns = whole && wide ? columns.slice(0, ROW_COLUMNS) : detailed;

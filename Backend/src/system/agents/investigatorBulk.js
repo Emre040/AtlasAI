@@ -27,7 +27,8 @@ const tool = (name, description, properties, required = []) => ({ type: 'functio
 function tools(db) {
   return [
     tool('find_tables', 'Tables whose name, title, description or a column contains the word, with their columns.', { about: S }, ['about']),
-    tool('open', 'Put a table on the desk: what it is and its column names.', { table: S }, ['table']),
+    tool('open', 'Put a table on the desk: what it is and its first column names.', { table: S }, ['table']),
+    tool('columns', 'The columns of a table whose name contains the word.', { table: S, about: S }, ['table', 'about']),
     tool('values', 'The values a column of a table takes (every value of a category column, the range of a number column), spelled as the data spells them.', { table: S, column: S }, ['table', 'column']),
     tool('fetch', `Retrieve rows from one table. With the list: one row per source row for each point, with the point, the fields, source_rows and source_status; the points are ${db.entity}s unless match names the column their values are in. Without the list: every row where holds. Omit fields for every column.`, { title: S, description: S, table: S, fields: { type: 'array', items: S }, where: WHERE, match: { type: 'string', description: 'Column whose values the points are' } }, ['title', 'description', 'table']),
     tool('finish', 'Return the results that answer the question, by title. note states what no table holds and which points did not resolve.', { results: { type: 'array', items: S }, note: S }, ['results'])
@@ -41,7 +42,7 @@ function systemPrompt(db, catalog) {
 The desk in the message is everything you have opened and fetched so far, and stays in front of you every turn.
 
 How it goes:
-- open a table: its card names its columns. values shows what one column holds, so fields and filter values are spelled as the data spells them. find_tables narrows the list below by a word.
+- open a table: its card names its first columns; columns finds the rest by a word. values shows what one column holds, so fields and filter values are spelled as the data spells them. find_tables narrows the list below by a word.
 - fetch once per table with every field the question needs from it, and a where filter when the question names particular rows. With a list, the points are ${db.entity}s read by their keys, or the values of the column named by match. Each result has a title and a description a reader understands. The result keeps repeated rows, zeros, blanks and ties as recorded; a point with no matching row gets one row with empty fields and a source_status saying why. A question that spans several tables is answered by a fetch from each.
 - finish names the results that answer the question. The fetched rows are the evidence and a result's title is its citation. The note states what no table holds and which points did not resolve.
 
@@ -155,6 +156,12 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             history.push(`turn ${turn}: opened ${o.entry.file} (on the desk)`);
             done.set(key, 'already on the desk'); progressed = true;
             await emit('execution_step', 'Opened', `${o.entry.file}: ${o.entry.columns.length} columns`);
+          } else if (name === 'columns') {
+            const o = await openTable(args.table);
+            const word = String(args.about || '').trim().toLowerCase();
+            const hits = o.entry.columns.filter(c => c.toLowerCase().includes(word));
+            history.push(`turn ${turn}: columns of ${o.entry.file} about "${args.about}": ${hits.length ? hits.join(' | ') : `none of its ${o.entry.columns.length} columns`}`);
+            done.set(key, 'listed above'); progressed = true;
           } else if (name === 'values') {
             const line = await columnValues(args.table, args.column);
             history.push(`turn ${turn}: values of ${args.table} ${args.column} (on its card)`);

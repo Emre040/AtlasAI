@@ -20,7 +20,7 @@ const fs = require('node:fs/promises');
 const { inference, getActiveModel } = require('../../inference/gateway');
 const { platformConfig } = require('../../policy/config');
 const tools = require('../aso/studyTools');
-const { TABLE_OPERATIONS, executeTableOperation, A, THEN_BY } = require('../aso/tableOperations');
+const { TABLE_OPERATIONS, executeTableOperation, A } = require('../aso/tableOperations');
 const geneData = require('../../hpa/geneDataAdapter');
 const { createWorkspace, updateWorkspace } = require('../aso/workspaceStore');
 const { registerArtifact } = require('../aso/artifactStore');
@@ -57,21 +57,18 @@ const STUDY_TOOLS = [
   TABLE_OPERATIONS.get('filter'),
   TABLE_OPERATIONS.get('select'),
   TABLE_OPERATIONS.get('rank'),
-  op('top_per_group', 'The n highest (or lowest) rows of by per group; group_by defaults to the entity.', { artifact: A, group_by: S, by: S, n: N, order: { type: 'string', enum: ['desc', 'asc'] }, ties: { type: 'string', enum: ['include', 'truncate'] }, then_by: THEN_BY }, ['artifact', 'by']),
   TABLE_OPERATIONS.get('aggregate'),
   TABLE_OPERATIONS.get('classify'),
   TABLE_OPERATIONS.get('compute'),
-  TABLE_OPERATIONS.get('fill_missing'),
   op('pivot', 'A matrix for a heatmap: rows from row, columns from column, cells from value (aggregate duplicates first).', { artifact: A, row: S, column: S, value: S }, ['artifact', 'column', 'value']),
   op('chart', 'Draw an artifact; the title is the figure title. Bar family: x labels, y values, group for series (grouped_bar needs it). scatter/bubble: numeric x and y, label names points, group colours them. heatmap takes a pivot. missing=omit skips rows with a missing number.', { artifact: A, type: { type: 'string', enum: studyPlan.CHART_KINDS }, x: S, y: S, group: S, size: S, label: S, x_label: S, y_label: S, missing: { type: 'string', enum: ['error', 'omit'] } }, ['artifact', 'type']),
   TABLE_OPERATIONS.get('correlate'),
   op('overlap', 'Entities a and b share, against every entity of the database or a universe artifact: shared, expected, fold, hypergeometric p; group_by tests each group of a.', { a: A, b: A, universe: A, on: S, group_by: S }, ['a', 'b']),
-  op('standardize', 'Add a rescaled copy of a numeric column: zscore, minmax or percentile.', { artifact: A, column: S, method: { type: 'string', enum: ['zscore', 'minmax', 'percentile'] }, as: S }, ['artifact', 'column', 'method']),
   op('explode', 'One row per item of a list cell; "key: number" items become <as>_key and <as>_value, "label (number)" <as>_label and <as>_value, others <as>_item.', { artifact: A, column: S, as: S }, ['artifact', 'column']),
   tool('skip', 'Nothing to do until a running agent returns.', { reason: S }, ['reason']),
   tool('finish', 'Deliver the report: tables and figures by id, findings as claims bound to their cells, limitations, not_done.', FINISH_SCHEMA)
 ];
-const TABLE_TOOLS = new Set(['combine', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'classify', 'compute', 'fill_missing', 'pivot', 'chart', 'correlate', 'overlap', 'standardize', 'explode']);
+const TABLE_TOOLS = new Set(['combine', 'join', 'filter', 'select', 'rank', 'aggregate', 'classify', 'compute', 'pivot', 'chart', 'correlate', 'overlap', 'explode']);
 const SYNC_TOOLS = new Set(['plan', 'note', 'open', 'skip', 'finish']);
 
 // The arguments of a call without the name it gives its result.
@@ -349,14 +346,12 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
         out = { rows: tools.setOp(args.how, rowsOf('a'), rowsOf('b'), args.on || null) }; break;
       }
       case 'join': out = executeTableOperation(toolName, args, { a: rowsOf('a'), b: rowsOf('b') }); break;
-      case 'filter': case 'select': case 'classify': case 'compute': case 'fill_missing': case 'correlate': case 'rank': case 'aggregate': out = executeTableOperation(toolName, args, { artifact: rowsOf('artifact') }); break;
-      case 'top_per_group': out = { rows: tools.topPerGroup(rowsOf('artifact'), args) }; break;
+      case 'filter': case 'select': case 'classify': case 'compute': case 'correlate': case 'rank': case 'aggregate': out = executeTableOperation(toolName, args, { artifact: rowsOf('artifact') }); break;
       case 'overlap': {
         // The universe is every entity of the database unless an artifact is named.
         const universe = args.universe ? rowsOf('universe') : tools.withColumns(await geneData.entities(), [...identity.keys]);
         out = { rows: tools.overlap(rowsOf('a'), rowsOf('b'), universe, args.on || null, args.group_by || null) }; break;
       }
-      case 'standardize': out = { rows: tools.standardize(rowsOf('artifact'), args) }; break;
       case 'explode': out = { rows: tools.explode(rowsOf('artifact'), args.column, args.as) }; break;
       case 'pivot': out = { matrix: tools.pivot(rowsOf('artifact'), args) }; break;
       case 'chart': { const a = get(args.artifact); inputRefs.add(a.id); out = { figure: tools.chartSpec(args, a.matrix || a.rows) }; break; }
@@ -462,7 +457,10 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
       turn++;
       state.turn = turn;
       // The last turn can only report; skip exists only while an agent is running.
-      const offered = turn === maxTurns ? toolSpecs.filter(t => ['finish', 'note'].includes(t.function.name)) : toolSpecs.filter(t => t.function.name !== 'skip' || state.running.size);
+      // Only what can act is offered: before any artifact exists, the plan, notes and the agents;
+      // the operations, open and finish once there is something to work on.
+      const offered = turn === maxTurns ? toolSpecs.filter(t => ['finish', 'note'].includes(t.function.name))
+        : toolSpecs.filter(t => (t.function.name !== 'skip' || state.running.size) && (state.artifacts.length || ['plan', 'note', 'skip'].includes(t.function.name) || agentNames.has(t.function.name)));
       const user = deskText(turn);
       const request = { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], tools: offered, temperature: 0, prompt_cache: { key: `study ${workspace.uuid}` }, ...(effort ? { reasoning_effort: effort } : {}) };
       const contextDir = path.join(workspace.workspaceDir, 'context');

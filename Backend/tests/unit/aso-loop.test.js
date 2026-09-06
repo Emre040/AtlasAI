@@ -108,17 +108,20 @@ test('a plan item without a deliverable blocks finish unless it is listed in not
 
 test('finish while an agent runs is refused and the loop waits for the agent; a failed operation is a history line with the columns', async t => {
   const { run, requests } = await study(t, [
-    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' })), call('finish', { tables: [{ artifact: 'a1' }] })),
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' }))),
+    response(call('investigator_hpa', named('More values', { points: ['ERBB2'], question: 'nTPM' })), call('finish', { tables: [{ artifact: 'a1' }] })),
     response(call('filter', named('High', { artifact: 'a1', where: [{ column: 'expression', op: '>', value: 1 }] }))),
     response(call('finish', { tables: [{ artifact: 'a1' }] }))
   ], { agentResult: async () => { await new Promise(resolve => setTimeout(resolve, 60)); return BULK; } });
   const result = await run({});
   assert.equal(result.outcome, 'completed', result.summary);
-  assert.equal(result.turns, 3, 'no turn is spent looking at an unchanged desk while the agent runs');
-  const desk2 = requests[1].messages[1].content;
-  assert.match(desk2, /RUNNING\n\(nothing running\)/);
-  assert.match(desk2, /turn 1: finish refused: t1 still running; wait for them \(skip\) or finish after they return\nturn 1: t1 investigator_hpa "Values" done → a1 "Values" \(4 rows\)/);
-  assert.match(requests[2].messages[1].content, /turn 2: filter\(artifact=a1, where=\[\{"column":"expression","op":">","value":1\}\]\) failed: filter: no column named "expression" \(columns: gene, ensembl, Tissue, nTPM, source_rows, source_status\)/);
+  assert.equal(result.turns, 4, 'no turn is spent looking at an unchanged desk while an agent runs');
+  assert.ok(!requests[0].tools.some(tool => ['finish', 'filter', 'open'].includes(tool.function.name)), 'before any artifact exists only the plan, notes and the agents are offered');
+  assert.ok(requests[1].tools.some(tool => tool.function.name === 'finish'));
+  const desk3 = requests[2].messages[1].content;
+  assert.match(desk3, /RUNNING\n\(nothing running\)/);
+  assert.match(desk3, /turn 2: finish refused: t2 still running; wait for them \(skip\) or finish after they return\nturn 2: t2 investigator_hpa "More values" done → a2 "More values" \(4 rows\)/);
+  assert.match(requests[3].messages[1].content, /turn 3: filter\(artifact=a1, where=\[\{"column":"expression","op":">","value":1\}\]\) failed: filter: no column named "expression" \(columns: gene, ensembl, Tissue, nTPM, source_rows, source_status\)/);
   assert.equal(result.failed, 1, 'the failed filter; a refused finish is feedback, not a failure');
 });
 

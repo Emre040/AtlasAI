@@ -14,7 +14,6 @@ const rows = [
 ];
 const domains = [{ column: 'phase', values: ['first', 'second', 'third'] }, { column: 'cohort', values: ['A', 'B'] }];
 const args = { group_by_columns: ['cohort', 'phase'], group_domains: domains, column: 'value', metrics };
-async function* stream(values) { yield* values; }
 
 test('full uneven 2x3 domains retain all observations and add zero-count combinations on table and stream paths', async () => {
   const before = JSON.stringify(rows);
@@ -26,8 +25,6 @@ test('full uneven 2x3 domains retain all observations and add zero-count combina
   const observed = tools.aggregate(rows, { ...args, group_domains: undefined });
   assert.equal(observed.length, 3);
   assert.deepEqual(result.filter(r => r.count > 0), observed, 'existing observed-group metric semantics must be unchanged');
-  assert.deepEqual(await tools.aggregateStream(stream(rows), args, columns), result);
-  assert.deepEqual(await tools.aggregateStream(stream([...rows].reverse()), args, columns), result, 'declared output order does not depend on source order');
   assert.equal(JSON.stringify(rows), before, 'source values and counts are not mutated');
 });
 
@@ -39,7 +36,6 @@ test('empty groups use the existing empty aggregate statistics and preserve sche
   for (const { cohort, phase, ...stats } of result) assert.deepEqual(stats, emptyStats);
   for (const metric of ['count', 'numeric_count', 'zero', 'missing', 'distinct']) assert.equal(emptyStats[metric], 0);
   for (const metric of ['sum', 'mean', 'median', 'sd', 'q1', 'q3', 'min', 'max']) assert.equal(emptyStats[metric], null);
-  assert.deepEqual(await tools.aggregateStream(stream([]), args, columns), result);
   assert.deepEqual(tools.aggregate(source, { ...args, group_domains: undefined }), []);
   const noCombinations = { ...args, group_domains: [{ column: 'cohort', values: [] }, domains[0]] };
   assert.deepEqual(tools.aggregate(source, noCombinations), []);
@@ -55,7 +51,6 @@ test('typed grouping labels retain zero, text, boolean, null, blank and NA as se
   assert.deepEqual(result.map(r => r.count), labels.map(k => k === null ? 2 : 1));
   assert.deepEqual(result.map(r => r.numeric_count), labels.map(() => 1));
   assert.equal(result.find(r => r.key === null).missing, 1, 'undefined grouping keys retain existing null normalization');
-  assert.deepEqual(await tools.aggregateStream(stream(source), options, ['key', 'value']), result);
   assert.throws(() => tools.aggregate([{ key: '0', value: 0 }], { ...options, group_domains: [{ column: 'key', values: [0] }] }), /outside declared domain/);
   assert.throws(() => tools.aggregate([{ key: ' A ', value: 0 }], { ...options, group_domains: [{ column: 'key', values: ['A'] }] }), /outside declared domain/);
 });
@@ -63,12 +58,10 @@ test('typed grouping labels retain zero, text, boolean, null, blank and NA as se
 test('invalid or incomplete domain declarations reject explicitly without silently dropping observations', async () => {
   for (const group_domains of [null, {}, [], [{ column: 'cohort', values: ['A', 'B'] }], [...domains, { column: 'value', values: [0] }], [...domains, { column: 'COHORT', values: ['A', 'B'] }], [{ column: 'phase', values: ['first', 'first'] }, domains[1]], [{ column: 'phase', values: [{}] }, domains[1]], [{ column: 'phase', values: [[]] }, domains[1]], [{ column: 'phase', values: [undefined] }, domains[1]], [{ column: 'phase', values: [Infinity] }, domains[1]], [{ column: 'phase', values: [NaN] }, domains[1]], [{ column: 'phase', values: ['first'], unexpected: true }, domains[1]]]) {
     assert.throws(() => tools.aggregate(rows, { ...args, group_domains }), /aggregate:/);
-    await assert.rejects(() => tools.aggregateStream(stream(rows), { ...args, group_domains }, columns), /aggregate:/);
   }
   assert.throws(() => tools.aggregate(rows, { group_domains: domains, metrics: ['count'] }), /requires group_by/);
   const outside = [...rows, { cohort: 'C', phase: 'first', value: 99 }];
   assert.throws(() => tools.aggregate(outside, args), /outside declared domain for "cohort"/);
-  await assert.rejects(() => tools.aggregateStream(stream(outside), args, columns), /outside declared domain for "cohort"/);
 });
 
 test('declared Cartesian products have no private group-count ceiling', () => {

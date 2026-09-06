@@ -2,11 +2,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const tools = require('../../src/system/aso/studyTools');
-async function* stream(rows) { yield* rows; }
 async function both(values, args = { column: 'value', metrics: ['distinct'] }) {
   const rows = values.map(value => ({ value }));
   const result = tools.aggregate(rows, args);
-  assert.deepEqual(await tools.aggregateStream(stream(rows), args, ['value']), result);
   return result;
 }
 
@@ -52,8 +50,6 @@ test('typed distinct works in grouped row and streaming outputs and retains empt
   const args = { group_by: 'group', group_domains: [{ column: 'group', values: ['observed', 'missing', 'empty'] }], column: 'value', metrics: ['count', 'missing', 'distinct'] };
   const expected = [{ group: 'observed', count: 4, missing: 0, distinct: 4 }, { group: 'missing', count: 1, missing: 1, distinct: 0 }, { group: 'empty', count: 0, missing: 0, distinct: 0 }];
   assert.deepEqual(tools.aggregate(rows, args), expected);
-  assert.deepEqual(await tools.aggregateStream(stream(rows), args, ['group', 'value']), expected);
-  assert.deepEqual(await tools.aggregateStream(stream([...rows].reverse()), args, ['group', 'value']), expected);
 });
 
 test('non-JSON values reject explicitly in both distinct pathways instead of collapsing', async () => {
@@ -64,7 +60,6 @@ test('non-JSON values reject explicitly in both distinct pathways instead of col
   for (const value of invalid) {
     const rows = [{ value }], args = { column: 'value', metrics: ['distinct'] };
     assert.throws(() => tools.aggregate(rows, args), /aggregate: distinct/);
-    await assert.rejects(() => tools.aggregateStream(stream(rows), args, ['value']), /aggregate: distinct/);
   }
 });
 

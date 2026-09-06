@@ -148,27 +148,6 @@ function classify(rows, args = {}) {
 }
 
 
-function fillMissing(rows, args = {}) {
-  const columns = columnsOf(rows);
-  if (!Array.isArray(args.columns) || !args.columns.length) throw new Error('fill_missing: choose a nonempty array of existing columns');
-  const selected = args.columns.map(name => {
-    const column = findColumn(rows, name);
-    if (!column) throw new Error(`fill_missing: no column named ${JSON.stringify(name)}`);
-    return column;
-  });
-  if (new Set(selected).size !== selected.length) throw new Error('fill_missing: columns must be distinct');
-  const value = args.value;
-  if (!Object.hasOwn(args, 'value') || !(value === null || typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value))) throw new Error('fill_missing: value must be an explicit finite JSON scalar');
-  const affected = Object.fromEntries(selected.map(column => [column, 0]));
-  const result = withColumns(rows.map(row => {
-    const changed = selected.filter(column => isMissing(row[column]));
-    changed.forEach(column => affected[column]++);
-    return { ...row, ...Object.fromEntries(changed.map(column => [column, value])) };
-  }), columns);
-  Object.defineProperty(result, 'fill', { value: { columns: selected, value, predicate: 'isMissing', affected_cells: affected, total_affected_cells: Object.values(affected).reduce((a, b) => a + b, 0), input_rows: rows.length } });
-  return result;
-}
-
 function applyWhere(rows, where = []) {
   const columns = columnsOf(rows);
   return withColumns(rows.filter(wherePredicate(columns, where)), columns);
@@ -399,12 +378,6 @@ function topPerGroup(rows, args = {}) {
   return keeper.result();
 }
 
-async function topPerGroupStream(iterable, args, columns) {
-  const keeper = topKeeper(args, columns);
-  for await (const r of iterable) keeper.add(r);
-  return keeper.result();
-}
-
 function quantile(sorted, q) {
   if (!sorted.length) return null;
   const pos = (sorted.length - 1) * q;
@@ -558,12 +531,6 @@ function aggregateMany(rows, specifications) {
   const accumulators = specifications.map(args => aggregator(args, columns));
   for (const row of rows) for (const accumulator of accumulators) accumulator.add(row);
   return accumulators.map(accumulator => accumulator.result());
-}
-
-async function aggregateStream(iterable, args, columns) {
-  const acc = aggregator(args, columns);
-  for await (const r of iterable) acc.add(r);
-  return acc.result();
 }
 
 // ---- list cells: their grammar, exploding them into rows, and profiling columns -------------------
@@ -813,30 +780,6 @@ function overlap(a, b, universe, on = null, group_by = null) {
   return [...groups].map(([g, rows]) => ({ [groupCol]: g, ...overlapStats(ids(rows, onA), B, N) }));
 }
 
-function standardize(rows, { column, method = 'zscore', as } = {}) {
-  const col = findColumn(rows, column);
-  if (!col) throw new Error(`standardize: no column named "${column}" (columns: ${columnsOf(rows).slice(0, 30).join(', ')})`);
-  const how = lower(method);
-  const name = String(as || '').trim() || `${col}_${how}`;
-  const vals = rows.map(r => num(r[col]));
-  const present = vals.filter(v => v !== null);
-  if (!present.length) throw new Error(`standardize: no numeric values in "${col}"`);
-  let f;
-  if (how === 'zscore') {
-    const mean = present.reduce((a, v) => a + v, 0) / present.length;
-    const sd = present.length > 1 ? Math.sqrt(present.reduce((a, v) => a + (v - mean) ** 2, 0) / (present.length - 1)) : 0;
-    f = v => (sd ? (v - mean) / sd : 0);
-  } else if (how === 'minmax') {
-    const lo = Math.min(...present), hi = Math.max(...present);
-    f = v => (hi > lo ? (v - lo) / (hi - lo) : 0);
-  } else if (how === 'percentile') {
-    const byValue = new Map();
-    ranks(present).forEach((rk, i) => byValue.set(present[i], (rk - 0.5) / present.length * 100));
-    f = v => byValue.get(v);
-  } else throw new Error(`standardize: unknown method "${method}" (zscore, minmax, percentile)`);
-  return withColumns(rows.map((r, i) => { const value = vals[i] === null ? null : f(vals[i]); return { ...r, [name]: value === null || !Number.isFinite(value) ? null : value }; }), [...columnsOf(rows), name]);
-}
-
 // A small arithmetic language for compute: column names (quote names with spaces), numbers,
 // + - * / and parentheses, and the functions log2, log10, ln, abs, sqrt, exp, min, max.
 // Every row gets the value, or null where a column it needs is missing or the result is not finite.
@@ -1075,4 +1018,4 @@ async function measure(rows, { table, value_column, entity_column, entity, as, a
   return out;
 }
 
-module.exports = { aggregateMany, fillMissing, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, inList, applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, withColumns, findColumn, keyOf, num, isMissing };
+module.exports = { aggregateMany, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, inList, applyWhere, wherePredicate, freshFirst, correlate, overlap, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, withColumns, findColumn, keyOf, num, isMissing };

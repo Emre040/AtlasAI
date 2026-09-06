@@ -4,14 +4,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const Module = require('node:module');
-const { chartSpec, pivot, aggregate, aggregateStream } = require('../../src/system/aso/studyTools');
+const { chartSpec, pivot, aggregate } = require('../../src/system/aso/studyTools');
 
 test('multi-column aggregation retains separate group labels without delimiter collisions', async () => {
   const rows = [{ cohort: 'A|B', category: 'C', value: 2 }, { cohort: 'A|B', category: 'C', value: null }, { cohort: 'A', category: 'B|C', value: 0 }];
   const args = { group_by_columns: ['cohort', 'category'], column: 'value', metrics: ['count', 'sum', 'mean', 'missing'] };
   const expected = [{ cohort: 'A|B', category: 'C', count: 2, sum: 2, mean: 2, missing: 1 }, { cohort: 'A', category: 'B|C', count: 1, sum: 0, mean: 0, missing: 0 }];
   assert.deepEqual(aggregate(rows, args), expected);
-  assert.deepEqual(await aggregateStream((async function* () { yield* rows; })(), args, ['cohort', 'category', 'value']), expected);
   assert.throws(() => aggregate(rows, { ...args, group_by: 'cohort' }), /not both/);
   assert.throws(() => aggregate(rows, { ...args, group_by_columns: [] }), /nonempty array/);
   assert.throws(() => aggregate(rows, { ...args, group_by_columns: ['cohort', 'unknown'] }), /no grouping column/);

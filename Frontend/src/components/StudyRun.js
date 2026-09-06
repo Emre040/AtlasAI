@@ -5,17 +5,19 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faChartBar, faDatabase, faFlagCheckered, faGear, faListCheck, faMagnifyingGlass, faMicroscope, faNoteSticky, faQuestion, faRobot, faExternalLinkAlt } from '@fortawesome/free-solid-svg-icons';
 import './StudyRun.css';
 
-// A study run (aso_hpa) as a live map, top to bottom. The query sits at the top. An agent or tool
-// island appears the moment the loop calls it and pulses until it returns; its data or figure
-// island appears under it, linked to what it read. Plan, note and finish get islands of their
-// own. Hovering an island opens its details beside it, live while it runs. The plan sits top
-// right. Live SSE steps and stored run events share one shape (stage + JSON message), so the same
-// reducer draws a run in progress and a run reloaded from history.
+// A study run (aso_hpa) as a live map, top to bottom. The query sits at the top. An agent (deep
+// research for a set of genes, the Investigator for rows) or an operation appears the moment the
+// study calls it, named with the title the study gave it, and pulses until it returns; its data
+// or figure island appears under it, linked to what it read, carrying the title and description
+// the study wrote for it. Plan, note and finish get islands of their own. Hovering an island opens
+// its details beside it, live while it runs. The plan sits top right and its items tick off as
+// the report delivers them. Live SSE steps and stored run events share one shape (stage + JSON
+// message), so the same reducer draws a run in progress and a run reloaded from history.
 
 const AGENT_NAMES = { deep_research_hpa: 'Deep research', investigator_hpa: 'Investigator', check_inclusion_hpa: 'Inclusion check', dictionary_expert_hpa: 'Dictionary' };
 const ICONS = { query: faQuestion, agent: faRobot, deep_research_hpa: faMagnifyingGlass, investigator_hpa: faMicroscope, data: faDatabase, tool: faGear, figure: faChartBar, plan: faListCheck, note: faNoteSticky, finish: faFlagCheckered };
-const CELL_W = 104;
-const ROW_H = 104;
+const CELL_W = 124;
+const ROW_H = 112;
 const ICON = 46;
 const PAD_X = 24;
 const PAD_Y = 18;
@@ -45,19 +47,24 @@ export function studyStateFromEvents(events) {
     else if (stage === 'turn') state.turns.push({ turn: d.turn, text: d.text || '', calls: d.calls || [] });
     else if (stage === 'plan') {
       state.plan = Array.isArray(d.items) ? d.items : state.plan;
-      if (!d.changed) add({ key: `plan${state.islands.length}`, type: 'plan', label: 'Plan', inputs: ['query'], status: 'done', items: state.plan.map(p => ({ ...p })) });
+      // The first plan is an island; later plan events (a rewrite, the statuses at finish) update it.
+      const existing = state.islands.find(i => i.type === 'plan');
+      if (existing) existing.items = state.plan.map(p => ({ ...p }));
+      else add({ key: 'plan', type: 'plan', label: 'Plan', inputs: ['query'], status: 'done', items: state.plan.map(p => ({ ...p })) });
     }
     else if (stage === 'note') add({ key: `note${state.islands.length}`, type: 'note', label: 'Note', inputs: ['query'], status: 'done', text: d.text || '' });
     else if (stage === 'skip') state.turns.push({ turn: null, skip: d.reason || '' });
+    else if (stage === 'finish.refused') state.turns.push({ turn: null, refused: Array.isArray(d.issues) ? d.issues : [d.reason || 'refused'] });
+    else if (stage === 'call.failed') state.turns.push({ turn: null, failed: `${d.tool}: ${d.error || ''}` });
     else if (stage === 'tool.start') {
       const type = d.kind === 'agent' ? 'agent' : 'tool';
-      add({ key: d.id, type, tool: d.tool, label: type === 'agent' ? (AGENT_NAMES[d.tool] || d.tool) : d.tool, detail: d.label, args: d.args || {}, inputs: (d.inputs || []).length ? d.inputs : ['query'], status: 'running', startedAt: event.createdAt || null });
+      add({ key: d.id, type, tool: d.tool, label: type === 'agent' ? (AGENT_NAMES[d.tool] || d.tool) : d.tool, title: d.label || '', args: d.args || {}, inputs: (d.inputs || []).length ? d.inputs : ['query'], status: 'running', startedAt: event.createdAt || null });
     } else if (stage === 'tool.done') {
       const t = state.byKey.get(d.id);
       if (t) { t.status = 'done'; t.ms = d.ms; t.output = d.artifact?.id || null; }
       const a = d.artifact;
       if (a) {
-        const island = add({ key: a.id, type: a.kind === 'figure' ? 'figure' : 'data', kind: a.kind, label: a.label, size: a.size, inputs: [d.id], status: 'done', rows: a.rows, columns: a.columns || [], sample: a.sample || [], sampleColumns: a.sample_columns || [], text: a.text || null, images: a.images || [], searchUrl: a.search_url || null, query: a.query || null, artifactUuid: a.artifact_uuid, from: t ? { tool: t.tool, args: t.args, inputs: t.inputs } : null });
+        const island = add({ key: a.id, type: a.kind === 'figure' ? 'figure' : 'data', kind: a.kind, label: a.label, title: a.title || a.label || '', description: a.description || '', size: a.size, inputs: [d.id], status: 'done', rows: a.rows, columns: a.columns || [], sample: a.sample || [], sampleColumns: a.sample_columns || [], text: a.text || null, images: a.images || [], searchUrl: a.search_url || null, query: a.query || null, artifactUuid: a.artifact_uuid, from: t ? { tool: t.tool, args: t.args, inputs: t.inputs } : null });
         state.artifactsById.set(a.id, island);
       }
     } else if (stage === 'tool.failed') {
@@ -135,9 +142,14 @@ function iconFor(island) {
   return ICONS[island.type] || ICONS.tool;
 }
 
+// The arguments of a call, without the title and description shown above them.
 function argLines(args) {
-  return Object.entries(args || {}).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)]);
+  return Object.entries(args || {}).filter(([k, v]) => k !== 'title' && k !== 'description' && v !== undefined && v !== null && v !== '').map(([k, v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)]);
 }
+
+// The plan item kinds, in the words the study uses.
+const KIND_LABELS = { gene_set: 'set of genes', table: 'table', interpretation: 'interpretation' };
+function kindLabel(kind) { return KIND_LABELS[kind] || `${String(kind || '').replace(/_/g, ' ')} chart`; }
 
 function Panel({ island, state }) {
   const trail = state.trails.get(island.key) || [];
@@ -155,10 +167,10 @@ function Panel({ island, state }) {
           <div className="HPAG-map-panel-text">{state.goal}</div>
           {state.turns.length > 0 && (
             <div className="HPAG-map-steps">
-              {state.turns.slice(-8).map((t, i) => (
-                <div key={i} className="HPAG-map-step">
-                  <span className="HPAG-map-step-label">{t.turn ? `turn ${t.turn}` : 'wait'}</span>
-                  <span className="HPAG-map-step-text">{t.skip !== undefined ? `skip: ${t.skip}` : t.calls.length ? t.calls.map(c => c.tool).join(', ') : truncate(t.text, 160)}</span>
+              {state.turns.slice(-10).map((t, i) => (
+                <div key={i} className={`HPAG-map-step ${t.refused || t.failed ? 'HPAG-map-step-refused' : ''}`}>
+                  <span className="HPAG-map-step-label">{t.turn ? `turn ${t.turn}` : t.refused ? 'report refused' : t.failed ? 'call failed' : 'wait'}</span>
+                  <span className="HPAG-map-step-text">{t.refused ? truncate(t.refused.join(' · '), 260) : t.failed ? truncate(t.failed, 200) : t.skip !== undefined ? `skip: ${t.skip}` : t.calls.length ? t.calls.map(c => c.tool).join(', ') : truncate(t.text, 160)}</span>
                 </div>
               ))}
             </div>
@@ -167,7 +179,8 @@ function Panel({ island, state }) {
       )}
       {(island.type === 'agent' || island.type === 'tool') && (
         <>
-          {island.detail && <div className="HPAG-map-panel-text">{island.detail}</div>}
+          {island.title && <div className="HPAG-map-panel-name">{island.title}</div>}
+          {island.args?.description && <div className="HPAG-map-panel-text">{island.args.description}</div>}
           <dl className="HPAG-map-args">{argLines(island.args).map(([k, v]) => <React.Fragment key={k}><dt>{k}</dt><dd>{truncate(v, 240)}</dd></React.Fragment>)}</dl>
           {island.inputs?.filter(i => i !== 'query').length > 0 && <div className="HPAG-map-panel-meta">reads {island.inputs.filter(i => i !== 'query').join(', ')}</div>}
           {island.error && <div className="HPAG-map-panel-error">{island.error}</div>}
@@ -187,8 +200,9 @@ function Panel({ island, state }) {
       )}
       {(island.type === 'data' || island.type === 'figure') && (
         <>
-          <div className="HPAG-map-panel-text">{island.label}</div>
-          {island.from && <div className="HPAG-map-panel-meta">from {island.from.tool}{island.from.inputs?.filter(i => i !== 'query').length ? ` of ${island.from.inputs.filter(i => i !== 'query').join(', ')}` : ''}</div>}
+          <div className="HPAG-map-panel-name">{island.title || island.label}</div>
+          {island.description && <div className="HPAG-map-panel-text">{island.description}</div>}
+          {island.from && <div className="HPAG-map-panel-meta">from {AGENT_NAMES[island.from.tool] || island.from.tool}{island.from.inputs?.filter(i => i !== 'query').length ? ` of ${island.from.inputs.filter(i => i !== 'query').join(', ')}` : ''}</div>}
           {island.query && <div className="HPAG-map-panel-meta">{island.query}</div>}
           {island.searchUrl && <a className="HPAG-map-link" href={island.searchUrl} target="_blank" rel="noopener noreferrer">open on proteinatlas.org <FontAwesomeIcon icon={faExternalLinkAlt} /></a>}
           {island.text && <div className="HPAG-map-panel-text">{truncate(island.text, 500)}</div>}
@@ -204,7 +218,7 @@ function Panel({ island, state }) {
           {island.type === 'figure' && island.images?.length > 0 && <div className="HPAG-map-panel-meta">rendered: {island.images.join(', ')}</div>}
         </>
       )}
-      {island.type === 'plan' && <ol className="HPAG-map-plan-list">{island.items.map((p, i) => <li key={i} className={`HPAG-map-plan-${p.status}`}>{p.text}</li>)}</ol>}
+      {island.type === 'plan' && <ol className="HPAG-map-plan-list">{island.items.map((p, i) => <li key={i} className={`HPAG-map-plan-${p.status}`}>{p.text} <span className="HPAG-map-plan-kind">{kindLabel(p.kind)}</span></li>)}</ol>}
       {island.type === 'note' && <div className="HPAG-map-panel-text">{island.text}</div>}
       {island.type === 'finish' && <div className="HPAG-map-panel-text">{truncate(island.summary, 600)}</div>}
     </div>
@@ -227,7 +241,7 @@ export default function StudyRun({ events, isComplete }) {
   const enter = key => { if (leaveTimer.current) { clearTimeout(leaveTimer.current); leaveTimer.current = null; } setHovered(key); };
   const leave = () => { leaveTimer.current = setTimeout(() => setHovered(null), 180); };
   const live = !isComplete && !['done', 'failed', 'incomplete'].includes(state.phase);
-  const counts = { artifacts: state.islands.filter(i => i.type === 'data' || i.type === 'figure').length, running: state.islands.filter(i => i.status === 'running').length, failed: state.islands.filter(i => i.status === 'failed').length };
+  const counts = { artifacts: state.islands.filter(i => i.type === 'data' || i.type === 'figure').length, agents: state.islands.filter(i => i.type === 'agent').length, running: state.islands.filter(i => i.status === 'running').length, failed: state.islands.filter(i => i.status === 'failed').length };
   const panelLeft = focusPos ? (focusPos.x > layout.width * 0.55 ? focusPos.x - ICON / 2 - 12 - 320 : focusPos.x + ICON / 2 + 12) : 0;
   const panelTop = focusPos ? Math.max(6, focusPos.y - 20) : 0;
 
@@ -235,7 +249,7 @@ export default function StudyRun({ events, isComplete }) {
     <div className="HPAG-study">
       <div className="HPAG-study-head">
         <span className={`HPAG-study-phase HPAG-study-phase-${state.phase}`}>{live ? 'Running' : state.phase === 'failed' ? 'Failed' : state.phase === 'incomplete' ? 'Incomplete' : 'Complete'}</span>
-        <span className="HPAG-study-counts">{state.turns.filter(t => t.turn).length} turns · {counts.artifacts} artifacts{counts.running ? ` · ${counts.running} running` : ''}{counts.failed ? ` · ${counts.failed} failed` : ''}</span>
+        <span className="HPAG-study-counts">{state.turns.filter(t => t.turn).length} turns · {counts.agents} agent{counts.agents === 1 ? '' : 's'} · {counts.artifacts} artifacts{counts.running ? ` · ${counts.running} running` : ''}{counts.failed ? ` · ${counts.failed} failed` : ''}</span>
         <span className="HPAG-study-meta">{state.finish?.seconds ? `${Number(state.finish.seconds).toFixed(0)}s · ` : ''}{state.finish?.tokens?.total ? `${Number(state.finish.tokens.total).toLocaleString()} tokens · ` : ''}{state.model || ''}{state.mode ? ` · ${state.mode} data` : ''}</span>
       </div>
       {state.error && <div className="HPAG-study-error">{state.error}</div>}
@@ -256,7 +270,7 @@ export default function StudyRun({ events, isComplete }) {
               const p = layout.positions.get(i.key);
               if (!p) return null;
               const dim = focus && !linked.has(i.key);
-              const label = i.type === 'query' ? 'query' : i.type === 'data' ? (i.size || 'data') : i.type === 'figure' ? 'figure' : i.type === 'agent' ? i.label : i.type === 'tool' ? i.tool : i.label;
+              const label = i.type === 'query' ? 'query' : i.type === 'data' || i.type === 'figure' ? (i.title || i.size || i.type) : i.type === 'agent' ? i.label : i.type === 'tool' ? i.tool : i.label;
               return (
                 <div
                   key={i.key}
@@ -272,7 +286,7 @@ export default function StudyRun({ events, isComplete }) {
                 >
                   <span className="HPAG-map-icon"><FontAwesomeIcon icon={iconFor(i)} /></span>
                   <span className="HPAG-map-key">{i.key === 'query' ? '' : i.key}</span>
-                  <span className="HPAG-map-label">{truncate(label, 15)}</span>
+                  <span className="HPAG-map-label">{truncate(label, 36)}</span>
                 </div>
               );
             })}
@@ -287,7 +301,7 @@ export default function StudyRun({ events, isComplete }) {
           <div className="HPAG-map-plan">
             <div className="HPAG-map-plan-head">Plan</div>
             <ol className="HPAG-map-plan-list">
-              {state.plan.map((p, i) => <li key={i} className={`HPAG-map-plan-${p.status}`}>{p.text}{p.note ? <span className="HPAG-map-plan-note"> {p.note}</span> : null}</li>)}
+              {state.plan.map((p, i) => <li key={i} className={`HPAG-map-plan-${p.status}`}>{p.text} <span className="HPAG-map-plan-kind">{kindLabel(p.kind)}</span></li>)}
             </ol>
           </div>
         )}

@@ -122,7 +122,7 @@ test('search excludes model drafts, control feedback and previous searches and r
   }
 });
 
-const specifications = new Map([['transform', { parameters: { type: 'object', properties: { artifact: { type: 'string' }, factor: { type: 'number' } }, required: ['artifact'] } }]]);
+const specifications = new Map([['transform', { parameters: { type: 'object', properties: { artifact: { type: 'string', 'x-artifact-reference': true }, factor: { type: 'number' } }, required: ['artifact'] } }]]);
 const step = (id, artifact, extra = {}) => ({ id, tool: 'transform', args: JSON.stringify({ artifact, ...extra }) });
 
 test('batch executes arbitrary dependency graphs and passes actual generated artifact IDs', async () => {

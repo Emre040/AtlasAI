@@ -18,11 +18,12 @@ const { AgentStop, RepairProgress, createAgentControl, fingerprint } = require('
 
 const PLAN_SYSTEM = `You are answering a question about one gene from a database of per-gene tables. You are given the catalog: every table with the database's own description of it and its columns.
 
-Choose which tables to read for this gene. Return JSON: { "understanding": "<what the question asks, in the database's terms>", "reads": [ { "table": "<file name exactly as listed>", "focus": ["<words that identify the rows or columns needed, if the question names a tissue, cell type, cancer, sample group or similar; else empty>"], "where": [ { "column": "<column name>", "op": ">" | ">=" | "<" | "<=" | "=" | "!=" | "contains", "value": "<value>" } ], "why": "<one sentence>" } ], "cannot": [ { "requirement": "<part of the question>", "why": "<why no table holds it>" } ] }
+Choose which tables to read for this gene. Return JSON: { "understanding": "<what the question asks, in the database's terms>", "reads": [ { "table": "<file name exactly as listed>", "focus": ["<words that identify the rows or columns needed, if the question names a tissue, cell type, cancer, sample group or similar; else empty>"], "where": [ { "column": "<column name>", "op": ">" | ">=" | "<" | "<=" | "=" | "!=" | "contains" | "in" | "is_missing" | "is_present" | "is_numeric" | "is_non_numeric", "value": "<comparison value; omit for unary predicates>" } ], "why": "<one sentence>" } ], "cannot": [ { "requirement": "<part of the question>", "why": "<why no table holds it>" } ] }
 Rules:
 - Use table names exactly as listed. Read only the sources needed for the requested evidence, preserving each source's measure, unit and scope.
 - Focus words narrow a long table to the rows that matter (a cell line name, a tissue) and, in a table with one column per sample, pick which columns are shown; leave the list empty when the question needs the whole table (a maximum, a ranking).
 - A threshold or a count ("above 100", "how many … below") is a "where" filter on a column, applied exactly by the database before the rows are shown; the number of matching rows is then reported to you. Never count by eye.
+- Use is_missing for null/blank/NA cells; is_present for recorded cells; is_numeric for finite numeric values including zero and negatives; is_non_numeric for present nonnumeric values, excluding missing cells. These four predicates take only column and op, without value. They filter existing source rows; they cannot establish whether an absent row was ever assayed.
 - A read may additionally specify columns=[exact source column names], rows=<requested page size>, and offset=<zero-based row offset>. Choose relevant columns for wide tables. These options affect the displayed view, not source filters or coverage counts.
 - When no table holds what the question asks, put the requirement in "cannot" rather than reading an unrelated table.`;
 
@@ -34,6 +35,7 @@ Rules:
 - A source-row count uses cited_coverage with the exact read ID and reported source_rows or matching_rows, including zero matches. A row count is not a count of nonmissing measurements or distinct entities.
 - A maximum, minimum or ranking is read across all rows shown; say so in the notes if only part of the table was shown.
 - When a note says rows or columns were left out and the answer needs them, set found to false and fill "need_more" with the table and the focus words or filter that would bring the missing evidence. Request a new source view when needed; previously read evidence remains available.
+- need_more filters also support is_missing, is_present, is_numeric and is_non_numeric with column and op only. Missing is null/blank/NA; non_numeric excludes missing cells, and numeric includes zero and negatives.
 - need_more can also specify columns, rows and offset for an exact source view. Use explicit columns when their names are known; avoid retrieving unrelated fields.
 - If the rows do not contain what the question asks, set found to false and say what is missing. No source rows, no filter matches, and a blank measurement are distinct. A missing record does not establish biological absence or whether an experiment ever occurred. State source/release coverage only; do not invent a reason for missing data.`;
 

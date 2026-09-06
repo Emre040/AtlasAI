@@ -20,7 +20,7 @@ function renderReport({ summary, tables = [] }, state) {
       `| ${columns.map(escapeCell).join(' | ')} |`,
       `| ${columns.map(() => '---').join(' | ')} |`,
       ...shown.map(row => `| ${columns.map(c => escapeCell(row[c])).join(' | ')} |`)
-    ].join('\n') : `No matching rows (${id}).`;
+    ].join('\n') : artifact.rows.length ? `No rows shown (${id}).` : `No matching rows (${id}).`;
     sections.push(`${heading}\n\n${body}${shown.length < artifact.rows.length ? `\n\nShowing ${shown.length} of ${artifact.rows.length} rows; the full result is saved in ${id}.` : ''}`);
   }
   return sections.join('\n\n');

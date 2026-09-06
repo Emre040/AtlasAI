@@ -162,14 +162,14 @@ async function read(gene, file) {
 // Applied by code before rendering, so counts and thresholds are exact and not left to the model.
 function applyWhere(reading, where = []) {
   const { entry: e, rows } = reading;
-  const { wherePredicate } = require('../system/aso/studyTools');
+  const { wherePredicate, FILTER_OPS } = require('../system/aso/studyTools');
   const clauses = [];
   for (const w of Array.isArray(where) ? where : []) {
     const column = e.columns.find(c => c.toLowerCase() === String(w?.column || '').toLowerCase());
     const op = String(w?.op || '=').trim();
     if (!column) throw new Error(`filter: no column named "${w?.column}" in ${e.file}`);
-    if (!['>', '>=', '<', '<=', '=', '!=', 'contains', 'in'].includes(op)) throw new Error(`filter: unknown op "${op}"`);
-    clauses.push({ column, op, value: w.value });
+    if (!FILTER_OPS.includes(op)) throw new Error(`filter: unknown op "${op}"`);
+    clauses.push({ ...w, column, op });
   }
   if (!clauses.length) return { reading, clauses: [] };
   const keep = rows.filter(wherePredicate(e.columns, clauses));
@@ -181,7 +181,7 @@ function applyWhere(reading, where = []) {
 function render(reading, focus = [], options = {}) {
   const { entry: e, rows } = reading;
   const { isMissing } = require('../system/aso/studyTools');
-  const filtered = reading.unfiltered !== undefined ? `${rows.length} of ${reading.unfiltered} rows match ${reading.clauses.map(c => `${c.column} ${c.op} ${c.value}`).join(' and ')}` : null;
+  const filtered = reading.unfiltered !== undefined ? `${rows.length} of ${reading.unfiltered} rows match ${reading.clauses.map(c => `${c.column} ${c.op}${Object.hasOwn(c, 'value') ? ` ${c.value}` : c.column_b ? ` ${c.column_b}` : ''}`).join(' and ')}` : null;
   const words = focus.map(f => String(f).toLowerCase()).filter(Boolean);
   const offset = options.offset === undefined ? 0 : options.offset;
   if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Source view offset must be a nonnegative integer');

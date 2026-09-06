@@ -219,3 +219,13 @@ test('table output collisions fail explicitly instead of replacing earlier evide
   const inputRows = f.supplied.map(gene => ({ gene, signal: 7 }));
   await assert.rejects(() => createBulkTools({ ...f, inputRows }).applyBulk({ name: 'raw', lookups: [{ table: 'assays.tsv', match_column: 'target', mode: 'rows', columns: ['category', 'signal'] }] }), /conflicts with an input value/);
 });
+
+
+test('compute never turns structured records into fabricated text or numeric measurements', () => {
+  const data = [{ gene: 'EXAMPLE', labels: [{ category: 'recorded', score: 2 }], values: [2] }];
+  assert.throws(() => compute(data, 'copied', 'labels'), /structured values.*select/);
+  assert.throws(() => compute(data, 'doubled', 'values * 2'), /structured values.*select/);
+  const selected = select(data, ['gene', 'labels'], { labels: 'recorded_labels' });
+  assert.deepEqual(selected[0].recorded_labels, [{ category: 'recorded', score: 2 }]);
+  assert.deepEqual(data[0].values, [2]);
+});

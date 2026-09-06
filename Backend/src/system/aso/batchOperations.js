@@ -1,5 +1,7 @@
 'use strict';
 
+const { decodeArguments, mapArtifactReferences } = require('./toolArguments');
+
 function object(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`);
   return value;
@@ -12,7 +14,7 @@ function validate(value, schema, label) {
     object(value, label);
     for (const name of schema.required || []) if (!Object.hasOwn(value, name)) throw new Error(`${label}.${name} is required`);
     for (const [key, item] of Object.entries(value)) {
-      if (schema.properties?.[key]) validate(item, schema.properties[key], `${label}.${key}`);
+      if (schema.properties && Object.hasOwn(schema.properties, key)) validate(item, schema.properties[key], `${label}.${key}`);
       else if (schema.additionalProperties && typeof schema.additionalProperties === 'object') validate(item, schema.additionalProperties, `${label}.${key}`);
       else if (schema.properties || schema.additionalProperties === false) throw new Error(`${label}.${key} is not a declared argument`);
     }
@@ -26,23 +28,17 @@ function validate(value, schema, label) {
   } else if (typeof value !== schema.type) throw new Error(`${label} must be ${schema.type}`);
 }
 
-function references(value, found = new Set()) {
-  if (typeof value === 'string' && /^@[A-Za-z][A-Za-z0-9_]*$/.test(value)) { found.add(value.slice(1)); return found; }
-  if (!value || typeof value !== 'object') return found;
-  if (Object.hasOwn(value, '$ref')) throw new Error('Use the string "@step_id" for a batch reference');
-  for (const item of Object.values(value)) references(item, found);
+function references(value, schema) {
+  const found = new Set();
+  mapArtifactReferences(value, schema, (id, original) => { found.add(id); return original; });
   return found;
 }
 
-function resolve(value, bindings) {
-  if (typeof value === 'string' && /^@[A-Za-z][A-Za-z0-9_]*$/.test(value)) {
-    const id = value.slice(1);
+function resolve(value, bindings, schema) {
+  return mapArtifactReferences(value, schema, id => {
     if (!bindings.has(id)) throw new Error(`No completed output for ${id}`);
     return bindings.get(id);
-  }
-  if (!value || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.map(item => resolve(item, bindings));
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, resolve(item, bindings)]));
+  });
 }
 
 // This is a data-flow executor over registered operations, not an eval/JavaScript sandbox.
@@ -59,14 +55,14 @@ async function executeBatch({ steps, outputs }, { specifications, execute, concu
     if (!spec) throw new Error(`${raw.tool} is not a batch operation; choose a registered data operation from the capability directory and load its schema with load_tools`);
     if (typeof raw.args !== 'string') throw new Error(`${raw.id}.args must be a JSON object encoded as a string`);
     let args;
-    try { args = object(JSON.parse(raw.args), `${raw.id}.args`); }
+    try { args = decodeArguments(object(JSON.parse(raw.args), `${raw.id}.args`), spec.parameters, raw.tool); }
     catch (error) { throw new Error(`${raw.id}: ${error.message}`); }
-    byId.set(raw.id, { id: raw.id, tool: raw.tool, args, dependencies: [...references(args)], spec, status: 'pending' });
+    byId.set(raw.id, { id: raw.id, tool: raw.tool, args, dependencies: [...references(args, spec.parameters)], spec, status: 'pending' });
   }
   const placeholders = new Map([...byId.keys()].map(id => [id, 'artifact_pending']));
   for (const step of byId.values()) {
     for (const dependency of step.dependencies) if (!byId.has(dependency)) throw new Error(`${step.id} references unknown step ${dependency}`);
-    validate(resolve(step.args, placeholders), step.spec.parameters, step.tool);
+    validate(resolve(step.args, placeholders, step.spec.parameters), step.spec.parameters, step.tool);
   }
   for (const id of outputs) if (!byId.has(id)) throw new Error(`Unknown requested output ${id}`);
   const visiting = new Set(), visited = new Set();
@@ -90,7 +86,7 @@ async function executeBatch({ steps, outputs }, { specifications, execute, concu
     if (!ready.length) continue;
     await Promise.all(ready.map(async step => {
       try {
-        const result = await execute(step.tool, resolve(step.args, bindings));
+        const result = await execute(step.tool, resolve(step.args, bindings, step.spec.parameters));
         if (typeof result?.artifact?.id === 'string') {
           step.artifact = result.artifact.id;
           results.set(step.id, result);

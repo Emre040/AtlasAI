@@ -1,6 +1,6 @@
 'use strict';
 
-const { num, isMissing, wherePredicate, columnsOf, withColumns, compute, rank } = require('../aso/studyTools');
+const { FILTER_OPS, num, isMissing, wherePredicate, columnsOf, withColumns, compute, rank } = require('../aso/studyTools');
 
 const S = { type: 'string' };
 const THEN_BY = { type: 'array', description: 'Secondary keys order equal primary scores without changing their tied rank. text uses exact lexical order; number requires numeric values; auto orders numeric values numerically and other scalar values lexically. Missing values remain last.', items: { type: 'object', properties: { column: S, order: { type: 'string', enum: ['asc', 'desc'] }, type: { type: 'string', enum: ['auto', 'number', 'text'] } }, required: ['column'] } };
@@ -16,7 +16,7 @@ const APPLY_BULK = {
         match_column: { type: 'string', description: 'Exact source column containing the gene name or Ensembl ID.' },
         value_column: { type: 'string', description: 'Exact source measurement/category column (scalar mode).' },
         as: { type: 'string', description: 'Output column name, including the source unit for measurements.' },
-        where: { type: 'array', items: { type: 'object', properties: { column: S, op: { type: 'string', enum: ['=', '!=', '>', '>=', '<', '<=', 'contains', 'in'] }, value: {} }, required: ['column', 'op', 'value'] } },
+        where: { type: 'array', description: 'Every clause must hold. Unary is_missing/is_present/is_numeric/is_non_numeric take column and op only. Missing is null, blank or NA; numeric includes finite zero and negative values; non_numeric means present text/category or other nonnumeric data, excluding missing cells.', items: { type: 'object', properties: { column: S, op: { type: 'string', enum: FILTER_OPS }, value: { description: 'Comparison operand; omit for unary predicates.' } }, required: ['column', 'op'] } },
         aggregate: { type: 'string', enum: REDUCERS, description: 'Explicit reduction: count counts source rows; numeric_count counts numeric measurements; distinct_count counts nonmissing value/label tuples; missing counts blank/NA cells; zero counts numeric zero. No numeric values means min/max/mean/median/sum is null.' },
         distinct_columns: { type: 'array', items: S, description: 'For distinct_count, exact source columns identifying an entity or tuple; defaults to value_column. Missing tuples are excluded. where can restrict which observations count.' },
         labels: { type: 'array', items: S, description: 'With scalar min or max, retain every distinct source-label tuple attaining the extremum in the output column <as>_labels. Includes all ties, including measured zero; no numeric value gives an empty list.' },

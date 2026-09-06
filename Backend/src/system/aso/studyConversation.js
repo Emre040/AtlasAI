@@ -7,8 +7,11 @@ function planText(plan) {
   return plan.map((p, i) => `${i + 1}. [${p.status}] ${p.text}${p.kind ? ` | ${p.kind}` : ''}${p.inputs ? ` <- ${p.inputs}` : ''}${p.artifacts.length ? ` | evidence ${p.artifacts.join(',')}` : ''}${p.note ? ` | ${p.note}` : ''}`).join('\n') || '(no plan yet)';
 }
 
-function runningText(running) {
-  return [...running.values()].map(j => `${j.id} ${j.tool} ${JSON.stringify(j.args)}`).join('\n') || '(none)';
+function runningText(running, plan) {
+  return [...running.values()].map(j => {
+    const owner = j.planItem ? (plan[j.node - 1] === j.planItem ? `owns plan item ${j.node}` : `started for previous plan item ${j.node}`) : 'no plan item assigned';
+    return `${j.id} ${j.tool} (${owner}) ${JSON.stringify(j.args)}`;
+  }).join('\n') || '(none)';
 }
 
 class StudyConversation {
@@ -51,7 +54,7 @@ class StudyConversation {
     if (inbox.text) this.blocks.push({ sent: false, messages: [{ role: 'user', content: `NEW RESULTS\n${inbox.text}` }], deliveries: inbox.deliveries });
     const unfinished = state.plan.map((p, i) => ({ p, n: i + 1 })).filter(({ p }) => !['done', 'dropped'].includes(p.status));
     const work = unfinished.map(({ p, n }) => `${n}. [${p.status}] ${p.text}`).join('\n');
-    const update = { role: 'user', content: `TURN ${state.turn}/${maxTurns}\nREMAINING PLAN (item numbers are labels, not execution dependencies; start independent work together)\n${work || (state.plan.length ? '(all items resolved; finish when results have been inspected)' : '(record the requested results with set_plan; independent tools may start in the same response)')}\nRUNNING\n${runningText(state.running)}` };
+    const update = { role: 'user', content: `TURN ${state.turn}/${maxTurns}\nREMAINING PLAN (item numbers are labels, not execution dependencies; start independent work together)\n${work || (state.plan.length ? '(all items resolved; finish when results have been inspected)' : '(record the requested results with set_plan; independent tools may start in the same response)')}\nRUNNING\n${runningText(state.running, state.plan)}` };
     // Bound individual deliveries, not working memory. Preserve every native exchange,
     // including corrections and provider signatures, in its original order.
     const current = [this.goal, ...this.blocks.flatMap(b => b.messages), update], used = size(current);

@@ -59,7 +59,8 @@ async function fixture(t, decide, execute, options = {}) {
     '../aso/pipelines/renderCharts': { renderCharts: options.renderCharts || (async (spec, renderDir) => { const image = path.join(renderDir, 'plot.png'); await fs.writeFile(image, 'rendered test image'); return { images: [image] }; }) },
     '../orchestrator': { getToolSpecs: () => [
       { type: 'function', function: { name: 'deep_research_hpa', parameters: { type: 'object', properties: { goal: { type: 'string' }, mode: { type: 'string' } }, required: ['goal'] } } },
-      { type: 'function', function: { name: 'investigator_hpa', parameters: { type: 'object', properties: { gene: { type: 'string' }, question: { type: 'string' }, mode: { type: 'string' } }, required: ['gene'] } } }
+      { type: 'function', function: { name: 'investigator_hpa', parameters: { type: 'object', properties: { gene: { type: 'string' }, question: { type: 'string' }, mode: { type: 'string' } }, required: ['gene'] } } },
+      ...(options.extraAgentSpecs || [])
     ], execute: execute || (() => { throw new Error('Unexpected agent call'); }) }
   };
   const filename = require.resolve('../../src/system/agents/asoStudy');
@@ -87,6 +88,8 @@ test('the real loop retains an agent completion during inference and refuses a p
     if (turn === 2) return response(call('deep_research_hpa', { goal: 'Look up TEST', node: 1 }), call('datasets', {}));
     if (turn === 3) {
       assert.match(text, /RUNNING\nt1 deep_research_hpa/);
+      assert.match(request.messages.at(-1).content, /1\. \[doing\] Get evidence/);
+      assert.match(request.messages.at(-1).content, /owns plan item 1/);
       agent.resolve({ result: { status: 'ok', result: { rows: [{ Gene: 'TEST', value: 42 }] } } });
       assert.equal((await agentDone.promise).stage, 'tool.done');
       return response(call('finish', { summary: 'Premature conclusion' }));
@@ -341,7 +344,8 @@ test('native tools retain raw master columns, correct arguments and matched prov
     if (turn === 3) return response(call('filter', { artifact: 'example.tsv', where: [{ column: 'Gene', op: '=', value: 'EXAMPLE' }] }));
     if (turn === 4) return response(call('compute', { artifact: 'a1', expr: 'score * 7', name: 'scaled', node: 1 }));
     assert.match(transcript(request), /scaled.*EXAMPLE/s);
-    assert.match(transcript(request), /score \* 7/);
+    assert.match(JSON.stringify(request.messages), /score \* 7/);
+    assert.doesNotMatch(transcript(request), /score \* 7/);
     const replayed = request.messages.filter(m => m.role === 'assistant').flatMap(m => m.tool_calls || []);
     assert.ok(replayed.every(c => c.id && c.thought_signature === 'opaque-signature'));
     assert.equal(request.messages.filter(m => m.role === 'tool').length, replayed.length);
@@ -591,4 +595,84 @@ test('a failed cohort repair exposes unresolved requirements without creating a 
   assert.equal(result.outcome, 'incomplete');
   assert.equal(result.failed, 1);
   assert.equal(result.artifacts.length, 0);
+});
+
+
+test('an in-flight job retains its original plan ownership when the plan is rewritten', async t => {
+  const agent = deferred();
+  const f = await fixture(t, async ({ request, turn, agentDone }) => {
+    const frame = request.messages.at(-1).content;
+    if (turn === 1) return response(call('set_plan', { items: [{ step: 'Original cohort', kind: 'gene_set' }] }), call('deep_research_hpa', { goal: 'Original selection', node: 1 }), call('datasets', {}));
+    if (turn === 2) {
+      assert.match(frame, /1\. \[doing\] Original cohort/);
+      assert.match(frame, /owns plan item 1/);
+      return response(call('set_plan', { items: [{ step: 'Independent source summary', kind: 'table' }] }), call('datasets', {}));
+    }
+    if (turn === 3) {
+      assert.match(frame, /1\. \[todo\] Independent source summary/);
+      assert.match(frame, /started for previous plan item 1/);
+      agent.resolve({ result: { status: 'ok', result: { rows: [{ Gene: 'EXAMPLE', value: 7 }] } } });
+      await agentDone.promise;
+      return response(call('finish', { summary: 'The replacement work is not yet done.' }));
+    }
+    if (turn === 4) {
+      assert.match(frame, /1\. \[todo\] Independent source summary/);
+      assert.match(transcript(request), /previous plan item 1 returned a1/);
+      return response(call('aggregate', { artifact: 'mapping.tsv', column: 'value', metrics: ['sum'], node: 1 }));
+    }
+    assert.equal(turn, 5);
+    return response(call('finish', { summary: 'The source sum is 3 (a2).' }));
+  }, () => agent.promise, { entry: { file: 'mapping.tsv', key: 'stream', columns: ['name', 'value'] }, rows: [{ name: 'A', value: 3 }] });
+  const result = await f.run();
+  assert.equal(result.outcome, 'completed', result.error);
+  assert.deepEqual(result.plan[0].artifacts, ['a2']);
+});
+
+test('supporting agents stay discoverable without resending their schemas before use', async t => {
+  const f = await fixture(t, ({ request, turn }) => {
+    const names = request.tools.map(tool => tool.function.name);
+    if (turn === 1) {
+      assert.ok(names.includes('deep_research_hpa'));
+      assert.ok(names.includes('investigator_hpa'));
+      assert.ok(!names.includes('check_inclusion_hpa'));
+      assert.match(request.messages[0].content, /check_inclusion_hpa/);
+      return response(call('set_plan', { items: [{ step: 'Review the requested capability', kind: 'summary' }] }), call('load_tools', { names: ['check_inclusion_hpa'] }));
+    }
+    assert.ok(names.includes('check_inclusion_hpa'));
+    return response(call('finish', { summary: 'The requested capability is available.' }));
+  }, undefined, { nativeDiscovery: true, extraAgentSpecs: [{ type: 'function', function: { name: 'check_inclusion_hpa', description: 'Check a supplied gene against a search.', parameters: { type: 'object', properties: { gene: { type: 'string' } }, required: ['gene'] } } }] });
+  assert.equal((await f.run()).outcome, 'completed');
+});
+
+
+test('finish binds complete saved outputs to several plan items without bookkeeping turns', async t => {
+  const f = await fixture(t, ({ turn }) => {
+    if (turn === 1) return response(call('set_plan', { items: [{ step: 'Read measurements', kind: 'table' }, { step: 'Read associated labels', kind: 'table' }] }), call('investigator_hpa', { genes: ['EXAMPLE'], question: 'Return both requested tables' }));
+    assert.equal(turn, 2);
+    return response(call('finish', { completed: [{ item: 1, artifacts: ['a1'] }, { item: 2, artifacts: ['a2'] }], tables: [{ artifact: 'a1', columns: ['gene', 'value'] }, { artifact: 'a2', columns: ['gene', 'label'] }] }));
+  }, async () => ({ result: { bulk: true, found: true, status: 'ok', tables: [
+    { name: 'measurements', rows: [{ gene: 'EXAMPLE', value: 7 }], columns: ['gene', 'value'], provenance: [], coverage: [], calculations: [] },
+    { name: 'labels', rows: [{ gene: 'EXAMPLE', label: 'recorded label' }], columns: ['gene', 'label'], provenance: [], coverage: [], calculations: [] }
+  ], not_in_release: [] } }));
+  const result = await f.run();
+  assert.equal(result.outcome, 'completed', result.error);
+  assert.equal(result.turns, 2);
+  assert.deepEqual(result.plan.map(item => [item.status, item.artifacts]), [['done', ['a1']], ['done', ['a2']]]);
+  assert.match(result.summary, /recorded label/);
+});
+
+test('finish completion bindings reject wrong evidence before changing any plan item', async t => {
+  const f = await fixture(t, ({ request, turn }) => {
+    if (turn === 1) return response(call('set_plan', { items: [{ step: 'Summarize a source', kind: 'table' }, { step: 'Draw requested chart', kind: 'bar' }] }), call('aggregate', { artifact: 'mapping.tsv', column: 'value', metrics: ['sum'] }));
+    if (turn === 2) return response(call('finish', { summary: 'The data are available (a1).', completed: [{ item: 1, artifacts: ['a1'] }, { item: 2, artifacts: ['a1'] }] }));
+    const frame = request.messages.at(-1).content;
+    assert.match(frame, /1\. \[todo\] Summarize a source/);
+    assert.match(frame, /2\. \[todo\] Draw requested chart/);
+    assert.match(transcript(request), /finish.completed item 2: requires chart output/);
+    return response(call('update_plan', { item: 2, status: 'dropped', note: 'Chart is not yet produced' }), call('finish', { summary: 'Only the source summary is available (a1).', completed: [{ item: 1, artifacts: ['a1'] }] }));
+  }, undefined, { entry: { file: 'mapping.tsv', key: 'stream', columns: ['name', 'value'] }, rows: [{ name: 'A', value: 3 }] });
+  const result = await f.run();
+  assert.equal(result.outcome, 'incomplete');
+  assert.equal(result.plan[0].status, 'done');
+  assert.equal(result.plan[1].status, 'dropped');
 });

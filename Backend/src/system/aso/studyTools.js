@@ -10,7 +10,8 @@
 
 const geneData = require('../../hpa/geneDataAdapter');
 
-const OPS = ['>', '>=', '<', '<=', '=', '!=', 'contains', 'in'];
+const UNARY_OPS = ['is_missing', 'is_present', 'is_numeric', 'is_non_numeric'];
+const OPS = ['>', '>=', '<', '<=', '=', '!=', 'contains', 'in', ...UNARY_OPS];
 
 function isMissing(v) { return v === null || v === undefined || (typeof v === 'string' && (!v.trim() || v.trim().toUpperCase() === 'NA')); }
 
@@ -18,7 +19,8 @@ function isMissing(v) { return v === null || v === undefined || (typeof v === 's
 function num(v) {
   if (v === null || v === undefined || typeof v === 'boolean') return null;
   if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-  const text = String(v).replace(/,/g, '').trim();
+  if (typeof v !== 'string') return null;
+  const text = v.replace(/,/g, '').trim();
   if (!text) return null;
   const n = Number(text);
   return Number.isFinite(n) ? n : null;
@@ -59,6 +61,7 @@ function wherePredicate(columns, where = []) {
     const op = String(w?.op || '=').trim();
     if (!column) throw new Error(`filter: no column named "${w?.column}" (columns: ${columns.slice(0, 30).join(', ')})`);
     if (!OPS.includes(op)) throw new Error(`filter: unknown op "${op}"`);
+    if (UNARY_OPS.includes(op) && ['value', 'column_b', 'other', 'versus', 'against'].some(key => Object.hasOwn(w, key))) throw new Error(`filter: ${op} takes only column and op; omit comparison operands`);
     // column_b compares with another column of the same row instead of a fixed value.
     const otherName = w.column_b ?? w.other ?? w.versus ?? w.against ?? null;
     const columnB = otherName ? (columns.find(c => c === otherName) || columns.find(c => lower(c) === lower(otherName)) || null) : null;
@@ -73,6 +76,10 @@ function wherePredicate(columns, where = []) {
   }
   return r => clauses.every(({ column, op, value: fixed, columnB }) => {
     const cell = r[column];
+    if (op === 'is_missing') return isMissing(cell);
+    if (op === 'is_present') return !isMissing(cell);
+    if (op === 'is_numeric') return num(cell) !== null;
+    if (op === 'is_non_numeric') return !isMissing(cell) && num(cell) === null;
     const value = columnB ? r[columnB] : fixed;
     if (columnB && (value === null || value === undefined || String(value).trim() === '')) return false;
     if (op === 'in') return (Array.isArray(value) ? value : [value]).some(v => lower(v) === lower(cell));
@@ -171,14 +178,24 @@ function join(left, right, how = 'inner', on = null, onColumns) {
 }
 
 function select(rows, columns = [], rename = {}, add = {}) {
+  for (const [name, value] of [['rename', rename], ['add', add]]) if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(`select: ${name} must be an object`);
   const wanted = Array.isArray(columns) && columns.length ? columns : columnsOf(rows);
   const keep = wanted.map(c => { const found = findColumn(rows, c); if (!found) throw new Error(`select: no column named "${c}" (columns: ${columnsOf(rows).slice(0, 30).join(', ')})`); return found; });
-  const constants = add && typeof add === 'object' ? Object.entries(add) : [];
-  const renamed = keep.map(c => rename[c] || c);
-  if (new Set(renamed).size !== renamed.length || constants.some(([k]) => renamed.includes(k))) throw new Error('select: output column names must be distinct');
+  for (const [source, target] of Object.entries(rename)) {
+    if (!keep.includes(source)) throw new Error(`select: rename source ${JSON.stringify(source)} is not among the selected columns`);
+    if (typeof target !== 'string') throw new Error(`select: rename target for ${JSON.stringify(source)} must be a string`);
+  }
+  const constants = Object.entries(add);
+  const renamed = keep.map(c => Object.hasOwn(rename, c) ? rename[c] : c);
+  const identifiers = ['gene', 'ensembl'].filter(c => columnsOf(rows).includes(c));
+  if (new Set(renamed).size !== renamed.length || constants.some(([k]) => renamed.includes(k) || identifiers.includes(k))) throw new Error('select: output column names must be distinct');
   if (keep.some((c, i) => ['gene', 'ensembl'].includes(renamed[i]) && renamed[i] !== c && columnsOf(rows).includes(renamed[i]))) throw new Error('select: a renamed column cannot replace retained gene identifiers');
-  const outputColumns = [...new Set([...keep.map(c => rename[c] || c), ...['gene', 'ensembl'].filter(c => columnsOf(rows).includes(c)), ...constants.map(([k]) => k)])];
-  return withColumns(rows.map(r => { const o = {}; for (const c of keep) o[rename[c] || c] = r[c] === undefined ? null : r[c]; if (r.gene !== undefined && o.gene === undefined) o.gene = r.gene; if (r.ensembl !== undefined && o.ensembl === undefined) o.ensembl = r.ensembl; for (const [k, v] of constants) o[k] = v; return o; }), outputColumns);
+  const outputColumns = [...new Set([...renamed, ...identifiers, ...constants.map(([k]) => k)])];
+  return withColumns(rows.map(r => Object.fromEntries([
+    ...keep.map((c, i) => [renamed[i], r[c] === undefined ? null : r[c]]),
+    ...identifiers.filter(c => !renamed.includes(c) && r[c] !== undefined).map(c => [c, r[c]]),
+    ...constants
+  ])), outputColumns);
 }
 
 function secondaryOrder(columns, thenBy = []) {
@@ -715,6 +732,7 @@ function evaluate(tree, row, resolved) {
   if (tree.str !== undefined) return tree.str;
   if (tree.col) {
     const raw = row[resolved.get(tree.col)];
+    if (raw !== null && typeof raw === 'object') throw new Error(`compute: ${tree.col} contains structured values; use select to copy or rename the column`);
     if (raw === null || raw === undefined || String(raw).trim() === '') return null;
     const n = num(raw);
     return n === null ? String(raw) : n;
@@ -877,4 +895,4 @@ async function measure(rows, { table, value_column, entity_column, entity, as, a
   return out;
 }
 
-module.exports = { applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, withColumns, findColumn, keyOf, num, isMissing };
+module.exports = { FILTER_OPS: OPS, applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, withColumns, findColumn, keyOf, num, isMissing };

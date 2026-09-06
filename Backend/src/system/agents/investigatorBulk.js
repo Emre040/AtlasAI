@@ -9,7 +9,7 @@ const { columnsOf } = require('../aso/studyTools');
 const { previewRows, rowPageOptions, cellValue, createViewReader } = require('../aso/observationViews');
 const { AgentStop, RepairProgress, createAgentControl, fingerprint } = require('../aso/agentControl');
 
-const SYSTEM = `You are Investigator. Answer the assigned question for the supplied gene list using imported raw source tables. The complete list and prior measurements stay in the tool layer. Discover the relevant sources, inspect their exact columns, and use apply_bulk for the whole list.
+const SYSTEM = `You are Investigator. Answer the assigned question for the supplied gene list using imported raw source tables. The complete list and prior measurements stay in the tool layer. Discover the relevant sources, inspect their exact columns, and use apply_bulk for the whole list. Match the requested scope; additional assays require an explicit comparison request or a documented source gap.
 
 The source directory lists every imported source and its access method. inspect_table supplies exact columns, source descriptions, sample rows and relevant category definitions. inspect_input supplies existing input columns when needed for a calculation; do not retrieve prior measurements again. Source schemas and samples are evidence about structure, not about the whole cohort.
 
@@ -17,7 +17,7 @@ Combine all requested per-input measurements, statistics, labels of extrema, sim
 
 Canonical gene and ensembl identifiers are already retained. In rows mode select entity labels and measurements; omit duplicate source gene columns. Source columns cannot overwrite different inherited values. Scalar aliases keep differently scoped measurements separate.
 
-Full results remain saved. Receipts show new columns, coverage and a preview; inherited input fields remain available. open_result reads other saved rows or columns without repeating source lookups. You do not need to inspect every row to return a complete result. Describe coverage from computed coverage fields; never extrapolate cohort counts from a preview. finish returns result names and a short explanation of the source and limitations; the tables carry numerical result lists.
+Full results remain saved. Receipts show new columns, coverage and a preview; inherited input fields remain available. open_result reads other saved rows or columns without repeating source lookups. You do not need to inspect every row to return a complete result. Describe coverage from computed coverage fields; never extrapolate cohort counts from a preview. finish returns result names and unresolved requirements. Omit answer unless requested interpretation or necessary source limitations add to the tables.
 
 An explicit open_result may return a text_fragment of a complete saved JSON view. Continue it with view and next_text_offset as text_offset; this cursor is not a row offset. A fragment is not an empty result or a truncated source value. To inspect a particular large cell or nested item, select cell.row, cell.column and an optional exact JSON Pointer path.
 
@@ -27,11 +27,11 @@ const TOOLS = [APPLY_BULK,
   { type: 'function', function: { name: 'inspect_table', description: 'Inspect exact source columns, descriptions, example rows and category definitions. about selects matching columns; terms requests exact release-defined terms.', parameters: { type: 'object', properties: { table: { type: 'string' }, about: { type: 'string' }, terms: { type: 'array', items: { type: 'string' } } }, required: ['table'] } } },
   { type: 'function', function: { name: 'inspect_input', description: 'Discover inherited input columns without retrieving measurements again. Omit columns for the complete schema only; choose exact columns to inspect a sample of existing values.', parameters: { type: 'object', properties: { columns: { type: 'array', items: { type: 'string' } } } } } },
   { type: 'function', function: { name: 'open_result', description: 'Read an exact saved-result selection by name, or continue its saved JSON text view by view and text_offset. Large selections are paged in transport without dropping cells or rereading sources. Use only one selection mode.', parameters: { type: 'object', properties: { name: { type: 'string' }, rows: { type: 'integer', description: 'Requested positive row count; default10. Delivery may span text fragments.' }, offset: { type: 'integer', description: 'Zero-based row offset; default0.' }, columns: { type: 'array', items: { type: 'string' } }, cell: { type: 'object', description: 'Select one cell instead of a row window; path optionally selects its exact nested value.', properties: { row: { type: 'integer' }, column: { type: 'string' }, path: { type: 'string', description: 'JSON Pointer within the cell; omit for the complete cell.' } }, required: ['row', 'column'] }, view: { type: 'string', description: 'Saved view ID from an earlier fragment; use without name or row/cell selectors.' }, text_offset: { type: 'integer', description: 'Returned next_text_offset for view continuation; distinct from row offset.' } } } } },
-  { type: 'function', function: { name: 'finish', description: 'Return the named complete result tables without transcribing their rows. Preserve unanswered requirements.', parameters: { type: 'object', properties: {
-    results: { type: 'array', items: { type: 'string' } }, answer: { type: 'string' },
+  { type: 'function', function: { name: 'finish', description: 'Return named result tables and unresolved requirements. answer is optional for requested interpretation or necessary limitations; do not transcribe rows.', parameters: { type: 'object', properties: {
+    results: { type: 'array', items: { type: 'string' } }, answer: { type: 'string', description: 'Optional requested interpretation or source limitation; omit when tables and structured requirements suffice.' },
     not_in_release: { type: 'array', items: { type: 'object', properties: { requirement: { type: 'string' }, why: { type: 'string' } }, required: ['requirement', 'why'] } },
     remaining_for_aso: { type: 'array', description: 'Work explicitly requested in your question or assigned result that ASO still needs to perform. Do not list other study tasks. This is not missing source data.', items: { type: 'object', properties: { requirement: { type: 'string' }, why: { type: 'string' } }, required: ['requirement', 'why'] } }
-  }, required: ['results', 'answer', 'not_in_release'] } } }
+  }, required: ['results', 'not_in_release'] } } }
 ];
 
 // Only a bounded preview enters inference. The returned result retains every supplied row.
@@ -170,8 +170,9 @@ async function investigatorBulk({ genes, question, mode = 'offline' }, ctx = {},
             if (args.results.some(name => !results.has(name))) throw new Error('finish results must name existing apply_bulk outputs');
             if (!args.results.length && !args.not_in_release.length && !args.remaining_for_aso?.length) throw new Error('Return result tables or explain which requirements remain unanswered');
             const tables = [...new Set(args.results)].map(name => results.get(name));
-            await emit('complete', 'Bulk answer', args.answer);
-            return { bulk: true, found: tables.length > 0, status: args.not_in_release.length || args.remaining_for_aso?.length ? 'partial' : 'ok', answer: args.answer, tables, not_in_release: args.not_in_release, remaining_for_aso: args.remaining_for_aso || [], input_count: genes.length, unresolved_inputs: resolved.filter(gene => !gene).length, mode: 'offline', hpa_version: release.hpaVersion, tokens: { total: stats }, seconds: (Date.now() - started) / 1000 };
+            const answer = args.answer === undefined ? '' : args.answer;
+            await emit('complete', 'Bulk answer', answer || `Returned ${tables.length} saved result tables`);
+            return { bulk: true, found: tables.length > 0, status: args.not_in_release.length || args.remaining_for_aso?.length ? 'partial' : 'ok', answer, tables, not_in_release: args.not_in_release, remaining_for_aso: args.remaining_for_aso || [], input_count: genes.length, unresolved_inputs: resolved.filter(gene => !gene).length, mode: 'offline', hpa_version: release.hpaVersion, tokens: { total: stats }, seconds: (Date.now() - started) / 1000 };
           }
           completedCalls.set(requestKey, { tool: name, previous_call_id: call.id, ...(name === 'apply_bulk' ? { name: result.name } : {}) });
           evidenceRevision++;

@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { executeBatch } = require('../../src/system/aso/batchOperations');
 
-const specifications = new Map([['compute', { parameters: { type: 'object', properties: { artifact: { type: 'string' } }, required: ['artifact'] } }]]);
+const specifications = new Map([['compute', { parameters: { type: 'object', properties: { artifact: { type: 'string', 'x-artifact-reference': true } }, required: ['artifact'] } }]]);
 const step = (id, artifact) => ({ id, tool: 'compute', args: JSON.stringify({ artifact }) });
 
 test('a productive dependency graph has no private operation-count ceiling', async () => {

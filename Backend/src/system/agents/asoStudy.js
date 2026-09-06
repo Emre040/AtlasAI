@@ -380,7 +380,9 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
         } else {
           const a = await addArtifact({ ...agentArtifact(toolName, args, result), tool: toolName, args, inputs, toolId: id });
           made.push(a);
-          const extra = toolName === 'deep_research_hpa' ? ` query: ${String(a.meta.query || '').slice(0, 160)}${a.meta.not_expressible?.length ? `; could not express: ${a.meta.not_expressible.join('; ')}` : ''}` : a.kind === 'answer' ? ` answer: ${String(a.rows[0]?.answer || '').slice(0, 200)}` : '';
+          // A search that ran the same query as an earlier one says so: rewording the goal changed nothing.
+          const twin = a.meta.query ? state.artifacts.find(x => x !== a && x.meta?.query === a.meta.query) : null;
+          const extra = toolName === 'deep_research_hpa' ? ` query: ${String(a.meta.query || '').slice(0, 160)}${a.meta.not_expressible?.length ? `; could not express: ${a.meta.not_expressible.join('; ')}` : ''}${twin ? `; the same query as ${twin.id}${(twin.rows?.length || 0) === a.rows.length ? ', the same cohort' : ''}` : ''}` : a.kind === 'answer' ? ` answer: ${String(a.rows[0]?.answer || '').slice(0, 200)}` : '';
           remember(`${id} ${toolName} done → ${a.id} (${a.size})${extra}`);
         }
         job.made = made.map(a => a.id);

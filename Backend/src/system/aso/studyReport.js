@@ -22,20 +22,7 @@ const FINISH_SCHEMA = {
 };
 
 // Numbers a text states, with the precision they were written at.
-const NUMBER = /(?<![\w.])[-+−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+−]?\d+)?(?![\w])/g;
-function statedNumbers(text) {
-  const out = [];
-  for (const match of String(text || '').matchAll(NUMBER)) {
-    const clean = match[0].replace(/,/g, '').replaceAll('−', '-');
-    const value = Number(clean);
-    if (!Number.isFinite(value)) continue;
-    const mantissa = clean.split(/[eE]/)[0];
-    const exponent = /[eE]/.test(clean) ? Number(clean.split(/[eE]/)[1]) : 0;
-    const decimals = mantissa.includes('.') ? mantissa.split('.')[1].length : 0;
-    out.push({ raw: match[0], value, tolerance: 0.5 * 10 ** (exponent - decimals) });
-  }
-  return out;
-}
+const { statedNumbers } = require('./numbers');
 
 function numbersIn(value, out = []) {
   if (typeof value === 'number' && Number.isFinite(value)) out.push(value);

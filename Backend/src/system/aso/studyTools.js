@@ -10,6 +10,7 @@
 
 const geneData = require('../../hpa/geneDataAdapter');
 const { SCALAR_SCHEMA } = require('./valueSchemas');
+const { statedNumbers } = require('./numbers');
 
 const UNARY_OPS = ['is_missing', 'is_present', 'is_numeric', 'is_non_numeric'];
 const OPS = ['>', '>=', '<', '<=', '=', '!=', 'contains', 'in', ...UNARY_OPS];
@@ -258,8 +259,9 @@ const IDENTITY = ['gene', 'ensembl'];
 
 // A label typed by the model is words. A number in it would become a cell that looks like
 // evidence; numbers come from the data, from operations over it, or from an argument.
+// Digits inside a name (BRCA1, TP53) are not numbers.
 function requireLabel(what, value) {
-  if (typeof value === 'number' || (typeof value === 'string' && /\d/.test(value))) throw new Error(`${what}=${JSON.stringify(value)} holds a number; a label is words. Counts come from aggregate, ratios from compute, thresholds from filter or classify arguments, and are cited from those artifacts`);
+  if (typeof value === 'number' || (typeof value === 'string' && statedNumbers(value).length)) throw new Error(`${what}=${JSON.stringify(value)} holds a number; a label is words. Counts come from aggregate, ratios from compute, thresholds from filter or classify arguments, and are cited from those artifacts`);
 }
 
 function select(rows, columns = [], rename = {}, add = {}) {

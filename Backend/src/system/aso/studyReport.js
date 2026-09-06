@@ -1,65 +1,155 @@
 'use strict';
 
-// Tables are rendered from saved artifacts. The model chooses a projection and explains it;
-// it does not have to transcribe measurements into a second, potentially conflicting table.
+/**
+ * The report is rendered from the data, never transcribed by the model. finish names saved
+ * tables and figures by id, and states findings as claims, each bound to the rows and columns
+ * of the artifact it rests on. The renderer prints the bound cells beside every claim, and the
+ * binder checks that every number a claim states is among those cells (or the row counts they
+ * imply). A claim that cannot be bound is not accepted.
+ */
+
 const escapeCell = value => String(value === null || value === undefined ? '—' : typeof value === 'object' ? JSON.stringify(value) : value).replaceAll('|', '\\|').replace(/\r?\n/g, '<br>');
+const S = { type: 'string' };
+const N = { type: 'integer' };
 
-const OBSERVATIONS_SCHEMA = { type: 'array', description: 'Exact observed facts needed outside full result tables. Choose saved records and their source fields; the report renders their actual values without transcription. Use saved calculation results for comparisons, extrema, counts and correlations.', items: { type: 'object', properties: {
-  artifact: { type: 'string' }, row_indices: { type: 'array', items: { type: 'integer' }, description: 'Exact zero-based indices within this saved artifact, as shown by open offsets. Every selected record is retained.' },
-  columns: { type: 'array', items: { type: 'string' }, description: 'Exact fields including the relevant identities, dimensions and measures. No value or unit overrides.' }
-}, required: ['artifact', 'row_indices', 'columns'] } };
-const INTERPRETATION_LABELS = { inference: 'Interpretation', hypothesis: 'Untested hypothesis', limitation: 'Evidence limitation' };
-const INTERPRETATIONS_SCHEMA = { type: 'array', description: 'Requested discussion beyond exact observations. Scientific interpretation remains a judgment, not a validated measurement. Use hypothesis for possible causes not established by the retrieved evidence, and limitation for what the evidence cannot establish. Do not transcribe source values or add unobserved methods as facts.', items: { type: 'object', properties: {
-  kind: { type: 'string', enum: Object.keys(INTERPRETATION_LABELS), description: 'inference: interpretation of saved results; hypothesis: untested possible explanation; limitation: evidence boundary.' },
-  text: { type: 'string', description: 'One scientific point, retaining the stated qualification. Observed identities and values belong in observations or tables.' },
-  artifacts: { type: 'array', items: { type: 'string' }, description: 'Saved evidence that motivates this discussion. Every paragraph will cite these artifacts; citations do not establish causality.' }
-}, required: ['kind', 'text', 'artifacts'] } };
+const FINISH_SCHEMA = {
+  tables: { type: 'array', description: 'Saved tables to print in full: artifact id, optional columns to show, optional title.', items: { type: 'object', properties: { artifact: S, columns: { type: 'array', items: S }, title: S, rows: { type: 'integer', description: 'Print only the first N rows (the full table stays saved)' } }, required: ['artifact'] } },
+  figures: { type: 'array', items: S, description: 'Rendered figure artifact ids to include, in order. Omit for all figures; [] for none.' },
+  claims: { type: 'array', description: 'Findings, one per item, each bound to the saved rows it rests on. The report prints those cells beside the claim, and every number the claim states must be among them.', items: { type: 'object', properties: { text: S, artifact: S, rows: { type: 'array', items: N, description: 'Zero-based row indices in the artifact the claim rests on' }, columns: { type: 'array', items: S } }, required: ['text', 'artifact', 'rows'] } },
+  limitations: { type: 'array', items: S, description: 'What the evidence cannot establish, without numbers.' },
+  not_done: { type: 'array', description: 'Plan items not delivered, with the reason.', items: { type: 'object', properties: { item: N, why: S }, required: ['item', 'why'] } }
+};
 
-function renderReport({ summary, tables = [], observations = [], interpretations = [] }, state) {
-  const sections = [String(summary || '').trim()];
-  const displayed = new Map();
-  for (const table of tables) {
-    const id = table.artifact;
-    const artifact = state.byId.get(id);
-    if (!artifact || !Array.isArray(artifact.rows) || artifact.kind === 'figure') throw new Error(`Report table ${table.artifact} must be a saved row artifact`);
-    const columns = table.columns;
-    if (!Array.isArray(columns) || !columns.length || columns.some(c => !artifact.columns.includes(c))) throw new Error(`Report table ${id} requires exact columns from ${artifact.columns.join(', ')}`);
-    const limit = table.rows === undefined ? artifact.rows.length : table.rows;
-    if (!Number.isSafeInteger(limit) || limit < 0) throw new Error('Report table rows must be a nonnegative integer');
-    const shown = artifact.rows.slice(0, limit);
-    if (!displayed.has(id)) displayed.set(id, []);
-    displayed.get(id).push({ rows: shown.length, columns: new Set(columns) });
-    const heading = `${table.title || artifact.label} (${id}):`;
-    const body = shown.length ? [
-      `| ${columns.map(escapeCell).join(' | ')} |`,
-      `| ${columns.map(() => '---').join(' | ')} |`,
-      ...shown.map(row => `| ${columns.map(c => escapeCell(row[c])).join(' | ')} |`)
-    ].join('\n') : artifact.rows.length ? `No rows shown (${id}).` : `No matching rows (${id}).`;
-    sections.push(`${heading}\n\n${body}${shown.length < artifact.rows.length ? `\n\nShowing ${shown.length} of ${artifact.rows.length} rows; the full result is saved in ${id}.` : ''}`);
+// Numbers a text states, with the precision they were written at.
+const NUMBER = /(?<![\w.])[-+−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+−]?\d+)?(?![\w])/g;
+function statedNumbers(text) {
+  const out = [];
+  for (const match of String(text || '').matchAll(NUMBER)) {
+    const clean = match[0].replace(/,/g, '').replaceAll('−', '-');
+    const value = Number(clean);
+    if (!Number.isFinite(value)) continue;
+    const mantissa = clean.split(/[eE]/)[0];
+    const exponent = /[eE]/.test(clean) ? Number(clean.split(/[eE]/)[1]) : 0;
+    const decimals = mantissa.includes('.') ? mantissa.split('.')[1].length : 0;
+    out.push({ raw: match[0], value, tolerance: 0.5 * 10 ** (exponent - decimals) });
   }
-  if (!Array.isArray(observations)) throw new Error('observations must be an array');
-  for (const [index, observation] of observations.entries()) {
-    const path = `observations[${index}]`, artifact = state.byId.get(observation?.artifact);
-    if (!observation || Object.keys(observation).some(key => !['artifact', 'row_indices', 'columns'].includes(key))) throw new Error(`${path} accepts only artifact, row_indices and columns; values come from the saved records`);
-    if (!artifact || !Array.isArray(artifact.rows) || artifact.kind === 'figure') throw new Error(`${path}.artifact must name a saved row artifact`);
-    if (!Array.isArray(observation.row_indices) || !observation.row_indices.length || observation.row_indices.some(i => !Number.isSafeInteger(i) || i < 0 || i >= artifact.rows.length)) throw new Error(`${path}.row_indices must select existing zero-based rows in ${artifact.id}`);
-    if (!Array.isArray(observation.columns) || !observation.columns.length || observation.columns.some(c => !artifact.columns.includes(c))) throw new Error(`${path}.columns must select exact fields from ${artifact.id}`);
-    if ((displayed.get(observation.artifact) || []).some(table => observation.row_indices.every(index => index < table.rows) && observation.columns.every(column => table.columns.has(column)))) continue;
-    const columns = observation.columns;
-    const body = [`| ${columns.map(escapeCell).join(' | ')} |`, `| ${columns.map(() => '---').join(' | ')} |`, ...observation.row_indices.map(i => `| ${columns.map(c => escapeCell(artifact.rows[i][c])).join(' | ')} |`)].join('\n');
-    sections.push(`Observed records (${artifact.id}):\n\n${body}`);
+  return out;
+}
+
+function numbersIn(value, out = []) {
+  if (typeof value === 'number' && Number.isFinite(value)) out.push(value);
+  else if (typeof value === 'string' && /\d/.test(value)) {
+    const n = Number(value.replace(/,/g, ''));
+    if (Number.isFinite(n)) out.push(n); else for (const m of statedNumbers(value)) out.push(m.value);
+  } else if (Array.isArray(value)) for (const item of value) numbersIn(item, out);
+  else if (value && typeof value === 'object') for (const item of Object.values(value)) numbersIn(item, out);
+  return out;
+}
+
+const near = (values, x, tol) => values.some(v => Math.abs(v - x) <= tol + 1e-9 * Math.abs(x));
+
+function resolveColumns(artifact, columns) {
+  if (columns === undefined) return artifact.columns;
+  if (!Array.isArray(columns) || !columns.length) throw new Error(`columns for ${artifact.id} must be a nonempty list`);
+  return columns.map(c => {
+    const found = artifact.columns.find(x => x === c) || artifact.columns.find(x => x.toLowerCase() === String(c).toLowerCase());
+    if (!found) throw new Error(`${artifact.id} has no column ${JSON.stringify(c)}; its columns: ${artifact.columns.join(', ')}`);
+    return found;
+  });
+}
+
+// What a claim rests on: the cells it names, as numbers and as text for the reader.
+function binding(claim, state) {
+  const artifact = state.byId.get(String(claim.artifact || '').trim());
+  if (!artifact) throw new Error(`claim cites ${JSON.stringify(claim.artifact)}, which is not a saved artifact`);
+  if (artifact.figure) {
+    if (claim.rows?.length) throw new Error(`${artifact.id} is a figure; bind the claim to the table it was drawn from`);
+    return { artifact, cells: [], values: numbersIn(artifact.figure.data || artifact.figure.matrix || []), counts: [] };
   }
-  if (!Array.isArray(interpretations)) throw new Error('interpretations must be an array');
-  for (const [index, item] of interpretations.entries()) {
-    const path = `interpretations[${index}]`;
-    if (!item || !Object.hasOwn(INTERPRETATION_LABELS, item.kind)) throw new Error(`${path}.kind must be inference, hypothesis or limitation`);
-    if (typeof item.text !== 'string' || !item.text.trim()) throw new Error(`${path}.text must contain a scientific point`);
-    if (!Array.isArray(item.artifacts) || !item.artifacts.length || item.artifacts.some(id => !state.byId.has(id))) throw new Error(`${path}.artifacts must cite existing evidence`);
-    const refs = [...new Set(item.artifacts)].join(', ');
-    const paragraphs = item.text.trim().split(/\n\s*\n/).map(paragraph => `**${INTERPRETATION_LABELS[item.kind]}:** ${paragraph.trim()} (${refs}).`);
-    sections.push(paragraphs.join('\n\n'));
+  if (artifact.matrix) {
+    const values = numbersIn(artifact.matrix.matrix);
+    return { artifact, cells: [], values, counts: [artifact.matrix.row_labels.length, artifact.matrix.col_labels.length] };
   }
+  const rows = artifact.rows || [];
+  if (!Array.isArray(claim.rows) || !claim.rows.length) throw new Error(`claim on ${artifact.id} must name the rows it rests on (zero-based indices, as shown by open)`);
+  if (claim.rows.some(i => !Number.isSafeInteger(i) || i < 0 || i >= rows.length)) throw new Error(`claim rows for ${artifact.id} must be between 0 and ${rows.length - 1}`);
+  const columns = resolveColumns(artifact, claim.columns);
+  const cells = [...new Set(claim.rows)].map(i => ({ index: i, values: columns.map(c => [c, rows[i][c]]) }));
+  const values = numbersIn(cells.map(c => c.values.map(v => v[1])));
+  const distinct = columns.map(c => new Set(cells.map(x => String(rows[x.index][c] ?? ''))).size);
+  return { artifact, cells, columns, values, counts: [cells.length, rows.length, ...distinct] };
+}
+
+function claimIssue(claim, state) {
+  let bound;
+  try { bound = binding(claim, state); }
+  catch (error) { return error.message; }
+  const unmatched = statedNumbers(claim.text).filter(({ value, tolerance }) => !near(bound.values, value, tolerance) && !(Number.isInteger(value) && bound.counts.includes(value)));
+  if (unmatched.length) return `${JSON.stringify(claim.text)} states ${unmatched.map(u => u.raw).join(', ')}, which ${unmatched.length === 1 ? 'is' : 'are'} not among the cells it is bound to in ${bound.artifact.id} (rows ${[...new Set(claim.rows || [])].join(', ')}${bound.columns ? `; columns ${bound.columns.join(', ')}` : ''}). Bind the rows and columns that hold the number, or compute it with an operation and cite that result.`;
+  return null;
+}
+
+// Every problem with a finish call, in words the model can act on. Empty means accepted.
+function reportIssues(args, state) {
+  const issues = [];
+  for (const [i, table] of (args.tables || []).entries()) {
+    const artifact = state.byId.get(String(table?.artifact || '').trim());
+    if (!artifact) { issues.push(`tables[${i}] cites ${JSON.stringify(table?.artifact)}, which is not a saved artifact`); continue; }
+    if (!Array.isArray(artifact.rows)) { issues.push(`tables[${i}]: ${artifact.id} is a ${artifact.figure ? 'figure' : 'matrix'}, not a row table`); continue; }
+    try { resolveColumns(artifact, table.columns); } catch (error) { issues.push(`tables[${i}]: ${error.message}`); }
+    if (table.rows !== undefined && (!Number.isSafeInteger(table.rows) || table.rows < 1)) issues.push(`tables[${i}].rows must be a positive integer`);
+  }
+  if (args.figures !== undefined) {
+    if (!Array.isArray(args.figures)) issues.push('figures must be an array of figure artifact ids');
+    else for (const id of args.figures) {
+      const artifact = state.byId.get(String(id || '').trim());
+      if (!artifact || !artifact.figure) issues.push(`figures: ${JSON.stringify(id)} is not a saved figure`);
+      else if (!artifact.images?.length) issues.push(`figures: ${artifact.id} was not rendered`);
+    }
+  }
+  for (const [i, claim] of (args.claims || []).entries()) {
+    if (!claim || typeof claim.text !== 'string' || !claim.text.trim()) { issues.push(`claims[${i}] needs text`); continue; }
+    const issue = claimIssue(claim, state);
+    if (issue) issues.push(`claims[${i}]: ${issue}`);
+  }
+  for (const [i, text] of (args.limitations || []).entries()) {
+    const numbers = statedNumbers(text);
+    if (numbers.length) issues.push(`limitations[${i}] states ${numbers.map(n => n.raw).join(', ')}; numbers belong in a claim bound to the rows that hold them`);
+  }
+  for (const [i, item] of (args.not_done || []).entries()) {
+    if (!item || !Number.isSafeInteger(item.item) || item.item < 1 || item.item > state.plan.length) issues.push(`not_done[${i}].item must name a plan item between 1 and ${state.plan.length}`);
+    else if (!String(item.why || '').trim()) issues.push(`not_done[${i}] needs a reason`);
+  }
+  if (!(args.tables || []).length && !(args.claims || []).length && (args.figures === undefined ? !state.artifacts.some(a => a.figure && a.images?.length) : !args.figures.length)) issues.push('a report needs at least one table, figure or claim');
+  return issues;
+}
+
+function figureLine(artifact) {
+  const f = artifact.figure || {};
+  return `Figure ${artifact.id}: ${f.type}${f.title ? ` "${f.title}"` : ''}${f.x_label || f.y_label ? ` (${[f.x_label, f.y_label].filter(Boolean).join(' vs ')})` : ''}${artifact.inputs?.length ? ` from ${artifact.inputs.join(', ')}` : ''}`;
+}
+
+function evidenceText(bound) {
+  if (!bound.cells.length) return `${bound.artifact.id}`;
+  const shown = bound.cells.slice(0, 12).map(c => `row ${c.index}: ${c.values.map(([k, v]) => `${k}=${escapeCell(v)}`).join(', ')}`);
+  return `${bound.artifact.id} ${shown.join('; ')}${bound.cells.length > 12 ? `; … ${bound.cells.length - 12} more rows` : ''}`;
+}
+
+// Markdown from the accepted finish arguments and the saved artifacts.
+function renderReport(args, state, figures) {
+  const sections = [];
+  for (const table of args.tables || []) {
+    const artifact = state.byId.get(String(table.artifact).trim());
+    const columns = resolveColumns(artifact, table.columns);
+    const shown = artifact.rows.slice(0, table.rows === undefined ? artifact.rows.length : table.rows);
+    const body = shown.length ? [`| ${columns.map(escapeCell).join(' | ')} |`, `| ${columns.map(() => '---').join(' | ')} |`, ...shown.map(row => `| ${columns.map(c => escapeCell(row[c])).join(' | ')} |`)].join('\n') : `No rows (${artifact.id}).`;
+    sections.push(`**${table.title || artifact.label || artifact.id}** (${artifact.id}, ${artifact.rows.length} rows)\n\n${body}${shown.length < artifact.rows.length ? `\n\nShowing ${shown.length} of ${artifact.rows.length} rows; the full table is saved as ${artifact.id}.` : ''}`);
+  }
+  if (figures.length) sections.push(figures.map(figureLine).join('\n'));
+  if ((args.claims || []).length) sections.push(`**Findings**\n\n${args.claims.map(claim => { const bound = binding(claim, state); return `- ${claim.text.trim()} (evidence: ${evidenceText(bound)})`; }).join('\n')}`);
+  if ((args.limitations || []).length) sections.push(`**Limitations**\n\n${args.limitations.map(text => `- ${String(text).trim()}`).join('\n')}`);
+  if ((args.not_done || []).length) sections.push(`**Not done**\n\n${args.not_done.map(item => `- Plan item ${item.item}: ${String(item.why).trim()}`).join('\n')}`);
   return sections.join('\n\n');
 }
 
-module.exports = { renderReport, OBSERVATIONS_SCHEMA, INTERPRETATIONS_SCHEMA };
+module.exports = { FINISH_SCHEMA, reportIssues, renderReport, statedNumbers, binding };

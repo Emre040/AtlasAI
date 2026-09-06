@@ -22,6 +22,7 @@ const PRODUCER_LABELS = Object.freeze({
   // Study (ASO v2) operations: the node's producer is the operation that made it.
   search: 'Search agent',
   lookup: 'Reading agent',
+  fetch: 'Fetch',
   measure: 'Measure',
   union: 'Union',
   intersect: 'Intersect',

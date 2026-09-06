@@ -236,4 +236,51 @@ function cited(reading, citation, value = null) {
 
 function pageUrl(gene) { return `https://www.proteinatlas.org/${gene.ensembl}-${gene.gene}`; }
 
-module.exports = { name: 'Human Protein Atlas per-gene tables', catalog, overview, entry, resolveGene, resolveGenes, read, readMany, applyWhere, render, cited, pageUrl, definition, sources: docs.SOURCES };
+// What the database is and what one row of a per-entity table is about. The agents' prompts
+// take their nouns from here; nothing about the atlas is written into them.
+function identity() {
+  return { database: 'Human Protein Atlas', entity: 'gene', keys: ['gene', 'ensembl'], key_description: 'gene symbol and Ensembl gene id', release: platformRelease() };
+}
+
+function platformRelease() {
+  try { return require('../policy/config').platformConfig().activeHpaVersion || null; } catch { return null; }
+}
+
+// How a table is read, in words the agent can act on.
+function access(e) {
+  if (e.key === 'master') return 'one row per gene';
+  if (['ensembl', 'name', 'scan'].includes(e.key)) return 'rows per gene';
+  if (e.key === 'lookup') return 'reference table, no gene column';
+  if (e.key === 'stream') return `large sample table: ${e.why}`;
+  return e.why || e.key;
+}
+
+const PROFILE_MAX_ROWS = 200000;   // rows a profile scans in one file
+const profiles = new Map();        // release|file|columns → profile, for this process
+let profileClock = 0;
+
+// The values a table's columns take: kind, range, distinct values (listed in full when few),
+// examples, blanks and list grammar, from a scan of the file capped at PROFILE_MAX_ROWS. Cached
+// per file identity, so the first open of a table pays once per process.
+async function profile(e, columns = e.columns) {
+  const cols = columns.filter(c => e.columns.includes(c));
+  const key = `${e.hpaVersion}|${e.file}|${cols.join('|')}`;
+  if (profiles.has(key)) return profiles.get(key);
+  const { profileStream } = require('../system/aso/studyTools');
+  const pending = (async () => {
+    const scanned = await profileStream(localData.rows(e.file), cols, PROFILE_MAX_ROWS);
+    return { columns: scanned.profile, rows: scanned.rows, capped: scanned.rows >= PROFILE_MAX_ROWS, at: ++profileClock };
+  })();
+  profiles.set(key, pending);
+  try { return await pending; }
+  catch (error) { profiles.delete(key); throw error; }
+}
+
+// The first rows of a table as they are in the file.
+async function sample(e, n = 3) {
+  const rows = [];
+  for await (const row of localData.rows(e.file)) { rows.push(row); if (rows.length >= n) break; }
+  return rows;
+}
+
+module.exports = { name: 'Human Protein Atlas per-gene tables', identity, access, catalog, overview, entry, resolveGene, resolveGenes, read, readMany, applyWhere, render, cited, pageUrl, definition, profile, sample, PROFILE_MAX_ROWS, sources: docs.SOURCES };

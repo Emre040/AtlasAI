@@ -1,36 +1,43 @@
 'use strict';
 
+// The plan is the list of deliverables the study owes: what each one is (a gene set, a table, a
+// figure of a given type, an interpretation) so the finish can be checked against it.
 const CHART_KINDS = ['bar', 'lollipop', 'dot_plot', 'diverging_bar', 'grouped_bar', 'scatter', 'bubble', 'heatmap', 'radar', 'line', 'volcano'];
-const KINDS = ['gene_set', 'table', 'interpretation', 'summary', ...CHART_KINDS];
-const AGENT_FOR = { gene_set: 'deep_research_hpa', interpretation: 'investigator_hpa' };
-const isReport = item => item.kind === 'summary';
+const KINDS = ['gene_set', 'table', 'interpretation', ...CHART_KINDS];
 
-function validateItem(item) {
-  if (!KINDS.includes(item.kind)) throw new Error(`Plan kind must be one of ${KINDS.join(', ')}`);
-  if (!String(item.text || '').trim()) throw new Error('A plan step must describe its requested result');
+function createItem(input, index) {
+  const text = String(input?.step || '').trim();
+  if (!text) throw new Error(`plan item ${index + 1} needs a step describing the deliverable`);
+  if (!KINDS.includes(input.kind)) throw new Error(`plan item ${index + 1} kind must be one of ${KINDS.join(', ')}`);
+  return { text, kind: input.kind, status: 'todo', artifacts: [] };
 }
 
-function createItem(input) {
-  const item = { text: String(input.step || ''), kind: input.kind,
-    inputs: input.inputs, status: 'todo', note: '', artifacts: [] };
-  validateItem(item);
-  return item;
+function planText(plan) {
+  return plan.map((p, i) => `${i + 1}. [${p.status}] ${p.text} | ${p.kind}${p.artifacts.length ? ` → ${p.artifacts.join(', ')}` : ''}`).join('\n') || '(no plan yet: call plan with the deliverables)';
 }
 
-function completionIssue(item, byId) {
-  validateItem(item);
-  if (!Array.isArray(item.artifacts) || item.artifacts.some(id => !byId.has(id))) return 'artifacts must list existing artifact IDs';
-  if (isReport(item)) return null;
-  const evidence = item.artifacts.map(id => byId.get(id));
-  const agent = AGENT_FOR[item.kind];
-  if (agent) return evidence.some(a => a.tool === agent) ? null : `requires ${agent} output for this step; an earlier search in table ancestry does not answer this question`;
-  if (CHART_KINDS.includes(item.kind)) return evidence.some(a => a.tool === 'chart' && a.args.type === item.kind && a.kind === 'figure' && a.images.length)
-    ? null : `requires chart output of type ${item.kind} (a rendered figure)`;
-  const tables = evidence.filter(a => a.kind === 'data' && (Array.isArray(a.rows) || a.matrix));
-  if (!tables.length) return 'requires a saved result table';
-  const unfinished = a => [...(a.meta?.remaining_for_aso || []), ...(a.meta?.not_in_release || [])];
-  if (tables.some(a => !unfinished(a).length)) return null;
-  return `Investigator returned supporting data with unfinished requirements: ${[...new Set(tables.flatMap(a => unfinished(a).map(item => item.requirement)))].join('; ')}. Complete the assigned work and attach its complete evidence, or mark the item dropped with an explicit limitation. Changing the plan text alone does not resolve unfinished evidence`;
+// Which plan items a finish covers: a chart item needs a rendered figure of its type among the
+// figures; a gene set needs a search result; a table needs a table or a claim on one; an
+// interpretation needs a claim.
+function uncovered(plan, { tables = [], figures = [], claims = [], notDone = [] }, byId) {
+  const figureTypes = figures.map(a => a.figure?.type);
+  const tableIds = new Set([...tables.map(t => String(t.artifact).trim()), ...claims.map(c => String(c.artifact).trim())]);
+  // A cohort is delivered when a cited table descends from a search.
+  const fromSearch = (id, seen = new Set()) => {
+    const a = byId.get(id);
+    if (!a || seen.has(id)) return false;
+    seen.add(id);
+    return a.tool === 'deep_research_hpa' || (a.inputs || []).some(input => fromSearch(input, seen));
+  };
+  const searched = [...tableIds].some(id => fromSearch(id));
+  const skipped = new Set(notDone.map(item => item.item));
+  return plan.map((p, i) => ({ p, n: i + 1 })).filter(({ p, n }) => {
+    if (skipped.has(n)) return false;
+    if (CHART_KINDS.includes(p.kind)) return !figureTypes.includes(p.kind);
+    if (p.kind === 'gene_set') return !searched;
+    if (p.kind === 'interpretation') return !claims.length;
+    return !tableIds.size;
+  }).map(({ p, n }) => `${n}. ${p.text} (${p.kind})`);
 }
 
-module.exports = { KINDS, CHART_KINDS, createItem, validateItem, completionIssue, isReport };
+module.exports = { KINDS, CHART_KINDS, createItem, planText, uncovered };

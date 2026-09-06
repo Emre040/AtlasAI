@@ -148,12 +148,39 @@ def _place_scatter_labels(ax, data):
     return annotations
 
 
+def _groups(data):
+    """Distinct group labels in order of appearance, or None when the points carry no group."""
+    if not any('group' in d and d.get('group') not in (None, '') for d in data):
+        return None
+    seen = []
+    for d in data:
+        g = d.get('group', '')
+        if g not in seen:
+            seen.append(g)
+    return seen
+
+
+def _group_colors(groups):
+    palette = plt.get_cmap('tab10' if len(groups) <= 10 else 'tab20')
+    return {g: palette(i % palette.N) for i, g in enumerate(groups)}
+
+
+def _legend_outside(ax):
+    ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0, fontsize=8)
+
+
 def render_scatter(chart, out_path):
     data = chart.get('data', [])
-    xs = [d.get('x') for d in data]
-    ys = [d.get('y') for d in data]
     fig, ax = plt.subplots(figsize=(8, 6))
-    ax.scatter(xs, ys, alpha=0.7, s=40)
+    groups = _groups(data)
+    if groups:
+        colors = _group_colors(groups)
+        for g in groups:
+            pts = [d for d in data if d.get('group', '') == g]
+            ax.scatter([d.get('x') for d in pts], [d.get('y') for d in pts], alpha=0.75, s=40, color=colors[g], label=str(g))
+        _legend_outside(ax)
+    else:
+        ax.scatter([d.get('x') for d in data], [d.get('y') for d in data], alpha=0.7, s=40)
     _apply_title(chart)
     _apply_labels(chart)
     fig.tight_layout()
@@ -165,9 +192,26 @@ def render_dot_plot(chart, out_path):
     data = chart.get('data', [])
     labels = [d.get('label', '') for d in data]
     values = [d.get('value', 0) for d in data]
-    plt.figure(figsize=(8, max(4, len(labels) * 0.3)))
-    plt.scatter(values, range(len(labels)), alpha=0.8, s=40)
-    plt.yticks(range(len(labels)), labels)
+    groups = _groups(data)
+    if groups:
+        # One row per label, one colour per group: the same entity across groups stays on one line.
+        rows = []
+        for l in labels:
+            if l not in rows:
+                rows.append(l)
+        fig, ax = plt.subplots(figsize=(8, max(4, len(rows) * 0.3)))
+        colors = _group_colors(groups)
+        index = {l: i for i, l in enumerate(rows)}
+        for g in groups:
+            pts = [d for d in data if d.get('group', '') == g]
+            ax.scatter([d.get('value', 0) for d in pts], [index[d.get('label', '')] for d in pts], alpha=0.85, s=40, color=colors[g], label=str(g))
+        ax.set_yticks(range(len(rows)))
+        ax.set_yticklabels(rows)
+        _legend_outside(ax)
+    else:
+        plt.figure(figsize=(8, max(4, len(labels) * 0.3)))
+        plt.scatter(values, range(len(labels)), alpha=0.8, s=40)
+        plt.yticks(range(len(labels)), labels)
     _apply_title(chart)
     _apply_labels(chart, swap=True)
     plt.tight_layout()
@@ -281,9 +325,17 @@ def render_lollipop(chart, out_path):
     fig_h = max(5, n * 0.35)
     plt.figure(figsize=(9, fig_h))
     y_pos = range(n)
-    colors = plt.cm.viridis(np.linspace(0.2, 0.9, n))
+    groups = _groups(data)
+    if groups:
+        group_colors = _group_colors(groups)
+        colors = [group_colors[d.get('group', '')] for d in data]
+    else:
+        colors = plt.cm.viridis(np.linspace(0.2, 0.9, n))
     plt.hlines(y=y_pos, xmin=0, xmax=values, color=colors, alpha=0.7, linewidth=2)
     plt.scatter(values, y_pos, color=colors, s=60, zorder=5, edgecolors='white', linewidth=0.5)
+    if groups:
+        from matplotlib.lines import Line2D
+        plt.legend(handles=[Line2D([0], [0], marker='o', color='w', markerfacecolor=group_colors[g], markersize=8, label=str(g)) for g in groups], loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0, fontsize=8)
     plt.yticks(y_pos, labels, fontsize=8)
     for i, v in enumerate(values):
         if v is not None and v > 0:
@@ -448,18 +500,27 @@ def render_bubble(chart, out_path):
     max_size = max(sizes) if sizes else 1
     norm_sizes = [max(20, (s / max_size) * 500) for s in sizes]
     colors_raw = [d.get('color', None) for d in data]
-    if any(c is not None for c in colors_raw):
-        color_vals = [c if c is not None else 0 for c in colors_raw]
-        cmap = plt.cm.YlOrRd
-        norm = plt.Normalize(min(color_vals), max(color_vals))
-        colors = cmap(norm(np.array(color_vals)))
-    else:
-        colors = '#4C78A8'
+    groups = _groups(data)
     plt.figure(figsize=(9, 7))
-    sc = plt.scatter(xs, ys, s=norm_sizes, c=colors if isinstance(colors, str) else colors,
-                     alpha=0.6, edgecolors='white', linewidth=0.5)
-    if not isinstance(colors, str):
-        plt.colorbar(sc, shrink=0.8, label=chart.get('color_label', ''))
+    if groups:
+        group_colors = _group_colors(groups)
+        for g in groups:
+            idx = [i for i, d in enumerate(data) if d.get('group', '') == g]
+            plt.scatter([xs[i] for i in idx], [ys[i] for i in idx], s=[norm_sizes[i] for i in idx], color=group_colors[g],
+                        alpha=0.6, edgecolors='white', linewidth=0.5, label=str(g))
+        plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0, fontsize=8)
+    else:
+        if any(c is not None for c in colors_raw):
+            color_vals = [c if c is not None else 0 for c in colors_raw]
+            cmap = plt.cm.YlOrRd
+            norm = plt.Normalize(min(color_vals), max(color_vals))
+            colors = cmap(norm(np.array(color_vals)))
+        else:
+            colors = '#4C78A8'
+        sc = plt.scatter(xs, ys, s=norm_sizes, c=colors if isinstance(colors, str) else colors,
+                         alpha=0.6, edgecolors='white', linewidth=0.5)
+        if not isinstance(colors, str):
+            plt.colorbar(sc, shrink=0.8, label=chart.get('color_label', ''))
     for i, lbl in enumerate(point_labels):
         if lbl and xs[i] is not None and ys[i] is not None:
             plt.annotate(lbl, (xs[i], ys[i]), fontsize=6, alpha=0.7,

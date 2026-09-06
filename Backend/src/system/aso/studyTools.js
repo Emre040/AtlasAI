@@ -972,6 +972,7 @@ function chartSpec(args, input) {
     if (!input || !Array.isArray(input.matrix)) throw new Error('chart: heatmap needs a pivot output');
     return { ...base, ...chartDomains(args, {}), matrix: input.matrix, row_labels: input.row_labels, col_labels: input.col_labels };
   }
+  if (input && Array.isArray(input.matrix)) throw new Error(`chart: ${args.type} needs a row table with columns, not a matrix (a pivot only serves a heatmap); make the columns with filter/select/join, aggregate group_by or top_per_group`);
   let rows = Array.isArray(input) ? input : input?.rows || [];
   if (!rows.length) throw new Error('chart: no rows');
   const x = findColumn(rows, args.x);
@@ -990,7 +991,7 @@ function chartSpec(args, input) {
   rows = valid;
   if (!rows.length) throw new Error('chart: no rows with measured numeric values');
   if (['scatter', 'bubble', 'volcano'].includes(args.type)) {
-    return { ...base, ...chartDomains(args, { x: rows.map(r => num(r[x])), y: rows.map(r => num(r[y])) }), data: rows.map(r => ({ x: num(r[x]), y: num(r[y]), label: label ? String(r[label] ?? '') : '', size: size ? num(r[size]) : 10 })) };
+    return { ...base, ...chartDomains(args, { x: rows.map(r => num(r[x])), y: rows.map(r => num(r[y])) }), data: rows.map(r => ({ x: num(r[x]), y: num(r[y]), label: label ? String(r[label] ?? '') : '', size: size ? num(r[size]) : 10, ...(group ? { group: String(r[group] ?? '') } : {}) })) };
   }
   if (args.type === 'line') {
     const xs = rows.map(r => num(r[x]));

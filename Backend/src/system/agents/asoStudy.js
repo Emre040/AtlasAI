@@ -1,19 +1,19 @@
 'use strict';
 
-const { sourceDefinitions } = require('../../hpa/sourceDefinitions');
-const { prepareBulkArchive } = require('../aso/bulkArchive');
-
 /**
- * The study loop (aso_hpa). One prompt, one loop. Every turn the model sees the goal, its own plan,
- * every artifact in the workspace and where it came from, what is still running and what came
- * back since its last turn; then it calls tools: the same agents the chat offers (taken from the
- * orchestrator), table operations on artifacts, plan and note updates, skip (wait) and finish.
- * Every tool result is an artifact linked to its inputs. A tool that returns wakes the loop.
+ * The study loop (aso_hpa). One model, one desk, one loop.
+ *
+ * Every turn the model sees its whole working set, rebuilt from state: the goal, the plan, every
+ * table it opened, every artifact (columns and two rows), what is running, its own history and
+ * notes. It calls tools: the agents the chat offers (from the orchestrator), the registered table
+ * operations, plan/note/open/run/skip and finish. Every tool result is an artifact linked to its
+ * inputs; an agent that returns wakes the loop. The report is bound to the data: tables and
+ * figures by id, findings as claims tied to the rows they rest on. The model never carries values.
+ * Nothing about the database is written here: its name, entity and tables come from the adapter.
  */
 
 const path = require('node:path');
 const fs = require('node:fs/promises');
-const { AsyncLocalStorage } = require('node:async_hooks');
 const { inference, getActiveModel } = require('../../inference/gateway');
 const { platformConfig } = require('../../policy/config');
 const tools = require('../aso/studyTools');
@@ -25,120 +25,75 @@ const { createLogger } = require('../aso/logger');
 const { renderCharts } = require('../aso/pipelines/renderCharts');
 const { resolveAgentMode } = require('../../hpa/agentMode');
 const { localData, FILES } = require('../../hpa/localData');
-const { StudyContext, bytes } = require('../aso/studyContext');
-const { StudyConversation, planText, artifactCard } = require('../aso/studyConversation');
-const { CapabilityCatalog } = require('../aso/capabilityCatalog');
 const { validate, executeBatch, ARGUMENTS_SCHEMA } = require('../aso/batchOperations');
 const { decodeArguments } = require('../aso/toolArguments');
 const studyPlan = require('../aso/studyPlan');
-const { renderReport, OBSERVATIONS_SCHEMA, INTERPRETATIONS_SCHEMA } = require('../aso/studyReport');
-const { FIGURES_SCHEMA, selectFigures } = require('../aso/reportFigures');
-const { rowPageOptions, readPage, formatPage } = require('../aso/observationViews');
-const { unverifiedNumbers, verificationIssues } = require('../aso/summaryEvidence');
+const { FINISH_SCHEMA, reportIssues, renderReport } = require('../aso/studyReport');
+const { selectFigures } = require('../aso/reportFigures');
+const desk = require('../aso/desk');
 
 const MAX_STALLS = 2;             // turns in a row with nothing to do before the loop ends
 const WAKE_DEBOUNCE_MS = 300;     // completions this close together wake the loop once
 const JOB_WAIT_MS = 15 * 60_000;  // longest the loop waits for a running agent
-const CELL = 60;                  // characters per shown cell
-const RESULT_BYTES = 8192;        // one delivery page; never a conversation limit
+const MAX_HELD_ROWS = 5000000;    // rows held in memory at once; streaming tools have no limit
+const VIEW_ROWS = 10;             // rows an open shows by default
 
 // ---- tools of the study itself ---------------------------------------------------------------------
 
 const A = { type: 'string', description: 'artifact id, or a dataset name', 'x-artifact-reference': true };
 const S = { type: 'string' };
 const N = { type: 'integer' };
-const RESULT_KIND = { type: 'string', enum: studyPlan.KINDS, description: 'gene_set for a biological selection question; table for measurements/calculations; a chart type such as heatmap/bar/scatter for one figure; interpretation for gene-specific evidence; summary for the final report.' };
-const CHART_TYPE = { type: 'string', enum: studyPlan.CHART_KINDS };
 const tool = (name, description, properties = {}, required = []) => ({ name, description, parameters: { type: 'object', properties, required } });
-// One line each: the rules in the prompt do the teaching.
 const STUDY_TOOLS = [
-  tool('set_plan', 'Plan requested results: Deep Research selects cohorts; Investigator finds source evidence for the supplied list; ASO calculates across saved tables and draws figures. Describe outcomes without guessing source columns. Use a separate gene_set step for each selection and a separate step for each chart. Include interpretation only when requested.', { items: { type: 'array', items: { type: 'object', properties: { step: { type: 'string', description: 'Describe the requested result in words; item numbers are assigned automatically.' }, kind: RESULT_KIND, inputs: S }, required: ['step', 'kind'] } } }, ['items']),
-  tool('run', 'Execute dependent registered data operations together. Use @step_id for a preceding output in artifact/a/b arguments. Exact operation schemas come from load_tools; no custom code or agent calls. Returns requested output IDs. Every result appears in ARTIFACTS; open to inspect values.', { steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } }, outputs: { type: 'array', items: S, description: 'Step IDs whose resulting artifact IDs should be returned.' } }, ['steps', 'outputs']),
-  tool('update_plan', 'Revise a plan item (1-based), or append at the next number. artifacts lists evidence for done. A gene_set needs Deep Research, interpretation needs Investigator, and a chart kind needs a rendered figure of that type. Tag completing calls with node to avoid bookkeeping turns.', { item: N, status: { type: 'string', enum: ['todo', 'doing', 'done', 'dropped'] }, note: S, step: S, kind: RESULT_KIND, inputs: S, artifacts: { type: 'array', items: S } }, ['item']),
-  tool('note', 'Record a decision or unresolved question. replace overwrites note N; empty text with replace removes it. Cite observation/artifact IDs for evidence.', { text: S, replace: N }, ['text']),
-  tool('recall', 'Read the rest of a paged observation by id and offset, or search saved source evidence with query. limit caps search matches (default 12, max 30). The conversation already retains earlier results and corrections.', { id: S, query: S, offset: N, limit: N }),
-  tool('datasets', 'Discover source files when investigating a gap reported by a specialist. Investigator already has the source catalog for measurement questions. about matches a word in names, titles or columns; omitted about lists all names.', { about: S }),
-  tool('schema', 'Inspect saved result columns, or a source schema for a reported specialist gap. Investigator discovers measurement sources itself. about restricts both names and samples to matching columns; omit it for all names. Use describe for categories or distributions.', { what: S, about: S }, ['what']),
-  tool('describe', 'Profile a dataset or artifact: column kinds, blanks, distinct values, examples, ranges and list grammar. columns narrows the profile; the result is saved for recall.', { what: S, columns: { type: 'array', items: S } }, ['what']),
-  tool('open', 'Read exact rows and columns. Without columns, return every column; select columns for a compact view. A positive rows count and zero-based offset select a page. provenance=true adds full source/operation metadata when needed; ordinary reads return the selected data and lineage. Cells are never shortened; recall continues long observations.', { what: S, rows: N, offset: N, columns: { type: 'array', items: S, description: 'Nonempty column selection; omit for every column.' }, provenance: { type: 'boolean' } }, ['what']),
-  tool('explode', 'One row per item of a list cell: "key: number" items give <as>_key and <as>_value columns, "label (number)" gives <as>_label and <as>_value, plain items <as>_item.', { artifact: A, column: S, as: S }, ['artifact', 'column']),
-  tool('measure', 'Direct source read for a gap reported by Investigator; delegate ordinary measurement questions to investigator_hpa with genes or from. Existing columns are retained; with entity one row per gene, otherwise one row per gene and entity, retaining the source entity column name. as names the new column. An entity requires entity_column. Multiple matching rows require an explicit aggregate, or read all raw rows with intersect.', { artifact: A, table: { type: 'string', description: 'dataset name' }, value_column: S, entity_column: S, entity: S, as: S, aggregate: { type: 'string', enum: ['min', 'max', 'mean', 'median'] } }, ['artifact', 'table', 'value_column', 'as']),
-  tool('union', 'Genes in either artifact.', { a: A, b: A }, ['a', 'b']),
-  tool('intersect', 'Rows of a whose gene is in b.', { a: A, b: A }, ['a', 'b']),
-  tool('difference', 'Rows of a whose gene is not in b.', { a: A, b: A }, ['a', 'b']),
+  tool('plan', 'Record the deliverables the study owes, one item per requested table, figure (its chart type) or interpretation; gene_set for a cohort to find. Replaces the current plan.', { items: { type: 'array', items: { type: 'object', properties: { step: { type: 'string', description: 'The deliverable in words' }, kind: { type: 'string', enum: studyPlan.KINDS } }, required: ['step', 'kind'] } } }, ['items']),
+  tool('note', 'Keep a decision or an open question on the desk. replace overwrites note N; empty text with replace removes it.', { text: S, replace: N }, ['text']),
+  tool('open', 'Show rows of an artifact, or put a dataset on the desk (columns, the values each column takes, sample rows). For an artifact: rows and offset page through it, columns narrow the view. The view stays on the desk.', { what: S, rows: N, offset: N, columns: { type: 'array', items: S } }, ['what']),
+  tool('run', 'Run dependent operations together: each step names a registered operation and its arguments; a later step refers to an earlier one with @id in an artifact argument. Returns the artifact of every step.', { steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
+  tool('union', 'Rows in either table, one per entity.', { a: A, b: A, on: S }, ['a', 'b']),
+  tool('intersect', 'Rows of a whose entity is in b.', { a: A, b: A, on: S }, ['a', 'b']),
+  tool('difference', 'Rows of a whose entity is not in b.', { a: A, b: A, on: S }, ['a', 'b']),
   tool('concat', 'All rows of a then all rows of b.', { a: A, b: A }, ['a', 'b']),
   TABLE_OPERATIONS.get('join'),
   TABLE_OPERATIONS.get('filter'),
   TABLE_OPERATIONS.get('select'),
   TABLE_OPERATIONS.get('rank'),
-  tool('top_per_group', 'Keep the n highest rows per group (default group gene). Streams a whole dataset.', { artifact: A, group_by: S, by: S, n: N, order: { type: 'string', enum: ['desc', 'asc'] }, ties: { type: 'string', enum: ['include', 'truncate'] }, then_by: THEN_BY }, ['artifact', 'by']),
+  tool('top_per_group', 'Keep the n highest (or lowest) rows per group; group_by defaults to the entity. Streams a whole dataset.', { artifact: A, group_by: S, by: S, n: N, order: { type: 'string', enum: ['desc', 'asc'] }, ties: { type: 'string', enum: ['include', 'truncate'] }, then_by: THEN_BY }, ['artifact', 'by']),
   TABLE_OPERATIONS.get('aggregate'),
   TABLE_OPERATIONS.get('classify'),
   TABLE_OPERATIONS.get('compute'),
   TABLE_OPERATIONS.get('fill_missing'),
-  tool('pivot', 'Produce a matrix for heatmaps, retaining all input row and column labels. Row-table operations such as compute require a row artifact. row defaults to gene. When the question requests a subset, select it with the table tools before pivoting.', { artifact: A, row: S, column: S, value: S }, ['artifact', 'column', 'value']),
-  tool('chart', 'Draw an artifact: x the label column and y the value column (bar family), both numeric for scatter; heatmap takes a pivot. Missing numeric values fail unless missing=omit; omissions are recorded.', { artifact: A, type: CHART_TYPE, x: { type: 'string', description: 'X column; required except for a matrix heatmap' }, y: { type: 'string', description: 'Numeric Y/value column; required except for a matrix heatmap' }, group: S, size: S, label: { type: 'string', description: 'Saved column whose values identify individual plotted points. Provide it when point identity is needed to understand the requested comparison; omission produces unnamed points. This is separate from axis labels and group/series labels.' }, title: S, x_label: S, y_label: S, x_domain: { type: 'array', items: { type: 'number' }, description: 'Explicit numeric limits for the rendered X axis; two increasing values containing all plotted values.' }, y_domain: { type: 'array', items: { type: 'number' }, description: 'Explicit numeric limits for the rendered Y axis; two increasing values containing all plotted values.' }, missing: { type: 'string', enum: ['error', 'omit'] } }, ['artifact', 'type']),
+  tool('pivot', 'A matrix for a heatmap: one row per row value, one column per column value, the value column in the cells. Duplicate cells must be aggregated first.', { artifact: A, row: S, column: S, value: S }, ['artifact', 'column', 'value']),
+  tool('chart', 'Draw an artifact. Bar family: x the label column, y the value column, group for series (grouped_bar needs it). scatter/bubble: numeric x and y, label names the points, group colours them. heatmap takes a pivot matrix. Missing numeric values fail unless missing=omit.', { artifact: A, type: { type: 'string', enum: studyPlan.CHART_KINDS }, x: S, y: S, group: S, size: S, label: S, title: S, x_label: S, y_label: S, missing: { type: 'string', enum: ['error', 'omit'] } }, ['artifact', 'type']),
   TABLE_OPERATIONS.get('correlate'),
-  tool('overlap', 'Rows two tables share by gene (or "on"), against a universe (an artifact or a dataset such as proteinatlas.tsv): shared, expected, fold and a hypergeometric p; group_by tests every group of a in one call.', { a: A, b: A, universe: A, on: S, group_by: S }, ['a', 'b', 'universe']),
+  tool('overlap', 'Entities two tables share, against a universe (an artifact or a dataset): shared, expected, fold and a hypergeometric p; group_by tests every group of a.', { a: A, b: A, universe: A, on: S, group_by: S }, ['a', 'b', 'universe']),
   tool('standardize', 'Add a column with a numeric column rescaled: zscore, minmax or percentile.', { artifact: A, column: S, method: { type: 'string', enum: ['zscore', 'minmax', 'percentile'] }, as: S }, ['artifact', 'column', 'method']),
-  tool('skip', 'Nothing to do until something running returns.', { reason: S }, ['reason']),
-  tool('finish', 'Submit saved tables, figures and exact observed records. Measurements and comparisons are rendered from artifact bindings, not written as narrative. Use interpretations only for requested scientific discussion or necessary evidence limitations. completed binds plan items in this call. Preserve missing work.', { completed: { type: 'array', description: 'Complete plan items using existing artifact IDs without a separate update_plan turn; each evidence binding is checked before any is applied.', items: { type: 'object', properties: { item: N, artifacts: { type: 'array', items: S } }, required: ['item', 'artifacts'] } }, figures: FIGURES_SCHEMA, observations: OBSERVATIONS_SCHEMA, interpretations: INTERPRETATIONS_SCHEMA, tables: { type: 'array', items: { type: 'object', properties: { artifact: S, columns: { type: 'array', items: S }, title: S, rows: N }, required: ['artifact', 'columns'] } } })
+  tool('explode', 'One row per item of a list cell: "key: number" items give <as>_key and <as>_value, "label (number)" gives <as>_label and <as>_value, plain items <as>_item.', { artifact: A, column: S, as: S }, ['artifact', 'column']),
+  tool('skip', 'Nothing to do until a running agent returns.', { reason: S }, ['reason']),
+  tool('finish', 'Deliver the report from the data: tables and figures by artifact id, findings as claims bound to the rows they rest on. Refused when a claim states a number its bound cells do not hold, or a plan item is neither delivered nor in not_done.', FINISH_SCHEMA)
 ];
-const TABLE_TOOLS = new Set(['measure', 'union', 'intersect', 'difference', 'concat', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'compute', 'classify', 'fill_missing', 'pivot', 'chart', 'correlate', 'overlap', 'standardize', 'explode']);
-const FOR_EACH = { type: 'object', description: 'once per value; $item stands for it', properties: { values: { type: 'array', items: S }, column: S, of: A, as: S } };
-const NODE = { type: 'integer', description: 'plan item carried out' };
-const PROFILE_MAX_ROWS = 200000;  // rows a describe scans in one file
-const profileCache = new Map();   // file|columns → card, for this process
+const TABLE_TOOLS = new Set(['union', 'intersect', 'difference', 'concat', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'classify', 'compute', 'fill_missing', 'pivot', 'chart', 'correlate', 'overlap', 'standardize', 'explode']);
+const SYNC_TOOLS = new Set(['plan', 'note', 'open', 'skip', 'finish']);
 
-function systemPrompt(directory) {
-  return `Coordinate the requested HPA study using registered agents and data tools. Tools produce the evidence; choose the questions and combine results to deliver exactly the requested outputs. Tables and figures can satisfy the request directly. Include explanation when requested or needed to state a source limitation.
+function systemPrompt(db, datasets, agentNames) {
+  const entity = db.entity;
+  return `You run a study over the ${db.database} for a scientist. Agents and operations produce every value; you choose what to ask and combine the results. Deep Research finds the ${entity}s matching a description (a cohort). Investigator, given a list (genes=[names] or from=<artifact id>) and a complete question (fields, tissues or other row filters, units), finds the tables that hold the answer and fetches the raw records for the whole list at once; it returns tables. The operations compute over saved tables. Every result is an artifact you address by id (a1, a2, …).
 
-Plan deliverables with set_plan and start independent work in the same response. Use gene_set for cohort selection, table for a complete measurement question including raw records and per-input summaries, the requested chart type for each figure, interpretation for a requested gene investigation, and summary for the report. node marks the plan item a result completes.
+The desk in the message is your whole working set and stays in front of you every turn: the plan, tables you opened, every artifact with its columns and two rows, what is running, your history and notes. Rows live in the artifacts; open shows more of them when a decision needs values.
 
-Deep Research selects biological cohorts from the exact requested criteria. Investigator finds sources and applies bulk lookups for raw measurements, source labels and per-input lookup summaries. Pass the source question with from=<saved cohort> or genes=<user-supplied names>; keep the list and source rows in artifacts. Use gene for focused interpretation. ASO owns calculations across saved tables: joins, nested grouped statistics, correlations and other study analyses. Compose those registered operations with run after retrieval. Investigator has no study planner or table-operation workflow runner.
+How to work:
+1. plan the deliverables first (one item per requested table, figure of a given type, cohort or interpretation) and start independent work in the same turn.
+2. Delegate cohorts to ${agentNames.includes('deep_research_hpa') ? 'deep_research_hpa' : 'the search agent'} and measurements to investigator_hpa with genes or from. Use its tables directly; do not reread them to copy values.
+3. Compute with the operations on artifact ids. Chain dependent steps in one run call with @id references (pivot then heatmap; filter, rank, chart). Independent calls go in the same turn. A dataset name can stand in for an artifact in an operation.
+4. finish binds the report to the data: tables and figures by id, findings as claims each bound to the rows and columns they rest on. The report prints those cells beside each claim. A claim stating a number its cells do not hold is refused; put such numbers in a computed artifact and cite it.
+Keep units, zeros, blanks, repeated rows and ties as recorded; a missing record is absence from this source, not biological absence; transform only when asked. When a deliverable cannot be made, list it in not_done with the reason instead of approximating.
 
-Give Investigator the complete source retrieval question, including every applicable source constraint, exclusion, unit and scope. It receives that question and the supplied list, not the whole study request or plan. Reuse its saved tables for analysis. Keep distinct cohorts and assays separate. Inspect reported source gaps; an explicit no-record result is an answer about source coverage, not a reason to invent data or repeat the same search.
-
-Use the ARTIFACTS schemas and coverage directly; open values only for a value-dependent decision or requested interpretation. Retrieve each source relation once and derive its other presentations with registered operations. Load the required operation schemas together, then submit the dataflow, including figures, in one run call with @step_id dependencies. The executor handles intermediate artifacts; do not spend model turns inspecting intermediates unless their content changes the next decision. Keep duplicate records and missing values explicit. Run independent calls together and skip only when useful work depends on running jobs. Every additional capability is listed below and available through load_tools. Do not write custom code or SQL.
-
-The ARTIFACTS list gives each saved result's ID, columns, size and origin on every turn. Tool execution saves data without copying row values or execution recipes into chat. Use these exact columns and artifact IDs directly for calculations, charts and report tables. Request open or describe when a decision needs values or source details. Explicit reads are shown for the next decision, then retained by observation ID for recall; note keeps a working observation available when needed later.
-
-The conversation preserves decisions and tool exchanges. Receipts describe results; open reads exact rows and columns, and additional inspection tools expose saved schemas and source evidence. A saved row that was not shown is not evidence for a prose detail: inspect its exact rows/columns before making that claim. Prefer the requested summaries over extra row-level narration, and artifact references over copying tables or creating presentation-only artifacts.
-
-Preserve source units, missing values, record coverage, repeated measurements and ties. State denominators and aggregation semantics. A zero is a measurement; a missing record establishes only absence from that source. It does not establish biological absence, an experiment's history, or a causal explanation. Preserve evidence reliability and qualifiers. Apply transformations only when requested.
-
-Use exact tables and figures as the answer when sufficient. finish.figures selects the final figures when exploratory or corrected plots also exist; all artifacts remain available in the workspace. For necessary individual facts, finish.observations renders exact saved row/column references without transcribing identities or values. Comparisons and extrema must reference saved calculation results. For requested discussion, finish.interpretations distinguishes interpretation of the results, untested possible explanations (hypothesis), and evidence limitations. Retrieved measurements do not establish their causes or specific experimental methods. Source schema samples describe only the displayed records, never every cohort member. Retrieval and figure requests need no additional narrative; finish renders the selected evidence directly.
-
-Before finish, check the original deliverables against the returned evidence, including every requested group and tied result. A completed tool or plan item does not prove the whole question is answered. finish.tables renders saved data exactly; use it for numerical results instead of rewriting them in prose. Write factual prose only from values visible in this decision or an evidence-linked note; reopen the needed final columns if their previous read is archived. Artifact labels and column names do not tell you which genes have values or are absent. Each factual paragraph cites its supporting artifact and stays within what that source establishes. If work is impossible, identify the exact gap and revise the plan explicitly.
-
-ADDITIONAL CAPABILITIES — request their native schemas with load_tools:
-${directory}`;
+DATASETS ON DISK (open one for its columns and values; investigator_hpa reads them for a supplied list)
+${datasets.join(', ')}`;
 }
 
-// ---- context rendering -----------------------------------------------------------------------------
+// ---- data access for the operations -----------------------------------------------------------------
 
-function cell(v) {
-  const s = v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
-  return s.length > CELL ? `${s.slice(0, CELL - 1)}…` : s;
-}
-
-function shownColumns(columns, pick = null) {
-  if (Array.isArray(pick) && pick.length) return pick.map(p => {
-    const column = columns.find(c => c === p) || columns.find(c => c.toLowerCase() === String(p).toLowerCase());
-    if (!column) throw new Error(`No column ${JSON.stringify(p)}; available: ${columns.join(', ')}`);
-    return column;
-  });
-  return columns.slice(0, 7);
-}
-
-function sampleLines(rows, columns, n, pick = null) {
-  const cols = shownColumns(columns, pick);
-  return rows.slice(0, n).map(r => cols.map(c => cell(r[c])).join(' | '));
-}
-
-const MAX_HELD_ROWS = 5000000;    // rows held in memory at once; streaming tools have no limit
-
-// Gene and ensembl keys for a row read straight from a dataset, so set operations and joins work.
+// Entity keys for a row read straight from a dataset, so set operations and joins work.
 function geneKeys(entry, row) {
   const isEnsembl = v => /^ENSG\d{5,}$/.test(String(v || ''));
   if (entry.key === 'name') return { gene: row[entry.columns[0]] || null, ensembl: row[entry.columns[1]] || null };
@@ -147,13 +102,12 @@ function geneKeys(entry, row) {
   return { gene: name || null, ensembl: column ? row[column] || null : null };
 }
 
-// Every row of a dataset, keyed, as they stream from disk.
 async function* datasetStream(entry) {
   for await (const row of localData.rows(entry.file)) yield { ...geneKeys(entry, row), ...row };
 }
 
-// A dataset used where an artifact goes. Gene-level files come whole; a per-gene file comes
-// restricted to the genes of the other input, filtered while it streams, or whole when it fits.
+// A dataset used where an artifact goes. Entity-level files come whole; a per-entity file comes
+// restricted to the entities of the other input, filtered while it streams, or whole when it fits.
 async function datasetRows(entry, { genes = null, where = null, limit = 3 } = {}) {
   if (entry.key === 'master') {
     const master = await localData.master();
@@ -194,24 +148,10 @@ async function datasetRows(entry, { genes = null, where = null, limit = 3 } = {}
   const out = [];
   for await (const row of datasetStream(entry)) {
     out.push(row);
-    if (out.length > MAX_HELD_ROWS) throw new Error(`${entry.file} has more than ${MAX_HELD_ROWS} rows, more than fits in memory at once: filter, aggregate or top_per_group stream it, or use it with an artifact (join, intersect, difference) so only those genes are read`);
+    if (out.length > MAX_HELD_ROWS) throw new Error(`${entry.file} has more than ${MAX_HELD_ROWS} rows, more than fits in memory at once: filter, aggregate or top_per_group stream it, or use it with an artifact (join, intersect, difference) so only those entities are read`);
   }
   return out;
 }
-
-// Arguments as they appear on the desk: whole, cut only between arguments. A cut inside a value
-// can otherwise change an output column name and make later steps refer to a nonexistent column.
-function describeArgs(args, max = 160) {
-  const parts = Object.entries(args || {}).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => { const text = typeof v === 'string' ? v : JSON.stringify(v); return `${k}=${text.length > 80 ? `${text.slice(0, 79)}…` : text}`; });
-  let out = '';
-  for (const part of parts) {
-    if (out && out.length + part.length + 2 > max) { out += ', …'; break; }
-    out += (out ? ', ' : '') + part;
-  }
-  return out;
-}
-
-// ---- artifacts from tool results ---------------------------------------------------------------------
 
 function normalizeSearchRow(r) {
   const out = { gene: r.Gene ?? r.gene ?? null, ensembl: r.Ensembl ?? r.ensembl ?? null };
@@ -228,56 +168,60 @@ function scalarRow(obj) {
   return row;
 }
 
-// What an agent's result becomes: rows for a gene set or an answer, text for a lookup.
-function agentArtifact(tool, args, result) {
-  if (tool === 'deep_research_hpa') {
+// What a non-bulk agent result becomes: rows for a cohort or an answer, text for a lookup.
+function agentArtifact(toolName, args, result) {
+  if (toolName === 'deep_research_hpa') {
     if (result?.status !== 'ok') {
       const error = new Error(result?.error || 'search failed');
-      error.details = { stop_reason: result?.stop_reason, unresolved_requirements: result?.result?.unresolved_requirements, requirements: result?.result?.requirements };
+      error.details = { stop_reason: result?.stop_reason, unresolved_requirements: result?.result?.unresolved_requirements };
       throw error;
     }
     const r = result.result || {};
     return { kind: 'data', label: String(args.goal || 'search').slice(0, 80), rows: (r.rows || []).map(normalizeSearchRow), meta: { search_url: r.search_urls?.[0] || null, query: r.plan || null, not_expressible: (r.not_expressible || []).map(c => c.requirement), mode: r.mode || null, hpa_version: r.hpa_version, source_files: r.source_files } };
   }
-  if (tool === 'investigator_hpa') {
+  if (toolName === 'investigator_hpa') {
     if (result?.error && result.found !== true) throw new Error(result.error);
-    return { kind: 'answer', label: `${result.gene || args.gene}: ${String(args.question || '').slice(0, 60)}`, rows: [{ gene: result.gene || args.gene, ensembl: result.ensembl || null, question: args.question || '', found: result.found === true, answer: result.answer || '', value: result.extracted_value ?? null, entity: result.exact_label ?? null, table: result.source_section || null, cited_row: result.cited_row || null }], meta: { not_in_release: result.not_in_release || [], notes: result.notes || [], citations: result.citations || [], grounded: result.grounded, evidence_status: result.evidence_status, coverage: result.coverage, cited_coverage: result.cited_coverage } };
+    return { kind: 'answer', label: `${result.gene || args.gene}: ${String(args.question || '').slice(0, 60)}`, rows: [{ gene: result.gene || args.gene, ensembl: result.ensembl || null, question: args.question || '', found: result.found === true, answer: result.answer || '', value: result.extracted_value ?? null, entity: result.exact_label ?? null, table: result.source_section || null, cited_row: result.cited_row || null }], meta: { not_in_release: result.not_in_release || [], notes: result.notes || [], citations: result.citations || [], grounded: result.grounded, evidence_status: result.evidence_status } };
   }
-  if (tool === 'check_inclusion_hpa') {
-    return { kind: 'answer', label: `${args.gene} in search result?`, rows: [scalarRow(result)], meta: {} };
-  }
+  if (toolName === 'check_inclusion_hpa') return { kind: 'answer', label: `${args.gene} in search result?`, rows: [scalarRow(result)], meta: {} };
   const text = [result?.summary, result?.answer, result?.content, result?.text].find(v => typeof v === 'string') || JSON.stringify(scalarRow(result));
-  return { kind: 'note', label: String(args.topic || args.question || tool).slice(0, 80), rows: [], text: String(text), meta: { images: Array.isArray(result?.images) ? result.images.length : 0 } };
+  return { kind: 'note', label: String(args.topic || args.question || toolName).slice(0, 80), rows: [], text: String(text), meta: { images: Array.isArray(result?.images) ? result.images.length : 0 } };
 }
 
 // ---- the loop --------------------------------------------------------------------------------------
 
-async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort, context_budget_bytes }, ctx = {}) {
+async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort }, ctx = {}) {
   const effort = reasoning_effort || ctx.reasoning_effort || null;
   const db = ctx.db;
   if (!db) throw new Error('The study requires db in context.');
   getActiveModel();
   const orchestrator = require('../orchestrator'); // at call time: the orchestrator requires this module too
   const config = platformConfig();
-  if (context_budget_bytes !== undefined) throw new Error('context_budget_bytes is no longer supported: ASO preserves its conversation without automatic compaction.');
   const maxTurns = max_turns === undefined ? config.asoMaxSteps : max_turns;
   if (!Number.isSafeInteger(maxTurns) || maxTurns < 1) throw new Error('The caller or platform must provide a positive integer study turn allowance');
+  const parallel = config.asoParallelLimit || 3;
   const agentMode = await resolveAgentMode(requestedMode ?? 'offline', [FILES.master]);
   const mode = agentMode.mode;
+  const identity = geneData.identity();
   const startedAt = Date.now();
   const tokens = { prompt: 0, completion: 0, total: 0 };
-  const mainTokens = { prompt: 0, completion: 0, total: 0 };
+  const mainTokens = { prompt: 0, completion: 0, total: 0, calls: 0 };
   const specialistTokens = {};
-  const addSpecialistUsage = (name, usage) => {
+  const addSpecialistUsage = (name, usage, calls) => {
     if (usage === undefined) return;
     const stats = typeof usage.total === 'object' ? usage.total : usage;
     for (const key of ['prompt', 'completion', 'total']) if (!Number.isFinite(stats[key]) || stats[key] < 0) throw new Error(`${name} returned invalid token accounting for ${key}`);
-    const sum = specialistTokens[name] || (specialistTokens[name] = { prompt: 0, completion: 0, total: 0 });
+    const sum = specialistTokens[name] || (specialistTokens[name] = { prompt: 0, completion: 0, total: 0, calls: 0 });
     for (const key of ['prompt', 'completion', 'total']) { sum[key] += stats[key]; tokens[key] += stats[key]; }
+    sum.calls += Number(calls) || (usage.steps ? Object.keys(usage.steps).length : 0);
   };
-  const addUsage = usage => { mainTokens.prompt += usage?.prompt_tokens || 0; mainTokens.completion += usage?.completion_tokens || 0; mainTokens.total += (usage?.prompt_tokens || 0) + (usage?.completion_tokens || 0); tokens.prompt += usage?.prompt_tokens || 0; tokens.completion += usage?.completion_tokens || 0; tokens.total += (usage?.prompt_tokens || 0) + (usage?.completion_tokens || 0); };
+  const addUsage = usage => {
+    const p = usage?.prompt_tokens || 0, c = usage?.completion_tokens || 0;
+    mainTokens.prompt += p; mainTokens.completion += c; mainTokens.total += p + c; mainTokens.calls++;
+    tokens.prompt += p; tokens.completion += c; tokens.total += p + c;
+  };
 
-  const workspace = await createWorkspace(db, { visitorId: ctx.visitorId, inferenceModelId: getActiveModel().id, requestText: goal, planJson: { goal, mode, hpa_version: agentMode.hpaVersion, version: 'native-study' } });
+  const workspace = await createWorkspace(db, { visitorId: ctx.visitorId, inferenceModelId: getActiveModel().id, requestText: goal, planJson: { goal, mode, hpa_version: agentMode.hpaVersion, version: 'desk-study' } });
   inference.assignContext({ workspaceId: workspace.id });
   const logger = createLogger(workspace.logPath);
   const log = async (event, data, step) => {
@@ -287,87 +231,24 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
   let registrations = Promise.resolve();
   const register = args => { const next = registrations.then(() => registerArtifact(db, args)); registrations = next.catch(() => {}); return next; };
 
-  const contextMemory = new StudyContext();
-  const state = { goal, plan: [], artifacts: [], byId: new Map(), running: new Map(), notes: [], history: [], turn: 0, toolCalls: 0, failed: 0, ids: { a: 0, t: 0 } };
-  const observationScope = new AsyncLocalStorage();
-  const capture = id => { const scope = observationScope.getStore(); if (scope?.open) scope.ids.push(id); return id; };
-  const observe = (text, options = {}) => {
-    const kind = /feedback|decision/.test(options.source || '') ? 'control' : 'evidence';
-    const id = contextMemory.add(text, { turn: state.turn, kind, ...options });
-    if (options.announce !== false) capture(id);
-    return id;
-  };
-  const conversation = new StudyConversation({ goal, archive: contextMemory, resultBytes: RESULT_BYTES });
-  // Control feedback also uses the durable observation path. There is no turn-based clearing.
-  state.recent = { push: (...messages) => messages.map(text => observe(text, { source: 'control feedback' })) };
-  // History collapses a repeated action within a turn ("opened a3 ×4"), so a repeat is not a pattern to copy.
-  const remember = (text) => {
-    const entry = state.history[state.history.length - 1];
-    if (entry && entry.turn === state.turn) {
-      const last = entry.items[entry.items.length - 1] || '';
-      const m = last.match(/^(.*) ×(\d+)$/);
-      if (last === text) entry.items[entry.items.length - 1] = `${text} ×2`;
-      else if (m && m[1] === text) entry.items[entry.items.length - 1] = `${text} ×${Number(m[2]) + 1}`;
-      else entry.items.push(text);
-    } else state.history.push({ turn: state.turn, items: [text] });
-  };
-  const planItem = studyPlan.createItem;
-  const completionIssue = item => {
-    const visited = new Set(), partial = [];
-    const inspect = id => {
-      if (visited.has(id)) return;
-      visited.add(id);
-      const artifact = state.byId.get(id);
-      if (!artifact) return; // Raw source names have no saved-artifact lineage.
-      if (artifact.meta?.execution?.status === 'partial' || artifact.meta?.saved_result?.archive && !state.byId.has(artifact.meta.saved_result.archive)) partial.push(artifact.id);
-      for (const input of artifact.inputs || []) inspect(input);
-    };
-    for (const id of Array.isArray(item.artifacts) ? item.artifacts : []) inspect(id);
-    if (partial.length) return `incomplete execution in selected evidence ancestry: ${partial.join(', ')}; completed rows are supporting evidence only. Repair the failed work and attach complete output, or revise the plan explicitly`;
-    return studyPlan.completionIssue(item, state.byId);
-  };
-  // A preparatory operation may advance a step without completing its promised output.
-  const markNode = async (n, artifactId, expectedItem) => {
-    const item = state.plan[n - 1];
-    if (expectedItem && item !== expectedItem) {
-      observe(`Job for a previous plan item ${n} returned ${artifactId}; the rewritten plan was not marked done.`, { source: 'control feedback', refs: [artifactId] });
-      return;
-    }
-    if (!item) return;
-    item.artifacts = [...new Set([...item.artifacts, artifactId])];
-    const issue = completionIssue(item);
-    item.status = issue ? 'doing' : 'done';
-    item.note = `→ ${item.artifacts.join(', ')}`;
-    if (issue) observe(`Plan item ${n} remains doing: ${issue}. ${artifactId} is supporting work; complete the output or revise the plan explicitly.`, { source: 'control feedback', refs: item.artifacts });
-    planTouched = true;
-    remember(`plan item ${n} ${item.status} (${artifactId})`);
-    await log('plan', { items: state.plan, changed: n });
-  };
-  const wake = { resolve: null };
-  const wakeUp = () => { if (wake.resolve) { const r = wake.resolve; wake.resolve = null; r(); } };
-  const artifactsSummary = () => state.artifacts.map(a => ({ artifact_uuid: a.uuid, kind: a.kind === 'figure' ? 'figure' : a.kind === 'note' ? 'inspection' : a.kind === 'answer' ? 'measurement' : 'dataset', tool: a.tool, summary: { id: a.id, label: a.label, row_count: a.rows?.length }, storage_uri: a.storageUri }));
+  const state = { goal, plan: [], artifacts: [], byId: new Map(), running: new Map(), notes: [], history: [], opened: new Map(), views: new Map(), turn: 0, toolCalls: 0, failed: 0, ids: { a: 0, t: 0 } };
+  const remember = text => state.history.push(`turn ${state.turn}: ${text}`);
 
+  const catalog = (await geneData.catalog()).filter(e => e.key !== 'unreadable');
   const agentSpecs = orchestrator.getToolSpecs().filter(t => t.function.name !== 'aso_hpa').map(t => {
     const properties = { ...t.function.parameters.properties };
     delete properties.mode;
     t = { ...t, function: { ...t.function, parameters: { ...t.function.parameters, properties } } };
     if (t.function.name !== 'investigator_hpa') return t;
-    return { ...t, function: { ...t.function, description: 'Find source evidence for a supplied list: raw values, source labels and per-input lookup summaries, including explicit counts and extrema. Include all applicable source constraints and exclusions in question; Investigator does not receive the whole study. Pass genes for user-supplied names or from for a saved cohort. ASO performs calculations across saved tables with its own registered tools. Existing single-gene investigation remains available through gene. No list copying or source-schema inspection is needed before delegating.', parameters: { ...t.function.parameters, required: [], properties: {
+    return { ...t, function: { ...t.function, description: `Raw records for a list of ${identity.entity}s: pass genes=[names] or from=<artifact id> and the complete question (which fields, which tissues or other rows, units). It finds the tables and fetches every ${identity.entity} at once, returning tables. gene alone asks about one ${identity.entity}.`, parameters: { ...t.function.parameters, required: [], properties: {
       ...t.function.parameters.properties,
-      genes: { type: 'array', items: S, description: 'Supplied gene names for a bulk question. Use from when the list is already saved.' },
-      from: { type: 'string', description: 'Saved result ID containing the supplied list. The runtime passes its genes and existing values to Investigator. No column selection or list copying is needed. Supply one of gene, genes or from.' }
+      genes: { type: 'array', items: S, description: `Supplied ${identity.entity} names` },
+      from: { type: 'string', description: `Artifact id whose rows supply the ${identity.entity}s` }
     } } } };
   });
   const agentNames = new Set(agentSpecs.map(t => t.function.name));
-  const toolSpecs = [...agentSpecs, ...STUDY_TOOLS.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }))]
-    .map(t => {
-      const name = t.function.name;
-      if (!TABLE_TOOLS.has(name) && !agentNames.has(name)) return t;
-      const properties = { ...t.function.parameters.properties, node: NODE, ...(TABLE_TOOLS.has(name) && !['chart', 'pivot'].includes(name) ? { for_each: FOR_EACH } : {}) };
-      return { ...t, function: { ...t.function, parameters: { ...t.function.parameters, properties } } };
-    });
-  const capabilities = new CapabilityCatalog({ tools: toolSpecs, coreNames: ['set_plan', 'open', 'chart', 'run', 'skip', 'finish', ...['deep_research_hpa', 'investigator_hpa'].filter(name => agentNames.has(name))] });
-  const system = systemPrompt(capabilities.directory());
+  const toolSpecs = [...agentSpecs, ...STUDY_TOOLS.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }))];
+  const system = systemPrompt(identity, catalog.map(e => e.file), [...agentNames]);
 
   const get = id => {
     const key = String(id || '').trim();
@@ -375,14 +256,15 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     if (!a) throw new Error(`no artifact "${id}" (have ${state.artifacts.map(x => x.id).join(', ') || 'none'})`);
     return a;
   };
+  const origin = a => `${a.tool}${a.toolId ? ` ${a.toolId}` : ''}${a.tool === 'chart' ? `(${desk.argsLine(a.args, 120)})` : agentNames.has(a.tool) ? ` "${String(a.args.question || a.args.goal || a.args.topic || '').slice(0, 90)}"` : a.inputs?.length ? ` of ${a.inputs.join(', ')}` : ''}`;
 
   // Stores a tool's output as an artifact, linked to the artifacts it read.
-  async function addArtifact({ kind, label, rows, matrix, text, tool, args, inputs, meta, figure, toolId, columns: suppliedColumns, reservedId }) {
-    const id = reservedId || `a${++state.ids.a}`;
+  async function addArtifact({ kind, label, rows, matrix, text, tool: toolName, args, inputs, meta, figure, toolId, columns: suppliedColumns }) {
+    const id = `a${++state.ids.a}`;
     const sources = inputs.map(i => state.byId.get(i)?.uuid).filter(Boolean);
     const base = { workspaceId: workspace.id, artifactsDir: workspace.artifactsDir };
     let reg;
-    let images = [];
+    const images = [];
     if (kind === 'figure') {
       reg = await register({ ...base, kind: 'figure', format: 'json', schemaJson: { type: 'chart_spec' }, provenance: { tool: 'chart', sources, purpose: label }, payload: { charts: [figure], node_id: id, label, args, provenance: { tool: 'chart', purpose: label, sources } } });
       const renderDir = path.join(workspace.workspaceDir, 'render', id);
@@ -400,670 +282,341 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
       }
     } else {
       const columns = suppliedColumns || (rows ? tools.columnsOf(rows) : []);
-      const artifactKind = kind === 'answer' ? 'answer' : kind === 'note' ? 'note' : tool === 'deep_research_hpa' ? 'gene_list' : tool === 'measure' ? 'measurement' : `analysis_${tool}`;
+      const artifactKind = kind === 'answer' ? 'answer' : kind === 'note' ? 'note' : toolName === 'deep_research_hpa' ? 'gene_list' : toolName === 'investigator_hpa' ? 'measurement' : `analysis_${toolName}`;
       const payload = matrix
-        ? { node_id: id, op: tool, label, args, row_count: matrix.row_labels.length, column_count: matrix.col_labels.length, ...matrix, provenance: { tool, purpose: label, sources, ...(meta || {}) } }
-        : { node_id: id, op: tool, label, args, row_count: rows ? rows.length : 0, columns, rows: rows || [], text: text || undefined, provenance: { tool, purpose: label, sources, ...(meta || {}) } };
-      reg = await register({ ...base, kind: artifactKind, format: 'json', schemaJson: { type: tool, columns }, provenance: { tool, sources, purpose: label }, payload });
+        ? { node_id: id, op: toolName, label, args, row_count: matrix.row_labels.length, column_count: matrix.col_labels.length, ...matrix, provenance: { tool: toolName, purpose: label, sources, ...(meta || {}) } }
+        : { node_id: id, op: toolName, label, args, row_count: rows ? rows.length : 0, columns, rows: rows || [], text: text || undefined, provenance: { tool: toolName, purpose: label, sources, ...(meta || {}) } };
+      reg = await register({ ...base, kind: artifactKind, format: 'json', schemaJson: { type: toolName, columns }, provenance: { tool: toolName, sources, purpose: label }, payload });
     }
     const columns = suppliedColumns || (rows ? tools.columnsOf(rows) : []);
     const size = kind === 'figure' ? 'figure' : matrix ? `${matrix.row_labels.length} × ${matrix.col_labels.length} matrix` : kind === 'note' ? 'note' : `${rows.length} rows`;
-    const a = { id, uuid: reg.artifactUuid, storageUri: reg.storageUri, kind, label, size, rows: rows || null, matrix: matrix || null, figure: figure || null, text: text || null, columns, tool, args, inputs, meta: meta || {}, images, toolId, turn: state.turn };
+    const a = { id, uuid: reg.artifactUuid, storageUri: reg.storageUri, kind, label, size, rows: rows || null, matrix: matrix || null, figure: figure || null, text: text || null, columns, tool: toolName, args, inputs, meta: meta || {}, images, toolId, turn: state.turn };
     state.artifacts.push(a);
     state.byId.set(id, a);
     return a;
   }
 
-const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.size, rows: a.rows ? a.rows.length : undefined, columns: a.columns.slice(0, 12), sample: a.rows ? sampleLines(a.rows, a.columns, 3).map(l => l.split(' | ')) : undefined, sample_columns: a.columns.slice(0, 7), text: a.text ? a.text.slice(0, 600) : undefined, images: a.images, artifact_uuid: a.uuid, search_url: a.meta?.search_url, query: a.meta?.query, inputs: a.inputs });
+  const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.size, rows: a.rows ? a.rows.length : undefined, columns: a.columns.slice(0, 12), sample: a.rows ? desk.sampleLines(a.rows, a.columns.slice(0, 7), 3).map(l => l.split(' | ')) : undefined, sample_columns: a.columns.slice(0, 7), text: a.text ? a.text.slice(0, 600) : undefined, images: a.images, artifact_uuid: a.uuid, search_url: a.meta?.search_url, query: a.meta?.query, inputs: a.inputs });
+  const artifactsSummary = () => state.artifacts.map(a => ({ artifact_uuid: a.uuid, kind: a.kind === 'figure' ? 'figure' : a.kind === 'note' ? 'inspection' : a.kind === 'answer' ? 'measurement' : 'dataset', tool: a.tool, summary: { id: a.id, label: a.label, row_count: a.rows?.length }, storage_uri: a.storageUri }));
 
-  // An agent runs in the background through the orchestrator, exactly as a chat message would.
-  function startAgent(tool, args) {
-    const node = Number(args?.node) || 0;
-    const plannedItem = node ? state.plan[node - 1] : null;
-    if (node) { args = { ...args }; delete args.node; }
-    if (args.mode !== undefined && args.mode !== mode) throw new Error(`Delegated agents must use the study data source: ${mode}`);
-    const executionArgs = { ...args, mode };
-    let inputTable;
-    const inputs = [];
-    if (tool === 'investigator_hpa' && args.from !== undefined) {
-      if (args.gene !== undefined || args.genes !== undefined) throw new Error('Use one of gene, genes or from');
-      const input = get(args.from);
-      if (!Array.isArray(input.rows) || input.rows.some(row => !row.ensembl && !row.gene)) throw new Error(`${args.from} must contain gene rows`);
-      inputTable = structuredClone({ source: { id: input.id, uuid: input.uuid, inputs: input.inputs, meta: input.meta }, rows: input.rows, columns: input.columns,
-        ...Object.fromEntries(['record_rows', 'row_kind', 'execution'].filter(key => input.meta[key] !== undefined).map(key => [key, input.meta[key]])) });
-      inputs.push(input.id);
-      delete executionArgs.from;
-      executionArgs.genes = [...new Set(inputTable.rows.map(row => row.ensembl || row.gene))];
-    }
-    const id = `t${++state.ids.t}`;
-    const job = { id, tool, args, node, planItem: plannedItem, startedAt: Date.now(), kind: 'agent' };
-    state.running.set(id, job);
-    if (plannedItem) {
-      plannedItem.status = 'doing';
-      plannedItem.note = `running ${id}`;
-      planTouched = true;
-      log('plan', { items: state.plan, changed: node, running: id });
-    }
-    state.toolCalls++;
-    const label = String(args.goal || args.question || args.topic || args.gene || tool).slice(0, 80);
-    log('tool.start', { id, tool, kind: 'agent', label, args, inputs }, id);
-    const forward = async s => log(`agent.${s.stage}`, { id, label: s.label, message: s.message }, id);
-    job.promise = orchestrator.execute(tool, executionArgs, { db, visitorId: ctx.visitorId, rawQuery: '', includeRows: true, onStep: forward, inputTable, studyGoal: goal, studyTask: plannedItem?.text, reasoningEffort: effort, runControl: ctx.runControl, signal: ctx.signal, viewDirectory: path.join(workspace.workspaceDir, 'agent-views', id) })
-      .then(async ({ result }) => {
-        addSpecialistUsage(tool, result?.tokens);
-        const saveSourceEvidence = async () => {
-          if (!result?.source_evidence?.length) return;
-          const incomplete = ['partial', 'incomplete'].includes(result.status);
-          const execution = incomplete ? { status: 'partial', source_status: result.status, error: result.error, remaining_for_aso: result.remaining_for_aso || [], not_in_release: result.not_in_release || [] } : undefined;
-          const rows = result.source_evidence.map(record => { const row = { ...record }; delete row.hpa_version; return row; });
-          const a = await addArtifact({ kind: 'note', label: 'Retrieved source descriptions and schema samples', rows, columns: tools.columnsOf(rows), tool, args, inputs, toolId: id, meta: { evidence_kind: 'retrieved_source_context', hpa_version: result.hpa_version, ...(execution ? { execution } : {}) } });
-          observe(`${a.id}: saved ${result.source_evidence.length} exact source reads from ${id}. These descriptions, definitions and displayed sample records are source context, not cohort-wide measurements. Open only the needed rows/columns for a report claim. Sources: ${JSON.stringify(result.source_evidence.map(row => ({ read_id: row.read_id, table: row.table })))}.`, { source: `artifact ${a.id}`, refs: [a.id, ...inputs], announce: false });
-          await log('tool.done', { id, tool, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);
-        };
-        let primary;
-        if (result?.bulk) {
-          const archive = prepareBulkArchive(result);
-          for (const entry of archive.nodes) entry.artifactId = `a${++state.ids.a}`;
-          const indexId = archive.nodes.some(entry => !entry.selected || entry.parents.length) ? `a${++state.ids.a}` : undefined;
-          for (const entry of archive.ordered) {
-            const table = entry.table;
-            const { name, rows, columns, provenance, ...metadata } = table;
-            entry.artifact = await addArtifact({ kind: 'data', label: entry.kind === 'raw_source' ? `Raw source rows for supplied cohort: ${table.source_file}` : name,
-              rows, columns, tool, args, inputs: [...new Set([...inputs, ...entry.parents.map(parent => parent.artifactId)])], toolId: id, reservedId: entry.artifactId,
-              meta: { ...metadata, bulk: true, assignment_status: result.status, status: result.status, operation_dispositions: result.operation_dispositions, error: result.error, answer: result.answer, lookups: provenance || [],
-                saved_result: { invocation: id, archive: indexId, kind: entry.kind, name: entry.kind === 'raw_source' ? table.source_file : name, selected: entry.selected },
-                input_count: result.input_count, unresolved_inputs: result.unresolved_inputs, not_in_release: result.not_in_release, remaining_for_aso: result.remaining_for_aso || [] } });
-          }
-          const directory = archive.nodes.map(entry => ({ name: entry.kind === 'raw_source' ? entry.table.source_file : entry.table.name, kind: entry.kind, artifact: entry.artifact.id, artifact_uuid: entry.artifact.uuid, selected: entry.selected, rows: entry.table.rows.length, columns: entry.table.columns.length }));
-          if (indexId) await addArtifact({ kind: 'note', label: `Saved Investigator results from ${id}`, rows: directory, columns: ['name', 'kind', 'artifact', 'artifact_uuid', 'selected', 'rows', 'columns'],
-            tool, args, inputs: archive.nodes.map(entry => entry.artifact.id), toolId: id, reservedId: indexId,
-            meta: { evidence_kind: 'saved_result_archive', execution: { status: 'completed' }, assignment_status: result.status, error: result.error, remaining_for_aso: result.remaining_for_aso || [], not_in_release: result.not_in_release || [], operation_dispositions: result.operation_dispositions || [] } });
-          const extra = directory.filter(entry => !entry.selected);
-          if (extra.length) observe(`${id} archived additional completed tables. Open these artifact IDs for exact rows/schema; no specialist rerun is needed. Full name/ancestry index: ${indexId}.\n${JSON.stringify(extra.map(({ name, kind, artifact }) => ({ name, kind, artifact })))}`, { source: `saved results ${id}`, refs: [indexId, ...extra.map(entry => entry.artifact)], announce: false });
-          primary = archive.nodes.filter(entry => entry.selected).map(entry => entry.artifact);
-          if (!primary.length) {
-            await saveSourceEvidence();
-            throw new Error(result.error || `Investigator returned no selected table: ${JSON.stringify(result.not_in_release)}`);
-          }
-        } else primary = [await addArtifact({ ...agentArtifact(tool, args, result), tool, args: node ? { ...args, node } : args, inputs, toolId: id })];
-        for (const a of primary) {
-          if (node) await markNode(node, a.id, plannedItem);
-          observe(`${id} ${tool} saved ${JSON.stringify(artifactCard(a))}`, { source: `artifact ${a.id}`, refs: [a.id, ...inputs], announce: false });
-          remember(`${tool} → ${a.id} (${a.size})`);
-          await log('tool.done', { id, tool, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);
-        }
-        if (result?.remaining_for_aso?.length || result?.not_in_release?.length) observe(`${id} ${tool}${result.error ? `: ${result.error}` : ''}\nUnfinished work for ASO: ${JSON.stringify(result.remaining_for_aso || [])}\nUnavailable source requirements: ${JSON.stringify(result.not_in_release || [])}`, { source: 'agent feedback', refs: primary.map(a => a.id) });
-        await saveSourceEvidence();
-      })
-      .catch(async err => {
-        state.failed++;
-        state.recent.push(`${id} ${tool} failed: ${err.message}${err.details ? `\nRequired evidence still unresolved: ${JSON.stringify(err.details)}` : ''}`);
-        remember(`${tool} failed: ${err.message.slice(0, 90)}`);
-        await log('tool.failed', { id, tool, kind: 'agent', error: err.message, details: err.details, ms: Date.now() - job.startedAt }, id);
-      })
-      .finally(() => { state.running.delete(id); wakeUp(); });
-    return { job: id, agent: tool, status: 'running' };
-  }
-
-  // Table tools run at once on the artifacts named in the call.
-  // One table operation: inputs resolved (artifacts, datasets, streams), the operation applied.
-  async function computeOut(tool, args) {
-      const parallel = config.asoParallelLimit || 3;
-      const inputColumns = new Set(), inputRefs = new Set();
-      let streamed = false;
-      // An input is an artifact on the desk or a dataset on disk; a per-gene dataset is read for
-      // the genes of the other input (join, set operations) or filtered as it streams.
-      const rowsOf = async (key, other = null) => {
-        const ref = String(args[key] ?? '').trim();
-        if (state.byId.has(ref)) {
-          const a = get(ref);
-          inputRefs.add(a.id);
-          if (a.matrix) throw new Error(`${a.id} is a matrix; only a heatmap chart can take it`);
-          if (!a.rows) throw new Error(`${a.id} has no rows`);
-          for (const c of a.columns) inputColumns.add(c);
-          return withRowMask(tools.withColumns([...a.rows], a.columns), a.meta?.record_rows, a.meta?.row_kind || (a.meta?.reductions?.length ? 'reduced_group' : undefined));
-        }
-        const entry = ref ? await geneData.entry(ref) : null;
-        if (!entry || entry.key === 'unreadable') throw new Error(`nothing called "${ref || '(no name)'}" on the desk or on disk (artifacts: ${[...state.byId.keys()].join(', ') || 'none'}; datasets lists what is on disk)`);
-        inputRefs.add(entry.file);
-        const otherRef = other ? String(args[other] ?? '').trim() : '';
-        if (otherRef && state.byId.has(otherRef)) inputRefs.add(otherRef);
-        const genes = otherRef && state.byId.has(otherRef) ? get(otherRef).rows || null : null;
-        const rows = await datasetRows(entry, { genes, where: tool === 'filter' ? args.where : null, limit: parallel });
-        streamed = tool === 'filter' && !genes && !['master', 'lookup', 'scan'].includes(entry.key);
-        for (const c of ['gene', 'ensembl', ...entry.columns]) inputColumns.add(c);
-        return withRowMask(tools.withColumns(rows, [...inputColumns]), rows.map(() => true), 'source_record');
-      };
-      // A whole per-gene dataset named as the input of a streaming tool.
-      const wholeDataset = async key => {
-        const ref = String(args[key] ?? '').trim();
-        if (!ref || state.byId.has(ref)) return null;
-        const entry = await geneData.entry(ref);
-        if (!entry || !['ensembl', 'name', 'scan', 'stream'].includes(entry.key)) return null;
-        inputRefs.add(entry.file);
-        for (const c of ['gene', 'ensembl', ...entry.columns]) inputColumns.add(c);
-        return entry;
-      };
-      let out;
-      const orderingMetadata = (rows, grouped = false) => {
-        const by = tools.findColumn(rows, args.by);
-        const keys = [by, ...(grouped ? [tools.findColumn(rows, args.group_by === undefined ? 'gene' : args.group_by)] : []), ...(args.then_by || []).map(rule => tools.findColumn(rows, rule.column)), 'rank'];
-        const input = state.byId.get(String(args.artifact ?? '').trim());
-        // apply_bulk declares min/max labels as <as>_labels. Only that explicit
-        // producer metadata establishes the relationship; names alone do not.
-        const labels = (input?.meta.lookups || []).filter(lookup => lookup.as === by && ['min', 'max'].includes(lookup.aggregate) && Array.isArray(lookup.labels) && lookup.labels.length).map(lookup => `${lookup.as}_labels`);
-        const columns = tools.columnsOf(rows);
-        return { ordering_columns: [...new Set([...keys, ...labels])].filter(column => columns.includes(column)) };
-      };
-      switch (tool) {
-        case 'measure': out = { rows: await tools.measure(await rowsOf('artifact'), args, parallel) }; inputRefs.add(args.table); break;
-        case 'union': case 'intersect': case 'difference': case 'concat': out = { rows: tools.setOp(tool, await rowsOf('a', 'b'), await rowsOf('b', 'a'), args.on || null) }; break;
-        case 'join': out = executeTableOperation(tool, args, { a: await rowsOf('a', 'b'), b: await rowsOf('b', 'a') }); break;
-        case 'filter': { const rows = await rowsOf('artifact'); out = executeTableOperation(tool, streamed ? { ...args, where: [] } : args, { artifact: rows }); if (streamed) out.meta.predicate_columns = [...new Set((args.where || []).flatMap(clause => [clause.column, clause.column_b]).filter(Boolean))]; break; }
-        case 'select': case 'classify': case 'compute': case 'fill_missing': case 'correlate': out = executeTableOperation(tool, args, { artifact: await rowsOf('artifact') }); break;
-        case 'rank': { out = executeTableOperation(tool, args, { artifact: await rowsOf('artifact') }); out.meta = { ...out.meta, ...orderingMetadata(out.rows) }; break; }
-        case 'top_per_group': { const entry = await wholeDataset('artifact'); const rows = entry ? await tools.topPerGroupStream(datasetStream(entry), args, ['gene', 'ensembl', ...entry.columns]) : tools.topPerGroup(await rowsOf('artifact'), args); out = { rows, meta: orderingMetadata(rows, true) }; break; }
-        case 'aggregate': {
-          const entry = await wholeDataset('artifact');
-          if (entry) {
-            let count = 0;
-            async function* counted() { for await (const row of datasetStream(entry)) { count++; yield row; } }
-            out = { rows: await tools.aggregateStream(counted(), args, ['gene', 'ensembl', ...entry.columns]), meta: { aggregation_rows: { scope: args.row_scope || 'all', input_rows: count, selected_rows: count, record_rows: count, placeholder_rows: 0, semantics: 'Imported source rows; not proof of independent samples' } } };
-          } else out = executeTableOperation(tool, args, { artifact: await rowsOf('artifact') });
-          break;
-        }
-        case 'overlap': out = { rows: tools.overlap(await rowsOf('a', 'b'), await rowsOf('b', 'a'), await rowsOf('universe'), args.on || null, args.group_by || null) }; break;
-        case 'standardize': out = { rows: tools.standardize(await rowsOf('artifact'), args) }; break;
-        case 'explode': out = { rows: tools.explode(await rowsOf('artifact'), args.column, args.as) }; break;
-        case 'pivot': out = { matrix: tools.pivot(await rowsOf('artifact'), args) }; break;
-        case 'chart': { const a = get(args.artifact); inputRefs.add(a.id); const input = a.matrix || (args.type === 'heatmap' && args.value ? tools.pivot(a.rows, { row: args.y, column: args.x, value: args.value }) : a.rows); out = { figure: tools.chartSpec(args, input) }; break; }
-        default: throw new Error(`unknown tool ${tool}`);
-      }
-    return { out, inputColumns, inputs: [...inputRefs] };
-  }
-
-  // The same operation once per value, "$item" standing for the value; one table results.
-  async function forEach(tool, args) {
-    if (['chart', 'pivot'].includes(tool)) throw new Error(`${tool} cannot run for_each; run it on the combined result`);
-    const spec = args.for_each && typeof args.for_each === 'object' ? args.for_each : {};
-    const inputRefs = new Set();
-    let values = Array.isArray(spec.values) ? spec.values.map(String) : (typeof spec.values === 'string' && spec.values.trim() ? spec.values.split(/\s*[|,]\s*/) : null);
-    if (!values && spec.column) {
-      const ref = String(spec.of ?? args.artifact ?? args.a ?? '').trim();
-      let rows;
-      if (state.byId.has(ref)) { const a = get(ref); inputRefs.add(a.id); rows = tools.withColumns(a.rows || [], a.columns); }
-      else {
-        const entry = await geneData.entry(ref);
-        if (!entry || entry.key === 'unreadable') throw new Error(`for_each: nothing called "${ref}" to take ${spec.column} from`);
-        inputRefs.add(entry.file);
-        const seen = new Set();
-        for await (const row of datasetStream(entry)) { const v = String(row[spec.column] ?? '').trim(); if (v) seen.add(v); }
-        rows = tools.withColumns([...seen].map(v => ({ [spec.column]: v })), [spec.column]);
-      }
-      const col = tools.findColumn(rows, spec.column);
-      if (!col) throw new Error(`for_each: no column named "${spec.column}" in ${ref}`);
-      values = [...new Set(rows.map(r => String(r[col] ?? '').trim()).filter(Boolean))];
-    }
-    if (!values || !values.length) throw new Error('for_each: give values, or column (and of) to take the distinct values of a column');
-    const itemCol = String(spec.as || 'item');
-    const { for_each: _spec, ...rest } = args;
-    const sub = (v, x) => (typeof x === 'string' ? x.split('$item').join(v).split('${item}').join(v) : Array.isArray(x) ? x.map(y => sub(v, y)) : x && typeof x === 'object' ? Object.fromEntries(Object.entries(x).map(([k, y]) => [k, sub(v, y)])) : x);
-    const rows = [], outputColumns = new Set([itemCol]), predicateColumns = new Set(), orderingColumns = new Set();
-    const failed = [], classifications = [], fills = [], recordRows = [];
-    let knownRecordRows = true;
-    const inputColumns = new Set();
-    for (const [index, v] of values.entries()) {
-      try {
-        const r = await computeOut(tool, sub(v, rest));
-        for (const input of r.inputs) inputRefs.add(input);
-        if (!Array.isArray(r.out.rows)) throw new Error('the operation gave no rows');
-        if (r.out.rows.some(row => Object.hasOwn(row, itemCol) && row[itemCol] !== v)) throw new Error(`for_each.as column ${itemCol} conflicts with a source value; choose a distinct output name`);
-        for (const c of tools.columnsOf(r.out.rows)) outputColumns.add(c);
-        for (const classification of r.out.meta?.classifications || []) classifications.push({ ...classification, for_each: { column: itemCol, value: v, index } });
-        for (const fill of r.out.meta?.fills || []) fills.push({ ...fill, for_each: { column: itemCol, value: v, index } });
-        for (const c of r.out.meta?.predicate_columns || []) predicateColumns.add(c);
-        for (const c of r.out.meta?.ordering_columns || []) orderingColumns.add(c);
-        if (Array.isArray(r.out.meta?.record_rows)) recordRows.push(...r.out.meta.record_rows); else knownRecordRows = false;
-        for (const row of r.out.rows) rows.push({ [itemCol]: v, ...row });
-        for (const c of r.inputColumns) inputColumns.add(c);
-      } catch (err) { failed.push({ index, item: v, error: err.message }); }
-    }
-    const execution = { status: failed.length ? 'partial' : 'completed', requested: values.length, completed: values.length - failed.length, failed };
-    return { out: { rows: tools.withColumns(rows, [...outputColumns]), meta: { execution, ...(knownRecordRows ? { record_rows: recordRows } : {}), ...(classifications.length ? { classifications } : {}), ...(fills.length ? { fills } : {}), ...(predicateColumns.size ? { predicate_columns: [...predicateColumns] } : {}), ...(orderingColumns.size ? { ordering_columns: [itemCol, ...orderingColumns] } : {}) } }, inputColumns, inputs: [...inputRefs] };
-  }
-
-  async function runTableTool(tool, args) {
-    args = { ...args };
-    // A two-table tool called with artifact instead of a: read it as a.
-    if (['union', 'intersect', 'difference', 'concat', 'join', 'overlap'].includes(tool) && args && args.a === undefined && args.artifact !== undefined) args = { ...args, a: args.artifact };
-    const node = Number(args?.node) || 0;
-    if (node) { args = { ...args }; delete args.node; }
-    const id = `t${++state.ids.t}`;
-    const t0 = Date.now();
-    state.toolCalls++;
-    let inputs = ['artifact', 'a', 'b', 'universe'].map(k => args[k]).filter(Boolean).map(String);
-    const label = tool === 'chart' ? String(args.title || 'figure').slice(0, 80) : `${tool}(${describeArgs(args, 100)})`;
-    await log('tool.start', { id, tool, kind: tool === 'chart' ? 'chart' : 'tool', label, args, inputs }, id);
-    try {
-      const { out, inputColumns, inputs: resolvedInputs } = args.for_each ? await forEach(tool, args) : await computeOut(tool, args);
-      inputs = resolvedInputs;
-      if (out.rows) out.rows = tools.freshFirst(out.rows, [...inputColumns]);
-      const a = await addArtifact({ kind: out.figure ? 'figure' : 'data', label: tool === 'chart' ? label : `${tool} of ${inputs.join(', ')}`, rows: out.rows, matrix: out.matrix, figure: out.figure, meta: out.figure ? { omitted_rows: out.figure.omitted_rows || 0 } : out.meta, tool, args: node ? { ...args, node } : args, inputs, toolId: id });
-      const execution = out.meta?.execution;
-      const partial = execution?.status === 'partial';
-      const executionNote = execution ? `\nExecution: ${execution.status}; ${execution.completed}/${execution.requested} items completed. ${partial ? 'Completed rows are retained; read open with provenance=true for every failed item and error.' : ''}` : '';
-      const observation = observe(`${id} ${tool} saved ${JSON.stringify(artifactCard(a))}${executionNote}`, { source: `artifact ${a.id}`, refs: [a.id, ...inputs], announce: false });
-      remember(`${tool}(${inputs.join(', ')}) → ${a.id} (${a.size})`);
-      if (node) await markNode(node, a.id);
-      if (partial) {
-        const error = `for_each: ${execution.failed.length} of ${execution.requested} items failed; completed rows remain in ${a.id}`;
-        state.failed++;
-        await log('tool.failed', { id, tool, kind: 'tool', artifact: artifactEvent(a), error, execution, ms: Date.now() - t0 }, id);
-        return { ok: false, status: 'partial', artifact: a, observation, error };
-      }
-      await log('tool.done', { id, tool, kind: out.figure ? 'chart' : 'tool', artifact: artifactEvent(a), ms: Date.now() - t0 }, id);
-      return { ok: true, artifact: a, observation };
-    } catch (err) {
-      state.failed++;
-      state.recent.push(`${id} ${tool}(${describeArgs(args).slice(0, 120)}) failed: ${err.message}`);
-      remember(`${tool}(${inputs.join(', ')}) failed: ${err.message.slice(0, 90)}`);
-      await log('tool.failed', { id, tool, kind: tool === 'chart' ? 'chart' : 'tool', error: err.message, ms: Date.now() - t0 }, id);
-      return { ok: false, error: err.message };
-    }
-  }
-
+  const wake = { resolve: null };
+  const wakeUp = () => { if (wake.resolve) { const r = wake.resolve; wake.resolve = null; r(); } };
   const waitForCompletion = () => new Promise(resolve => {
     const timer = setTimeout(resolve, JOB_WAIT_MS);
     wake.resolve = () => { clearTimeout(timer); setTimeout(resolve, WAKE_DEBOUNCE_MS); };
   });
 
-  let finishSummary = null;
-  let finishFigures;
-  const finishFeedback = new Set();
-  let stopReason = null;
-  let unverified = [];
-  let planTouched = false;
-  let turn = 0;
-  let stalls = 0;
+  // An agent runs in the background through the orchestrator, exactly as a chat message would.
+  function startAgent(toolName, args) {
+    if (args.mode !== undefined && args.mode !== mode) throw new Error(`Delegated agents use the study data source: ${mode}`);
+    const executionArgs = { ...args, mode };
+    const inputs = [];
+    if (toolName === 'investigator_hpa' && args.from !== undefined) {
+      if (args.gene !== undefined || args.genes !== undefined) throw new Error('Use one of gene, genes or from');
+      const input = get(args.from);
+      if (!Array.isArray(input.rows) || !input.rows.length) throw new Error(`${args.from} has no rows to investigate`);
+      const genes = [...new Set(input.rows.map(row => row.ensembl || row.gene).filter(Boolean))];
+      if (!genes.length) throw new Error(`${args.from} has no ${identity.entity} identifiers (columns ${identity.keys.join(', ')})`);
+      inputs.push(input.id);
+      delete executionArgs.from;
+      executionArgs.genes = genes;
+    }
+    if (toolName === 'investigator_hpa' && args.gene === undefined && args.genes === undefined && args.from === undefined) throw new Error('investigator_hpa needs gene, genes or from');
+    const id = `t${++state.ids.t}`;
+    const job = { id, tool: toolName, args, startedAt: Date.now(), kind: 'agent' };
+    state.running.set(id, job);
+    state.toolCalls++;
+    state.agentStarts = (state.agentStarts || 0) + 1;
+    const label = String(args.goal || args.question || args.topic || args.gene || toolName).slice(0, 80);
+    log('tool.start', { id, tool: toolName, kind: 'agent', label, args, inputs }, id);
+    const forward = async s => log(`agent.${s.stage}`, { id, label: s.label, message: s.message }, id);
+    job.promise = orchestrator.execute(toolName, executionArgs, { db, visitorId: ctx.visitorId, rawQuery: '', includeRows: true, onStep: forward, reasoningEffort: effort, runControl: ctx.runControl, signal: ctx.signal, cacheKey: workspace.uuid, maxTurns })
+      .then(async ({ result }) => {
+        addSpecialistUsage(toolName, result?.tokens, result?.calls);
+        const made = [];
+        if (result?.bulk) {
+          if (!result.tables?.length) throw new Error(result.error || result.note || 'Investigator returned no table');
+          for (const table of result.tables) {
+            const a = await addArtifact({ kind: 'data', label: table.name, rows: table.rows, columns: table.columns, tool: toolName, args, inputs, toolId: id, meta: { lookups: [table.args], coverage: table.coverage, source_file: table.source_file, source_files: [table.source_file], status: result.status, hpa_version: result.hpa_version } });
+            made.push(a);
+          }
+          remember(`${id} ${toolName} done → ${made.map(a => `${a.id} (${a.size})`).join(', ')}${result.note ? `. Investigator note: ${result.note}` : ''}${result.unresolved?.length ? `. Not in the release: ${result.unresolved.slice(0, 10).join(', ')}` : ''}`);
+        } else {
+          const a = await addArtifact({ ...agentArtifact(toolName, args, result), tool: toolName, args, inputs, toolId: id });
+          made.push(a);
+          const extra = toolName === 'deep_research_hpa' ? ` query: ${String(a.meta.query || '').slice(0, 160)}${a.meta.not_expressible?.length ? `; could not express: ${a.meta.not_expressible.join('; ')}` : ''}` : a.kind === 'answer' ? ` answer: ${String(a.rows[0]?.answer || '').slice(0, 200)}` : '';
+          remember(`${id} ${toolName} done → ${a.id} (${a.size})${extra}`);
+        }
+        for (const a of made) await log('tool.done', { id, tool: toolName, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);
+      })
+      .catch(async err => {
+        state.failed++;
+        remember(`${id} ${toolName} failed: ${err.message}${err.details ? ` ${JSON.stringify(err.details)}` : ''}`);
+        await log('tool.failed', { id, tool: toolName, kind: 'agent', error: err.message, details: err.details, ms: Date.now() - job.startedAt }, id);
+      })
+      .finally(() => { state.running.delete(id); wakeUp(); });
+    return { job: id };
+  }
+
+  // One table operation: inputs resolved (artifacts, datasets, streams), the operation applied.
+  async function computeOut(toolName, args) {
+    const inputColumns = new Set(), inputRefs = new Set();
+    let streamed = false;
+    const rowsOf = async (key, other = null) => {
+      const ref = String(args[key] ?? '').trim();
+      if (state.byId.has(ref)) {
+        const a = get(ref);
+        inputRefs.add(a.id);
+        if (a.matrix) throw new Error(`${a.id} is a matrix; only a heatmap chart can take it`);
+        if (!a.rows) throw new Error(`${a.id} has no rows`);
+        for (const c of a.columns) inputColumns.add(c);
+        return withRowMask(tools.withColumns([...a.rows], a.columns), a.meta?.record_rows, a.meta?.row_kind);
+      }
+      const entry = ref ? await geneData.entry(ref) : null;
+      if (!entry || entry.key === 'unreadable') throw new Error(`nothing called "${ref || '(no name)'}" among the artifacts (${[...state.byId.keys()].join(', ') || 'none'}) or the datasets on disk`);
+      inputRefs.add(entry.file);
+      const otherRef = other ? String(args[other] ?? '').trim() : '';
+      if (otherRef && state.byId.has(otherRef)) inputRefs.add(otherRef);
+      const genes = otherRef && state.byId.has(otherRef) ? get(otherRef).rows || null : null;
+      const rows = await datasetRows(entry, { genes, where: toolName === 'filter' ? args.where : null, limit: parallel });
+      streamed = toolName === 'filter' && !genes && !['master', 'lookup', 'scan'].includes(entry.key);
+      for (const c of ['gene', 'ensembl', ...entry.columns]) inputColumns.add(c);
+      return withRowMask(tools.withColumns(rows, [...inputColumns]), rows.map(() => true), 'source_record');
+    };
+    const wholeDataset = async key => {
+      const ref = String(args[key] ?? '').trim();
+      if (!ref || state.byId.has(ref)) return null;
+      const entry = await geneData.entry(ref);
+      if (!entry || !['ensembl', 'name', 'scan', 'stream'].includes(entry.key)) return null;
+      inputRefs.add(entry.file);
+      for (const c of ['gene', 'ensembl', ...entry.columns]) inputColumns.add(c);
+      return entry;
+    };
+    let out;
+    switch (toolName) {
+      case 'union': case 'intersect': case 'difference': case 'concat': out = { rows: tools.setOp(toolName, await rowsOf('a', 'b'), await rowsOf('b', 'a'), args.on || null) }; break;
+      case 'join': out = executeTableOperation(toolName, args, { a: await rowsOf('a', 'b'), b: await rowsOf('b', 'a') }); break;
+      case 'filter': { const rows = await rowsOf('artifact'); out = executeTableOperation(toolName, streamed ? { ...args, where: [] } : args, { artifact: rows }); break; }
+      case 'select': case 'classify': case 'compute': case 'fill_missing': case 'correlate': case 'rank': out = executeTableOperation(toolName, args, { artifact: await rowsOf('artifact') }); break;
+      case 'top_per_group': { const entry = await wholeDataset('artifact'); out = { rows: entry ? await tools.topPerGroupStream(datasetStream(entry), args, ['gene', 'ensembl', ...entry.columns]) : tools.topPerGroup(await rowsOf('artifact'), args) }; break; }
+      case 'aggregate': {
+        const entry = await wholeDataset('artifact');
+        if (entry) out = { rows: await tools.aggregateStream(datasetStream(entry), args, ['gene', 'ensembl', ...entry.columns]) };
+        else out = executeTableOperation(toolName, args, { artifact: await rowsOf('artifact') });
+        break;
+      }
+      case 'overlap': out = { rows: tools.overlap(await rowsOf('a', 'b'), await rowsOf('b', 'a'), await rowsOf('universe'), args.on || null, args.group_by || null) }; break;
+      case 'standardize': out = { rows: tools.standardize(await rowsOf('artifact'), args) }; break;
+      case 'explode': out = { rows: tools.explode(await rowsOf('artifact'), args.column, args.as) }; break;
+      case 'pivot': out = { matrix: tools.pivot(await rowsOf('artifact'), args) }; break;
+      case 'chart': { const a = get(args.artifact); inputRefs.add(a.id); out = { figure: tools.chartSpec(args, a.matrix || a.rows) }; break; }
+      default: throw new Error(`unknown operation ${toolName}`);
+    }
+    return { out, inputColumns, inputs: [...inputRefs] };
+  }
+
+  async function runTableTool(toolName, args) {
+    args = { ...args };
+    if (['union', 'intersect', 'difference', 'concat', 'join', 'overlap'].includes(toolName) && args.a === undefined && args.artifact !== undefined) args = { ...args, a: args.artifact };
+    const id = `t${++state.ids.t}`;
+    const t0 = Date.now();
+    state.toolCalls++;
+    let inputs = ['artifact', 'a', 'b', 'universe'].map(k => args[k]).filter(Boolean).map(String);
+    const label = toolName === 'chart' ? String(args.title || `${args.type} chart`).slice(0, 80) : `${toolName}(${desk.argsLine(args, 100)})`;
+    await log('tool.start', { id, tool: toolName, kind: toolName === 'chart' ? 'chart' : 'tool', label, args, inputs }, id);
+    try {
+      const { out, inputColumns, inputs: resolvedInputs } = await computeOut(toolName, args);
+      inputs = resolvedInputs;
+      if (out.rows) out.rows = tools.freshFirst(out.rows, [...inputColumns]);
+      const a = await addArtifact({ kind: out.figure ? 'figure' : 'data', label: toolName === 'chart' ? label : `${toolName} of ${inputs.join(', ')}`, rows: out.rows, matrix: out.matrix, figure: out.figure, meta: out.figure ? { omitted_rows: out.figure.omitted_rows || 0 } : out.meta, tool: toolName, args, inputs, toolId: id });
+      remember(`${toolName}(${desk.argsLine(args, 140)}) → ${a.id} (${a.size}${a.kind === 'figure' && !a.images.length ? ', not rendered' : ''})`);
+      await log('tool.done', { id, tool: toolName, kind: out.figure ? 'chart' : 'tool', artifact: artifactEvent(a), ms: Date.now() - t0 }, id);
+      return { ok: true, artifact: a };
+    } catch (err) {
+      state.failed++;
+      remember(`${toolName}(${desk.argsLine(args, 140)}) failed: ${err.message}`);
+      await log('tool.failed', { id, tool: toolName, kind: toolName === 'chart' ? 'chart' : 'tool', error: err.message, ms: Date.now() - t0 }, id);
+      return { ok: false, error: err.message };
+    }
+  }
+
+  async function openWhat(args) {
+    const what = String(args.what || '').trim();
+    if (state.byId.has(what)) {
+      const a = get(what);
+      if (a.figure) { state.views.set(a.id, `${a.id} figure: ${JSON.stringify(a.figure).slice(0, 1200)}`); remember(`opened ${a.id} (figure spec on the desk)`); return; }
+      if (a.matrix) { state.views.set(a.id, `${a.id} matrix rows ${a.matrix.row_labels.join(', ')}; columns ${a.matrix.col_labels.join(', ')}\n${a.matrix.matrix.slice(0, 40).map((row, i) => `  ${desk.cell(a.matrix.row_labels[i])}: ${row.map(v => v === null ? '—' : v).join(' | ')}`).join('\n')}${a.matrix.matrix.length > 40 ? '\n  …' : ''}`); remember(`opened ${a.id} (matrix on the desk)`); return; }
+      if (a.text) { state.views.set(a.id, `${a.id}: ${a.text.slice(0, 1500)}`); remember(`opened ${a.id}`); return; }
+      const rows = Number.isSafeInteger(args.rows) && args.rows > 0 ? args.rows : VIEW_ROWS;
+      const offset = Number.isSafeInteger(args.offset) && args.offset >= 0 ? args.offset : 0;
+      const columns = Array.isArray(args.columns) && args.columns.length ? args.columns.map(c => { const found = a.columns.find(x => x === c) || a.columns.find(x => x.toLowerCase() === String(c).toLowerCase()); if (!found) throw new Error(`${a.id} has no column ${JSON.stringify(c)}; its columns: ${a.columns.join(', ')}`); return found; }) : a.columns;
+      const page = a.rows.slice(offset, offset + rows);
+      const lines = page.map((row, i) => `  ${offset + i}: ${desk.rowLine(row, columns)}`);
+      state.views.set(a.id, `${a.id} rows ${offset}–${offset + page.length - 1} of ${a.rows.length} (${columns.join(' | ')})\n${lines.join('\n') || '  (no rows)'}${offset + page.length < a.rows.length ? `\n  … open ${a.id} offset=${offset + page.length} for more` : ''}`);
+      remember(`opened ${a.id} rows ${offset}–${offset + page.length - 1} (view on the desk)`);
+      return;
+    }
+    const entry = await geneData.entry(what);
+    if (!entry || entry.key === 'unreadable') throw new Error(`nothing called ${JSON.stringify(what)} among the artifacts or the datasets on disk`);
+    if (state.opened.has(entry.file)) { remember(`${entry.file} is already on the desk`); return; }
+    const [profiled, sample] = await Promise.all([geneData.profile(entry), geneData.sample(entry, 3)]);
+    state.opened.set(entry.file, desk.tableCard({ name: entry.file, title: entry.title, description: entry.description, access: geneData.access(entry), columns: entry.columns, profile: profiled.columns, sample, scanned: profiled.rows, capped: profiled.capped }));
+    remember(`opened ${entry.file} (on the desk)`);
+  }
+
+  function deskText(turn) {
+    const running = [...state.running.values()].map(j => `${j.id} ${j.tool} "${String(j.args.goal || j.args.question || j.args.gene || '').slice(0, 100)}" ${Math.round((Date.now() - j.startedAt) / 1000)} s`).join('\n') || '(nothing running)';
+    const cards = state.artifacts.map(a => desk.resultCard({ id: a.id, label: a.kind === 'answer' || a.kind === 'note' ? a.label : '', origin: origin(a), rows: a.rows || [], columns: a.columns, matrix: a.matrix, figure: a.figure, images: a.images }));
+    const sections = [
+      desk.section('STUDY', goal),
+      desk.section('PLAN', studyPlan.planText(state.plan)),
+      ...(state.opened.size ? [desk.section('TABLES OPENED', [...state.opened.values()].join('\n'))] : []),
+      desk.section('ARTIFACTS', cards.join('\n') || '(none yet)'),
+      ...(state.views.size ? [desk.section('VIEWS', [...state.views.values()].join('\n'))] : []),
+      desk.section('RUNNING', running),
+      desk.section('HISTORY', desk.historyText(state.history)),
+      ...(state.notes.length ? [desk.section('NOTES', state.notes.map((n, i) => `${i + 1}. ${n}`).join('\n'))] : []),
+      `TURN ${turn}/${maxTurns}${turn === maxTurns ? ' (last turn: finish now with what exists, listing the rest in not_done)' : ''}`
+    ];
+    return sections.join('\n\n');
+  }
+
+  let report = null, reportFigures, stopReason = null;
+  const refusals = new Set();
+  let turn = 0, stalls = 0;
   try {
     await log('start', { workspace_uuid: workspace.uuid, mode, hpa_version: agentMode.hpaVersion, model: getActiveModel().configKey, goal });
     await updateWorkspace(db, workspace.id, { status: 'running' });
     while (turn < maxTurns) {
       turn++;
       state.turn = turn;
-      const offered = capabilities.offered();
-      const artifactsBefore = state.artifacts.length;
-      planTouched = false;
-      const snapshot = conversation.prepare(state, maxTurns);
-      const context = JSON.stringify(snapshot.messages, null, 2);
-      // The exact text the model saw this turn, kept as a file in the workspace (the event log
-      // truncates long strings); the log keeps only its size.
-      await fs.mkdir(path.join(workspace.workspaceDir, 'context'), { recursive: true });
-      await fs.writeFile(path.join(workspace.workspaceDir, 'context', `turn-${String(turn).padStart(2, '0')}.txt`), context, { mode: 0o600 });
-      await contextMemory.flush(path.join(workspace.workspaceDir, 'observations'));
-      const request = { messages: [{ role: 'system', content: system }, ...snapshot.messages], tools: offered, temperature: 0, prompt_cache: { key: `study ${workspace.uuid}` }, ...(effort ? { reasoning_effort: effort } : {}) };
-      await fs.writeFile(path.join(workspace.workspaceDir, 'context', `turn-${String(turn).padStart(2, '0')}.request.json`), JSON.stringify(request), { mode: 0o600 });
-      const manifest = { turn, ...snapshot.manifest, system_bytes: bytes(system), tool_schema_bytes: bytes(JSON.stringify(offered)), request_bytes: bytes(JSON.stringify(request)), tools: offered.map(t => t.function.name) };
-      const manifestPath = path.join(workspace.workspaceDir, 'context', `turn-${String(turn).padStart(2, '0')}.json`);
-      await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), { mode: 0o600 });
-      await log('context', { turn, bytes: manifest.bytes, budget_bytes: manifest.budget_bytes, system_bytes: manifest.system_bytes, tool_schema_bytes: manifest.tool_schema_bytes, included: manifest.included.length, omitted: manifest.omitted.length });
+      const offered = turn === maxTurns ? toolSpecs.filter(t => ['finish', 'note'].includes(t.function.name)) : toolSpecs;
+      const user = deskText(turn);
+      const request = { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], tools: offered, temperature: 0, prompt_cache: { key: `study ${workspace.uuid}` }, ...(effort ? { reasoning_effort: effort } : {}) };
+      const contextDir = path.join(workspace.workspaceDir, 'context');
+      await fs.mkdir(contextDir, { recursive: true });
+      const stem = path.join(contextDir, `turn-${String(turn).padStart(2, '0')}`);
+      await fs.writeFile(`${stem}.txt`, user, { mode: 0o600 });
+      await fs.writeFile(`${stem}.request.json`, JSON.stringify(request), { mode: 0o600 });
+      await log('context', { turn, desk_bytes: Buffer.byteLength(user), system_bytes: Buffer.byteLength(system), tool_schema_bytes: Buffer.byteLength(JSON.stringify(offered)) });
       const res = await inference.chat.completions.create(request);
-      await fs.writeFile(path.join(workspace.workspaceDir, 'context', `turn-${String(turn).padStart(2, '0')}.response.json`), JSON.stringify(res), { mode: 0o600 });
+      await fs.writeFile(`${stem}.response.json`, JSON.stringify(res), { mode: 0o600 });
       addUsage(res.usage);
-      conversation.acknowledge(snapshot);
-      await fs.writeFile(manifestPath, JSON.stringify({ ...manifest, usage: res.usage }, null, 2), { mode: 0o600 });
-      const original = res.choices?.[0]?.message || {};
-      const message = { ...original, role: 'assistant', tool_calls: (original.tool_calls || []).map((c, i) => ({ ...c, id: c.id || `study_${turn}_${i}`, type: 'function' })) };
-      const calls = message.tool_calls.map(c => {
+      const message = res.choices?.[0]?.message || {};
+      const calls = (message.tool_calls || []).map((c, i) => {
         try {
-          const args = JSON.parse(c.function.arguments);
+          const args = JSON.parse(c.function.arguments || '{}');
           if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('arguments must be an object');
-          return { id: c.id, name: c.function.name, args };
-        } catch (err) { return { id: c.id, name: c.function?.name, args: {}, error: err.message }; }
+          return { id: c.id || `study_${turn}_${i}`, name: c.function.name, args };
+        } catch (err) { return { id: c.id || `study_${turn}_${i}`, name: c.function?.name, args: {}, error: err.message }; }
       });
       await log('turn', { turn, text: message.content ? String(message.content).slice(0, 600) : null, calls: calls.map(c => ({ tool: c.name, args: c.args })), offered: offered.length });
-      let sync = 0;
-      let waiting = false;
+      if (message.content && !calls.length) remember(`said: ${String(message.content).slice(0, 300)}`);
+      let waiting = false, sync = 0, started = 0;
       async function executeCall(call) {
-        if (call.error) throw new Error(`Invalid arguments: ${call.error}`);
-        if (finishSummary !== null) throw new Error('Not run: this response already finished the study');
+        if (call.error) throw new Error(`invalid arguments: ${call.error}`);
         const spec = offered.find(t => t.function.name === call.name);
-        if (!spec) throw new Error(`Unknown tool ${call.name}; use a declared tool`);
+        if (!spec) throw new Error(`no tool ${call.name}`);
         call.args = decodeArguments(call.args, spec.function.parameters, call.name);
         validate(call.args, spec.function.parameters, call.name);
-        if (call.name === 'load_tools') {
-          sync++;
-          return { status: 'ok', ...capabilities.load(call.args.names) };
-        }
-        if (call.name === 'finish') {
-          if (!state.plan.length) throw new Error('finish requires a plan: record the requested results with set_plan first.');
-          const unseen = state.artifacts.slice(artifactsBefore).filter(a => a.kind !== 'figure');
-          if (state.running.size || unseen.length) {
-            observe(`finish refused: ${state.running.size ? `${state.running.size} agent jobs are still running. ` : ''}${unseen.length ? `New results ${unseen.map(a => a.id).join(', ')} arrived after your request snapshot; inspect them before concluding.` : 'Wait for their results or revise the plan.'}`, { source: 'control feedback', refs: unseen.map(a => a.id) });
-            await log('finish.refused', { reason: 'results_pending', running: [...state.running.keys()], unseen: unseen.map(a => a.id) });
-            sync++; return;
-          }
-          const selectedFigures = selectFigures(state.artifacts, call.args.figures);
-          if (selectedFigures.some(artifact => !artifact.images?.length)) throw new Error('finish.figures requires rendered figure artifacts');
-          if (!call.args.tables?.length && !call.args.observations?.length && !call.args.interpretations?.length && !selectedFigures.length) throw new Error('finish needs an exact report table, a rendered figure, or a cited interpretation; an empty report does not satisfy a study');
-          const summary = renderReport(call.args, state);
-          const completionBindings = [], boundItems = new Set();
-          for (const binding of call.args.completed || []) {
-            const item = state.plan[binding.item - 1];
-            if (!item || boundItems.has(binding.item)) throw new Error('finish.completed must name each existing plan item at most once');
-            boundItems.add(binding.item);
-            const next = { ...item, artifacts: [...new Set(binding.artifacts)] };
-            const issue = completionIssue(next);
-            if (issue) throw new Error(`finish.completed item ${binding.item}: ${issue}`);
-            completionBindings.push({ item, next });
-          }
-          if (call.args.figures !== undefined) {
-            const selectedIds = new Set(selectedFigures.map(artifact => artifact.id));
-            const proposed = new Map(completionBindings.map(binding => [binding.item, { ...binding.next, status: 'done' }]));
-            for (const [index, item] of state.plan.entries()) {
-              const effective = proposed.get(item) || item;
-              if (effective.status !== 'done' || !studyPlan.CHART_KINDS.includes(effective.kind)) continue;
-              const issue = completionIssue({ ...effective, artifacts: effective.artifacts.filter(id => selectedIds.has(id)) });
-              if (issue) throw new Error(`finish.figures must include bound evidence for requested chart item ${index + 1}: ${issue}`);
-            }
-          }
-          for (const { item, next } of completionBindings) {
-            item.artifacts = next.artifacts;
-            item.status = 'done';
-            item.note = `→ ${item.artifacts.join(', ')}`;
-          }
-          if (completionBindings.length) {
-            planTouched = true;
-            await log('plan', { items: state.plan, completed: [...boundItems] });
-          }
-          const missing = unverifiedNumbers(summary, state);
-          const isFinishStep = studyPlan.isReport;
-          const undone = state.plan.map((p, i) => ({ ...p, n: i + 1 })).filter(p => p.status !== 'done' && p.status !== 'dropped' && !isFinishStep(p));
-          const issues = missing.length ? verificationIssues(summary, state) : [];
-          if (undone.length || missing.length) {
-            const feedbackKey = JSON.stringify({ unfinished: undone.map(p => p.n), issues: issues.map(issue => ({ reason: issue.reason, artifacts: [...issue.artifacts].sort(), numbers: [...issue.numbers].sort() })) });
-            if (finishFeedback.has(feedbackKey)) {
-              stopReason = 'unresolved_finish_evidence';
-              await log('finish.refused', { reason: stopReason, plan_items: undone.map(p => p.n), issues });
-              return { status: 'error', error: 'The same completion issues remain unresolved after feedback. No rejected report is accepted; completed artifacts are retained.' };
-            }
-            finishFeedback.add(feedbackKey);
-          }
-          if (undone.length) {
-            state.recent.push(`finish refused: the plan says ${undone.map(p => `item ${p.n}`).join(', ')} ${undone.length === 1 ? 'is' : 'are'} not done. A report can only state what was done. Do the work, mark an item dropped with a note saying why, or mark it done only if an artifact shows it is; then finish again.`);
-            remember('finish refused: plan items not done');
-            await log('finish.refused', { plan_items: undone.map(p => p.n), feedback_states: finishFeedback.size });
-            sync++;
-            return;
-          }
-          if (missing.length) {
-            const cited = [...new Set(issues.flatMap(issue => issue.artifacts))];
-            observe(`finish refused. Repair these specific passages:\n${issues.map(issue => `${issue.reason}: ${JSON.stringify(issue.paragraph)}\nUnmatched numbers: ${issue.numbers.join(', ')}; cited sources: ${issue.artifacts.join(', ') || 'none'}`).join('\n\n')}\nFor no_source_citation, add the correct artifact ID in that paragraph (a reference elsewhere does not cover it). For number_not_in_cited_artifacts, check the source or compute the quantity. Counts and absence claims need a count/filter result; an empty filter is evidence of zero matches. Keep already supported passages.`, { source: 'finish feedback' });
-            if (cited.length) observe(`Inspect the needed values with open: ${cited.join(', ')}. Exact report tables can use these saved artifacts directly.`, { source: 'finish feedback', refs: cited });
-            remember('finish refused: numbers not in any artifact');
-            await log('finish.refused', { numbers: missing, issues, feedback_states: finishFeedback.size });
-            sync++;
-            return;
-          }
-          for (const p of state.plan) if (isFinishStep(p) && p.status !== 'done' && p.status !== 'dropped') { p.status = 'done'; p.note = 'finished'; }
-          finishSummary = undone.length ? `Not done according to the plan: ${undone.map(p => `${p.n}. ${p.text}`).join('; ')}.\n\n${summary}` : summary;
-          finishFigures = call.args.figures === undefined ? undefined : [...call.args.figures];
-          unverified = missing;
-          return;
-        }
-        if (call.name === 'skip') { waiting = true; remember(`waited: ${String(call.args.reason || '').slice(0, 80)}`); await log('skip', { reason: call.args.reason || '' }); return; }
-        if (call.name === 'set_plan') { sync++;  state.plan = (call.args.items || []).map(planItem); planTouched = true; remember('rewrote the plan'); await log('plan', { items: state.plan }); return; }
-        if (call.name === 'update_plan') {
-          sync++;
-          const n = Number(call.args.item);
-          let item = state.plan[n - 1];
-          if (!item && n === state.plan.length + 1 && call.args.step) { item = planItem(call.args); state.plan.push(item); remember(`added plan item ${n}`); }
-          if (item) {
-            const next = { ...item };
-            if (call.args.status) next.status = call.args.status;
-            if (call.args.note) next.note = String(call.args.note);
-            if (Object.hasOwn(call.args, 'artifacts')) next.artifacts = call.args.artifacts;
-            for (const k of ['step', 'kind', 'inputs']) if (call.args[k]) next[k === 'step' ? 'text' : k] = String(call.args[k]);
-            studyPlan.validateItem(next);
-            const issue = next.status === 'done' ? completionIssue(next) : (!Array.isArray(next.artifacts) || next.artifacts.some(id => !state.byId.has(id))) ? 'artifacts must list existing artifact IDs' : null;
-            if (issue) {
-              observe(`update_plan refused for item ${n}: ${issue}. The item was not changed.`, { source: 'control feedback' });
-              sync++; return;
-            }
-            Object.assign(item, next);
-            planTouched = true;
-            remember(`plan item ${n} ${call.args.status || 'edited'}`);
-          } else state.recent.push(`update_plan failed: there is no item ${call.args.item} (add the next one with item=${state.plan.length + 1} and a step)`);
-          await log('plan', { items: state.plan, changed: n }); return;
+        if (call.name === 'plan') {
+          state.plan = (call.args.items || []).map(studyPlan.createItem);
+          if (!state.plan.length) throw new Error('plan needs at least one deliverable');
+          sync++; remember(`plan: ${state.plan.length} deliverables`);
+          await log('plan', { items: state.plan }); return;
         }
         if (call.name === 'note') {
-          sync++;
           const text = String(call.args.text || '').trim();
           const at = Number(call.args.replace) || 0;
           if (at >= 1 && at <= state.notes.length) { if (text) state.notes[at - 1] = text; else state.notes.splice(at - 1, 1); remember(text ? `rewrote note ${at}` : `removed note ${at}`); }
-          else if (text) { state.notes.push(text); remember('wrote a note'); }
-          await log('note', { text, replace: at || undefined });
-          return;
+          else if (text) { state.notes.push(text); remember(`noted: ${text.slice(0, 120)}`); }
+          sync++; await log('note', { text, replace: at || undefined }); return;
         }
-        if (call.name === 'recall') {
-          try { capture(contextMemory.recall(call.args)); }
-          catch (err) { state.recent.push(`recall failed: ${err.message}`); }
-          sync++; return;
-        }
-        if (call.name === 'schema') {
-          const { about } = call.args;
-          const what = call.args.what;
-          const target = state.byId.has(what) ? get(what) : await geneData.entry(what);
-          if (!target || !target.columns) throw new Error(`No dataset or artifact ${what}`);
-          const allColumns = target.columns;
-          const columns = about ? allColumns.filter(c => c.toLowerCase().includes(about.toLowerCase())) : allColumns;
-          const sample = state.byId.has(what) ? (target.rows || []).slice(0, 2) : (await readPage(localData.rows(target.file), { rows: 2, offset: 0 })).rows;
-          const sampleColumns = [...new Set([...allColumns.slice(0, 2), ...(columns.length <= 16 || about ? columns : columns.slice(0, 8))])];
-          const examples = sampleColumns.map(column => `${JSON.stringify(column)}: ${JSON.stringify([...new Set(sample.map(r => r[column]))].map(v => typeof v === 'string' && v.length > 100 ? v.slice(0, 100) + '… [open for full cell]' : v))}`);
-          const header = `${what}: ${allColumns.length} total columns${about ? `; ${columns.length} matching ${JSON.stringify(about)}` : ''}\nColumns: ${JSON.stringify(columns)}`;
-          const samples = `Raw sample values (${sampleColumns.length}/${allColumns.length} columns${about ? `; sample filter ${JSON.stringify(about)} matches ${columns.length}` : ''}; describe selected columns for categories). Use the exact source columns.\n${examples.join('\n')}`;
-          const content = `${header}\n${samples}`;
-          observe(content, { source: `schema ${what}`, refs: [what], projection: columns });
-          sync++; return;
-        }
+        if (call.name === 'skip') { waiting = true; remember(`waited: ${String(call.args.reason || '').slice(0, 100)}`); await log('skip', { reason: call.args.reason || '' }); return; }
+        if (call.name === 'open') { await openWhat(call.args); sync++; return; }
         if (call.name === 'run') {
           const specifications = new Map(toolSpecs.filter(t => TABLE_TOOLS.has(t.function.name)).map(t => [t.function.name, t.function]));
-          const batch = await executeBatch(call.args, { specifications, concurrency: config.asoParallelLimit,
-            execute: runTableTool });
-          sync++;
-          return { status: batch.status, steps: batch.steps, outputs: batch.outputs.map(output => ({ step: output.id, artifact: output.artifact.id, observation: output.observation })) };
-        }
-        if (TABLE_TOOLS.has(call.name)) {
-          const result = await runTableTool(call.name, call.args);
-          sync++;
-          return result.ok ? { status: 'completed', artifact: result.artifact.id } : { status: result.status || 'error', ...(result.artifact ? { artifact: result.artifact.id, observation: result.observation } : {}), error: result.error };
-        }
-        if (agentNames.has(call.name)) return observationScope.run(null, () => startAgent(call.name, call.args));
-        if (call.name === 'datasets') {
-          const about = String(call.args.about || '').trim().toLowerCase();
-          const all = (await geneData.catalog()).filter(e => e.key !== 'unreadable');
-          const entries = about ? all.filter(e => e.file.toLowerCase().includes(about) || String(e.title || '').toLowerCase().includes(about) || e.columns.some(c => c.toLowerCase().includes(about))) : all;
-          const large = e => (e.key === 'stream' ? '  (large: filter, aggregate or top_per_group stream it; no per-gene reads)' : '');
-          if (!entries.length) state.recent.push(`no dataset has "${about}" in its name, title or columns; datasets with no word lists them all`);
-          else observe(`datasets${about ? ` matching "${about}"` : ''} (${entries.length}):\n${entries.map(e => {
-            const columns = about ? e.columns.filter(c => c.toLowerCase().includes(about)) : [];
-            return about ? `  ${e.file} — ${e.title}${large(e)}${columns.length ? `; matching columns: ${columns.join(', ')}` : ''}` : e.file;
-          }).join('\n')}`, { source: `datasets ${about}` });
-          remember(about ? `browsed the datasets about ${about}` : 'listed the datasets'); sync++; return;
-        }
-        if (call.name === 'describe') {
-          const requested = String(call.args.what ?? call.args.artifact ?? call.args.dataset ?? call.args.name ?? '').trim();
-          const what = requested;
-          const pick = Array.isArray(call.args.columns) ? call.args.columns.map(String) : (typeof call.args.columns === 'string' && call.args.columns.trim() ? call.args.columns.split(/\s*[|,]\s*/) : null);
-          const cardLine = (c, columnCount) => {
-            const values = c.observed_values && bytes(JSON.stringify(c.observed_values)) <= Math.floor(RESULT_BYTES / (2 * columnCount))
-              ? `; all observed nonblank values: ${JSON.stringify(c.observed_values)}`
-              : c.full_examples.length ? `; examples only: ${JSON.stringify(c.full_examples)}; aggregate group_by=${JSON.stringify(c.column)} metrics=["count"] lists every value` : '';
-            return `${c.column} — ${c.kind}; ${c.blank_pct}% blank; distinct ${c.distinct}${values}${c.min !== undefined ? `; ${c.min} to ${c.max}` : ''}${c.list ? `; ${c.list}` : ''}`;
-          };
-          try {
-            if (state.byId.has(what)) {
-              const a = get(what);
-              if (!a.rows) throw new Error(`${a.id} has no rows to describe`);
-              const cols = pick ? shownColumns(a.columns, pick) : a.columns.slice(0, 40);
-              observe(`${a.id} (${a.size}) described:\n  ${tools.profile(a.rows, cols).map(c => cardLine(c, cols.length)).join('\n  ')}${a.columns.length > cols.length ? `\n  … ${a.columns.length - cols.length} more columns (describe with columns)` : ''}`, { source: `describe ${a.id}`, refs: [a.id], projection: cols });
-              remember(`described ${a.id}`);
-            } else {
-              const entry = await geneData.entry(what);
-              if (!entry || entry.key === 'unreadable') throw new Error(`nothing called "${what}" on the desk or on disk; datasets lists what is on disk`);
-              const cols = pick ? shownColumns(entry.columns, pick) : entry.columns.slice(0, 40);
-              const key = `${agentMode.hpaVersion}|${entry.file}|${cols.join('|')}`;
-              let card = profileCache.get(key);
-              if (!card) { card = await tools.profileStream(datasetStream(entry), cols, PROFILE_MAX_ROWS); profileCache.set(key, card); }
-              const scanned = card.rows >= PROFILE_MAX_ROWS ? ` (first ${PROFILE_MAX_ROWS.toLocaleString('en-US')} rows)` : ` (${card.rows.toLocaleString('en-US')} rows)`;
-              const lines = card.profile.map(c => cardLine(c, cols.length));
-              const text = `${entry.file} — ${entry.title}. ${entry.description || ''}${scanned}\n  ${lines.join('\n  ')}${entry.columns.length > cols.length ? `\n  … ${entry.columns.length - cols.length} more columns (describe with columns)` : ''}`;
-              observe(text, { source: `describe ${entry.file}`, refs: [entry.file], projection: cols });
-              remember(`described ${entry.file}`);
-            }
-          } catch (err) { state.recent.push(`describe failed: ${err.message}`); remember(`describe ${what || '(no name)'} failed`); }
+          const steps = call.args.steps || [];
+          const batch = await executeBatch({ steps, outputs: steps.map(s => s?.id).filter(id => typeof id === 'string') }, { specifications, concurrency: parallel, execute: runTableTool });
+          if (batch.status !== 'completed') remember(`run: ${batch.steps.filter(s => s.status !== 'done').map(s => `${s.id} ${s.status}${s.error ? `: ${s.error}` : ''}`).join('; ')}`);
           sync++; return;
         }
-        if (call.name === 'open') {
-          const requested = String(call.args.what || '').trim();
-          const what = requested;
-          if (call.args.columns !== undefined && call.args.columns.length === 0) throw new Error('open.columns must be a nonempty selection; omit columns to return every column');
-          try {
-            const options = rowPageOptions(call.args);
-            const pick = call.args.columns;
-            if (state.byId.has(what)) {
-              const a = get(what);
-              const sourceMeta = { ...a.meta };
-              delete sourceMeta.hpa_version;
-              const provenance = JSON.stringify(call.args.provenance ? { tool: a.tool, args: a.args, inputs: a.inputs, meta: sourceMeta } : { tool: a.tool, inputs: a.inputs });
-              let content;
-              if (a.figure) content = JSON.stringify(a.figure);
-              else if (a.matrix) content = JSON.stringify(a.matrix);
-              else if (a.text) content = a.text;
-              else {
-                const view = { rows: a.rows.slice(options.offset, options.offset + options.rows), offset: options.offset, total: a.rows.length, more: options.offset + options.rows < a.rows.length };
-                content = formatPage(view, shownColumns(a.columns, pick === undefined ? a.columns : pick));
-              }
-              observe(`${a.id} (${a.size}); ${a.columns.length} total columns\nProvenance: ${provenance}\n${content}`, { source: `open ${a.id}`, refs: [a.id, ...a.inputs] });
-              remember(`opened ${a.id}`);
-            } else {
-              const entry = await geneData.entry(what);
-              if (!entry || entry.key === 'unreadable') throw new Error(`No readable dataset ${JSON.stringify(what)}; use datasets to discover files`);
-              const columns = shownColumns(entry.columns, pick === undefined ? entry.columns : pick);
-              const view = await readPage(localData.rows(entry.file), options);
-              const definitions = sourceDefinitions(entry, view.rows, [], columns);
-              const content = `${entry.file} — ${entry.title}. ${entry.description || ''}\nShowing ${columns.length}/${entry.columns.length} columns: ${columns.join(', ')}; describe for profiles of other columns\n${formatPage(view, columns)}${Object.keys(definitions.definitions).length || definitions.unavailable_definitions ? `\nSource column definitions: ${JSON.stringify(definitions)}` : ''}`;
-              observe(content, { source: `open ${entry.file}`, refs: [entry.file] });
-              remember(`opened ${entry.file}`);
-            }
-          } catch (err) { state.recent.push(`open failed: ${err.message}`); remember(`open ${what || '(no name)'} failed`); }
-          sync++; return;
+        if (call.name === 'finish') {
+          if (!state.plan.length) throw new Error('finish needs a plan first: record the deliverables with plan');
+          if (state.running.size) { remember(`finish refused: ${[...state.running.keys()].join(', ')} still running; wait for them (skip) or finish after they return`); await log('finish.refused', { reason: 'agents_running', running: [...state.running.keys()] }); sync++; return; }
+          const args = call.args;
+          const issues = reportIssues(args, state);
+          let figures = [];
+          if (!issues.length) {
+            figures = selectFigures(state.artifacts, args.figures).filter(a => a.images?.length);
+            const missing = studyPlan.uncovered(state.plan, { tables: args.tables || [], figures, claims: args.claims || [], notDone: args.not_done || [] }, state.byId);
+            if (missing.length) issues.push(`plan items not delivered and not in not_done: ${missing.join('; ')}. Deliver them (a figure of the requested type, a table, a claim), or list them in not_done with the reason`);
+          }
+          if (issues.length) {
+            const key = JSON.stringify(issues);
+            await log('finish.refused', { issues });
+            if (refusals.has(key)) { stopReason = 'unresolved_finish'; remember(`finish refused again for the same reasons; the study stops`); return; }
+            refusals.add(key);
+            remember(`finish refused:\n${issues.map(i => `    - ${i}`).join('\n')}`);
+            sync++; return;
+          }
+          report = renderReport(args, state, figures);
+          reportFigures = args.figures === undefined ? undefined : figures.map(a => a.id);
+          for (const p of state.plan) p.status = (args.not_done || []).some(item => item.item === state.plan.indexOf(p) + 1) ? 'dropped' : 'done';
+          await log('plan', { items: state.plan });
+          return;
         }
-        state.recent.push(`unknown tool ${call.name}`);
+        if (TABLE_TOOLS.has(call.name)) { await runTableTool(call.name, call.args); sync++; return; }
+        if (agentNames.has(call.name)) { startAgent(call.name, call.args); started++; return; }
+        throw new Error(`no tool ${call.name}`);
       }
-      const completedCalls = [];
-      const executeObservedCall = async call => {
-        const scope = { ids: [], open: true };
-        let data;
-        const planBefore = planText(state.plan);
-        try { data = await observationScope.run(scope, () => executeCall(call)); }
-        catch (error) {
-          state.failed++;
-          await log('call.failed', { tool: call.name, error: error.message, turn });
-          data = { status: 'error', error: error.message }; sync++;
-        }
-        finally { scope.open = false; }
-        const planAfter = planText(state.plan);
-        const previousLines = planBefore.split('\n');
-        const changedPlan = call.name === 'set_plan' ? planAfter : planAfter.split('\n').filter((line, i) => line !== previousLines[i]).join('\n');
-        return { call, ids: scope.ids, data: { ...(data || { status: 'ok' }), ...(planAfter !== planBefore ? { plan: changedPlan } : {}), ...(call.name === 'note' ? { notes: [...state.notes] } : {}) } };
+      const guarded = async call => {
+        try { await executeCall(call); }
+        catch (error) { state.failed++; remember(`${call.name}(${desk.argsLine(call.args, 140)}) failed: ${error.message}`); await log('call.failed', { tool: call.name, error: error.message, turn }); sync++; }
       };
-      // Independent native calls share the existing concurrency limit. Plan mutations and
-      // finish are ordered barriers so they cannot race work submitted in the same turn.
-      let parallelCalls = [];
-      const drain = async () => {
-        if (parallelCalls.length) completedCalls.push(...await Promise.all(parallelCalls.map(executeObservedCall)));
-        parallelCalls = [];
-      };
+      // Sync tools are ordered barriers; operations and agents run together up to the parallel limit.
+      let batch = [];
+      const drain = async () => { if (batch.length) await Promise.all(batch.map(guarded)); batch = []; };
       for (const call of calls) {
-        if (['set_plan', 'update_plan', 'note', 'skip', 'finish', 'load_tools'].includes(call.name)) {
-          await drain();
-          completedCalls.push(await executeObservedCall(call));
-        } else {
-          parallelCalls.push(call);
-          if (parallelCalls.length >= config.asoParallelLimit) await drain();
-        }
+        if (SYNC_TOOLS.has(call.name)) { await drain(); await guarded(call); }
+        else { batch.push(call); if (batch.length >= parallel) await drain(); }
       }
       await drain();
-      const results = completedCalls.map(c => {
-        const view = conversation.result(c.ids);
-        return { message: { role: 'tool', tool_call_id: c.call.id, content: JSON.stringify({ ...c.data, ...(view.text ? { observations: view.text } : {}) }) }, deliveries: view.deliveries };
-      });
-      conversation.append(message, results);
-      if (finishSummary !== null || stopReason) break;
+      if (report !== null || stopReason) break;
       if (!calls.length) {
         stalls++;
-        state.recent.push('You called no tool. Call tools, skip while waiting, or finish.');
+        remember('no tool was called; call tools, skip while agents run, or finish');
         if (stalls > MAX_STALLS) break;
         continue;
       }
-      if (waiting && state.running.size) {
-        stalls = 0;
-        await waitForCompletion();
-        continue;
-      }
-      // Loading schemas supplies no source evidence. When the desk is empty and
-      // specialists own the pending work, deliver their results before asking for
-      // another decision. Existing artifacts still allow useful parallel work.
-      const controlCalls = ['set_plan', 'update_plan', 'note', ...agentNames,
-        ...(!state.artifacts.length ? ['load_tools'] : [])];
-      const hasNewEvidence = completedCalls.some(c => c.ids.length || c.data.status === 'error' || !controlCalls.includes(c.call.name));
-      if (state.running.size && !hasNewEvidence && state.artifacts.length === artifactsBefore) {
-        stalls = 0;
-        await waitForCompletion();
-        continue;
-      }
-      if (sync > 0) { stalls = 0; continue; }
-      if (state.running.size === 0) {
-        state.recent.push(waiting
-          ? 'Nothing is running, so there is nothing to wait for. Act or finish.'
-          : `That turn did no work${state.artifacts.length ? '' : ' and there are no artifacts yet'}: the plan exists, nothing is running. Summon agents or call tools for the open items now, or finish.`);
-        stalls++;
-        if (stalls > MAX_STALLS) break;
-        continue;
-      }
+      // An agent still running holds the next decision: the loop wakes when the first one returns,
+      // so no turn is spent looking at an unchanged desk.
+      if (state.running.size) { stalls = 0; await waitForCompletion(); continue; }
+      if (sync === 0 && started === 0 && !waiting) { stalls++; remember('that turn did no work: summon agents, run operations, or finish'); if (stalls > MAX_STALLS) break; continue; }
+      if (waiting) { stalls++; remember('nothing is running, so there is nothing to wait for: act or finish'); if (stalls > MAX_STALLS) break; continue; }
       stalls = 0;
-      await waitForCompletion();
     }
-    // Finish recording jobs already started before closing the workspace. Their inference
-    // calls have provider timeouts; no background callback may mutate a finalized report.
     if (state.running.size) await Promise.allSettled([...state.running.values()].map(job => job.promise));
-    // A study that runs out of turns writes no summary: nothing is estimated into the gap.
-    const budgetExhausted = finishSummary === null && turn >= maxTurns;
-    const incompleteReason = stopReason || (budgetExhausted ? 'turn_budget_exhausted' : finishSummary === null ? 'stalled' : state.running.size ? 'agents_pending' : unverified.length ? 'unverified_numbers' : state.plan.some(p => p.status !== 'done') ? 'unfinished_or_dropped_steps' : null);
+    const budgetExhausted = report === null && turn >= maxTurns && !stopReason;
+    const incompleteReason = stopReason || (budgetExhausted ? 'turn_budget_exhausted' : report === null ? 'stalled' : state.plan.some(p => p.status === 'dropped') ? 'undelivered_items' : null);
     const outcome = incompleteReason ? 'incomplete' : 'completed';
-    if (finishSummary === null) finishSummary = budgetExhausted
-      ? `The study stopped at its budget of ${maxTurns} turns before it finished. No summary was written, so nothing here is estimated: the plan shows what was done and what was not, and the artifacts hold everything it made.`
-      : `The study stopped before its completion checks passed${stopReason ? ` (${stopReason})` : ''}. Completed artifacts are retained; no rejected narrative has been accepted as a result.`;
-    // Numbers still unverified when the study ends are marked where the reader sees them.
-    for (const raw of unverified) finishSummary = finishSummary.replace(new RegExp(`(?<![\\w.,])${raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w.,]*\\d)(?! \\[unverified\\])`, 'g'), `${raw} [unverified]`);
-
+    const summary = report !== null ? report : budgetExhausted
+      ? `The study stopped at its budget of ${maxTurns} turns before it finished. No report was written; the plan shows what was done and what was not, and the artifacts hold everything it made.`
+      : `The study stopped before a report was accepted${stopReason ? ` (${stopReason})` : ''}. Completed artifacts are retained; no rejected report was accepted.`;
     const seconds = (Date.now() - startedAt) / 1000;
-    const reportArtifacts = finishFigures === undefined ? state.artifacts : [...state.artifacts.filter(artifact => artifact.kind !== 'figure'), ...selectFigures(state.artifacts, finishFigures)];
-    const summaryMd = [`# Study`, '', `**Goal:** ${goal}`, '', finishSummary, '', '## Artifacts', '', ...reportArtifacts.map(a => `- ${a.id} ${a.kind} "${a.label}" (${a.size}) from ${a.tool}${a.inputs.length ? ` of ${a.inputs.join(', ')}` : ''}`), '', '## Plan', '', ...state.plan.map((p, i) => `${i + 1}. [${p.status}] ${p.text}`)].join('\n');
+    const reportArtifacts = reportFigures === undefined ? state.artifacts : [...state.artifacts.filter(artifact => artifact.kind !== 'figure'), ...selectFigures(state.artifacts, reportFigures)];
+    const summaryMd = [`# Study`, '', `**Goal:** ${goal}`, '', summary, '', '## Artifacts', '', ...reportArtifacts.map(a => `- ${a.id} ${a.kind} "${a.label}" (${a.size}) from ${a.tool}${a.inputs.length ? ` of ${a.inputs.join(', ')}` : ''}`), '', '## Plan', '', ...state.plan.map((p, i) => `${i + 1}. [${p.status}] ${p.text}`)].join('\n');
     const reportPath = path.join(workspace.workspaceDir, 'report.md');
     await fs.writeFile(reportPath, summaryMd, { mode: 0o600 });
-    await register({ workspaceId: workspace.id, artifactsDir: workspace.artifactsDir, kind: 'summary', format: 'md', schemaJson: { type: 'report', ...(finishFigures === undefined ? {} : { figures: finishFigures }) }, provenance: { tool: 'report', sources: reportArtifacts.map(a => a.uuid), purpose: 'Study summary' }, payload: null, storageUriOverride: reportPath, skipWrite: true });
-    await log('finish', { summary: finishSummary, outcome, incomplete_reason: incompleteReason, turns: turn, tool_calls: state.toolCalls, failed: state.failed, artifacts: state.artifacts.length, seconds, tokens, unverified_numbers: unverified, budget_exhausted: budgetExhausted });
-    await updateWorkspace(db, workspace.id, { status: 'completed', message: outcome === 'completed' ? 'Study completed' : `Study incomplete: ${incompleteReason}`, finishedUnixMs: Date.now(), planJson: { goal, mode, hpa_version: agentMode.hpaVersion, version: 'native-study', compactions: 0, outcome, incomplete_reason: incompleteReason, plan: state.plan, turns: turn } });
-    await contextMemory.flush(path.join(workspace.workspaceDir, 'observations'));
+    await register({ workspaceId: workspace.id, artifactsDir: workspace.artifactsDir, kind: 'summary', format: 'md', schemaJson: { type: 'report', ...(reportFigures === undefined ? {} : { figures: reportFigures }) }, provenance: { tool: 'report', sources: reportArtifacts.map(a => a.uuid), purpose: 'Study report' }, payload: null, storageUriOverride: reportPath, skipWrite: true });
+    await log('finish', { summary, outcome, incomplete_reason: incompleteReason, turns: turn, tool_calls: state.toolCalls, failed: state.failed, artifacts: state.artifacts.length, seconds, tokens, budget_exhausted: budgetExhausted });
+    await updateWorkspace(db, workspace.id, { status: 'completed', message: outcome === 'completed' ? 'Study completed' : `Study incomplete: ${incompleteReason}`, finishedUnixMs: Date.now(), planJson: { goal, mode, hpa_version: agentMode.hpaVersion, version: 'desk-study', outcome, incomplete_reason: incompleteReason, plan: state.plan, turns: turn } });
     await logger.close();
-    return { status: 'ok', outcome, incomplete_reason: incompleteReason, workspace_uuid: workspace.uuid, summary: finishSummary, summary_md: summaryMd, artifacts: artifactsSummary(), ...(finishFigures === undefined ? {} : { report_figures: finishFigures }), plan: state.plan, turns: turn, tool_calls: state.toolCalls, failed: state.failed, unverified_numbers: unverified, budget_exhausted: budgetExhausted, compactions: 0, tokens, token_breakdown: { aso_hpa: mainTokens, ...specialistTokens }, seconds, mode, hpa_version: agentMode.hpaVersion };
+    return { status: 'ok', outcome, incomplete_reason: incompleteReason, workspace_uuid: workspace.uuid, summary, summary_md: summaryMd, artifacts: artifactsSummary(), ...(reportFigures === undefined ? {} : { report_figures: reportFigures }), plan: state.plan, turns: turn, tool_calls: state.toolCalls, failed: state.failed, budget_exhausted: budgetExhausted, tokens, token_breakdown: { aso_hpa: mainTokens, ...specialistTokens }, agents: state.agentStarts || 0, seconds, mode, hpa_version: agentMode.hpaVersion };
   } catch (err) {
     if (state.running.size) await Promise.allSettled([...state.running.values()].map(job => job.promise));
     await log('error', { message: err.message });
     await updateWorkspace(db, workspace.id, { status: 'failed', finishedUnixMs: Date.now(), errorCode: 'study_failed', errorMessage: err.message });
-    await contextMemory.flush(path.join(workspace.workspaceDir, 'observations'));
     await logger.close();
     return { status: 'error', error: err.message, workspace_uuid: workspace.uuid, artifacts: artifactsSummary(), tokens };
   }

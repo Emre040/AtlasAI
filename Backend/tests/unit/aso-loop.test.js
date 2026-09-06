@@ -157,6 +157,20 @@ test('a view folds to its receipt once a later turn consumes its artifact; openi
   assert.match(requests[4].messages[1].content, /\nVIEWS\na1 rows 0–3 of 4 \(nTPM\)\n  0: 32\.2\n/);
 });
 
+test('a join line says what b\'s clashing columns are now called; shared columns that agree are kept once', async t => {
+  const { run, requests } = await study(t, [
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR', 'ERBB2'], question: 'nTPM' }))),
+    response(call('filter', named('Liver', { artifact: 'a1', where: [{ column: 'Tissue', op: '=', value: 'liver' }] })), call('filter', named('Lung', { artifact: 'a1', where: [{ column: 'Tissue', op: '=', value: 'lung' }] }))),
+    response(call('join', named('Liver beside lung', { a: 'a2', b: 'a3', how: 'inner' }))),
+    response(call('finish', { tables: [{ artifact: 'a4' }] }))
+  ]);
+  const result = await run({});
+  assert.equal(result.outcome, 'completed', result.summary);
+  const desk4 = requests[3].messages[1].content;
+  assert.match(desk4, /a4 "Liver beside lung" \(2 rows: [^\n]*nTPM_2[^\n]*\) ← join t4 of a2, a3 \(a3's Tissue as Tissue_2, nTPM as nTPM_2\)/);
+  assert.doesNotMatch(desk4, /source_status_2/, 'shared columns that agree are kept once');
+});
+
 test('an identical agent call is answered by the earlier job', async t => {
   const { run, requests, agentCalls } = await study(t, [
     response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' }))),

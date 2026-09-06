@@ -12,8 +12,9 @@ function createItem(input, index) {
   return { text, kind: input.kind, status: 'todo', artifacts: [] };
 }
 
-function planText(plan) {
-  return plan.map((p, i) => `${i + 1}. [${p.status}] ${p.text} | ${p.kind}${p.artifacts.length ? ` → ${p.artifacts.join(', ')}` : ''}`).join('\n') || '(no plan yet: call plan with the deliverables)';
+// The plan on the desk; labels name who delivers a kind (a cohort comes from the search agent).
+function planText(plan, labels = {}) {
+  return plan.map((p, i) => `${i + 1}. [${p.status}] ${p.text} | ${labels[p.kind] || p.kind}${p.artifacts.length ? ` → ${p.artifacts.join(', ')}` : ''}`).join('\n') || '(no plan yet: call plan with the deliverables)';
 }
 
 // Which plan items a finish covers: a chart item needs a rendered figure of its type among the

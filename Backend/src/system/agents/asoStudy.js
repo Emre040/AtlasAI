@@ -80,8 +80,8 @@ The desk in the message is your whole working set and stays in front of you ever
 
 How a study goes:
 1. plan lists the deliverables, one item per requested table, figure of a given type, cohort or interpretation; independent work starts in the same turn.
-2. Cohorts come from ${search}, records from investigator_hpa; their tables are used as they are.
-3. Operations compute on artifact ids, and a dataset name can stand in for an artifact. Dependent steps chain in one run call with @id references (pivot then heatmap; filter, rank, chart); independent calls go in the same turn.
+2. A cohort, the ${entity}s matching a description, comes from ${search}, which runs the ${db.database} search for it. The records of a list of ${entity}s come from investigator_hpa, which finds the tables that hold them. Both run in the background and return tables that are used as they are. A dataset name stands in for a table when the question is about the whole dataset: a count over every ${entity}, a whole-table ranking.
+3. Operations compute on artifact ids. Dependent steps chain in one run call with @id references (pivot then heatmap; filter, rank, chart); independent calls go in the same turn.
 4. finish delivers the report from the data: tables and figures by id, and findings as claims, each bound to the rows and columns it rests on. The report prints those cells beside the claim, so every number a claim states is among them or was computed into an artifact the claim cites. Limitations state what the evidence cannot establish, in words. A plan item that cannot be delivered goes in not_done with the reason.
 Values are reported as recorded: units, zeros, blanks, repeated rows and ties. A missing record is absence from this source.
 
@@ -573,7 +573,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     const views = [...state.views.values()].map(v => v.text);
     const sections = [
       desk.section('STUDY', goal),
-      desk.section('PLAN', studyPlan.planText(state.plan)),
+      desk.section('PLAN', studyPlan.planText(state.plan, agentNames.has('deep_research_hpa') ? { gene_set: 'gene_set ← deep_research_hpa' } : {})),
       ...(state.opened.size ? [desk.section('TABLES OPENED', openedCards().join('\n'))] : []),
       desk.section('ARTIFACTS', cards.join('\n') || '(none yet)'),
       ...(views.length ? [desk.section('VIEWS', views.join('\n'))] : []),

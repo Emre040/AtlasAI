@@ -16,4 +16,5 @@ test('a finish covers a chart item only with a rendered figure of that type, and
   assert.deepEqual(plan.uncovered(items, { tables: [], figures: [{ figure: { type: 'heatmap' } }, { figure: { type: 'scatter' } }], claims: [], notDone: [] }, byId), ['1. measurements (table)', '4. cohort (gene_set)']);
   assert.deepEqual(plan.uncovered(items, { tables: [{ artifact: 'a5' }], figures: [{ figure: { type: 'heatmap' } }, { figure: { type: 'scatter' } }], claims: [], notDone: [] }, byId), []);
   assert.match(plan.planText(items), /^1\. \[todo\] measurements \| table\n2\. \[todo\] heatmap \| heatmap/);
+  assert.match(plan.planText([plan.createItem({ step: 'kidney cohort', kind: 'gene_set' }, 0)], { gene_set: 'gene_set ← deep_research_hpa' }), /^1\. \[todo\] kidney cohort \| gene_set ← deep_research_hpa$/, 'the plan says who delivers a cohort');
 });

@@ -117,7 +117,7 @@ test('actual bulk inspect_table receipt uses column scopes and about means proje
         assert.match(request.messages.at(-1).content, /No columns matching/);assert.equal(reads, 1);
         return call('apply_bulk', { name: 'levels', lookups: [{ table: ihc.file, match_column: 'Gene', value_column: 'Level', as: 'recorded_level' }] }, 'bulk');
       }
-      return call('finish', { results: ['levels'], not_in_release: [] }, 'finish');
+      return call('finish', { results: ['levels'], unavailable_requirements: [] }, 'finish');
     } } } } }
   });
   const result = await run({ genes: ['Fixture'], question: 'Return recorded source level.' }, {}, {

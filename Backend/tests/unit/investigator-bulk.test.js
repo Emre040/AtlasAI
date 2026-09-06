@@ -156,7 +156,7 @@ test('Investigator can inspect an unshown saved result page without repeating th
       const actions = [
         ['apply_bulk', { name: 'values', lookups: [f.lookup('organ A', 'a_units')] }],
         ['open_result', { name: 'values', offset: 598, rows: 2, columns: ['gene', 'a_units'] }],
-        ['finish', { results: ['values'], answer: 'Complete source measurements returned.', not_in_release: [] }]
+        ['finish', { results: ['values'], answer: 'Complete source measurements returned.', unavailable_requirements: [] }]
       ];
       if (calls === 2) assert.doesNotMatch(JSON.stringify(request), /SPECIMEN_GENE_599/);
       if (calls === 3) {
@@ -208,7 +208,7 @@ test('bulk Investigator uses two model turns for 600 genes and never sends the f
       assert.match(request.messages[1].content, /Original study context \(constraints only; not additional assigned deliverables\):\nUNRELATED_STUDY_TASK/);
       const tool = requests.length === 1
         ? functionCall('apply_bulk', { name: 'values', lookups: [f.lookup('organ A', 'a_units'), f.lookup('organ B', 'b_units')] }, 'read')
-        : functionCall('finish', { results: ['values'], answer: 'Source measurements returned. Mechanistic interpretation is unavailable.', not_in_release: [{ requirement: 'mechanism', why: 'No mechanism evidence in these source tables' }] }, 'done');
+        : functionCall('finish', { results: ['values'], answer: 'Source measurements returned. Mechanistic interpretation is unavailable.', unavailable_requirements: [{ requirement: 'mechanism', why: 'No mechanism evidence in these source tables' }] }, 'done');
       return { choices: [{ message: { role: 'assistant', content: null, tool_calls: [tool] } }], usage: { prompt_tokens: 11, completion_tokens: 3 } };
     } } } } }
   });

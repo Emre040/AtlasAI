@@ -9,7 +9,7 @@ const Module = require('node:module');
 const entry = { file: 'observations.tsv', title: 'Source observations', key: 'ensembl', columns: ['Gene', 'Sample', 'Value'] };
 const lookup = { table: entry.file, match_column: 'Gene', mode: 'rows', columns: ['Sample', 'Value'] };
 const apply = name => ['apply_bulk', { name, lookups: [lookup] }];
-const finish = ['finish', { results: ['observed'], answer: 'Source observations returned.', not_in_release: [] }];
+const finish = ['finish', { results: ['observed'], answer: 'Source observations returned.', unavailable_requirements: [] }];
 
 async function study({ decide, ctx = {}, onRead }) {
   const filename = require.resolve('../../src/system/agents/investigatorBulk');
@@ -69,7 +69,7 @@ test('new result names do not rerun an identical bulk computation or manufacture
 });
 
 test('a repeated rejected finish stays incomplete without inferred success', async () => {
-  const { result, requests } = await study({ decide: () => ['finish', { results: [], answer: 'Complete!', not_in_release: [] }] });
+  const { result, requests } = await study({ decide: () => ['finish', { results: [], answer: 'Complete!', unavailable_requirements: [] }] });
   assert.equal(requests.length, 2); assert.equal(result.stop_reason, 'no_progress_cycle');
   assert.equal(result.status, 'incomplete'); assert.equal(result.found, false);
   assert.notEqual(result.answer, 'Complete!');

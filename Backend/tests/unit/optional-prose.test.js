@@ -79,7 +79,7 @@ async function fixture(t, decide, execute, options = {}) {
 const entry = { file: 'observations.tsv', title: 'Source observations', key: 'ensembl', columns: ['Gene', 'Sample', 'Value'] };
 const lookup = { table: entry.file, match_column: 'Gene', mode: 'rows', columns: ['Sample', 'Value'] };
 const apply = name => ['apply_bulk', { name, lookups: [lookup] }];
-const finish = ['finish', { results: ['observed'], answer: 'Source observations returned.', not_in_release: [] }];
+const finish = ['finish', { results: ['observed'], answer: 'Source observations returned.', unavailable_requirements: [] }];
 
 async function study({ decide, ctx = {}, onRead }) {
   const filename = require.resolve(path.join(BACKEND, 'src/system/agents/investigatorBulk'));
@@ -171,7 +171,7 @@ test('bulk Investigator finishes complete result tables without retyping measure
     const finish = request.tools.find(tool => tool.function.name === 'finish').function;
     assert.ok(!finish.parameters.required.includes('answer'));
     if (turn === 1) return apply('observed');
-    assert.equal(turn, 2); return ['finish', { results: ['observed'], not_in_release: [] }];
+    assert.equal(turn, 2); return ['finish', { results: ['observed'], unavailable_requirements: [] }];
   } });
   assert.equal(result.status, 'ok'); assert.equal(result.answer, ''); assert.equal(result.tables[0].rows.length, 12);
   assert.equal(result.tables[0].rows[0].Value, '0'); assert.equal(requests.length, 2); assert.equal(sourceReads, 1);
@@ -180,18 +180,18 @@ test('bulk Investigator finishes complete result tables without retyping measure
 
 test('bulk Investigator preserves the existing answer field when source interpretation is supplied', async () => {
   const narrative = 'The returned table contains source observations; specimen identities are retained.';
-  const { result } = await study({ decide: ({ turn }) => turn === 1 ? apply('observed') : ['finish', { results: ['observed'], answer: narrative, not_in_release: [] }] });
+  const { result } = await study({ decide: ({ turn }) => turn === 1 ? apply('observed') : ['finish', { results: ['observed'], answer: narrative, unavailable_requirements: [] }] });
   assert.equal(result.status, 'ok'); assert.equal(result.answer, narrative); assert.equal(result.tables[0].rows.length, 12);
 });
 
 test('bulk structured unanswered requirements remain partial without mandatory prose', async () => {
   const requirement = { requirement: 'Requested source comparison', why: 'The second source is unavailable in this release.' };
-  const { result } = await study({ decide: ({ turn }) => turn === 1 ? apply('observed') : ['finish', { results: ['observed'], not_in_release: [requirement] }] });
+  const { result } = await study({ decide: ({ turn }) => turn === 1 ? apply('observed') : ['finish', { results: ['observed'], unavailable_requirements: [requirement] }] });
   assert.equal(result.status, 'partial'); assert.equal(result.answer, ''); assert.deepEqual(result.not_in_release, [requirement]);
 });
 
 test('bulk optional prose does not permit empty completion without evidence or unresolved requirements', async () => {
-  const { result, requests } = await study({ decide: () => ['finish', { results: [], not_in_release: [] }] });
+  const { result, requests } = await study({ decide: () => ['finish', { results: [], unavailable_requirements: [] }] });
   assert.equal(result.status, 'incomplete'); assert.equal(result.found, false); assert.equal(requests.length, 2);
   assert.match(result.error, /repeated a rejected operation/);
 });

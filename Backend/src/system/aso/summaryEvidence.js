@@ -35,15 +35,18 @@ function statedNumbers(text) {
 }
 
 // Every number an artifact holds, sorted, computed once: numeric cells, numbers inside text
-// cells, matrix cells.
+// and saved JSON values, matrix cells. Object keys are labels, not recorded values.
 function artifactNumbers(a) {
   if (a.numbersSorted) return a.numbersSorted;
   const values = [];
   const push = v => { if (Number.isFinite(v)) values.push(v); };
-  if (a.rows) for (const r of a.rows) for (const v of Object.values(r)) {
+  const visit = v => {
     if (typeof v === 'number') push(v);
     else if (typeof v === 'string' && v && /\d/.test(v)) { const n = Number(v.replace(/,/g, '')); if (Number.isFinite(n)) push(n); else for (const m of numericMentions(v)) push(Number(m.clean)); }
-  }
+    else if (Array.isArray(v)) for (const item of v) visit(item);
+    else if (v !== null && typeof v === 'object') for (const item of Object.values(v)) visit(item);
+  };
+  if (a.rows) for (const r of a.rows) for (const v of Object.values(r)) visit(v);
   const matrix = a.matrix?.matrix || a.figure?.matrix;
   if (matrix) for (const row of matrix) for (const v of row) if (v !== null && v !== undefined) push(Number(v));
   if (a.figure?.data) for (const point of a.figure.data) for (const key of ['x', 'y', 'value']) if (point[key] !== null && point[key] !== undefined) push(Number(point[key]));

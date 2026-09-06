@@ -151,7 +151,7 @@ test('native bulk open can request257 rows and recover an oversized source cell 
       assert.equal(previous.delivery, 'text_fragment');
       fragments += previous.text;
       if (!previous.complete) return response('open_result', { view: previous.view, text_offset: previous.next_text_offset }, `call-${turn}`);
-      return response('finish', { results: ['values'], answer: 'Source data retained exactly.', not_in_release: [] }, `call-${turn}`);
+      return response('finish', { results: ['values'], answer: 'Source data retained exactly.', unavailable_requirements: [] }, `call-${turn}`);
     } } } } }
   })('src/system/agents/investigatorBulk.js');
   const result = await run({ genes: names, question: 'Read the source values.' }, { reasoningEffort: 'low' }, { async resolveGenes() { return resolved; }, async catalog() { return [entry]; }, async entry() { return entry; }, async readMany() { reads++; return { entry, byGene }; } });
@@ -168,7 +168,7 @@ test('native bulk view and row/cell selectors cannot be combined ambiguously', a
     turn++;
     if (turn === 1) return response('open_result', { view: 'o1', name: 'values' }, `call-${turn}`);
     rejection = JSON.parse(request.messages.at(-1).content);
-    return response('finish', { results: [], answer: 'No source requested.', not_in_release: [{ requirement: 'not requested', why: 'fixture' }] }, `call-${turn}`);
+    return response('finish', { results: [], answer: 'No source requested.', unavailable_requirements: [{ requirement: 'not requested', why: 'fixture' }] }, `call-${turn}`);
   } } } } } })('src/system/agents/investigatorBulk.js');
   await run({ genes: ['A'], question: 'Fixture.' }, {}, { async resolveGenes() { return [{ gene: 'A', ensembl: 'ID_A' }]; }, async catalog() { return [entry]; } });
   assert.match(rejection.error, /only view and text_offset/);

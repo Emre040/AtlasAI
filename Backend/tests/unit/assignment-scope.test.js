@@ -87,7 +87,7 @@ const observed = [
   { Gene: 'ID1', Region: 'third region', Value: '7' }
 ];
 const retrieve = () => sourceEntries.map((entry, i) => call('apply_bulk', { name: `source_${i}`, lookups: [{ table: entry.file, mode: 'rows', match_column: 'Gene', columns: ['Region', 'Value'] }] }));
-const finished = extra => call('finish', { results: ['source_0', 'source_1'], not_in_release: [], ...extra });
+const finished = extra => call('finish', { results: ['source_0', 'source_1'], unavailable_requirements: [], ...extra });
 
 async function bulkFixture(decide, onRead) {
   const filename = require.resolve(path.join(BACKEND, 'src/system/agents/investigatorBulk'));
@@ -145,8 +145,8 @@ for (const requirements of [undefined, []]) test(`completed narrow assignment re
   }
 });
 
-for (const field of ['unfinished_requirements', 'not_in_release']) test(`true ${field} remains partial through both finish.completed and update_plan`, async t => {
-  const obligation = { requirement: 'Compute the requested per-entity uncertainty from the original replicate measurements', why: field === 'not_in_release' ? 'The imported release contains no replicate uncertainty source' : 'The assigned uncertainty calculation is not represented by these raw tables' };
+for (const field of ['unfinished_requirements', 'unavailable_requirements']) test(`true ${field} remains partial through both finish.completed and update_plan`, async t => {
+  const obligation = { requirement: 'Compute the requested per-entity uncertainty from the original replicate measurements', why: field === 'unavailable_requirements' ? 'The imported release contains no replicate uncertainty source' : 'The assigned uncertainty calculation is not represented by these raw tables' };
   const bulk = await bulkFixture(({ turn }) => turn === 1 ? retrieve() : [finished({ [field]: [obligation] })]);
   let bulkResult;
   const f = await fixture(t, ({ request, turn }) => {
@@ -181,7 +181,7 @@ test('the obsolete native field is rejected explicitly and can be repaired witho
 
 test('a source gap can finish without tables and preserves its exact public evidence status', async () => {
   const gap = { requirement: 'Retrieve requested source records', why: 'No source in this imported release provides the requested measurement' };
-  const bulk = await bulkFixture(() => [call('finish', { results: [], not_in_release: [gap] })]);
+  const bulk = await bulkFixture(() => [call('finish', { results: [], unavailable_requirements: [gap] })]);
   const result = await bulk.run(); assert.equal(result.status, 'partial'); assert.equal(result.found, false);
   assert.deepEqual(result.not_in_release, [gap]); assert.deepEqual(result.remaining_for_aso, []); assert.equal(bulk.reads.length, 0);
 });

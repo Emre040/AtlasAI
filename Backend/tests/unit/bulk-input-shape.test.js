@@ -9,7 +9,7 @@ const sourcePath = filename => filename;
 const entry = { file: 'observations.tsv', title: 'Source observations', key: 'ensembl', columns: ['Gene', 'Sample', 'Value'] };
 const lookup = { table: entry.file, match_column: 'Gene', mode: 'rows', columns: ['Sample', 'Value'] };
 const apply = name => ['apply_bulk', { name, lookups: [lookup] }];
-const finish = ['finish', { results: ['observed'], answer: 'Source observations returned.', not_in_release: [] }];
+const finish = ['finish', { results: ['observed'], answer: 'Source observations returned.', unavailable_requirements: [] }];
 
 async function study({ decide, ctx = {}, onRead }) {
   const filename = require.resolve(path.join(BACKEND, 'src/system/agents/investigatorBulk'));
@@ -48,7 +48,7 @@ for (const [label, ctx] of [
     assert.match(initial, /Input schema: gene and ensembl identifiers only\. There are no inherited measurements or other input columns\./);
     assert.ok(request.tools.some(tool => tool.function.name === 'inspect_input'), 'optional existing-value inspection remains available');
     if (turn === 1) return apply('observed');
-    assert.equal(turn, 2); return ['finish', { results: ['observed'], not_in_release: [] }];
+    assert.equal(turn, 2); return ['finish', { results: ['observed'], unavailable_requirements: [] }];
   } });
   assert.equal(result.status, 'ok'); assert.equal(result.tables[0].rows.length, 12); assert.equal(requests.length, 2);
 });
@@ -65,7 +65,7 @@ test('bulk initial context reports inherited column count while preserving exact
       assert.ok(JSON.stringify(inspected).includes('exact retained label')); assert.ok(JSON.stringify(inspected).includes('0'));
       return apply('observed');
     }
-    assert.equal(turn, 3); return ['finish', { results: ['observed'], not_in_release: [] }];
+    assert.equal(turn, 3); return ['finish', { results: ['observed'], unavailable_requirements: [] }];
   } });
   assert.equal(result.status, 'ok'); assert.equal(requests.length, 3);
   for (const row of result.tables[0].rows) { assert.equal(row.prior_measurement, 0); assert.equal(row.prior_label, 'exact retained label'); }
@@ -77,7 +77,7 @@ test('metadata-only inherited schema columns are counted without dumping the wid
   const { result } = await study({ ctx: { inputRows: rows }, decide: ({ request, turn }) => {
     const initial = request.messages.find(message => message.role === 'user').content;
     assert.match(initial, /plus 1 inherited columns/); assert.doesNotMatch(initial, /recorded_but_empty|There are no inherited/);
-    return turn === 1 ? apply('observed') : ['finish', { results: ['observed'], not_in_release: [] }];
+    return turn === 1 ? apply('observed') : ['finish', { results: ['observed'], unavailable_requirements: [] }];
   } });
   assert.equal(result.status, 'ok');
 });
@@ -90,7 +90,7 @@ test('bulk preserves original source exclusions even when the delegated question
     assert.match(user, /Question: Retrieve all source observations and assess the requested views\./);
     assert.match(user, /Assigned plan result: Retrieve the region measurements/);
     assert.match(request.messages[0].content, /original study context constrains this work/);
-    return turn === 1 ? apply('observed') : ['finish', { results: ['observed'], not_in_release: [] }];
+    return turn === 1 ? apply('observed') : ['finish', { results: ['observed'], unavailable_requirements: [] }];
   } });
   assert.equal(result.status, 'ok'); assert.equal(requests.length, 2);
 });
@@ -101,7 +101,7 @@ test('bulk preserves the full exact original request including literal lists, wh
     const user = request.messages.find(message => message.role === 'user').content;
     assert.ok(user.includes(`Original study context (constraints only; not additional assigned deliverables):\n${original}\nEnd of original study context.\n\nASSIGNMENT`));
     assert.ok(user.includes('literal_name_599')); assert.ok(user.includes('α/β'));
-    return turn === 1 ? apply('observed') : ['finish', { results: ['observed'], not_in_release: [] }];
+    return turn === 1 ? apply('observed') : ['finish', { results: ['observed'], unavailable_requirements: [] }];
   } });
   assert.equal(result.status, 'ok');
 });
@@ -113,7 +113,7 @@ test('bulk omits only an exactly duplicate original request', async () => {
       const user = request.messages.find(message => message.role === 'user').content;
       assert.equal(user.includes('Original study context ('), original !== question);
       if (original === question) assert.equal(user.split(question).length - 1, 1);
-      return turn === 1 ? apply('observed') : ['finish', { results: ['observed'], not_in_release: [] }];
+      return turn === 1 ? apply('observed') : ['finish', { results: ['observed'], unavailable_requirements: [] }];
     } });
     assert.equal(result.status, 'ok');
   }

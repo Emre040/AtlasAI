@@ -77,7 +77,7 @@ test('bulk context discovers arbitrary sources and inherited data without repeat
     }
     const page = JSON.parse(request.messages.at(-1).content);
     assert.deepEqual(page.rows, [['INPUT_0', 'retained_value_103']]);
-    return response('finish', { results: ['measurements'], answer: 'Exact source measurements returned with source coverage.', not_in_release: [] }, 'finish');
+    return response('finish', { results: ['measurements'], answer: 'Exact source measurements returned with source coverage.', unavailable_requirements: [] }, 'finish');
   });
   const result = await run({ genes: supplied, question: 'Retrieve the source readings.' }, { inputRows, reasoningEffort: 'low' }, adapter);
   assert.equal(result.status, 'ok');
@@ -101,7 +101,7 @@ test('an unavailable source remains discoverable and its exact schema can be ins
     assert.deepEqual(schema.columns, entry.columns);
     assert.equal(schema.key, 'stream');
     assert.match(schema.access_note, /streaming/);
-    return response('finish', { results: [], answer: 'Per-input lookup unavailable for this source.', not_in_release: [], unfinished_requirements: [{ requirement: 'Read this source', why: schema.access_note }] }, 'finish');
+    return response('finish', { results: [], answer: 'Per-input lookup unavailable for this source.', unavailable_requirements: [], unfinished_requirements: [{ requirement: 'Read this source', why: schema.access_note }] }, 'finish');
   });
   const result = await run({ genes: ['ONE'], question: 'Read this source.' }, {}, {
     async catalog() { return [entry]; }, async entry() { return entry; }, async resolveGenes() { return [{ gene: 'ONE', ensembl: 'ID1' }]; },

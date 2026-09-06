@@ -158,7 +158,7 @@ test('the actual native bulk loop returns raw and nested results without source 
       return [['open_result', { name: 'entities', columns: ['gene', 'entity_value', 'record_count', 'observation_count'] }]];
     }
     assert.equal(turn, 4); assert.deepEqual(JSON.parse(request.messages.at(-1).content).rows, [['ONE', 10, 5, 3]]);
-    return [['finish', { results: ['raw', 'observations', 'entities'], not_in_release: [] }]];
+    return [['finish', { results: ['raw', 'observations', 'entities'], unavailable_requirements: [] }]];
   });
   assert.equal(result.status, 'ok', result.error); assert.equal(result.tables.length, 3); assert.equal(reads, 1); assert.equal(requests.length, 4);
   assert.deepEqual(result.tables.map(table => table.rows.length), [5, 3, 1]); assert.equal(result.tokens.total.total, 20);
@@ -172,7 +172,7 @@ for (const repair of [false, true]) test(`the actual loop ${repair ? 'repairs' :
       const receipt = JSON.parse(request.messages.at(-1).content); assert.equal(receipt.status, 'partial'); assert.equal(receipt.resume_from, 'observations');
       if (repair) return [['reduce_result', { from: 'observations', stages: [stages()[1]] }]];
     }
-    return [['finish', { results: repair ? ['raw', 'observations', 'entities'] : ['raw', 'observations'], not_in_release: [] }]];
+    return [['finish', { results: repair ? ['raw', 'observations', 'entities'] : ['raw', 'observations'], unavailable_requirements: [] }]];
   });
   assert.equal(reads, 1); assert.equal(result.status, repair ? 'ok' : 'partial', result.error);
   assert.equal(result.remaining_for_aso.length, repair ? 0 : 1); assert.equal(result.tables.length, repair ? 3 : 2);

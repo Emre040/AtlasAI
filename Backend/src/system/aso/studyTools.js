@@ -141,6 +141,28 @@ function classify(rows, args = {}) {
   return result;
 }
 
+
+function fillMissing(rows, args = {}) {
+  const columns = columnsOf(rows);
+  if (!Array.isArray(args.columns) || !args.columns.length) throw new Error('fill_missing: choose a nonempty array of existing columns');
+  const selected = args.columns.map(name => {
+    const column = findColumn(rows, name);
+    if (!column) throw new Error(`fill_missing: no column named ${JSON.stringify(name)}`);
+    return column;
+  });
+  if (new Set(selected).size !== selected.length) throw new Error('fill_missing: columns must be distinct');
+  const value = args.value;
+  if (!Object.hasOwn(args, 'value') || !(value === null || typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value))) throw new Error('fill_missing: value must be an explicit finite JSON scalar');
+  const affected = Object.fromEntries(selected.map(column => [column, 0]));
+  const result = withColumns(rows.map(row => {
+    const changed = selected.filter(column => isMissing(row[column]));
+    changed.forEach(column => affected[column]++);
+    return { ...row, ...Object.fromEntries(changed.map(column => [column, value])) };
+  }), columns);
+  Object.defineProperty(result, 'fill', { value: { columns: selected, value, predicate: 'isMissing', affected_cells: affected, total_affected_cells: Object.values(affected).reduce((a, b) => a + b, 0), input_rows: rows.length } });
+  return result;
+}
+
 function applyWhere(rows, where = []) {
   const columns = columnsOf(rows);
   return withColumns(rows.filter(wherePredicate(columns, where)), columns);
@@ -372,6 +394,31 @@ function quantile(sorted, q) {
 
 const METRICS = ['count', 'numeric_count', 'zero', 'sum', 'mean', 'median', 'sd', 'q1', 'q3', 'min', 'max', 'missing', 'distinct'];
 
+// Distinct cells use exact JSON value semantics: scalar types differ, object key order does
+// not matter, and array order does. Missing top-level cells are excluded by the caller.
+// Reject non-JSON content rather than silently converting it or collapsing unrelated objects.
+function distinctCellKey(value, ancestors = new Set()) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value);
+  if (typeof value === 'number' && Number.isFinite(value)) return JSON.stringify(value);
+  if (!value || typeof value !== 'object') throw new Error('aggregate: distinct requires finite JSON values');
+  if (ancestors.has(value)) throw new Error('aggregate: distinct cannot compare a cyclic cell');
+  if (Object.getOwnPropertySymbols(value).length) throw new Error('aggregate: distinct cannot compare symbol-keyed cells');
+  if (!Array.isArray(value) && ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new Error('aggregate: distinct requires plain JSON objects or arrays');
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const cells = [];
+      if (Object.keys(value).length !== value.length) throw new Error('aggregate: distinct requires dense JSON arrays without extra properties');
+      for (let i = 0; i < value.length; i++) {
+        if (!Object.hasOwn(value, i)) throw new Error('aggregate: distinct requires dense JSON arrays');
+        cells.push(distinctCellKey(value[i], ancestors));
+      }
+      return `[${cells.join(',')}]`;
+    }
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${distinctCellKey(value[key], ancestors)}`).join(',')}}`;
+  } finally { ancestors.delete(value); }
+}
+
 // Summarises a column per group as rows arrive; values are kept per group for the order
 // statistics, nothing else is held.
 function aggregator({ group_by, group_by_columns, group_domains, column, metrics = ['count'] } = {}, columns) {
@@ -441,7 +488,7 @@ function aggregator({ group_by, group_by_columns, group_domains, column, metrics
       if (col) {
         const raw = r[col];
         if (isMissing(raw)) st.missing++;
-        else { st.distinct.add(String(raw)); const v = num(raw); if (v !== null) st.vals.push(v); }
+        else { if (wanted.includes('distinct')) st.distinct.add(distinctCellKey(raw)); const v = num(raw); if (v !== null) st.vals.push(v); }
       }
     },
     result() {
@@ -993,4 +1040,4 @@ async function measure(rows, { table, value_column, entity_column, entity, as, a
   return out;
 }
 
-module.exports = { CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, withColumns, findColumn, keyOf, num, isMissing };
+module.exports = { fillMissing, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, withColumns, findColumn, keyOf, num, isMissing };

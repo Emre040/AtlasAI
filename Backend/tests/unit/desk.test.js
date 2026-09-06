@@ -14,15 +14,16 @@ test('a table card lists every column with the values it takes and sample rows',
   assert.match(card, /rows: ENSG1 \| liver \| 32\.2/);
 });
 
-test('a small result is shown whole with row indices, a large one with two rows; figures and matrices say what they are', () => {
+test('a result is one line: id, title, size, columns, origin, then its description; a few rows show whole', () => {
   const rows = [{ gene: 'EGFR', nTPM: 32.2 }, { gene: 'ERBB2', nTPM: 30.7 }, { gene: 'MET', nTPM: null }];
-  const card = desk.resultCard({ id: 'a1', label: '', origin: 'investigator_hpa t1 "liver nTPM"', rows, columns: ['gene', 'nTPM'] });
-  assert.match(card, /^a1 \(3 rows\) ← investigator_hpa t1 "liver nTPM": gene, nTPM\n  0: EGFR \| 32\.2\n  1: ERBB2 \| 30\.7\n  2: MET \| $/);
-  const big = desk.resultCard({ id: 'a5', origin: 'filter of a1', rows: Array.from({ length: 70 }, (_, i) => ({ gene: `G${i}`, nTPM: i / 3 })), columns: ['gene', 'nTPM'] });
-  assert.match(big, /^a5 \(70 rows\) ← filter of a1: gene, nTPM\n  G0 \| 0\n  G1 \| 0\.333333\n  … 68 more rows \(open a5 to see them\)$/, 'numbers display with six significant digits');
-  assert.match(desk.resultCard({ id: 'a6', origin: 'x', rows: [{ gene: 'A', v: 1 }], columns: ['gene', 'v'], folded: ['a7', 'a8'] }), /^a6 \(1 rows\) ← x: gene, v \[used by a7, a8; open a6 for its rows\]$/);
-  assert.match(desk.resultCard({ id: 'a2', origin: 'chart(x=gene)', rows: [], columns: [], figure: { type: 'bar', title: 'T' }, images: ['a2.png'] }), /^a2 figure bar "T" ← chart\(x=gene\) \(rendered\)$/);
-  assert.match(desk.resultCard({ id: 'a3', origin: 'pivot of a1', rows: [], columns: [], matrix: { row_labels: ['EGFR'], col_labels: ['liver', 'lung'], matrix: [[1, null]] } }), /^a3 matrix 1 × 2 ← pivot of a1 \(a heatmap input; not a row table\)\n   \| liver \| lung\n  EGFR \| 1 \| $/);
+  const line = desk.resultLine({ id: 'a1', title: 'Liver nTPM', description: 'Consensus liver nTPM of the three genes', origin: 'investigator_hpa t1 "liver nTPM"', rows, columns: ['gene', 'nTPM'] });
+  assert.equal(line, 'a1 "Liver nTPM" (3 rows: gene, nTPM) ← investigator_hpa t1 "liver nTPM"\n  Consensus liver nTPM of the three genes\n  0: EGFR | 32.2\n  1: ERBB2 | 30.7\n  2: MET | ');
+  const big = desk.resultLine({ id: 'a5', title: 'All', description: 'Every gene', origin: 'filter of a1', rows: Array.from({ length: 70 }, (_, i) => ({ gene: `G${i}`, nTPM: i / 3 })), columns: ['gene', 'nTPM'] });
+  assert.equal(big, 'a5 "All" (70 rows: gene, nTPM) ← filter of a1\n  Every gene', 'a larger result shows no rows until opened');
+  assert.match(desk.resultLine({ id: 'a2', title: 'T', origin: 'chart(x=gene)', rows: [], columns: [], figure: { type: 'bar', title: 'T' }, images: ['a2.png'] }), /^a2 "T" figure bar ← chart\(x=gene\) \(rendered\)$/);
+  assert.match(desk.resultLine({ id: 'a3', title: 'Heat', origin: 'pivot of a1', rows: [], columns: [], matrix: { row_labels: ['EGFR'], col_labels: ['liver', 'lung'], matrix: [[1, null]] } }), /^a3 "Heat" matrix 1 × 2 \(rows: EGFR; columns: liver, lung\) ← pivot of a1; a heatmap input$/);
+  const wide = desk.resultLine({ id: 'a9', title: 'Wide', origin: 'x', rows: Array.from({ length: 9 }, () => ({})), columns: Array.from({ length: 30 }, (_, i) => `c${i}`) });
+  assert.match(wide, /^a9 "Wide" \(9 rows: c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, … \+18 more columns\) ← x$/);
 });
 
 test('a table opened for particular columns details those and names the rest', () => {
@@ -31,9 +32,11 @@ test('a table opened for particular columns details those and names the rest', (
     sample: [{ Gene: 'ENSG1', Tissue: 'liver', nTPM: '32.2', Note: 'a' }] });
   assert.match(card, /^wide\.tsv — Wide; 4 columns \(values from 6 rows\)\n  columns: Gene \| Tissue \| nTPM \| Note\n  Tissue: 3 values: liver \| lung \| heart\n  nTPM: number 0 to 34\.1; 5 distinct\n  rows \(Tissue \| nTPM\): liver \| 32\.2$/);
   assert.doesNotMatch(card, /Note: 6 values/, 'a column not asked for is named, not detailed');
+  const names = desk.tableCard({ name: 'wide.tsv', title: 'Wide', columns: ['Gene', 'Tissue'], focus: [], whole: false });
+  assert.equal(names, 'wide.tsv — Wide; 2 columns\n  columns: Gene | Tissue', 'opened without values, a table is its column names');
 });
 
-test('a wide table opened whole shows a few values per column, and every value for the columns asked for', () => {
+test('a wide table opened whole shows what each column holds, and every value for the columns asked for', () => {
   const columns = Array.from({ length: 30 }, (_, i) => `c${i}`);
   const values = Array.from({ length: 20 }, (_, i) => `v${i}`);
   const profile = columns.map(c => ({ column: c, kind: 'text', distinct: '20', observed_values: values, examples: values.slice(0, 6), full_examples: values.slice(0, 6) }));
@@ -42,14 +45,6 @@ test('a wide table opened whole shows a few values per column, and every value f
   assert.match(whole, /\n  c7: 20 values: v0 \| v1 \| v2 \| v3 \| v4 \| v5 \| v6 \| v7 \| v8 \| v9 \| v10 \| v11 \| v12 \| v13 \| v14 \| v15 \| v16 \| v17 \| v18 \| v19\n  c8: text, 20 distinct/);
   const narrow = desk.tableCard({ name: 'n.tsv', title: 'Narrow', columns: columns.slice(0, 3), profile: profile.slice(0, 3), sample: [], whole: true });
   assert.match(narrow, /\n  c0: 20 values: v0 \| v1/, 'a narrow table lists every value of every column');
-});
-
-test('a result card shows the entity keys and the columns its operation named first', () => {
-  const rows = Array.from({ length: 70 }, (_, i) => ({ gene: `G${i}`, ensembl: `E${i}`, a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, Score: i, Tissue: 'liver' }));
-  const columns = ['gene', 'ensembl', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'Score', 'Tissue'];
-  const card = desk.resultCard({ id: 'a9', origin: 'filter of x', rows, columns, first: ['gene', 'ensembl', 'Tissue', 'Score'], profile: [{ column: 'Score', kind: 'number', min: 0, max: 69, distinct: '70' }, { column: 'a', kind: 'number', min: 1, max: 1, distinct: '1' }] });
-  assert.match(card, /\n  Score: number 0 to 69; 70 distinct\n  a: number 1; 1 distinct\n  G0 \| E0 \| liver \| 0 \| 1 \| 2 \| 3 \| 4 \| … \+3 columns\n/);
-  assert.match(card, /^a9 \(70 rows\) ← filter of x: gene, ensembl, a, b, c, d, e, f, g, Score, Tissue\n/, 'the header keeps the real column order');
 });
 
 test('history keeps recent lines whole and folds only the oldest', () => {

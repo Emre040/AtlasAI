@@ -4,12 +4,15 @@
  * The study loop (aso_hpa). One model, one desk, one loop.
  *
  * Every turn the model sees its whole working set, rebuilt from state: the goal, the plan, every
- * table it opened, every artifact (columns and two rows), what is running, its own history and
- * notes. It calls tools: the agents the chat offers (from the orchestrator), the registered table
- * operations, plan/note/open/run/skip and finish. Every tool result is an artifact linked to its
- * inputs; an agent that returns wakes the loop. The report is bound to the data: tables and
- * figures by id, findings as claims tied to the rows they rest on. The model never carries values.
- * Nothing about the database is written here: its name, entity and tables come from the adapter.
+ * artifact as one line (id, title, columns, size, what made it; its rows when there are only a
+ * few), the rows it asked to see, what is running, its own history and notes. It calls tools:
+ * the agents (from the orchestrator), the table operations over artifacts, plan/note/open/run/
+ * skip and finish. Every result is an artifact linked to its inputs and named by the model with
+ * a title and a description; an agent that returns wakes the loop. The report is bound to the
+ * data: tables and figures by id, findings as claims tied to the rows they rest on. The model
+ * never carries values and never reads a file: sets of entities come from the search agent, rows
+ * from the Investigator. Nothing about the database is written here: its name and entity come
+ * from the adapter.
  */
 
 const path = require('node:path');
@@ -17,14 +20,14 @@ const fs = require('node:fs/promises');
 const { inference, getActiveModel } = require('../../inference/gateway');
 const { platformConfig } = require('../../policy/config');
 const tools = require('../aso/studyTools');
-const { TABLE_OPERATIONS, executeTableOperation, THEN_BY } = require('../aso/tableOperations');
+const { TABLE_OPERATIONS, executeTableOperation, A, THEN_BY } = require('../aso/tableOperations');
 const geneData = require('../../hpa/geneDataAdapter');
 const { createWorkspace, updateWorkspace } = require('../aso/workspaceStore');
 const { registerArtifact } = require('../aso/artifactStore');
 const { createLogger } = require('../aso/logger');
 const { renderCharts } = require('../aso/pipelines/renderCharts');
 const { resolveAgentMode } = require('../../hpa/agentMode');
-const { localData, FILES } = require('../../hpa/localData');
+const { FILES } = require('../../hpa/localData');
 const { validate, executeBatch, ARGUMENTS_SCHEMA } = require('../aso/batchOperations');
 const { decodeArguments } = require('../aso/toolArguments');
 const studyPlan = require('../aso/studyPlan');
@@ -35,144 +38,61 @@ const desk = require('../aso/desk');
 const MAX_STALLS = 2;             // turns in a row with nothing to do before the loop ends
 const WAKE_DEBOUNCE_MS = 300;     // completions this close together wake the loop once
 const JOB_WAIT_MS = 15 * 60_000;  // longest the loop waits for a running agent
-const MAX_HELD_ROWS = 5000000;    // rows held in memory at once; streaming tools have no limit
 const VIEW_ROWS = 10;             // rows an open shows by default
 
 // ---- tools of the study itself ---------------------------------------------------------------------
 
-const { A } = require('../aso/tableOperations');
 const S = { type: 'string' };
 const N = { type: 'integer' };
 const tool = (name, description, properties = {}, required = []) => ({ name, description, parameters: { type: 'object', properties, required } });
+// An operation names its result for a reader: a title and a description.
+const op = (name, description, properties = {}, required = []) => tool(name, description, { title: S, description: S, ...properties }, ['title', 'description', ...required]);
 const STUDY_TOOLS = [
   tool('plan', 'The deliverables the study owes: one item per requested table, figure (its chart type), cohort (gene_set) or interpretation. Replaces the plan.', { items: { type: 'array', items: { type: 'object', properties: { step: S, kind: { type: 'string', enum: studyPlan.KINDS } }, required: ['step', 'kind'] } } }, ['items']),
   tool('note', 'Keep a decision or open question on the desk; replace overwrites note N.', { text: S, replace: N }, ['text']),
-  tool('open', 'Show rows of a large artifact (rows and offset page it, columns narrow it), or put a dataset on the desk with its columns, values and sample rows.', { artifact: A, rows: N, offset: N, columns: { type: 'array', items: S } }, ['artifact']),
+  tool('open', 'Show rows of an artifact: rows and offset page it, columns narrow it.', { artifact: A, rows: N, offset: N, columns: { type: 'array', items: S } }, ['artifact']),
   tool('run', 'Run dependent operations together; a step names an operation and its args, and refers to an earlier step as @id.', { steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
-  tool('combine', 'Rows of a and b as one table: union (either, one row per entity), intersect (rows of a whose entity is in b), difference (rows of a whose entity is not in b) or concat (all rows of a, then all of b). on matches by a column instead of the entity.', { a: A, b: A, how: { type: 'string', enum: ['union', 'intersect', 'difference', 'concat'] }, on: S }, ['a', 'b', 'how']),
+  op('combine', 'Rows of a and b as one table: union (either, one row per entity), intersect (rows of a whose entity is in b), difference (rows of a whose entity is not in b) or concat (all rows of a, then all of b). on matches by a column instead of the entity.', { a: A, b: A, how: { type: 'string', enum: ['union', 'intersect', 'difference', 'concat'] }, on: S }, ['a', 'b', 'how']),
   TABLE_OPERATIONS.get('join'),
   TABLE_OPERATIONS.get('filter'),
   TABLE_OPERATIONS.get('select'),
   TABLE_OPERATIONS.get('rank'),
-  tool('top_per_group', 'The n highest (or lowest) rows of by per group; group_by defaults to the entity. Works on a whole dataset.', { artifact: A, group_by: S, by: S, n: N, order: { type: 'string', enum: ['desc', 'asc'] }, ties: { type: 'string', enum: ['include', 'truncate'] }, then_by: THEN_BY }, ['artifact', 'by']),
+  op('top_per_group', 'The n highest (or lowest) rows of by per group; group_by defaults to the entity.', { artifact: A, group_by: S, by: S, n: N, order: { type: 'string', enum: ['desc', 'asc'] }, ties: { type: 'string', enum: ['include', 'truncate'] }, then_by: THEN_BY }, ['artifact', 'by']),
   TABLE_OPERATIONS.get('aggregate'),
   TABLE_OPERATIONS.get('classify'),
   TABLE_OPERATIONS.get('compute'),
   TABLE_OPERATIONS.get('fill_missing'),
-  tool('pivot', 'A matrix for a heatmap: rows from row, columns from column, cells from value (aggregate duplicates first).', { artifact: A, row: S, column: S, value: S }, ['artifact', 'column', 'value']),
-  tool('chart', 'Draw an artifact. Bar family: x labels, y values, group for series (grouped_bar needs it). scatter/bubble: numeric x and y, label names points, group colours them. heatmap takes a pivot. missing=omit skips rows with a missing number.', { artifact: A, type: { type: 'string', enum: studyPlan.CHART_KINDS }, x: S, y: S, group: S, size: S, label: S, title: S, x_label: S, y_label: S, missing: { type: 'string', enum: ['error', 'omit'] } }, ['artifact', 'type']),
+  op('pivot', 'A matrix for a heatmap: rows from row, columns from column, cells from value (aggregate duplicates first).', { artifact: A, row: S, column: S, value: S }, ['artifact', 'column', 'value']),
+  op('chart', 'Draw an artifact; the title is the figure title. Bar family: x labels, y values, group for series (grouped_bar needs it). scatter/bubble: numeric x and y, label names points, group colours them. heatmap takes a pivot. missing=omit skips rows with a missing number.', { artifact: A, type: { type: 'string', enum: studyPlan.CHART_KINDS }, x: S, y: S, group: S, size: S, label: S, x_label: S, y_label: S, missing: { type: 'string', enum: ['error', 'omit'] } }, ['artifact', 'type']),
   TABLE_OPERATIONS.get('correlate'),
-  tool('overlap', 'Entities a and b share against a universe (artifact or dataset): shared, expected, fold, hypergeometric p; group_by tests each group of a.', { a: A, b: A, universe: A, on: S, group_by: S }, ['a', 'b', 'universe']),
-  tool('standardize', 'Add a rescaled copy of a numeric column: zscore, minmax or percentile.', { artifact: A, column: S, method: { type: 'string', enum: ['zscore', 'minmax', 'percentile'] }, as: S }, ['artifact', 'column', 'method']),
-  tool('explode', 'One row per item of a list cell; "key: number" items become <as>_key and <as>_value, "label (number)" <as>_label and <as>_value, others <as>_item.', { artifact: A, column: S, as: S }, ['artifact', 'column']),
+  op('overlap', 'Entities a and b share, against every entity of the database or a universe artifact: shared, expected, fold, hypergeometric p; group_by tests each group of a.', { a: A, b: A, universe: A, on: S, group_by: S }, ['a', 'b']),
+  op('standardize', 'Add a rescaled copy of a numeric column: zscore, minmax or percentile.', { artifact: A, column: S, method: { type: 'string', enum: ['zscore', 'minmax', 'percentile'] }, as: S }, ['artifact', 'column', 'method']),
+  op('explode', 'One row per item of a list cell; "key: number" items become <as>_key and <as>_value, "label (number)" <as>_label and <as>_value, others <as>_item.', { artifact: A, column: S, as: S }, ['artifact', 'column']),
   tool('skip', 'Nothing to do until a running agent returns.', { reason: S }, ['reason']),
   tool('finish', 'Deliver the report: tables and figures by id, findings as claims bound to their cells, limitations, not_done.', FINISH_SCHEMA)
 ];
 const TABLE_TOOLS = new Set(['combine', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'classify', 'compute', 'fill_missing', 'pivot', 'chart', 'correlate', 'overlap', 'standardize', 'explode']);
 const SYNC_TOOLS = new Set(['plan', 'note', 'open', 'skip', 'finish']);
 
-function systemPrompt(db, datasets, agentNames) {
+// The arguments of a call without the name it gives its result.
+const bare = args => { const { title, description, ...rest } = args || {}; return rest; };
+
+function systemPrompt(db, agentNames) {
   const entity = db.entity;
   const search = agentNames.includes('deep_research_hpa') ? 'deep_research_hpa' : 'the search agent';
-  return `You run a study over the ${db.database} for a scientist. Agents and operations produce every value; you choose what to ask and how to combine the results. ${search} finds the ${entity}s matching a description (a cohort). investigator_hpa takes a list (genes=[names], gene=<name> or from=<artifact id>) and a complete question (fields, row filters, units), finds the tables that hold the answer and fetches the raw records for the whole list at once, returning tables. The operations compute over saved tables. Every result is an artifact with an id (a1, a2, …); the artifacts are the evidence of the study, and the report cites them by id.
+  return `You run a study over the ${db.database} for a scientist. Two agents and the operations produce every value; you choose what to ask and how to combine the results, and you never read a file. ${search} finds the ${entity}s matching a description in words, the way the ${db.database} search would, and returns them as a table. investigator_hpa answers a question with rows: for a list of points (points=[…], one or hundreds, ${entity}s or any values such as tissues; or from=<artifact id> and column) it returns every point with the fields asked for, and without a list every row the question selects. The operations compute over artifacts. Every result is an artifact with an id (a1, a2, …), a title and a description; the artifacts are the evidence of the study, and the report cites them by id.
 
-The desk in the message is your whole working set and stays in front of you every turn: the plan, the tables you opened, every artifact with its columns and rows (whole with row indices up to ${desk.WHOLE_ROWS} rows; larger ones show two rows and what each column holds), what is running, your history and your notes. open shows more rows of a large artifact, or puts a dataset on the desk with its columns and values.
+The desk in the message is your whole working set and stays in front of you every turn: the plan, every artifact as one line (id, title, columns, rows, what made it; a result of a few rows whole, with row indices), the rows you asked to see, what is running, your history and your notes. open shows rows of an artifact when a decision or a claim needs them; select narrows columns.
 
 How a study goes:
 1. plan lists the deliverables, one item per requested table, figure of a given type, cohort or interpretation; independent work starts in the same turn.
-2. A cohort, the ${entity}s matching a description, comes from ${search}, which runs the ${db.database} search for it. The records of a list of ${entity}s come from investigator_hpa, which finds the tables that hold them and reads the list's rows by index, in seconds. Both run in the background and return tables that are used as they are. A dataset name stands in for a table when the question is about the whole dataset: a count over every ${entity}, a whole-table ranking; an operation over a dataset streams every row of it.
-3. Operations compute on artifact ids. Dependent steps chain in one run call with @id references (pivot then heatmap; filter, rank, chart); independent calls go in the same turn.
+2. A set of ${entity}s comes from ${search}; its rows come from investigator_hpa with from=<that artifact's id> and the question. Both run in the background and return tables that are used as they are.
+3. Operations compute on artifact ids, each named with a title and a description a reader understands. Dependent steps chain in one run call with @id references (pivot then heatmap; filter, rank, chart); independent calls go in the same turn.
 4. finish delivers the report from the data: tables and figures by id, and findings as claims, each bound to the rows and columns it rests on. The report prints those cells beside the claim, so every number a claim states is among them or was computed into an artifact the claim cites. Limitations state what the evidence cannot establish, in words. A plan item that cannot be delivered goes in not_done with the reason.
-Values are reported as recorded: units, zeros, blanks, repeated rows and ties. A missing record is absence from this source.
-
-DATASETS ON DISK (open one for its columns and values; investigator_hpa reads them for a supplied list)
-${datasets.join(', ')}`;
+Values are reported as recorded: units, zeros, blanks, repeated rows and ties. A missing record is absence from this source.`;
 }
 
-// ---- data access for the operations -----------------------------------------------------------------
-
-// Entity keys for a row read straight from a dataset, so set operations and joins work.
-function geneKeys(entry, row) {
-  const isEnsembl = v => /^ENSG\d{5,}$/.test(String(v || ''));
-  if (entry.key === 'name') return { gene: row[entry.columns[0]] || null, ensembl: row[entry.columns[1]] || null };
-  const column = entry.geneColumn || entry.columns.find(c => isEnsembl(row[c]));
-  const name = row['Gene name'] ?? (isEnsembl(row.Gene) ? null : row.Gene) ?? null;
-  return { gene: name || null, ensembl: column ? row[column] || null : null };
-}
-
-// The dataset columns that hold the entity keys, as geneKeys reads them, lower-cased.
-function keyColumns(entry) {
-  const names = ['gene', 'ensembl'];
-  if (entry.key === 'name') names.push(entry.columns[0], entry.columns[1]);
-  else if (entry.key === 'ensembl') names.push(entry.columns[0]);
-  else if (entry.geneColumn) names.push(entry.geneColumn);
-  for (const c of entry.columns) if (/^gene( name)?$/i.test(c)) names.push(c);
-  return new Set(names.filter(Boolean).map(c => String(c).toLowerCase()));
-}
-
-// The entities a filter pins with = or in on a key column, so they can be read by index
-// instead of streaming the whole table; null when no clause pins the key.
-function pinnedEntities(entry, where) {
-  const keys = keyColumns(entry);
-  for (const clause of Array.isArray(where) ? where : []) {
-    if (!clause || !['=', 'in'].includes(clause.op) || !keys.has(String(clause.column || '').toLowerCase())) continue;
-    const listed = clause.op === 'in' ? tools.inList(clause.value) : clause.value;
-    const values = Array.isArray(listed) ? listed : [listed];
-    if (values.every(v => typeof v === 'string' || typeof v === 'number')) return values.map(String);
-  }
-  return null;
-}
-
-async function* datasetStream(entry) {
-  for await (const row of localData.rows(entry.file)) yield { ...geneKeys(entry, row), ...row };
-}
-
-// A dataset used where an artifact goes. Entity-level files come whole; a per-entity file comes
-// restricted to the entities of the other input, filtered while it streams, or whole when it fits.
-async function datasetRows(entry, { genes = null, where = null, limit = 3 } = {}) {
-  if (entry.key === 'master') {
-    const master = await localData.master();
-    return master.rows.map(r => ({ ...geneKeys(entry, r), ...r }));
-  }
-  if (entry.key === 'lookup' || entry.key === 'scan') return (await localData.table(entry.file)).rows.map(r => ({ ...geneKeys(entry, r), ...r }));
-  if (genes && entry.key === 'stream') {
-    const wanted = new Set(genes.flatMap(r => [r.ensembl, r.gene].filter(Boolean).map(v => String(v).toLowerCase())));
-    const out = [];
-    for await (const row of datasetStream(entry)) {
-      const k = geneKeys(entry, row);
-      if ((k.ensembl && wanted.has(String(k.ensembl).toLowerCase())) || (k.gene && wanted.has(String(k.gene).toLowerCase()))) out.push(row);
-    }
-    return out;
-  }
-  if (genes) {
-    const seen = new Set();
-    const queue = [];
-    for (const r of genes) { const k = r.ensembl || r.gene; if (k && !seen.has(k)) { seen.add(k); queue.push(k); } }
-    const out = [];
-    const worker = async () => {
-      while (queue.length) {
-        const gene = await geneData.resolveGene(queue.shift());
-        if (!gene) continue;
-        const reading = await geneData.read(gene, entry.file);
-        for (const row of reading.rows) out.push({ gene: gene.gene, ensembl: gene.ensembl, ...row });
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(limit, Math.max(1, queue.length)) }, worker));
-    return out;
-  }
-  if (where) {
-    const keep = tools.wherePredicate(['gene', 'ensembl', ...entry.columns], where);
-    const out = [];
-    for await (const row of datasetStream(entry)) if (keep(row)) out.push(row);
-    return out;
-  }
-  const out = [];
-  for await (const row of datasetStream(entry)) {
-    out.push(row);
-    if (out.length > MAX_HELD_ROWS) throw new Error(`${entry.file} has more than ${MAX_HELD_ROWS} rows, more than fits in memory at once: filter, aggregate or top_per_group stream it, or use it with an artifact (join, intersect, difference) so only those entities are read`);
-  }
-  return out;
-}
+// ---- what agents return -----------------------------------------------------------------------------
 
 function normalizeSearchRow(r) {
   const out = { gene: r.Gene ?? r.gene ?? null, ensembl: r.Ensembl ?? r.ensembl ?? null };
@@ -252,29 +172,30 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
   let registrations = Promise.resolve();
   const register = args => { const next = registrations.then(() => registerArtifact(db, args)); registrations = next.catch(() => {}); return next; };
 
-  const state = { goal, plan: [], artifacts: [], byId: new Map(), running: new Map(), notes: [], history: [], opened: new Map(), views: new Map(), turn: 0, toolCalls: 0, failed: 0, ids: { a: 0, t: 0 } };
+  const state = { goal, plan: [], artifacts: [], byId: new Map(), running: new Map(), notes: [], history: [], views: new Map(), turn: 0, toolCalls: 0, failed: 0, ids: { a: 0, t: 0 } };
   const remember = text => state.history.push(`turn ${state.turn}: ${text}`);
 
-  const catalog = (await geneData.catalog()).filter(e => e.key !== 'unreadable');
-  // The study's agents are the ones that return evidence: a cohort or records. Agents that
-  // answer in prose about the database (definitions, membership) belong to the chat.
+  // The study's agents are the ones that return evidence: a set of entities or rows. Agents that
+  // answer in prose about the database (definitions, membership) belong to the chat. In a study
+  // each is described by what it returns, in the database's own terms, and names its result.
   const agentSpecs = orchestrator.getToolSpecs().filter(t => !['aso_hpa', 'dictionary_expert_hpa', 'check_inclusion_hpa'].includes(t.function.name)).map(t => {
     const properties = { ...t.function.parameters.properties };
     delete properties.mode;
     const entity = identity.entity;
-    // In a study the agents are described by what they return, in the database's own terms.
-    if (t.function.name === 'deep_research_hpa') return { ...t, function: { ...t.function, description: `Finds the ${entity}s matching a description (a cohort) by running a ${identity.database} search; returns their table.`, parameters: { ...t.function.parameters, properties: { ...properties, goal: { type: 'string', description: 'the cohort described, with every stated requirement' } } } } };
-    if (t.function.name === 'investigator_hpa') return { ...t, function: { ...t.function, description: `Raw records for a list of ${entity}s: genes=[names], gene=<name> or from=<artifact id>, and the complete question (fields, rows, units). It finds the tables and fetches every ${entity} at once, returning tables.`, parameters: { ...t.function.parameters, required: [], properties: {
-      gene: { type: 'string', description: `one ${entity}` },
-      genes: { type: 'array', items: S, description: `${entity} names` },
-      from: { type: 'string', description: `artifact id whose rows supply the ${entity}s` },
-      question: { type: 'string', description: 'the complete question: fields, rows, units' }
+    if (t.function.name === 'deep_research_hpa') return { ...t, function: { ...t.function, description: `Finds the ${entity}s matching a description in words, the way the ${identity.database} search would; returns them as a table.`, parameters: { ...t.function.parameters, required: ['goal', 'title', 'description'], properties: { ...properties, goal: { type: 'string', description: 'the set described, with every stated requirement' }, title: S, description: S } } } };
+    if (t.function.name === 'investigator_hpa') return { ...t, function: { ...t.function, description: `Rows that answer a question: for a list of points (points=[...], or from=<artifact id> and column) every point with the fields asked for; without a list every row the question selects. The question says which fields, rows and units.`, parameters: { ...t.function.parameters, required: ['question', 'title', 'description'], properties: {
+      points: { type: 'array', items: S, description: `${entity}s, or any values (tissues, cell lines, categories)` },
+      from: { type: 'string', description: 'artifact id whose rows supply the points' },
+      column: { type: 'string', description: `column of from that holds the points; its ${entity} keys by default` },
+      question: { type: 'string', description: 'the complete question: fields, rows, units' },
+      title: S,
+      description: S
     } } } };
     return { ...t, function: { ...t.function, parameters: { ...t.function.parameters, properties } } };
   });
   const agentNames = new Set(agentSpecs.map(t => t.function.name));
   const toolSpecs = [...agentSpecs, ...STUDY_TOOLS.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }))];
-  const system = systemPrompt(identity, catalog.map(e => e.file), [...agentNames]);
+  const system = systemPrompt(identity, [...agentNames]);
 
   const get = id => {
     const key = String(id || '').trim();
@@ -282,10 +203,10 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     if (!a) throw new Error(`no artifact "${id}" (have ${state.artifacts.map(x => x.id).join(', ') || 'none'})`);
     return a;
   };
-  const origin = a => `${a.tool}${a.toolId ? ` ${a.toolId}` : ''}${a.tool === 'chart' ? `(${desk.argsLine(a.args, 120)})` : agentNames.has(a.tool) ? ` "${String(a.args.question || a.args.goal || a.args.topic || '').slice(0, 90)}"` : a.inputs?.length ? ` of ${a.inputs.join(', ')}` : ''}`;
+  const origin = a => `${a.tool}${a.toolId ? ` ${a.toolId}` : ''}${a.tool === 'chart' ? `(${desk.argsLine(bare(a.args), 120)})` : agentNames.has(a.tool) ? ` "${String(a.args.question || a.args.goal || a.args.topic || '').slice(0, 90)}"` : a.inputs?.length ? ` of ${a.inputs.join(', ')}` : ''}`;
 
   // Stores a tool's output as an artifact, linked to the artifacts it read.
-  async function addArtifact({ kind, label, rows, matrix, text, tool: toolName, args, inputs, meta, figure, toolId, columns: suppliedColumns }) {
+  async function addArtifact({ kind, label, description = '', rows, matrix, text, tool: toolName, args, inputs, meta, figure, toolId, columns: suppliedColumns }) {
     const id = `a${++state.ids.a}`;
     const sources = inputs.map(i => state.byId.get(i)?.uuid).filter(Boolean);
     const base = { workspaceId: workspace.id, artifactsDir: workspace.artifactsDir };
@@ -316,13 +237,13 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     }
     const columns = suppliedColumns || (rows ? tools.columnsOf(rows) : []);
     const size = kind === 'figure' ? 'figure' : matrix ? `${matrix.row_labels.length} × ${matrix.col_labels.length} matrix` : kind === 'note' ? 'note' : `${rows.length} rows`;
-    const a = { id, uuid: reg.artifactUuid, storageUri: reg.storageUri, kind, label, size, rows: rows || null, matrix: matrix || null, figure: figure || null, text: text || null, columns, tool: toolName, args, inputs, meta: meta || {}, images, toolId, turn: state.turn };
+    const a = { id, uuid: reg.artifactUuid, storageUri: reg.storageUri, kind, label, description, size, rows: rows || null, matrix: matrix || null, figure: figure || null, text: text || null, columns, tool: toolName, args, inputs, meta: meta || {}, images, toolId, turn: state.turn };
     state.artifacts.push(a);
     state.byId.set(id, a);
     return a;
   }
 
-  const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.size, rows: a.rows ? a.rows.length : undefined, columns: a.columns.slice(0, 12), sample: a.rows ? desk.sampleLines(a.rows, a.columns.slice(0, 7), 3).map(l => l.split(' | ')) : undefined, sample_columns: a.columns.slice(0, 7), text: a.text ? a.text.slice(0, 600) : undefined, images: a.images, artifact_uuid: a.uuid, search_url: a.meta?.search_url, query: a.meta?.query, inputs: a.inputs });
+  const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, title: a.label, description: a.description, size: a.size, rows: a.rows ? a.rows.length : undefined, columns: a.columns.slice(0, 12), sample: a.rows ? desk.sampleLines(a.rows, a.columns.slice(0, 7), 3).map(l => l.split(' | ')) : undefined, sample_columns: a.columns.slice(0, 7), text: a.text ? a.text.slice(0, 600) : undefined, images: a.images, artifact_uuid: a.uuid, search_url: a.meta?.search_url, query: a.meta?.query, inputs: a.inputs });
   const artifactsSummary = () => state.artifacts.map(a => ({ artifact_uuid: a.uuid, kind: a.kind === 'figure' ? 'figure' : a.kind === 'note' ? 'inspection' : a.kind === 'answer' ? 'measurement' : 'dataset', tool: a.tool, summary: { id: a.id, label: a.label, row_count: a.rows?.length }, storage_uri: a.storageUri }));
 
   const wake = { resolve: null };
@@ -337,25 +258,35 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
   const agentJobs = new Map();
   function startAgent(toolName, args) {
     if (args.mode !== undefined && args.mode !== mode) throw new Error(`Delegated agents use the study data source: ${mode}`);
-    const executionArgs = { ...args, mode };
+    const title = String(args.title || '').trim(), description = String(args.description || '').trim();
+    if (!title || !description) throw new Error(`${toolName} needs a title and a description for its result`);
+    const executionArgs = { ...bare(args), mode };
     const inputs = [];
-    // One entity is a list of one: the investigator returns tables either way.
-    if (toolName === 'investigator_hpa' && args.gene !== undefined && args.genes === undefined && args.from === undefined) { executionArgs.genes = [String(args.gene)]; delete executionArgs.gene; }
-    if (toolName === 'investigator_hpa' && args.from !== undefined) {
-      if (args.gene !== undefined || args.genes !== undefined) throw new Error('Use one of gene, genes or from');
-      const input = get(args.from);
-      if (!Array.isArray(input.rows) || !input.rows.length) throw new Error(`${args.from} has no rows to investigate`);
-      const genes = [...new Set(input.rows.map(row => row.ensembl || row.gene).filter(Boolean))];
-      if (!genes.length) throw new Error(`${args.from} has no ${identity.entity} identifiers (columns ${identity.keys.join(', ')})`);
-      inputs.push(input.id);
-      delete executionArgs.from;
-      executionArgs.genes = genes;
+    if (toolName === 'investigator_hpa') {
+      // The points come as a list, or from an artifact's column (its entity keys by default);
+      // without either, the question itself selects the rows.
+      if (args.from !== undefined) {
+        if (args.points !== undefined) throw new Error('Use points or from, not both');
+        const input = get(args.from);
+        if (!Array.isArray(input.rows) || !input.rows.length) throw new Error(`${args.from} has no rows to investigate`);
+        const column = args.column ? (input.columns.find(c => c === args.column) || input.columns.find(c => c.toLowerCase() === String(args.column).toLowerCase())) : null;
+        if (args.column && !column) throw new Error(`${args.from} has no column ${JSON.stringify(args.column)}; its columns: ${input.columns.join(', ')}`);
+        const values = column ? input.rows.map(row => row[column]) : input.rows.map(row => row[identity.keys[1]] || row[identity.keys[0]]);
+        const points = [...new Set(values.filter(v => v !== null && v !== undefined && String(v).trim() !== '').map(String))];
+        if (!points.length) throw new Error(`${args.from} has no ${column || identity.entity} values to investigate`);
+        inputs.push(input.id);
+        delete executionArgs.from; delete executionArgs.column;
+        executionArgs.points = points;
+      } else if (args.points !== undefined) {
+        if (!Array.isArray(args.points) || !args.points.length) throw new Error('points must be a nonempty list');
+        executionArgs.points = args.points.map(String);
+      } else executionArgs.points = [];
+      delete executionArgs.gene; delete executionArgs.genes;
     }
-    if (toolName === 'investigator_hpa' && args.gene === undefined && args.genes === undefined && args.from === undefined) throw new Error('investigator_hpa needs gene, genes or from');
     const fingerprint = JSON.stringify([toolName, executionArgs]).toLowerCase();
     const earlier = agentJobs.get(fingerprint);
     if (earlier) {
-      remember(earlier.made ? `${toolName}(${desk.argsLine(args, 140)}) was already asked as ${earlier.id}: its result is ${earlier.made.join(', ')}` : `${toolName}(${desk.argsLine(args, 140)}) is already running as ${earlier.id}`);
+      remember(earlier.made ? `${toolName}(${desk.argsLine(bare(args), 140)}) was already asked as ${earlier.id}: its result is ${earlier.made.join(', ')}` : `${toolName}(${desk.argsLine(bare(args), 140)}) is already running as ${earlier.id}`);
       return false;
     }
     const id = `t${++state.ids.t}`;
@@ -364,8 +295,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     state.running.set(id, job);
     state.toolCalls++;
     state.agentStarts = (state.agentStarts || 0) + 1;
-    const label = String(args.goal || args.question || args.topic || args.gene || toolName).slice(0, 80);
-    log('tool.start', { id, tool: toolName, kind: 'agent', label, args, inputs }, id);
+    log('tool.start', { id, tool: toolName, kind: 'agent', label: title, args, inputs }, id);
     const forward = async s => log(`agent.${s.stage}`, { id, label: s.label, message: s.message }, id);
     job.promise = orchestrator.execute(toolName, executionArgs, { db, visitorId: ctx.visitorId, rawQuery: '', includeRows: true, onStep: forward, reasoningEffort: effort, runControl: ctx.runControl, signal: ctx.signal, cacheKey: workspace.uuid, maxTurns })
       .then(async ({ result }) => {
@@ -374,19 +304,19 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
         if (result?.bulk) {
           if (!result.tables?.length) throw new Error(result.error || result.note || 'Investigator returned no table');
           for (const table of result.tables) {
-            const a = await addArtifact({ kind: 'data', label: table.name, rows: table.rows, columns: table.columns, tool: toolName, args, inputs, toolId: id, meta: { lookups: [table.args], coverage: table.coverage, source_file: table.source_file, source_files: [table.source_file], status: result.status, hpa_version: result.hpa_version } });
+            const a = await addArtifact({ kind: 'data', label: table.title || title, description: table.description || description, rows: table.rows, columns: table.columns, tool: toolName, args, inputs, toolId: id, meta: { lookups: [table.args], coverage: table.coverage, source_file: table.source_file, source_files: [table.source_file], status: result.status, hpa_version: result.hpa_version } });
             made.push(a);
           }
-          remember(`${id} ${toolName} done → ${made.map(a => `${a.id} (${a.size})`).join(', ')}${result.note ? `. Investigator note: ${result.note}` : ''}${result.unresolved?.length ? `. Not in the release: ${result.unresolved.slice(0, 10).join(', ')}` : ''}`);
+          remember(`${id} ${toolName} "${title}" done → ${made.map(a => `${a.id} "${a.label}" (${a.size})`).join(', ')}${result.note ? `. Investigator note: ${result.note}` : ''}${result.unresolved?.length ? `. Not in the release: ${result.unresolved.slice(0, 10).join(', ')}` : ''}`);
         } else {
-          const a = await addArtifact({ ...agentArtifact(toolName, args, result), tool: toolName, args, inputs, toolId: id });
+          const a = await addArtifact({ ...agentArtifact(toolName, args, result), label: title, description, tool: toolName, args, inputs, toolId: id });
           made.push(a);
           // A search that ran the same query as an earlier one says so: rewording the goal changed nothing.
           const twin = a.meta.query ? state.artifacts.find(x => x !== a && x.meta?.query === a.meta.query) : null;
-          const extra = toolName === 'deep_research_hpa' ? ` query: ${String(a.meta.query || '').slice(0, 160)}${a.meta.not_expressible?.length ? `; could not express: ${a.meta.not_expressible.join('; ')}` : ''}${twin ? `; the same query as ${twin.id}${(twin.rows?.length || 0) === a.rows.length ? ', the same cohort' : ''}` : ''}` : a.kind === 'answer' ? ` answer: ${String(a.rows[0]?.answer || '').slice(0, 200)}` : '';
-          // A cohort's records are one Investigator call away; the history says so as it lands.
-          const next = toolName === 'deep_research_hpa' && a.rows.length && agentNames.has('investigator_hpa') ? `; its records: investigator_hpa from=${a.id} with the fields, rows and units the study needs` : '';
-          remember(`${id} ${toolName} done → ${a.id} (${a.size})${extra}${next}`);
+          const extra = toolName === 'deep_research_hpa' ? ` query: ${String(a.meta.query || '').slice(0, 160)}${a.meta.not_expressible?.length ? `; could not express: ${a.meta.not_expressible.join('; ')}` : ''}${twin ? `; the same query as ${twin.id}${(twin.rows?.length || 0) === a.rows.length ? ', the same set' : ''}` : ''}` : a.kind === 'answer' ? ` answer: ${String(a.rows[0]?.answer || '').slice(0, 200)}` : '';
+          // A set's rows are one Investigator call away; the history says so as it lands.
+          const next = toolName === 'deep_research_hpa' && a.rows.length && agentNames.has('investigator_hpa') ? `; its rows: investigator_hpa from=${a.id} with the question` : '';
+          remember(`${id} ${toolName} "${title}" done → ${a.id} (${a.size})${extra}${next}`);
         }
         job.made = made.map(a => a.id);
         for (const a of made) await log('tool.done', { id, tool: toolName, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);
@@ -394,193 +324,125 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
       .catch(async err => {
         agentJobs.delete(fingerprint);
         state.failed++;
-        remember(`${id} ${toolName} failed: ${err.message}${err.details ? ` ${JSON.stringify(err.details)}` : ''}`);
+        remember(`${id} ${toolName} "${title}" failed: ${err.message}${err.details ? ` ${JSON.stringify(err.details)}` : ''}`);
         await log('tool.failed', { id, tool: toolName, kind: 'agent', error: err.message, details: err.details, ms: Date.now() - job.startedAt }, id);
       })
       .finally(() => { state.running.delete(id); wakeUp(); });
     return true;
   }
 
-  // One table operation: inputs resolved (artifacts, datasets, streams), the operation applied.
+  // One table operation over artifacts: inputs resolved, the operation applied.
   async function computeOut(toolName, args) {
-    const inputColumns = new Set(), inputRefs = new Set(), reads = [];
-    let streamed = false;
-    const rowsOf = async (key, other = null) => {
-      const ref = String(args[key] ?? '').trim();
-      if (state.byId.has(ref)) {
-        const a = get(ref);
-        inputRefs.add(a.id);
-        if (a.matrix) throw new Error(`${a.id} is a matrix; only a heatmap chart can take it`);
-        if (!a.rows) throw new Error(`${a.id} has no rows`);
-        for (const c of a.columns) inputColumns.add(c);
-        return tools.withColumns([...a.rows], a.columns);
-      }
-      const entry = ref ? await geneData.entry(ref) : null;
-      if (!entry || entry.key === 'unreadable') throw new Error(`nothing called "${ref || '(no name)'}" among the artifacts (${[...state.byId.keys()].join(', ') || 'none'}) or the datasets on disk`);
-      inputRefs.add(entry.file);
-      const otherRef = other ? String(args[other] ?? '').trim() : '';
-      if (otherRef && state.byId.has(otherRef)) inputRefs.add(otherRef);
-      const genes = otherRef && state.byId.has(otherRef) ? get(otherRef).rows || null : null;
-      // A filter that pins the entity key reads those entities by index; the rest of its clauses apply in memory.
-      const pinned = toolName === 'filter' && !genes && ['ensembl', 'name'].includes(entry.key) ? pinnedEntities(entry, args.where) : null;
-      const t0 = Date.now();
-      const rows = pinned
-        ? await datasetRows(entry, { genes: (await geneData.resolveGenes(pinned)).filter(Boolean), limit: parallel })
-        : await datasetRows(entry, { genes, where: toolName === 'filter' ? args.where : null, limit: parallel });
-      streamed = toolName === 'filter' && !genes && !pinned && !['master', 'lookup', 'scan'].includes(entry.key);
-      // What reading the dataset cost, so the history shows it beside the result.
-      if (['ensembl', 'name', 'stream'].includes(entry.key)) reads.push(genes || pinned ? `${entry.file} read by index for ${(genes || pinned).length} ${identity.entity}s in ${Math.round((Date.now() - t0) / 1000)} s` : `${entry.file} streamed whole in ${Math.round((Date.now() - t0) / 1000)} s`);
-      for (const c of ['gene', 'ensembl', ...entry.columns]) inputColumns.add(c);
-      return tools.withColumns(rows, [...inputColumns]);
-    };
-    const wholeDataset = async key => {
-      const ref = String(args[key] ?? '').trim();
-      if (!ref || state.byId.has(ref)) return null;
-      const entry = await geneData.entry(ref);
-      if (!entry || !['ensembl', 'name', 'scan', 'stream'].includes(entry.key)) return null;
-      inputRefs.add(entry.file);
-      for (const c of ['gene', 'ensembl', ...entry.columns]) inputColumns.add(c);
-      return entry;
+    const inputColumns = new Set(), inputRefs = new Set();
+    const rowsOf = key => {
+      const a = get(String(args[key] ?? '').trim());
+      inputRefs.add(a.id);
+      if (a.matrix) throw new Error(`${a.id} is a matrix; only a heatmap chart can take it`);
+      if (!a.rows) throw new Error(`${a.id} has no rows`);
+      for (const c of a.columns) inputColumns.add(c);
+      return tools.withColumns([...a.rows], a.columns);
     };
     let out;
     switch (toolName) {
       case 'combine': {
         if (!['union', 'intersect', 'difference', 'concat'].includes(args.how)) throw new Error('combine: how is union, intersect, difference or concat');
-        out = { rows: tools.setOp(args.how, await rowsOf('a', 'b'), await rowsOf('b', 'a'), args.on || null) }; break;
+        out = { rows: tools.setOp(args.how, rowsOf('a'), rowsOf('b'), args.on || null) }; break;
       }
-      case 'join': out = executeTableOperation(toolName, args, { a: await rowsOf('a', 'b'), b: await rowsOf('b', 'a') }); break;
-      case 'filter': { const rows = await rowsOf('artifact'); out = executeTableOperation(toolName, streamed ? { ...args, where: [] } : args, { artifact: rows }); break; }
-      case 'select': case 'classify': case 'compute': case 'fill_missing': case 'correlate': case 'rank': out = executeTableOperation(toolName, args, { artifact: await rowsOf('artifact') }); break;
-      case 'top_per_group': { const entry = await wholeDataset('artifact'); out = { rows: entry ? await tools.topPerGroupStream(datasetStream(entry), args, ['gene', 'ensembl', ...entry.columns]) : tools.topPerGroup(await rowsOf('artifact'), args) }; break; }
-      case 'aggregate': {
-        const entry = await wholeDataset('artifact');
-        if (entry) out = { rows: await tools.aggregateStream(datasetStream(entry), args, ['gene', 'ensembl', ...entry.columns]) };
-        else out = executeTableOperation(toolName, args, { artifact: await rowsOf('artifact') });
-        break;
+      case 'join': out = executeTableOperation(toolName, args, { a: rowsOf('a'), b: rowsOf('b') }); break;
+      case 'filter': case 'select': case 'classify': case 'compute': case 'fill_missing': case 'correlate': case 'rank': case 'aggregate': out = executeTableOperation(toolName, args, { artifact: rowsOf('artifact') }); break;
+      case 'top_per_group': out = { rows: tools.topPerGroup(rowsOf('artifact'), args) }; break;
+      case 'overlap': {
+        // The universe is every entity of the database unless an artifact is named.
+        const universe = args.universe ? rowsOf('universe') : tools.withColumns(await geneData.entities(), [...identity.keys]);
+        out = { rows: tools.overlap(rowsOf('a'), rowsOf('b'), universe, args.on || null, args.group_by || null) }; break;
       }
-      case 'overlap': out = { rows: tools.overlap(await rowsOf('a', 'b'), await rowsOf('b', 'a'), await rowsOf('universe'), args.on || null, args.group_by || null) }; break;
-      case 'standardize': out = { rows: tools.standardize(await rowsOf('artifact'), args) }; break;
-      case 'explode': out = { rows: tools.explode(await rowsOf('artifact'), args.column, args.as) }; break;
-      case 'pivot': out = { matrix: tools.pivot(await rowsOf('artifact'), args) }; break;
+      case 'standardize': out = { rows: tools.standardize(rowsOf('artifact'), args) }; break;
+      case 'explode': out = { rows: tools.explode(rowsOf('artifact'), args.column, args.as) }; break;
+      case 'pivot': out = { matrix: tools.pivot(rowsOf('artifact'), args) }; break;
       case 'chart': { const a = get(args.artifact); inputRefs.add(a.id); out = { figure: tools.chartSpec(args, a.matrix || a.rows) }; break; }
       default: throw new Error(`unknown operation ${toolName}`);
     }
-    return { out, inputColumns, inputs: [...inputRefs], reads };
+    return { out, inputColumns, inputs: [...inputRefs] };
   }
 
   const made = new Map();   // fingerprint of an operation → the artifact it made
   async function runTableTool(toolName, args) {
     args = { ...args };
     if (['combine', 'join', 'overlap'].includes(toolName) && args.a === undefined && args.artifact !== undefined) args = { ...args, a: args.artifact };
-    // The same operation on the same inputs is the same artifact; it is not made twice.
-    const key = JSON.stringify([toolName, args]);
+    const title = String(args.title || '').trim(), description = String(args.description || '').trim();
+    if (!title || !description) throw new Error(`${toolName} needs a title and a description for its result`);
+    // The same operation on the same inputs is the same artifact, whatever it is called; it is not made twice.
+    const key = JSON.stringify([toolName, bare(args)]);
     if (made.has(key) && state.byId.has(made.get(key))) {
       const a = get(made.get(key));
-      remember(`${toolName}(${desk.argsLine(args, 140)}) is ${a.id}, already made at turn ${a.turn}`);
+      remember(`${toolName}(${desk.argsLine(bare(args), 140)}) is ${a.id} "${a.label}", already made at turn ${a.turn}`);
       return { ok: true, artifact: a, repeated: true };
     }
     const id = `t${++state.ids.t}`;
     const t0 = Date.now();
     state.toolCalls++;
     let inputs = ['artifact', 'a', 'b', 'universe'].map(k => args[k]).filter(Boolean).map(String);
-    const label = toolName === 'chart' ? String(args.title || `${args.type} chart`).slice(0, 80) : `${toolName}(${desk.argsLine(args, 100)})`;
-    await log('tool.start', { id, tool: toolName, kind: toolName === 'chart' ? 'chart' : 'tool', label, args, inputs }, id);
+    await log('tool.start', { id, tool: toolName, kind: toolName === 'chart' ? 'chart' : 'tool', label: title, args, inputs }, id);
     try {
-      const { out, inputColumns, inputs: resolvedInputs, reads } = await computeOut(toolName, args);
+      const { out, inputColumns, inputs: resolvedInputs } = await computeOut(toolName, args);
       inputs = resolvedInputs;
       if (out.rows) out.rows = tools.freshFirst(out.rows, [...inputColumns]);
-      const a = await addArtifact({ kind: out.figure ? 'figure' : 'data', label: toolName === 'chart' ? label : `${toolName} of ${inputs.join(', ')}`, rows: out.rows, matrix: out.matrix, figure: out.figure, meta: out.figure ? { omitted_rows: out.figure.omitted_rows || 0 } : out.meta, tool: toolName, args, inputs, toolId: id });
+      const a = await addArtifact({ kind: out.figure ? 'figure' : 'data', label: title, description, rows: out.rows, matrix: out.matrix, figure: out.figure, meta: out.figure ? { omitted_rows: out.figure.omitted_rows || 0 } : out.meta, tool: toolName, args, inputs, toolId: id });
       made.set(key, a.id);
-      remember(`${toolName}(${desk.argsLine(args, 140)}) → ${a.id} (${a.size}${a.kind === 'figure' && !a.images.length ? ', not rendered' : ''}${reads.length ? `; ${reads.join('; ')}` : ''})`);
+      remember(`${toolName}(${desk.argsLine(bare(args), 140)}) → ${a.id} "${title}" (${a.size}${a.kind === 'figure' && !a.images.length ? ', not rendered' : ''})`);
       await log('tool.done', { id, tool: toolName, kind: out.figure ? 'chart' : 'tool', artifact: artifactEvent(a), ms: Date.now() - t0 }, id);
       return { ok: true, artifact: a };
     } catch (err) {
       state.failed++;
-      remember(`${toolName}(${desk.argsLine(args, 140)}) failed: ${err.message}`);
+      remember(`${toolName}(${desk.argsLine(bare(args), 140)}) failed: ${err.message}`);
       await log('tool.failed', { id, tool: toolName, kind: toolName === 'chart' ? 'chart' : 'tool', error: err.message, ms: Date.now() - t0 }, id);
       return { ok: false, error: err.message };
     }
   }
 
-  // A view stays on the desk whole for two turns, then folds to its receipt (reopenable).
+  // A view is something the model asked to see; it stays on the desk for the whole study.
   const view = (key, text, receipt) => { state.views.set(key, { text, receipt, turn: state.turn }); };
-  async function openWhat(args) {
-    const what = String(args.what ?? args.artifact ?? args.id ?? args.dataset ?? args.name ?? args.table ?? '').trim();
-    if (!what) throw new Error('open needs artifact: an artifact id or a dataset name');
-    if (state.byId.has(what)) {
-      const a = get(what);
-      if (a.figure) { view(a.id, `${a.id} figure: ${JSON.stringify(a.figure).slice(0, 1200)}`, `${a.id} figure spec (opened at turn ${state.turn})`); remember(`opened ${a.id} (figure spec on the desk)`); return; }
-      if (a.matrix) { view(a.id, `${a.id} matrix rows ${a.matrix.row_labels.join(', ')}; columns ${a.matrix.col_labels.join(', ')}\n${a.matrix.matrix.slice(0, 40).map((row, i) => `  ${desk.cell(a.matrix.row_labels[i])}: ${row.map(v => v === null ? '—' : v).join(' | ')}`).join('\n')}${a.matrix.matrix.length > 40 ? '\n  …' : ''}`, `${a.id} matrix (opened at turn ${state.turn})`); remember(`opened ${a.id} (matrix on the desk)`); return; }
-      if (a.text) { view(a.id, `${a.id}: ${a.text.slice(0, 1500)}`, `${a.id} text (opened at turn ${state.turn})`); remember(`opened ${a.id}`); return; }
-      const named = Array.isArray(args.columns) && args.columns.length > 0;
-      if (!named && state.wholeOnDesk?.has(a.id)) { remember(`${a.id} is whole on the desk (rows 0–${a.rows.length - 1})`); return; }
-      const rows = Number.isSafeInteger(args.rows) && args.rows > 0 ? args.rows : VIEW_ROWS;
-      const offset = Number.isSafeInteger(args.offset) && args.offset >= 0 ? args.offset : 0;
-      const columns = Array.isArray(args.columns) && args.columns.length ? args.columns.map(c => { const found = a.columns.find(x => x === c) || a.columns.find(x => x.toLowerCase() === String(c).toLowerCase()); if (!found) throw new Error(`${a.id} has no column ${JSON.stringify(c)}; its columns: ${a.columns.join(', ')}`); return found; }) : a.columns;
-      // A view of a wide artifact shows its keys, the columns its operation named and the first
-      // columns; naming columns shows any of them.
-      const lead = [...identity.keys, ...argColumns(a)].filter(c => columns.includes(c));
-      const shownColumns = columns.length > desk.WIDE_COLUMNS ? [...lead, ...columns.filter(c => !lead.includes(c))].slice(0, desk.WIDE_COLUMNS / 2) : columns;
-      const hidden = columns.length - shownColumns.length;
-      const page = a.rows.slice(offset, offset + rows);
-      const lines = page.map((row, i) => `  ${offset + i}: ${desk.rowLine(row, shownColumns)}`);
-      const range = `rows ${offset}–${offset + page.length - 1} of ${a.rows.length}`;
-      view(`${a.id}|${offset}|${shownColumns.join(',')}`, `${a.id} ${range} (${shownColumns.join(' | ')}${hidden ? ` | … +${hidden} columns; name columns to see them` : ''})\n${lines.join('\n') || '  (no rows)'}${offset + page.length < a.rows.length ? `\n  … open ${a.id} offset=${offset + page.length} for more` : ''}`, `${a.id} ${range} (opened at turn ${state.turn}; open again to see them)`);
-      remember(`opened ${a.id} ${range} (view on the desk)`);
-      return;
-    }
-    const entry = await geneData.entry(what);
-    if (!entry || entry.key === 'unreadable') throw new Error(`nothing called ${JSON.stringify(what)} among the artifacts or the datasets on disk`);
-    // Columns asked for are detailed on the card and the rest are named; opened without columns,
-    // the table is detailed whole. Later opens add columns to the card.
-    const wanted = Array.isArray(args.columns) && args.columns.length ? args.columns.map(c => { const found = entry.columns.find(x => x === c) || entry.columns.find(x => x.toLowerCase() === String(c).toLowerCase()); if (!found) throw new Error(`${entry.file} has no column ${JSON.stringify(c)}; its columns: ${entry.columns.join(', ')}`); return found; }) : null;
-    const opened = state.opened.get(entry.file);
-    if (opened) {
-      const added = (wanted || []).filter(c => !opened.focus.includes(c));
-      if (!added.length && (wanted || opened.whole)) { remember(`${entry.file} is already on the desk${wanted ? ' with those columns' : ' whole'}`); return; }
-      opened.focus.push(...added);
-      if (!wanted) opened.whole = true;
-      remember(wanted ? `${entry.file}: added ${added.join(', ')} to its card` : `${entry.file}: its card now details every column`);
-      return;
-    }
-    const [profiled, sample] = await Promise.all([geneData.profile(entry), geneData.sample(entry, 3)]);
-    state.opened.set(entry.file, { entry, profile: profiled.columns, sample, scanned: profiled.rows, capped: profiled.capped, focus: wanted || [], whole: !wanted });
-    remember(`opened ${entry.file} (on the desk${wanted ? `: ${wanted.join(', ')}` : ''})`);
-  }
-  const openedCards = () => [...state.opened.values()].map(o => desk.tableCard({ name: o.entry.file, title: o.entry.title, description: o.entry.description, access: geneData.access(o.entry), columns: o.entry.columns, profile: o.profile, sample: o.sample, scanned: o.scanned, capped: o.capped, focus: o.focus, whole: o.whole }));
-  // Column names an operation's arguments mention, shown first on its card.
+  // Column names an operation's arguments mention, shown first in a view.
   const argColumns = a => {
     const names = new Set(a.columns || []), found = [];
     const walk = v => { if (typeof v === 'string') { if (names.has(v) && !found.includes(v)) found.push(v); } else if (Array.isArray(v)) v.forEach(walk); else if (v && typeof v === 'object') Object.values(v).forEach(walk); };
-    walk(a.args || {});
+    walk(bare(a.args));
     return found;
   };
+  async function openWhat(args) {
+    const what = String(args.artifact ?? args.what ?? args.id ?? '').trim();
+    if (!what) throw new Error('open needs artifact: an artifact id');
+    const a = get(what);
+    if (a.figure) { view(a.id, `${a.id} figure: ${JSON.stringify(a.figure).slice(0, 1200)}`, `${a.id} figure spec (opened at turn ${state.turn})`); remember(`opened ${a.id} (figure spec on the desk)`); return; }
+    if (a.matrix) { view(a.id, `${a.id} matrix rows ${a.matrix.row_labels.join(', ')}; columns ${a.matrix.col_labels.join(', ')}\n${a.matrix.matrix.slice(0, 40).map((row, i) => `  ${desk.cell(a.matrix.row_labels[i])}: ${row.map(v => v === null ? '—' : v).join(' | ')}`).join('\n')}${a.matrix.matrix.length > 40 ? '\n  …' : ''}`, `${a.id} matrix (opened at turn ${state.turn})`); remember(`opened ${a.id} (matrix on the desk)`); return; }
+    if (a.text) { view(a.id, `${a.id}: ${a.text.slice(0, 1500)}`, `${a.id} text (opened at turn ${state.turn})`); remember(`opened ${a.id}`); return; }
+    const named = Array.isArray(args.columns) && args.columns.length > 0;
+    if (!named && state.wholeOnDesk?.has(a.id)) { remember(`${a.id} is whole on the desk (rows 0–${a.rows.length - 1})`); return; }
+    const rows = Number.isSafeInteger(args.rows) && args.rows > 0 ? args.rows : VIEW_ROWS;
+    const offset = Number.isSafeInteger(args.offset) && args.offset >= 0 ? args.offset : 0;
+    const columns = named ? args.columns.map(c => { const found = a.columns.find(x => x === c) || a.columns.find(x => x.toLowerCase() === String(c).toLowerCase()); if (!found) throw new Error(`${a.id} has no column ${JSON.stringify(c)}; its columns: ${a.columns.join(', ')}`); return found; }) : a.columns;
+    // A view of a wide artifact shows its keys, the columns its operation named and the first
+    // columns; naming columns shows any of them.
+    const lead = [...identity.keys, ...argColumns(a)].filter(c => columns.includes(c));
+    const shownColumns = columns.length > desk.WIDE_COLUMNS ? [...lead, ...columns.filter(c => !lead.includes(c))].slice(0, desk.WIDE_COLUMNS / 2) : columns;
+    const hidden = columns.length - shownColumns.length;
+    const page = a.rows.slice(offset, offset + rows);
+    const lines = page.map((row, i) => `  ${offset + i}: ${desk.rowLine(row, shownColumns)}`);
+    const range = `rows ${offset}–${offset + page.length - 1} of ${a.rows.length}`;
+    view(`${a.id}|${offset}|${shownColumns.join(',')}`, `${a.id} ${range} (${shownColumns.join(' | ')}${hidden ? ` | … +${hidden} columns; name columns to see them` : ''})\n${lines.join('\n') || '  (no rows)'}${offset + page.length < a.rows.length ? `\n  … open ${a.id} offset=${offset + page.length} for more` : ''}`, `${a.id} ${range} (opened at turn ${state.turn}; open again to see them)`);
+    remember(`opened ${a.id} ${range} (view on the desk)`);
+  }
 
-  // What a large table's columns hold, computed once per artifact.
-  const profileOf = a => {
-    if (a.profile === undefined) a.profile = Array.isArray(a.rows) && a.rows.length > desk.WHOLE_ROWS ? tools.profile(a.rows, a.columns) : null;
-    return a.profile;
-  };
   function deskText(turn) {
-    const running = [...state.running.values()].map(j => `${j.id} ${j.tool} "${String(j.args.goal || j.args.question || j.args.gene || '').slice(0, 100)}" ${Math.round((Date.now() - j.startedAt) / 1000)} s`).join('\n') || '(nothing running)';
-    // The frontier (artifacts nothing has read yet) shows whole or sampled; a consumed table folds
-    // to one line unless it is small enough that folding would cost a turn to reopen; consumed
-    // tables that no frontier artifact read directly are filed together on one line.
-    const usedBy = new Map();
-    for (const a of state.artifacts) for (const input of a.inputs || []) { if (!usedBy.has(input)) usedBy.set(input, []); usedBy.get(input).push(a.id); }
-    const near = new Set(state.artifacts.filter(a => !usedBy.has(a.id)).flatMap(a => a.inputs || []));
-    const filed = state.artifacts.filter(a => usedBy.has(a.id) && !near.has(a.id) && (a.rows ? a.rows.length : 0) > desk.SMALL_ROWS);
+    const running = [...state.running.values()].map(j => `${j.id} ${j.tool} "${String(j.args.title || '').slice(0, 100)}" ${Math.round((Date.now() - j.startedAt) / 1000)} s`).join('\n') || '(nothing running)';
     // The artifacts whose every row is on the desk this turn; open answers for them from the desk.
-    state.wholeOnDesk = new Set(state.artifacts.filter(a => Array.isArray(a.rows) && a.rows.length <= desk.WHOLE_ROWS && !filed.includes(a) && !(usedBy.has(a.id) && a.rows.length > desk.SMALL_ROWS)).map(a => a.id));
-    const cards = state.artifacts.filter(a => !filed.includes(a)).map(a => desk.resultCard({ id: a.id, label: a.kind === 'answer' || a.kind === 'note' ? a.label : '', origin: origin(a), rows: a.rows || [], columns: a.columns, matrix: a.matrix, figure: a.figure, images: a.images, text: a.text, folded: usedBy.has(a.id) && (a.rows ? a.rows.length : 0) > desk.SMALL_ROWS ? usedBy.get(a.id) : null, profile: usedBy.has(a.id) ? null : profileOf(a), first: [...identity.keys, ...argColumns(a)] }));
-    if (filed.length) cards.push(`filed (read by later operations; open by id): ${filed.map(a => `${a.id} (${desk.count(a.rows.length)} rows) ← ${a.tool}`).join('; ')}`);
-    // A view is something the model asked to see; it stays on the desk for the whole study.
+    state.wholeOnDesk = new Set(state.artifacts.filter(a => Array.isArray(a.rows) && a.rows.length > 0 && a.rows.length <= desk.INLINE_ROWS).map(a => a.id));
+    const lines = state.artifacts.map(a => desk.resultLine({ id: a.id, title: a.label, description: a.description, origin: origin(a), rows: a.rows || [], columns: a.columns, matrix: a.matrix, figure: a.figure, images: a.images, text: a.text }));
     const views = [...state.views.values()].map(v => v.text);
     const sections = [
       desk.section('STUDY', goal),
       desk.section('PLAN', studyPlan.planText(state.plan, agentNames.has('deep_research_hpa') ? { gene_set: 'gene_set ← deep_research_hpa' } : {})),
-      ...(state.opened.size ? [desk.section('TABLES OPENED', openedCards().join('\n'))] : []),
-      desk.section('ARTIFACTS', cards.join('\n') || '(none yet)'),
+      desk.section('ARTIFACTS', lines.join('\n') || '(none yet)'),
       ...(views.length ? [desk.section('VIEWS', views.join('\n'))] : []),
       desk.section('RUNNING', running),
       desk.section('HISTORY', desk.historyText(state.history)),

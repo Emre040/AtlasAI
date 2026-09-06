@@ -36,6 +36,9 @@ function fakeAdapter(overrides = {}) {
   return {
     identity: () => ({ database: 'Test Atlas', entity: 'gene', keys: ['gene', 'ensembl'], key_description: 'symbol and id' }),
     access: e => e.key === 'lookup' ? 'reference table' : 'rows per gene',
+    async *rows(e) { if (e === CONSENSUS) { for (const g of GENES) for (const r of ROWS[g.ensembl]) yield r; } else { yield { Tissue: 'liver', Organ: 'Liver & Gallbladder' }; yield { Tissue: 'lung', Organ: 'Lung' }; } },
+    keysOf(e, row) { return { gene: row['Gene name'] || null, ensembl: row.Gene || null }; },
+    async entities() { return GENES; },
     async catalog() { return [CONSENSUS, TISSUES]; },
     async entry(name) { return [CONSENSUS, TISSUES].find(e => e.file === name || e.file === `${name}.tsv`) || null; },
     async resolveGenes(names) { return names.map(n => GENES.find(g => g.gene === n.toUpperCase() || g.ensembl === n) || null); },

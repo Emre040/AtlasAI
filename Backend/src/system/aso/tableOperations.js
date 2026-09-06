@@ -4,12 +4,14 @@
 // handles to rows; source streaming and durable-result storage remain caller concerns.
 const tools = require('./studyTools');
 const { SCALAR_SCHEMA } = require('./valueSchemas');
-const A = { type: 'string', description: 'artifact id or dataset name', 'x-artifact-reference': true };
+const A = { type: 'string', description: 'artifact id', 'x-artifact-reference': true };
 const S = { type: 'string' };
 const N = { type: 'integer' };
+// Every operation names its result for a reader: a title and a description.
+const NAMED = { title: S, description: S };
 const THEN_BY = { type: 'array', description: 'Tie-break columns in order; missing values last', items: { type: 'object', properties: { column: S, order: { type: 'string', enum: ['asc', 'desc'] }, type: { type: 'string', enum: ['auto', 'number', 'text'] } }, required: ['column'] } };
 const WHERE = { type: 'array', description: 'Clauses that must all hold; a unary op takes column and op; in takes a list; column_b compares two columns of a row.', items: { type: 'object', properties: { column: S, op: { type: 'string', enum: tools.FILTER_OPS }, value: {}, column_b: S }, required: ['column', 'op'] } };
-const tool = (name, description, properties = {}, required = []) => ({ name, description, result_kind: 'table', parameters: { type: 'object', properties, required } });
+const tool = (name, description, properties = {}, required = []) => ({ name, description, result_kind: 'table', parameters: { type: 'object', properties: { ...NAMED, ...properties }, required: ['title', 'description', ...required] } });
 const entries = [
   tool('join', 'Matching rows of a and b side by side: on the entity keys, on one column (on) or several (on_columns); full and right keep unmatched rows; a clashing column from b gets _2.', { a: A, b: A, how: { type: 'string', enum: ['inner', 'left', 'right', 'full'] }, on: S, on_columns: { type: 'array', items: S } }, ['a', 'b']),
   tool('filter', 'Keep the rows for which every clause holds.', { artifact: A, where: WHERE }, ['artifact', 'where']),

@@ -64,8 +64,8 @@ function coverageCitation(citation, sources) {
 }
 
 async function investigatorTrail(args, ctx = {}, adapter = require('../../hpa/geneDataAdapter')) {
-  if (args.genes !== undefined) {
-    if (args.gene !== undefined) throw new Error('Supply gene or genes, not both');
+  if (args.points !== undefined || args.genes !== undefined) {
+    if (args.gene !== undefined) throw new Error('Supply gene, or a list of points, not both');
     return require('./investigatorBulk')(args, ctx, adapter);
   }
   const { gene: geneQuery, question, mode: requestedMode = 'offline' } = args;

@@ -34,7 +34,7 @@ test('unknown fields, reference tables and bad filters fail with the columns the
   const adapter = fakeAdapter();
   const resolved = await adapter.resolveGenes(['EGFR']);
   await assert.rejects(fetchRows({ adapter, entry: CONSENSUS, supplied: ['EGFR'], resolved, fields: ['Tissue', 'expression'], keys }), /no column "expression"; its columns: Gene, Gene name, Tissue, nTPM/);
-  await assert.rejects(fetchRows({ adapter, entry: TISSUES, supplied: ['EGFR'], resolved, fields: ['Organ'], keys }), /cannot be fetched per gene: reference table; open it to read it whole/);
+  await assert.rejects(fetchRows({ adapter, entry: TISSUES, supplied: ['EGFR'], resolved, fields: ['Organ'], keys }), /has no per-gene reads \(reference table\); match the points against one of its columns, or fetch without a list/);
   await assert.rejects(fetchRows({ adapter, entry: CONSENSUS, supplied: ['EGFR'], resolved, fields: ['nTPM'], where: [{ column: 'Organ', op: '=', value: 'x' }], keys }), /no column named "Organ"/);
 });
 

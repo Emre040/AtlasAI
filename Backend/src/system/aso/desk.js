@@ -98,36 +98,26 @@ function tableCard({ name, title, description, access, columns, profile, sample,
   return lines.join('\n');
 }
 
-// A produced result as a card: id, what made it, its size, its columns and two rows.
-const NOTE_CHARS = 600;   // characters of a text result shown on its card
+// A produced result as a line: id, title, size, columns, what made it; then its description.
+// A result of a few rows shows them whole, with indices; anything larger is opened on request.
+const NOTE_CHARS = 600;   // characters of a text result shown on its line
+const INLINE_ROWS = 5;    // a result this small is shown whole: cheaper than a turn spent opening it
 
-function resultCard({ id, label, origin, rows, columns, matrix, figure, images, error, text, folded = null, profile = null, first = [] }) {
-  if (text && !rows?.length && !matrix && !figure) {
+function resultLine({ id, title = '', description = '', origin, rows = [], columns = [], matrix, figure, images, text }) {
+  const head = title ? `${id} "${title}"` : id;
+  if (text && !rows.length && !matrix && !figure) {
     const body = String(text).replace(/\s+/g, ' ').trim();
-    return `${id} note${label ? ` "${label}"` : ''} ← ${origin}\n  ${body.length > NOTE_CHARS ? `${body.slice(0, NOTE_CHARS - 1)}… (open ${id} for the rest)` : body}`;
+    return `${head} note ← ${origin}\n  ${body.length > NOTE_CHARS ? `${body.slice(0, NOTE_CHARS - 1)}… (open ${id} for the rest)` : body}`;
   }
-  if (figure) return `${id} figure ${figure.type}${figure.title ? ` "${figure.title}"` : ''} ← ${origin}${images?.length ? ' (rendered)' : ' (not rendered)'}${figure.omitted_rows ? `; ${figure.omitted_rows} rows omitted for missing values` : ''}`;
+  if (figure) return `${head} figure ${figure.type} ← ${origin}${images?.length ? ' (rendered)' : ' (not rendered)'}${figure.omitted_rows ? `; ${figure.omitted_rows} rows omitted for missing values` : ''}`;
   if (matrix) {
-    const head = `${id} matrix ${matrix.row_labels.length} × ${matrix.col_labels.length} ← ${origin} (a heatmap input; not a row table)`;
-    if (matrix.row_labels.length <= WHOLE_ROWS && matrix.col_labels.length <= WHOLE_ROWS) return [head, `  ${['', ...matrix.col_labels].map(cell).join(' | ')}`, ...matrix.matrix.map((row, i) => `  ${[matrix.row_labels[i], ...row.map(v => v === null ? '' : v)].map(cell).join(' | ')}`)].join('\n');
-    return `${head}; rows: ${matrix.row_labels.slice(0, 8).map(cell).join(', ')}${matrix.row_labels.length > 8 ? ', …' : ''}; columns: ${matrix.col_labels.slice(0, 8).map(cell).join(', ')}${matrix.col_labels.length > 8 ? ', …' : ''}`;
+    const head2 = `${head} matrix ${matrix.row_labels.length} × ${matrix.col_labels.length} (rows: ${matrix.row_labels.slice(0, 6).map(cell).join(', ')}${matrix.row_labels.length > 6 ? ', …' : ''}; columns: ${matrix.col_labels.slice(0, 6).map(cell).join(', ')}${matrix.col_labels.length > 6 ? ', …' : ''}) ← ${origin}; a heatmap input`;
+    return description ? `${head2}\n  ${description}` : head2;
   }
-  const named = columns.length <= WIDE_COLUMNS ? columns.join(', ') : `${columns.slice(0, ROW_COLUMNS + 4).join(', ')}, … +${columns.length - ROW_COLUMNS - 4} more columns (open ${id} for all names)`;
-  const head = `${id}${label ? ` ${label}` : ''} (${count(rows.length)} rows) ← ${origin}: ${named}${error ? ` [${error}]` : ''}`;
-  // An artifact that later operations have already consumed is filed: one line, reopenable.
-  if (folded) return `${head} [used by ${folded.join(', ')}; open ${id} for its rows]`;
-  const whole = rows.length <= WHOLE_ROWS;
-  const lines = [head];
-  // Rows show the entity keys and the columns the operation named first, then the rest.
-  const leading = first.filter(c => columns.includes(c));
-  const order = [...leading, ...columns.filter(c => !leading.includes(c))];
-  // A large table says what the columns its rows show hold, so the model need not page through it.
-  if (!whole && profile) {
-    const shownColumns = new Set(order.slice(0, ROW_COLUMNS));
-    for (const c of profile) if (shownColumns.has(c.column) && c.kind !== 'empty' && (c.kind === 'number' || c.observed_values || c.blank_pct)) lines.push(`  ${columnLine(c, CARD_VOCAB)}`);
-  }
-  lines.push(...sampleLines(rows, order, whole ? rows.length : SAMPLE_ROWS).map((l, i) => `  ${whole ? `${i}: ` : ''}${l}`));
-  if (!whole) lines.push(`  … ${count(rows.length - SAMPLE_ROWS)} more rows (open ${id} to see them)`);
+  const named = columns.length <= WIDE_COLUMNS ? columns.join(', ') : `${columns.slice(0, ROW_COLUMNS + 4).join(', ')}, … +${columns.length - ROW_COLUMNS - 4} more columns`;
+  const lines = [`${head} (${count(rows.length)} rows: ${named}) ← ${origin}`];
+  if (description) lines.push(`  ${description}`);
+  if (rows.length && rows.length <= INLINE_ROWS) lines.push(...sampleLines(rows, columns, rows.length).map((l, i) => `  ${i}: ${l}`));
   return lines.join('\n');
 }
 
@@ -141,4 +131,4 @@ function historyText(lines) {
 
 function section(title, body) { return `${title}\n${body}`; }
 
-module.exports = { cell, shown, rowLine, sampleLines, argsLine, tableCard, resultCard, historyText, section, count, SAMPLE_ROWS, WHOLE_ROWS, SMALL_ROWS, WIDE_COLUMNS };
+module.exports = { cell, shown, rowLine, sampleLines, argsLine, tableCard, columnLine, resultLine, historyText, section, count, INLINE_ROWS, WIDE_COLUMNS, ROW_COLUMNS };

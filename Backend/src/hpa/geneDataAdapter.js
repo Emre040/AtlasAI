@@ -283,4 +283,26 @@ async function sample(e, n = 3) {
   return rows;
 }
 
-module.exports = { name: 'Human Protein Atlas per-gene tables', identity, access, catalog, overview, entry, resolveGene, resolveGenes, read, readMany, applyWhere, render, cited, pageUrl, definition, profile, sample, PROFILE_MAX_ROWS, sources: docs.SOURCES };
+// The entity keys of a raw row of a table, as the table records them.
+function keysOf(e, row) {
+  const isId = v => HUMAN_GENE_ID.test(String(v || ''));
+  if (e.key === 'name') return { gene: row[e.columns[0]] || null, ensembl: row[e.columns[1]] || null };
+  const column = e.geneColumn || e.columns.find(c => isId(row[c]));
+  const name = row['Gene name'] ?? (isId(row.Gene) ? null : row.Gene) ?? null;
+  return { gene: name || null, ensembl: column ? row[column] || null : null };
+}
+
+// Every row of a table, whatever its shape: the master table and small tables from memory,
+// the rest streamed.
+async function* rows(e) {
+  if (e.key === 'master') { for (const row of (await localData.master()).rows) yield row; return; }
+  if (e.key === 'lookup' || e.key === 'scan') { for (const row of (await localData.table(e.file)).rows) yield row; return; }
+  for await (const row of localData.rows(e.file)) yield row;
+}
+
+// Every entity of the database: the universe an overlap test is measured against.
+async function entities() {
+  return (await localData.master()).rows.map(row => ({ gene: row.Gene || null, ensembl: row.Ensembl || null }));
+}
+
+module.exports = { name: 'Human Protein Atlas per-gene tables', identity, access, catalog, overview, entry, resolveGene, resolveGenes, read, readMany, keysOf, rows, entities, applyWhere, render, cited, pageUrl, definition, profile, sample, PROFILE_MAX_ROWS, sources: docs.SOURCES };

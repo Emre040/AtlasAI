@@ -602,13 +602,28 @@ function profiler(columns) {
         const top = [...s.distinct.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([v]) => (v.length > 40 ? `${v.slice(0, 39)}…` : v));
         const fullExamples = [...s.distinct.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([v]) => v);
         const grammar = kind === 'text' ? listGrammar(s.samples) : null;
+        // Structured cells ("key: number" lists, "label (number)") have a vocabulary of their own:
+        // the distinct keys or labels, which is what a filter or an explode needs spelled right.
+        let parts = null;
+        if (grammar && grammar.shape !== 'item') {
+          const found = new Set();
+          for (const cellValue of s.distinct.keys()) {
+            const items = grammar.sep ? cellValue.split(grammar.sep).map(x => x.trim()).filter(Boolean) : [cellValue];
+            for (const item of items) {
+              const part = grammar.shape === 'key: number' ? item.slice(0, item.indexOf(':')).trim() : (item.match(/^(.+)\s\(([-+]?\d[^)]*)\)$/) || [])[1];
+              if (part && found.size < 1000) found.add(part);
+            }
+          }
+          parts = { kind: grammar.shape === 'key: number' ? 'keys' : 'labels', values: [...found] };
+        }
         return {
           column: c, kind, rows: s.n, blank_pct: s.n ? Math.round(100 * s.blank / s.n) : 0,
           distinct: s.distinct.size >= 1000 ? '1000+' : String(s.distinct.size), examples: top,
           full_examples: fullExamples,
           observed_values: kind === 'text' && s.distinct.size < 1000 ? [...s.distinct.keys()] : null,
           min: kind === 'number' ? s.min : undefined, max: kind === 'number' ? s.max : undefined,
-          list: grammar && grammar.sep ? `list of '${grammar.shape}' items separated by '${grammar.sep}'` : (grammar && grammar.shape !== 'item' ? `'${grammar.shape}'` : undefined)
+          list: grammar && grammar.sep ? `list of '${grammar.shape}' items separated by '${grammar.sep}'` : (grammar && grammar.shape !== 'item' ? `'${grammar.shape}'` : undefined),
+          parts
         };
       });
     }

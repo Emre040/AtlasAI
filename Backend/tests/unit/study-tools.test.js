@@ -28,6 +28,17 @@ test('a typed label is words: a number in it is refused by select and classify a
   assert.deepEqual(tools.classify(rows, { name: 'tier', rules: [{ where: [{ column: 'score', op: '>', value: 0.5 }], value: 'strong' }], otherwise: 'weak' }).map(r => r.tier), ['strong', 'weak']);
 });
 
+test('a profile lists the keys or labels inside structured cells', () => {
+  const cells = [
+    { spec: 'liver: 12.5;kidney: 3.0', prog: 'potential prognostic favorable (1.5e-4)' },
+    { spec: 'testis: 900.1', prog: 'unprognostic (1.1e-1)' },
+    { spec: 'liver: 2.0;brain: 4.4', prog: 'validated prognostic unfavorable (2.0e-6)' }
+  ];
+  const [spec, prog] = tools.profile(cells, ['spec', 'prog']);
+  assert.deepEqual(spec.parts, { kind: 'keys', values: ['liver', 'kidney', 'testis', 'brain'] });
+  assert.deepEqual(prog.parts, { kind: 'labels', values: ['potential prognostic favorable', 'unprognostic', 'validated prognostic unfavorable'] });
+});
+
 test('an in list may be an array, a JSON list, or values separated by | or commas', () => {
   assert.deepEqual(tools.inList(['a', 'b']), ['a', 'b']);
   assert.deepEqual(tools.inList('["a", "b"]'), ['a', 'b']);

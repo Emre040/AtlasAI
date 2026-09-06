@@ -72,10 +72,12 @@ function columnLine(c, vocab = VOCAB_MAX, brief = false) {
   if (c.kind === 'number') return `${c.column}: number ${c.min === c.max ? count(c.min) : `${count(c.min)} to ${count(c.max)}`}${blank}${c.distinct === '1000+' ? '' : `; ${c.distinct} distinct`}`;
   // A brief line says what the column is; the values come when the column is asked for.
   if (brief && !(Array.isArray(c.observed_values) && c.observed_values.length <= 3)) return `${c.column}: text, ${c.distinct} distinct${blank}${c.list ? `; ${c.list}` : ''}`;
+  // Structured cells list the distinct keys or labels inside them, which a filter must spell right.
+  const parts = c.parts?.values?.length ? `; ${c.parts.values.length} ${c.parts.kind}: ${c.parts.values.slice(0, vocab).map(v => v.length > CELL ? `${v.slice(0, CELL - 1)}…` : v).join(' | ')}${c.parts.values.length > vocab ? ` (+${c.parts.values.length - vocab})` : ''}` : '';
   const values = Array.isArray(c.observed_values) && c.observed_values.length <= vocab ? c.observed_values : null;
-  if (values) return `${c.column}: ${values.length === 1 ? 'always' : `${values.length} values:`} ${values.map(v => v.length > CELL ? `${v.slice(0, CELL - 1)}…` : v).join(' | ')}${blank}${c.list ? `; ${c.list}` : ''}`;
+  if (values) return `${c.column}: ${values.length === 1 ? 'always' : `${values.length} values:`} ${values.map(v => v.length > CELL ? `${v.slice(0, CELL - 1)}…` : v).join(' | ')}${blank}${c.list ? `; ${c.list}` : ''}${parts}`;
   const examples = (c.full_examples || c.examples || []).slice(0, vocab === VOCAB_MAX ? EXAMPLES : 3).map(v => v.length > CELL ? `${v.slice(0, CELL - 1)}…` : v);
-  return `${c.column}: text, ${c.distinct} distinct${examples.length ? ` (e.g. ${examples.join(' | ')})` : ''}${blank}${c.list ? `; ${c.list}` : ''}`;
+  return `${c.column}: text, ${c.distinct} distinct${examples.length ? ` (e.g. ${examples.join(' | ')})` : ''}${blank}${c.list ? `; ${c.list}` : ''}${parts}`;
 }
 
 // A source table as a card: what it is, what its columns hold, how a few rows look. Opened

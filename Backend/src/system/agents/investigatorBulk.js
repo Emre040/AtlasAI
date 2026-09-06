@@ -29,7 +29,7 @@ function tools(db) {
     tool('find_tables', 'Tables whose name, title, description or a column contains the word, with their columns.', { about: S }, ['about']),
     tool('open', 'Put a table on the desk: what it is and its first column names.', { table: S }, ['table']),
     tool('columns', 'The columns of a table whose name contains the word.', { table: S, about: S }, ['table', 'about']),
-    tool('values', 'The values a column of a table takes (every value of a category column, the range of a number column), spelled as the data spells them.', { table: S, column: S }, ['table', 'column']),
+    tool('values', 'What a column of a table holds: every value of a category column, the range of a number column, the keys or labels inside list cells, spelled as the data spells them.', { table: S, column: S }, ['table', 'column']),
     tool('fetch', `Retrieve rows from one table. With the list: one row per source row for each point, with the point, the fields, source_rows and source_status; the points are ${db.entity}s unless match names the column their values are in. Without the list: every row where holds. Omit fields for every column.`, { title: S, description: S, table: S, fields: { type: 'array', items: S }, where: WHERE, match: { type: 'string', description: 'Column whose values the points are' } }, ['title', 'description', 'table']),
     tool('finish', 'Return the results that answer the question, by title. note states what no table holds and which points did not resolve.', { results: { type: 'array', items: S }, note: S }, ['results'])
   ];

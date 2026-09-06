@@ -43,3 +43,12 @@ test('a failed graph branch preserves independent results and blocks dependent w
   assert.deepEqual(called.sort(), ['invalid', 'source']);
   assert.equal(result.outputs[0].artifact.id, 'good_result');
 });
+
+test('a bare step id in an artifact argument means that step; an @id of an existing artifact is used as is', async () => {
+  const calls = [];
+  const execute = async (name, args) => { calls.push(args.artifact); return { ok: true, artifact: { id: `a${calls.length + 10}` } }; };
+  const result = await executeBatch({ steps: [step('first', 'a1'), step('second', 'first'), step('third', '@a2')], outputs: ['second', 'third'] }, { specifications, concurrency: 2, execute, external: id => (['a1', 'a2'].includes(id) ? id : null) });
+  assert.equal(result.status, 'completed');
+  assert.deepEqual(calls.sort(), ['a1', 'a11', 'a2'], 'second read the artifact first made; third read the existing artifact a2');
+  await assert.rejects(() => executeBatch({ steps: [step('only', '@nowhere')], outputs: ['only'] }, { specifications, concurrency: 1, execute, external: () => null }), /references unknown step nowhere/);
+});

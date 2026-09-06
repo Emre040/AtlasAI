@@ -152,6 +152,20 @@ test('an identical agent call is answered by the earlier job', async t => {
   assert.match(requests[2].messages[1].content, /turn 2: investigator_hpa\(points=\["EGFR"\], question=nTPM\) was already asked as t1: its result is a1/);
 });
 
+test('from on an artifact whose rows are all about one entity is refused with the columns that could hold the points', async t => {
+  const partners = { ...BULK, tables: [{ ...BULK.tables[0], rows: [{ gene: 'TP53', ensembl: 'ENSG_TP53', partner: 'ENSG_MDM2', source_rows: 2, source_status: 'ok' }, { gene: 'TP53', ensembl: 'ENSG_TP53', partner: 'ENSG_EP300', source_rows: 2, source_status: 'ok' }], columns: ['gene', 'ensembl', 'partner', 'source_rows', 'source_status'] }] };
+  const { run, requests, agentCalls } = await study(t, [
+    response(call('plan', { items: [{ step: 'partners', kind: 'table' }] }), call('investigator_hpa', named('Partners', { points: ['TP53'], question: 'interaction partners' }))),
+    response(call('investigator_hpa', named('Locations', { from: 'a1', question: 'main location' }))),
+    response(call('investigator_hpa', named('Locations', { from: 'a1', column: 'partner', question: 'main location' }))),
+    response(call('finish', { tables: [{ artifact: 'a1' }] }))
+  ], { agentResult: async (name, args) => args.points?.[0] === 'TP53' ? partners : BULK });
+  const result = await run({});
+  assert.equal(result.outcome, 'completed', result.summary);
+  assert.match(requests[2].messages[1].content, /turn 2: investigator_hpa\(from=a1, question=main location\) failed: a1 is about one gene \(ENSG_TP53\) across 2 rows; name the column that holds the points with column: partner, source_rows, source_status/);
+  assert.deepEqual(agentCalls[1].args.points, ['ENSG_MDM2', 'ENSG_EP300']);
+});
+
 test('the Investigator takes points from an artifact column, or no list at all; a file name is not an artifact', async t => {
   const { run, requests, agentCalls } = await study(t, [
     response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR', 'ERBB2'], question: 'nTPM' }))),

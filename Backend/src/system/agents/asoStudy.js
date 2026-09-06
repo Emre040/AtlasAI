@@ -271,6 +271,8 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
         const values = column ? input.rows.map(row => row[column]) : input.rows.map(row => row[identity.keys[1]] || row[identity.keys[0]]);
         const points = [...new Set(values.filter(v => v !== null && v !== undefined && String(v).trim() !== '').map(String))];
         if (!points.length) throw new Error(`${args.from} has no ${column || identity.entity} values to investigate`);
+        // Rows that are all about one entity carry their points in another column: say which.
+        if (!column && points.length === 1 && input.rows.length > 1) throw new Error(`${args.from} is about one ${identity.entity} (${points[0]}) across ${input.rows.length} rows; name the column that holds the points with column: ${desk.namedColumns(input.columns.filter(c => !identity.keys.includes(c)))}`);
         inputs.push(input.id);
         delete executionArgs.from; delete executionArgs.column;
         executionArgs.points = points;
@@ -543,7 +545,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
       }
       const guarded = async call => {
         try { await executeCall(call); }
-        catch (error) { state.failed++; remember(`${call.name}(${desk.argsLine(call.args, 140)}) failed: ${error.message}`); await log('call.failed', { tool: call.name, error: error.message, turn }); sync++; }
+        catch (error) { state.failed++; remember(`${call.name}(${desk.argsLine(bare(call.args), 140)}) failed: ${error.message}`); await log('call.failed', { tool: call.name, error: error.message, turn }); sync++; }
       };
       // Sync tools are ordered barriers; operations and agents run together up to the parallel limit.
       let batch = [];

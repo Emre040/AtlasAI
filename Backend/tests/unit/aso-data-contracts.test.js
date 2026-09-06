@@ -43,6 +43,7 @@ test('a grouped bar takes several value columns as series, one series per column
     { label: 'LIHC', value: 113, group: 'favorable' }, { label: 'LIHC', value: 939, group: 'unfavorable' }
   ]);
   assert.throws(() => chartSpec({ type: 'grouped_bar', x: 'Cancer', y: 'favorable' }, rows), /needs group \(a column of series names\) or series \(value columns, one series each\)/);
+  assert.throws(() => chartSpec({ type: 'dot_plot', x: 'favorable', y: 'Cancer' }, rows), /chart: Cancer holds no numbers; x names the labels and y the values, for a sideways chart \(dot_plot\) too/);
   assert.throws(() => chartSpec({ type: 'grouped_bar', x: 'Cancer', series: ['favorable', 'typo'] }, rows), /no series column typo/);
   assert.throws(() => chartSpec({ type: 'scatter', x: 'favorable', series: ['unfavorable'] }, rows), /series lists value columns for the bar family; scatter takes y/);
 });

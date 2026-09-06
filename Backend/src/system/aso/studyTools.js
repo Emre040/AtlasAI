@@ -1044,6 +1044,8 @@ function chartSpec(args, input) {
   if (args.size && !size) throw new Error(`chart: no size column ${args.size}`);
   if (args.label && !label) throw new Error(`chart: no label column ${args.label}`);
   const numeric = [...(series || [y]), ...(['scatter', 'bubble', 'volcano'].includes(args.type) ? [x] : []), ...(size ? [size] : [])];
+  // A column with no number in any row is the wrong column, not a column with missing values.
+  for (const c of numeric) if (rows.every(r => num(r[c]) === null)) throw new Error(`chart: ${c} holds no numbers; x names the labels and y the values, for a sideways chart (${args.type}) too`);
   const valid = rows.filter(r => numeric.every(c => num(r[c]) !== null));
   base.omitted_rows = rows.length - valid.length;
   if (base.omitted_rows && args.missing !== 'omit') throw new Error(`chart: ${base.omitted_rows} rows have missing numeric values; inspect them, then use missing=omit to exclude them explicitly`);

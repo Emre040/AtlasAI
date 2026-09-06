@@ -72,6 +72,11 @@ function binding(claim, state) {
     return { artifact, cells: [], values, counts: [artifact.matrix.row_labels.length, artifact.matrix.col_labels.length] };
   }
   const rows = artifact.rows || [];
+  // An empty table is evidence of emptiness: a claim on it binds to no rows and its count is 0.
+  if (!rows.length) {
+    if (Array.isArray(claim.rows) && claim.rows.length) throw new Error(`${artifact.id} has no rows; a claim about it takes rows: []`);
+    return { artifact, cells: [], columns: artifact.columns, values: [], counts: [0] };
+  }
   if (!Array.isArray(claim.rows) || !claim.rows.length) throw new Error(`claim on ${artifact.id} must name the rows it rests on (zero-based indices, as numbered on the desk)`);
   if (claim.rows.some(i => !Number.isSafeInteger(i) || i < 0 || i >= rows.length)) throw new Error(`claim rows for ${artifact.id} must be between 0 and ${rows.length - 1}`);
   const columns = resolveColumns(artifact, claim.columns);
@@ -150,7 +155,7 @@ function figureLine(artifact) {
 }
 
 function evidenceText(bound) {
-  if (!bound.cells.length) return `${bound.artifact.id}`;
+  if (!bound.cells.length) return Array.isArray(bound.artifact.rows) && !bound.artifact.rows.length ? `${bound.artifact.id}: no rows` : `${bound.artifact.id}`;
   const shown = bound.cells.slice(0, 12).map(c => `row ${c.index}: ${c.values.map(([k, v]) => `${k}=${escapeCell(v)}`).join(', ')}`);
   return `${bound.artifact.id} ${shown.join('; ')}${bound.cells.length > 12 ? `; … ${bound.cells.length - 12} more rows` : ''}`;
 }

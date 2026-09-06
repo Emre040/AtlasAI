@@ -487,8 +487,10 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     // An artifact that a later operation read is filed under the operation that read it.
     const usedBy = new Map();
     for (const a of state.artifacts) for (const input of a.inputs || []) { if (!usedBy.has(input)) usedBy.set(input, []); usedBy.get(input).push(a.id); }
-    const cards = state.artifacts.map(a => desk.resultCard({ id: a.id, label: a.kind === 'answer' || a.kind === 'note' ? a.label : '', origin: origin(a), rows: a.rows || [], columns: a.columns, matrix: a.matrix, figure: a.figure, images: a.images, text: a.text, folded: usedBy.get(a.id) || null, profile: usedBy.has(a.id) ? null : profileOf(a) }));
-    const views = [...state.views.values()].map(v => v.turn >= turn - 2 ? v.text : v.receipt);
+    // A consumed table folds unless it is small enough that folding would cost a turn to reopen.
+    const cards = state.artifacts.map(a => desk.resultCard({ id: a.id, label: a.kind === 'answer' || a.kind === 'note' ? a.label : '', origin: origin(a), rows: a.rows || [], columns: a.columns, matrix: a.matrix, figure: a.figure, images: a.images, text: a.text, folded: usedBy.has(a.id) && (a.rows ? a.rows.length : 0) > desk.SMALL_ROWS ? usedBy.get(a.id) : null, profile: usedBy.has(a.id) ? null : profileOf(a) }));
+    // A view is something the model asked to see; it stays on the desk for the whole study.
+    const views = [...state.views.values()].map(v => v.text);
     const sections = [
       desk.section('STUDY', goal),
       desk.section('PLAN', studyPlan.planText(state.plan)),

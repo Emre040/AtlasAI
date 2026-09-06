@@ -13,6 +13,7 @@
 const CELL = 48;          // characters per shown cell
 const SAMPLE_ROWS = 2;    // rows shown under a large result card
 const WHOLE_ROWS = 60;    // a result this small is shown whole: cheaper than a turn spent opening it
+const SMALL_ROWS = 12;    // a result this small stays whole even after later operations consumed it
 const DIGITS = 6;         // significant digits a number is displayed with; artifacts keep full precision
 const VOCAB_MAX = 60;     // distinct values listed in full for a categorical column
 const EXAMPLES = 6;       // examples listed for a column with more values than that
@@ -119,4 +120,4 @@ function historyText(lines) {
 
 function section(title, body) { return `${title}\n${body}`; }
 
-module.exports = { cell, shown, rowLine, sampleLines, argsLine, tableCard, resultCard, historyText, section, count, SAMPLE_ROWS, WHOLE_ROWS };
+module.exports = { cell, shown, rowLine, sampleLines, argsLine, tableCard, resultCard, historyText, section, count, SAMPLE_ROWS, WHOLE_ROWS, SMALL_ROWS };

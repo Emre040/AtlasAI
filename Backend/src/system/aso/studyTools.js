@@ -258,6 +258,9 @@ function select(rows, columns = [], rename = {}, add = {}) {
     if (typeof target !== 'string') throw new Error(`select: rename target for ${JSON.stringify(source)} must be a string`);
   }
   const constants = Object.entries(add);
+  // A constant column is a label. A number typed here would become a cell that looks like
+  // evidence; numbers come from operations over the data, never from the model.
+  for (const [key, value] of constants) if (typeof value === 'number' || (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value.replace(/,/g, ''))))) throw new Error(`select: add.${key}=${JSON.stringify(value)} is a number; constant columns are labels only. Counts and totals come from aggregate, ratios from compute, and are cited from those artifacts`);
   const renamed = keep.map(c => Object.hasOwn(rename, c) ? rename[c] : c);
   const identifiers = ['gene', 'ensembl'].filter(c => columnsOf(rows).includes(c));
   if (new Set(renamed).size !== renamed.length || constants.some(([k]) => renamed.includes(k) || identifiers.includes(k))) throw new Error('select: output column names must be distinct');

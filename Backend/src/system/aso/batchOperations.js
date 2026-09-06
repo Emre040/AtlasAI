@@ -72,8 +72,13 @@ async function executeBatch({ steps, outputs }, { specifications, execute, concu
     byId.set(raw.id, { id: raw.id, tool: raw.tool, args, dependencies: [...references(args, spec.parameters)], spec, status: 'pending' });
   }
   // A step named bare (without @) in an artifact argument means that step's output, unless an
-  // artifact of that name exists.
+  // artifact of that name exists. A step that names no input reads the previous step's output.
+  let previous = null;
   for (const step of byId.values()) {
+    const properties = step.spec.parameters?.properties || {};
+    const inputs = Object.keys(properties).filter(key => properties[key]?.['x-artifact-reference'] === true);
+    if (previous && inputs.length && inputs.every(key => step.args[key] === undefined)) step.args = { ...step.args, [inputs[0]]: `@${previous}` };
+    previous = step.id;
     step.args = mapArtifactReferences(step.args, step.spec.parameters, (id, original) => original);
     const bare = (value, schema) => {
       if (!schema || typeof schema !== 'object') return value;

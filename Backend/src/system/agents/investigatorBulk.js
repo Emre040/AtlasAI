@@ -40,7 +40,7 @@ The desk in the message is everything you have opened and fetched so far, and st
 
 How to work:
 - open a table before fetching from it. Its card shows the columns, the exact values each column takes and sample rows, so fields and filter values are spelled as the data spells them. find_tables narrows the list below by a word.
-- fetch once per table with every field the question needs from it, and a where filter when the question names particular rows (one tissue, one cell type). The result keeps repeated rows, zeros, blanks and ties as recorded. A ${db.entity} with no matching row gets one row with empty fields and a source_status saying why.
+- fetch once per table with every field the question needs from it, and a where filter when the question names particular rows (one category value, one group). The result keeps repeated rows, zeros, blanks and ties as recorded. A ${db.entity} with no matching row gets one row with empty fields and a source_status saying why.
 - When the question spans several tables, fetch from each. When no table holds a requested field, say so in the finish note instead of fetching something else.
 - finish with the names of the results that answer the question. The fetched rows are the evidence and the result name is its citation; a request to cite sources is met by returning the result. Do not put values in the note.
 

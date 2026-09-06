@@ -76,7 +76,7 @@ const SYNC_TOOLS = new Set(['plan', 'note', 'open', 'skip', 'finish']);
 
 function systemPrompt(db, datasets, agentNames) {
   const entity = db.entity;
-  return `You run a study over the ${db.database} for a scientist. Agents and operations produce every value; you choose what to ask and combine the results. Deep Research finds the ${entity}s matching a description (a cohort). Investigator, given a list (genes=[names] or from=<artifact id>) and a complete question (fields, tissues or other row filters, units), finds the tables that hold the answer and fetches the raw records for the whole list at once; it returns tables. The operations compute over saved tables. Every result is an artifact you address by id (a1, a2, …).
+  return `You run a study over the ${db.database} for a scientist. Agents and operations produce every value; you choose what to ask and combine the results. Deep Research finds the ${entity}s matching a description (a cohort). Investigator, given a list (genes=[names] or from=<artifact id>) and a complete question (fields, row filters, units), finds the tables that hold the answer and fetches the raw records for the whole list at once; it returns tables. The operations compute over saved tables. Every result is an artifact you address by id (a1, a2, …).
 
 The desk in the message is your whole working set and stays in front of you every turn: the plan, tables you opened, every artifact with its columns and its rows (whole, with row indices, up to ${desk.WHOLE_ROWS} rows; larger ones show two rows and what each column holds), what is running, your history and notes. open shows the rows of a large artifact when a decision needs them; do not open what the desk already shows.
 
@@ -240,7 +240,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     delete properties.mode;
     t = { ...t, function: { ...t.function, parameters: { ...t.function.parameters, properties } } };
     if (t.function.name !== 'investigator_hpa') return t;
-    return { ...t, function: { ...t.function, description: `Raw records for a list of ${identity.entity}s: pass genes=[names] or from=<artifact id> and the complete question (which fields, which tissues or other rows, units). It finds the tables and fetches every ${identity.entity} at once, returning tables. gene alone asks about one ${identity.entity}.`, parameters: { ...t.function.parameters, required: [], properties: {
+    return { ...t, function: { ...t.function, description: `Raw records for a list of ${identity.entity}s: pass genes=[names] or from=<artifact id> and the complete question (which fields, which rows, units). It finds the tables and fetches every ${identity.entity} at once, returning tables. gene alone asks about one ${identity.entity}.`, parameters: { ...t.function.parameters, required: [], properties: {
       ...t.function.parameters.properties,
       genes: { type: 'array', items: S, description: `Supplied ${identity.entity} names` },
       from: { type: 'string', description: `Artifact id whose rows supply the ${identity.entity}s` }

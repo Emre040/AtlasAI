@@ -577,7 +577,8 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     while (turn < maxTurns) {
       turn++;
       state.turn = turn;
-      const offered = turn === maxTurns ? toolSpecs.filter(t => ['finish', 'note'].includes(t.function.name)) : toolSpecs;
+      // The last turn can only report; skip exists only while an agent is running.
+      const offered = turn === maxTurns ? toolSpecs.filter(t => ['finish', 'note'].includes(t.function.name)) : toolSpecs.filter(t => t.function.name !== 'skip' || state.running.size);
       const user = deskText(turn);
       const request = { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], tools: offered, temperature: 0, prompt_cache: { key: `study ${workspace.uuid}` }, ...(effort ? { reasoning_effort: effort } : {}) };
       const contextDir = path.join(workspace.workspaceDir, 'context');

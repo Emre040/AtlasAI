@@ -65,7 +65,7 @@ async function executeBatch({ steps, outputs }, { specifications, execute, concu
     object(raw, 'step');
     if (typeof raw.id !== 'string' || !/^[A-Za-z][A-Za-z0-9_]*$/.test(raw.id) || byId.has(raw.id)) throw new Error(`Invalid or duplicate step id ${JSON.stringify(raw.id)}`);
     const spec = specifications.get(raw.tool);
-    if (!spec) throw new Error(`${raw.tool} is not a batch operation; choose a registered data operation from the capability directory and load its schema with load_tools`);
+    if (!spec) throw new Error(`${raw.tool} is not a table operation, so it cannot be a run step (steps hold ${[...specifications.keys()].join(', ')}); call it on its own`);
     let args;
     try { args = decodeArguments(object(decodeArguments(raw.args, ARGUMENTS_SCHEMA, `${raw.id}.args`), `${raw.id}.args`), spec.parameters, raw.tool); }
     catch (error) { throw new Error(`${raw.id}: ${error.message}`); }

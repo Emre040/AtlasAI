@@ -384,7 +384,9 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
           // A search that ran the same query as an earlier one says so: rewording the goal changed nothing.
           const twin = a.meta.query ? state.artifacts.find(x => x !== a && x.meta?.query === a.meta.query) : null;
           const extra = toolName === 'deep_research_hpa' ? ` query: ${String(a.meta.query || '').slice(0, 160)}${a.meta.not_expressible?.length ? `; could not express: ${a.meta.not_expressible.join('; ')}` : ''}${twin ? `; the same query as ${twin.id}${(twin.rows?.length || 0) === a.rows.length ? ', the same cohort' : ''}` : ''}` : a.kind === 'answer' ? ` answer: ${String(a.rows[0]?.answer || '').slice(0, 200)}` : '';
-          remember(`${id} ${toolName} done → ${a.id} (${a.size})${extra}`);
+          // A cohort's records are one Investigator call away; the history says so as it lands.
+          const next = toolName === 'deep_research_hpa' && a.rows.length && agentNames.has('investigator_hpa') ? `; its records: investigator_hpa from=${a.id} with the fields, rows and units the study needs` : '';
+          remember(`${id} ${toolName} done → ${a.id} (${a.size})${extra}${next}`);
         }
         job.made = made.map(a => a.id);
         for (const a of made) await log('tool.done', { id, tool: toolName, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);

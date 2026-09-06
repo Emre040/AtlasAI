@@ -2,6 +2,8 @@
 
 const { decodeArguments, mapArtifactReferences } = require('./toolArguments');
 
+const ARGUMENTS_SCHEMA = { type: 'object', additionalProperties: {}, description: 'Arguments of the registered operation. Artifact-handle fields may reference another step using @step_id.' };
+
 function object(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`);
   return value;
@@ -53,9 +55,8 @@ async function executeBatch({ steps, outputs }, { specifications, execute, concu
     if (typeof raw.id !== 'string' || !/^[A-Za-z][A-Za-z0-9_]*$/.test(raw.id) || byId.has(raw.id)) throw new Error(`Invalid or duplicate step id ${JSON.stringify(raw.id)}`);
     const spec = specifications.get(raw.tool);
     if (!spec) throw new Error(`${raw.tool} is not a batch operation; choose a registered data operation from the capability directory and load its schema with load_tools`);
-    if (typeof raw.args !== 'string') throw new Error(`${raw.id}.args must be a JSON object encoded as a string`);
     let args;
-    try { args = decodeArguments(object(JSON.parse(raw.args), `${raw.id}.args`), spec.parameters, raw.tool); }
+    try { args = decodeArguments(object(decodeArguments(raw.args, ARGUMENTS_SCHEMA, `${raw.id}.args`), `${raw.id}.args`), spec.parameters, raw.tool); }
     catch (error) { throw new Error(`${raw.id}: ${error.message}`); }
     byId.set(raw.id, { id: raw.id, tool: raw.tool, args, dependencies: [...references(args, spec.parameters)], spec, status: 'pending' });
   }
@@ -102,4 +103,4 @@ async function executeBatch({ steps, outputs }, { specifications, execute, concu
     outputs: outputs.filter(id => results.has(id)).map(id => ({ id, ...results.get(id) })) };
 }
 
-module.exports = { executeBatch, validate };
+module.exports = { executeBatch, validate, ARGUMENTS_SCHEMA };

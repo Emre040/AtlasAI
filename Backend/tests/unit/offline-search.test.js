@@ -71,7 +71,8 @@ test('tissue categories follow the specificity, distribution, and per-tissue exp
   assert.deepEqual(genes(await search.evaluate([{ field: 'Tissue category (RNA)', class: 'Heart muscle', subclass: ['Tissue enriched', 'Group enriched'] }])), ['MYH7']);
   assert.deepEqual(genes(await search.evaluate([{ field: 'Tissue category (RNA)', class: 'Any', subclass: 'Low tissue specificity' }])), ['TP53']);
   assert.deepEqual(genes(await search.evaluate([{ field: 'Tissue category (RNA)', class: 'Liver', subclass: 'Not detected' }])), ['FXYD2', 'MYH7']);
-  assert.deepEqual(genes(await search.evaluate([{ field: 'Tissue category (RNA)', class: 'Kidney', subclass: 'Is highest expressed' }])), ['FXYD2', 'TP53']);
+  // MYH7 has measured zero in both synthetic tissues, so both tie for its maximum.
+  assert.deepEqual(genes(await search.evaluate([{ field: 'Tissue category (RNA)', class: 'Kidney', subclass: 'Is highest expressed' }])), ['FXYD2', 'MYH7', 'TP53']);
   assert.deepEqual(genes(await search.evaluate([{ field: 'Tissue category (RNA)', class: 'Kidney', subclass: 'Detected in some' }])), ['FXYD2']);
 });
 

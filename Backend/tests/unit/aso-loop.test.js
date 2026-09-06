@@ -676,3 +676,49 @@ test('finish completion bindings reject wrong evidence before changing any plan 
   assert.equal(result.plan[0].status, 'done');
   assert.equal(result.plan[1].status, 'dropped');
 });
+
+
+test('cold tool loading alongside delegation waits for evidence without a skip decision', async t => {
+  const f = await fixture(t, ({ request, turn }) => {
+    if (turn === 1) return response(call('set_plan', { items: [{ step: 'Find cohort', kind: 'gene_set' }, { step: 'Compute source mean', kind: 'table' }] }),
+      call('deep_research_hpa', { goal: 'Find SYNTHETIC', node: 1 }), call('load_tools', { names: ['aggregate'] }));
+    if (turn === 2) {
+      assert.match(transcript(request), /SYNTHETIC/);
+      assert.match(request.messages.at(-1).content, /RUNNING\n\(none\)/);
+      assert.ok(request.tools.some(t => t.function.name === 'aggregate'));
+      return response(call('aggregate', { artifact: 'a1', column: 'value', metrics: ['mean'], node: 2 }));
+    }
+    assert.equal(turn, 3);
+    return response(call('finish', { tables: [{ artifact: 'a2', columns: ['mean'] }] }));
+  }, async () => {
+    await new Promise(resolve => setTimeout(resolve, 15));
+    return { result: { status: 'ok', result: { rows: [{ Gene: 'SYNTHETIC', value: 7 }] } } };
+  }, { nativeDiscovery: true });
+  const result = await f.run();
+  assert.equal(result.outcome, 'completed');
+  assert.equal(f.requests.length, 3);
+  assert.equal(result.failed, 0);
+});
+
+test('loaded operations can process existing evidence while a different specialist is pending', async t => {
+  const pending = deferred();
+  let started = 0;
+  const f = await fixture(t, ({ request, turn }) => {
+    if (turn === 1) return response(call('set_plan', { items: [{ step: 'First cohort', kind: 'gene_set' }, { step: 'Second cohort', kind: 'gene_set' }, { step: 'Mean from first', kind: 'table' }] }),
+      call('deep_research_hpa', { goal: 'First', node: 1 }));
+    if (turn === 2) return response(call('deep_research_hpa', { goal: 'Second', node: 2 }), call('load_tools', { names: ['aggregate'] }));
+    if (turn === 3) {
+      assert.equal(started, 2);
+      assert.match(request.messages.at(-1).content, /RUNNING\nt2/);
+      pending.resolve({ result: { status: 'ok', result: { rows: [{ Gene: 'SECOND', value: 9 }] } } });
+      return response(call('aggregate', { artifact: 'a1', column: 'value', metrics: ['mean'], node: 3 }));
+    }
+    return response(call('finish', { tables: [{ artifact: 'a1', columns: ['gene', 'value'] }] }));
+  }, async () => {
+    started++;
+    return started === 1 ? { result: { status: 'ok', result: { rows: [{ Gene: 'FIRST', value: 7 }] } } } : pending.promise;
+  }, { nativeDiscovery: true });
+  const result = await f.run();
+  assert.equal(result.outcome, 'completed');
+  assert.equal(result.failed, 0);
+});

@@ -1,5 +1,7 @@
 'use strict';
 
+const { sourceDefinitions } = require('../../hpa/sourceDefinitions');
+
 /**
  * The study loop (aso_hpa). One prompt, one loop. Every turn the model sees the goal, its own plan,
  * every artifact in the workspace and where it came from, what is still running and what came
@@ -24,7 +26,7 @@ const { localData, FILES } = require('../../hpa/localData');
 const { StudyContext, bytes } = require('../aso/studyContext');
 const { StudyConversation, planText } = require('../aso/studyConversation');
 const { CapabilityCatalog } = require('../aso/capabilityCatalog');
-const { validate, executeBatch } = require('../aso/batchOperations');
+const { validate, executeBatch, ARGUMENTS_SCHEMA } = require('../aso/batchOperations');
 const { decodeArguments } = require('../aso/toolArguments');
 const studyPlan = require('../aso/studyPlan');
 const { renderReport } = require('../aso/studyReport');
@@ -51,14 +53,14 @@ const tool = (name, description, properties = {}, required = []) => ({ name, des
 // One line each: the rules in the prompt do the teaching.
 const STUDY_TOOLS = [
   tool('set_plan', 'Plan requested results: Deep Research selects cohorts; Investigator retrieves measurements and statistics for the supplied list; ASO combines results and draws figures. Describe outcomes without choosing low-level operations or guessing columns. Use a separate gene_set step for each selection and a separate step for each chart. Include interpretation only when requested.', { items: { type: 'array', items: { type: 'object', properties: { step: { type: 'string', description: 'Describe the requested result in words; item numbers are assigned automatically.' }, kind: RESULT_KIND, inputs: S }, required: ['step', 'kind'] } } }, ['items']),
-  tool('run', 'Execute dependent registered data operations together. Use @step_id for a preceding output in artifact/a/b arguments. Exact operation schemas come from load_tools; no custom code or agent calls. Only requested outputs enter context; intermediates remain saved and inspectable.', { steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: { type: 'string', description: 'JSON object of that registered tool arguments; references use @step_id.' } }, required: ['id', 'tool', 'args'] } }, outputs: { type: 'array', items: S, description: 'Step IDs whose resulting evidence should be returned.' } }, ['steps', 'outputs']),
+  tool('run', 'Execute dependent registered data operations together. Use @step_id for a preceding output in artifact/a/b arguments. Exact operation schemas come from load_tools; no custom code or agent calls. Only requested outputs enter context; intermediates remain saved and inspectable.', { steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } }, outputs: { type: 'array', items: S, description: 'Step IDs whose resulting evidence should be returned.' } }, ['steps', 'outputs']),
   tool('update_plan', 'Revise a plan item (1-based), or append at the next number. artifacts lists evidence for done. A gene_set needs Deep Research, interpretation needs Investigator, and a chart kind needs a rendered figure of that type. Tag completing calls with node to avoid bookkeeping turns.', { item: N, status: { type: 'string', enum: ['todo', 'doing', 'done', 'dropped'] }, note: S, step: S, kind: RESULT_KIND, inputs: S, artifacts: { type: 'array', items: S } }, ['item']),
   tool('note', 'Record a decision or unresolved question. replace overwrites note N; empty text with replace removes it. Cite observation/artifact IDs for evidence.', { text: S, replace: N }, ['text']),
   tool('recall', 'Read the rest of a paged observation by id and offset, or search saved source evidence with query. limit caps search matches (default 12, max 30). The conversation already retains earlier results and corrections.', { id: S, query: S, offset: N, limit: N }),
   tool('datasets', 'Discover source files when investigating a gap reported by a specialist. Investigator already has the source catalog for measurement questions. about matches a word in names, titles or columns; omitted about lists all names.', { about: S }),
   tool('schema', 'Inspect saved result columns, or a source schema for a reported specialist gap. Investigator discovers measurement sources itself. about restricts both names and samples to matching columns; omit it for all names. Use describe for categories or distributions.', { what: S, about: S }, ['what']),
   tool('describe', 'Profile a dataset or artifact: column kinds, blanks, distinct values, examples, ranges and list grammar. columns narrows the profile; the result is saved for recall.', { what: S, columns: { type: 'array', items: S } }, ['what']),
-  tool('open', 'Read exact rows and columns. A positive rows count and zero-based offset select a page. provenance=true adds full source/operation metadata when needed; ordinary reads return the selected data and lineage. Cells are never shortened; recall continues long observations.', { what: S, rows: N, offset: N, columns: { type: 'array', items: S }, provenance: { type: 'boolean' } }, ['what']),
+  tool('open', 'Read exact rows and columns. Without columns, return every column; select columns for a compact view. A positive rows count and zero-based offset select a page. provenance=true adds full source/operation metadata when needed; ordinary reads return the selected data and lineage. Cells are never shortened; recall continues long observations.', { what: S, rows: N, offset: N, columns: { type: 'array', items: S, description: 'Nonempty column selection; omit for every column.' }, provenance: { type: 'boolean' } }, ['what']),
   tool('explode', 'One row per item of a list cell: "key: number" items give <as>_key and <as>_value columns, "label (number)" gives <as>_label and <as>_value, plain items <as>_item.', { artifact: A, column: S, as: S }, ['artifact', 'column']),
   tool('measure', 'Direct source read for a gap reported by Investigator; delegate ordinary measurement questions to investigator_hpa with genes or from. Existing columns are retained; with entity one row per gene, otherwise one row per gene and entity, retaining the source entity column name. as names the new column. An entity requires entity_column. Multiple matching rows require an explicit aggregate, or read all raw rows with intersect.', { artifact: A, table: { type: 'string', description: 'dataset name' }, value_column: S, entity_column: S, entity: S, as: S, aggregate: { type: 'string', enum: ['min', 'max', 'mean', 'median'] } }, ['artifact', 'table', 'value_column', 'as']),
   tool('union', 'Genes in either artifact.', { a: A, b: A }, ['a', 'b']),
@@ -411,7 +413,10 @@ const receipt = a => {
   if (a.matrix) return `${a.id} (${a.size}; rows ${a.matrix.row_labels.slice(0, 8).join(', ')}${a.matrix.row_labels.length > 8 ? ', …' : ''}; columns ${a.matrix.col_labels.slice(0, 8).join(', ')}${a.matrix.col_labels.length > 8 ? ', …' : ''})`;
   if (a.text) return `${a.id}: ${a.text}`;
   const predicateColumns = a.tool === 'filter' ? a.meta.predicate_columns || [] : [];
-  const columns = predicateColumns.length
+  const orderingColumns = a.meta.ordering_columns || [];
+  const columns = orderingColumns.length
+    ? shownColumns(a.columns, [...new Set([...['gene', 'ensembl'].filter(column => a.columns.includes(column)), ...orderingColumns])])
+    : predicateColumns.length
     ? shownColumns(a.columns, [...new Set([...['gene', 'ensembl'].filter(column => a.columns.includes(column)), ...predicateColumns])])
     : a.meta.bulk
     ? shownColumns(a.columns, [...new Set([...['gene', 'ensembl'].filter(key => a.columns.includes(key)), ...(a.meta.created_columns || a.columns).filter(key => !/_source_rows$|_missing_rows$/.test(key))])])
@@ -524,14 +529,24 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         return entry;
       };
       let out;
+      const orderingMetadata = (rows, grouped = false) => {
+        const by = tools.findColumn(rows, args.by);
+        const keys = [by, ...(grouped ? [tools.findColumn(rows, args.group_by === undefined ? 'gene' : args.group_by)] : []), ...(args.then_by || []).map(rule => tools.findColumn(rows, rule.column)), 'rank'];
+        const input = state.byId.get(String(args.artifact ?? '').trim());
+        // apply_bulk declares min/max labels as <as>_labels. Only that explicit
+        // producer metadata establishes the relationship; names alone do not.
+        const labels = (input?.meta.lookups || []).filter(lookup => lookup.as === by && ['min', 'max'].includes(lookup.aggregate) && Array.isArray(lookup.labels) && lookup.labels.length).map(lookup => `${lookup.as}_labels`);
+        const columns = tools.columnsOf(rows);
+        return { ordering_columns: [...new Set([...keys, ...labels])].filter(column => columns.includes(column)) };
+      };
       switch (tool) {
         case 'measure': out = { rows: await tools.measure(await rowsOf('artifact'), args, parallel) }; inputRefs.add(args.table); break;
         case 'union': case 'intersect': case 'difference': case 'concat': out = { rows: tools.setOp(tool, await rowsOf('a', 'b'), await rowsOf('b', 'a'), args.on || null) }; break;
         case 'join': out = { rows: tools.join(await rowsOf('a', 'b'), await rowsOf('b', 'a'), args.how, args.on || null, args.on_columns) }; break;
         case 'filter': { const rows = await rowsOf('artifact'); out = { rows: streamed ? rows : tools.applyWhere(rows, args.where), meta: { predicate_columns: [...new Set((args.where || []).flatMap(clause => [clause.column, clause.column_b || clause.other || clause.versus || clause.against]).filter(Boolean).map(name => tools.findColumn(rows, name)))] } }; break; }
         case 'select': out = { rows: tools.select(await rowsOf('artifact'), args.columns, args.rename, args.add) }; break;
-        case 'rank': out = { rows: tools.rank(await rowsOf('artifact'), args.by, args.order, Number(args.top) || 0, args.ties, args.then_by) }; break;
-        case 'top_per_group': { const entry = await wholeDataset('artifact'); out = { rows: entry ? await tools.topPerGroupStream(datasetStream(entry), args, ['gene', 'ensembl', ...entry.columns]) : tools.topPerGroup(await rowsOf('artifact'), args) }; break; }
+        case 'rank': { const rows = tools.rank(await rowsOf('artifact'), args.by, args.order, Number(args.top) || 0, args.ties, args.then_by); out = { rows, meta: orderingMetadata(rows) }; break; }
+        case 'top_per_group': { const entry = await wholeDataset('artifact'); const rows = entry ? await tools.topPerGroupStream(datasetStream(entry), args, ['gene', 'ensembl', ...entry.columns]) : tools.topPerGroup(await rowsOf('artifact'), args); out = { rows, meta: orderingMetadata(rows, true) }; break; }
         case 'aggregate': { const entry = await wholeDataset('artifact'); out = { rows: entry ? await tools.aggregateStream(datasetStream(entry), args, ['gene', 'ensembl', ...entry.columns]) : tools.aggregate(await rowsOf('artifact'), args) }; break; }
         case 'correlate': out = { rows: tools.correlate(await rowsOf('artifact'), args) }; break;
         case 'overlap': out = { rows: tools.overlap(await rowsOf('a', 'b'), await rowsOf('b', 'a'), await rowsOf('universe'), args.on || null, args.group_by || null) }; break;
@@ -571,7 +586,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
     const itemCol = String(spec.as || 'item');
     const { for_each: _spec, ...rest } = args;
     const sub = (v, x) => (typeof x === 'string' ? x.split('$item').join(v).split('${item}').join(v) : Array.isArray(x) ? x.map(y => sub(v, y)) : x && typeof x === 'object' ? Object.fromEntries(Object.entries(x).map(([k, y]) => [k, sub(v, y)])) : x);
-    const rows = [], outputColumns = new Set([itemCol]), predicateColumns = new Set();
+    const rows = [], outputColumns = new Set([itemCol]), predicateColumns = new Set(), orderingColumns = new Set();
     const failed = [];
     const inputColumns = new Set();
     for (const [index, v] of values.entries()) {
@@ -582,12 +597,13 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         if (r.out.rows.some(row => Object.hasOwn(row, itemCol) && row[itemCol] !== v)) throw new Error(`for_each.as column ${itemCol} conflicts with a source value; choose a distinct output name`);
         for (const c of tools.columnsOf(r.out.rows)) outputColumns.add(c);
         for (const c of r.out.meta?.predicate_columns || []) predicateColumns.add(c);
+        for (const c of r.out.meta?.ordering_columns || []) orderingColumns.add(c);
         for (const row of r.out.rows) rows.push({ [itemCol]: v, ...row });
         for (const c of r.inputColumns) inputColumns.add(c);
       } catch (err) { failed.push({ index, item: v, error: err.message }); }
     }
     const execution = { status: failed.length ? 'partial' : 'completed', requested: values.length, completed: values.length - failed.length, failed };
-    return { out: { rows: tools.withColumns(rows, [...outputColumns]), meta: { execution, ...(predicateColumns.size ? { predicate_columns: [...predicateColumns] } : {}) } }, inputColumns, inputs: [...inputRefs] };
+    return { out: { rows: tools.withColumns(rows, [...outputColumns]), meta: { execution, ...(predicateColumns.size ? { predicate_columns: [...predicateColumns] } : {}), ...(orderingColumns.size ? { ordering_columns: [itemCol, ...orderingColumns] } : {}) } }, inputColumns, inputs: [...inputRefs] };
   }
 
   async function runTableTool(tool, args, { announce = true } = {}) {
@@ -878,6 +894,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         if (call.name === 'open') {
           const requested = String(call.args.what || '').trim();
           const what = requested;
+          if (call.args.columns !== undefined && call.args.columns.length === 0) throw new Error('open.columns must be a nonempty selection; omit columns to return every column');
           try {
             const options = rowPageOptions(call.args);
             const pick = call.args.columns;
@@ -890,21 +907,17 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
               else if (a.text) content = a.text;
               else {
                 const view = { rows: a.rows.slice(options.offset, options.offset + options.rows), offset: options.offset, total: a.rows.length, more: options.offset + options.rows < a.rows.length };
-                content = formatPage(view, shownColumns(a.columns, pick));
+                content = formatPage(view, shownColumns(a.columns, pick === undefined ? a.columns : pick));
               }
               observe(`${a.id} (${a.size}); ${a.columns.length} total columns\nProvenance: ${provenance}\n${content}`, { source: `open ${a.id}`, refs: [a.id, ...a.inputs] });
               remember(`opened ${a.id}`);
             } else {
               const entry = await geneData.entry(what);
               if (!entry || entry.key === 'unreadable') throw new Error(`No readable dataset ${JSON.stringify(what)}; use datasets to discover files`);
-              const columns = shownColumns(entry.columns, pick);
+              const columns = shownColumns(entry.columns, pick === undefined ? entry.columns : pick);
               const view = await readPage(localData.rows(entry.file), options);
-              const terms = new Map();
-              for (const row of view.rows) for (const column of columns) for (const term of String(row[column] ?? '').split(/\s*[;,]\s*/)) {
-                const definition = term && geneData.definition(term);
-                if (definition) terms.set(term, definition);
-              }
-              const content = `${entry.file} — ${entry.title}. ${entry.description || ''}\nShowing ${columns.length}/${entry.columns.length} columns: ${columns.join(', ')}; describe for profiles of other columns\n${formatPage(view, columns)}${terms.size ? `\nTerms: ${JSON.stringify(Object.fromEntries(terms))}` : ''}`;
+              const definitions = sourceDefinitions(entry, view.rows, [], columns);
+              const content = `${entry.file} — ${entry.title}. ${entry.description || ''}\nShowing ${columns.length}/${entry.columns.length} columns: ${columns.join(', ')}; describe for profiles of other columns\n${formatPage(view, columns)}${Object.keys(definitions.definitions).length || definitions.unavailable_definitions ? `\nSource column definitions: ${JSON.stringify(definitions)}` : ''}`;
               observe(content, { source: `open ${entry.file}`, refs: [entry.file] });
               remember(`opened ${entry.file}`);
             }
@@ -964,7 +977,12 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         await waitForCompletion();
         continue;
       }
-      const hasNewEvidence = completedCalls.some(c => c.ids.length || c.data.status === 'error' || !['set_plan', 'update_plan', 'note', ...agentNames].includes(c.call.name));
+      // Loading schemas supplies no source evidence. When the desk is empty and
+      // specialists own the pending work, deliver their results before asking for
+      // another decision. Existing artifacts still allow useful parallel work.
+      const controlCalls = ['set_plan', 'update_plan', 'note', ...agentNames,
+        ...(!state.artifacts.length ? ['load_tools'] : [])];
+      const hasNewEvidence = completedCalls.some(c => c.ids.length || c.data.status === 'error' || !controlCalls.includes(c.call.name));
       if (state.running.size && !hasNewEvidence && state.artifacts.length === artifactsBefore) {
         stalls = 0;
         await waitForCompletion();

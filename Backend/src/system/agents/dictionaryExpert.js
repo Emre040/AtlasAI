@@ -8,6 +8,13 @@ const { inference } = require('../../inference/gateway');
 const { requireBoolean } = require('../../config/runtime');
 
 const VERBOSE_DIAGNOSTICS = requireBoolean('ATLAS_VERBOSE_DIAGNOSTICS');
+
+function canonicalTokens(usage) {
+  const tokens = { prompt: usage.prompt_tokens, completion: usage.completion_tokens, total: usage.total_tokens };
+  for (const [name, count] of Object.entries(tokens)) if (!Number.isSafeInteger(count) || count < 0) throw new Error(`Dictionary returned invalid token accounting for ${name}`);
+  if (tokens.total !== tokens.prompt + tokens.completion) throw new Error('Dictionary token total does not match prompt plus completion');
+  return tokens;
+}
 const debugLog = (...args) => {
   if (VERBOSE_DIAGNOSTICS) console.log(...args);
 };
@@ -265,6 +272,7 @@ async function handleAboutQuestion(question, onStep) {
       mode: 'about',
       question,
       message: 'Could not find relevant information on the HPA about pages.',
+      tokens: canonicalTokens(totalTokens),
       tokenUsage: { steps: tokenUsageLog, total: totalTokens }
     };
   }
@@ -289,6 +297,7 @@ async function handleAboutQuestion(question, onStep) {
     context: contextMd,
     chunk_count: allChunks.length,
     summary_md: `# About the Human Protein Atlas\n\n${contextMd}`,
+    tokens: canonicalTokens(totalTokens),
     tokenUsage: { steps: tokenUsageLog, total: totalTokens }
   };
 }
@@ -1399,7 +1408,8 @@ async function dictionaryExpert({ topic, topics, question }, { onStep } = {}) {
   if (!queryTopics.length || !queryTopics[0]) {
     return {
       status: 'error',
-      error: 'Topic is required'
+      error: 'Topic is required',
+      tokens: canonicalTokens(totalTokens)
     };
   }
 
@@ -1444,6 +1454,7 @@ async function dictionaryExpert({ topic, topics, question }, { onStep } = {}) {
         status: 'not_found',
         topic: queryTopics.join(', '),
         message: `No HPA Dictionary entries found for "${queryTopics.join(', ')}". Available categories include normal tissues, cancers, and cell structures.`,
+        tokens: canonicalTokens(totalTokens),
         tokenUsage: { steps: tokenUsageLog, total: totalTokens }
       };
     }
@@ -1531,6 +1542,7 @@ ${relatedNames ? `## Related Topics\n${relatedNames}` : ''}`;
       image_count: allImages.length,
       related_links: allRelatedLinks,
       summary_md, // Lightweight summary for LLM synthesis
+      tokens: canonicalTokens(totalTokens),
       tokenUsage: { steps: tokenUsageLog, total: totalTokens }
     };
 
@@ -1561,6 +1573,7 @@ ${relatedNames ? `## Related Topics\n${relatedNames}` : ''}`;
       status: 'error',
       topic: queryTopics.join(', '),
       error: error.message,
+      tokens: canonicalTokens(totalTokens),
       tokenUsage: { steps: tokenUsageLog, total: totalTokens }
     };
   }

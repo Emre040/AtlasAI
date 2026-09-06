@@ -45,7 +45,7 @@ test('bulk context discovers arbitrary sources and inherited data without repeat
     calls++;
     const initial = request.messages[1].content;
     assert.match(initial, /600 genes/);
-    assert.match(initial, /106 columns retained/);
+    assert.match(initial, /gene and ensembl identifiers plus 104 inherited columns retained/);
     assert.match(initial, /newly_imported_values.tsv/);
     assert.match(initial, /other_stream_source.tsv/);
     assert.doesNotMatch(initial, /inherited_field_|retained_value_|Value units/);
@@ -54,7 +54,8 @@ test('bulk context discovers arbitrary sources and inherited data without repeat
     if (calls === 2) {
       const schema = JSON.parse(request.messages.at(-1).content);
       assert.deepEqual(schema.columns, entry.columns);
-      assert.match(schema.definitions.Supported, /source evidence/);
+      assert.deepEqual(schema.definitions, {});
+      assert.equal(schema.unavailable_definitions.sample_term_pairs, 1); // A generic Quality field has no documented antibody-assay scope.
       return response('apply_bulk', { name: 'measurements', lookups: [{ table: entry.file, match_column: 'Target', value_column: 'Value units', as: 'observed_units' }] }, 'measure');
     }
     if (calls === 3) {

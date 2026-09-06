@@ -48,6 +48,7 @@ function specificEntities(text) {
 }
 
 function number(value) {
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -139,7 +140,7 @@ class OfflineSearch {
   }
 
   // One pass over a long-format file gives, per entity, the genes below and at or above the
-  // detection threshold, and per gene the entity with the highest value. Built once per file.
+  // detection threshold, and per gene every entity tied at the highest value. Built once per file.
   async entityIndex(long) {
     const dataset = typeof this.data.describe === 'function' ? await this.data.describe(long.file) : null;
     const identity = dataset ? `${long.file}:${dataset.unpackedBytes}:${dataset.downloadedUnixMs}` : long.file;
@@ -157,13 +158,16 @@ class OfflineSearch {
       if (!set) { set = new Set(); bucket.set(entity, set); }
       set.add(row.Gene);
       const current = best.get(row.Gene);
-      if (current === undefined || value > current.value) best.set(row.Gene, { entity, value });
+      if (current === undefined || value > current.value) best.set(row.Gene, { entities: new Set([entity]), value });
+      else if (value === current.value) current.entities.add(entity);
     }
     const highest = new Map();
     for (const [gene, top] of best) {
-      let set = highest.get(top.entity);
-      if (!set) { set = new Set(); highest.set(top.entity, set); }
-      set.add(gene);
+      for (const entity of top.entities) {
+        let set = highest.get(entity);
+        if (!set) { set = new Set(); highest.set(entity, set); }
+        set.add(gene);
+      }
     }
     const index = Object.freeze({ below, atLeast, highest });
     this.entityIndexes.set(long.file, { identity, index });

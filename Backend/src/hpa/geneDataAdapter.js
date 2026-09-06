@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const readline = require('node:readline');
 const { localData, FILES, parseHeader, parseCells } = require('./localData');
 const docs = require('./searchDocs');
+const { definition, sourceDefinitions } = require('./sourceDefinitions');
 
 const CATALOG_TTL_MS = 5 * 60 * 1000;
 const GENE_ID = /^ENS[A-Z]*G\d+/;
@@ -46,7 +47,7 @@ async function catalog() {
   const entries = [];
   for (const dataset of registry.values()) {
     const file = dataset.localPath;
-    const base = { file, title: dataset.datasetName || file, description: dataset.description || '', bytes: dataset.unpackedBytes || 0 };
+    const base = { file, title: dataset.datasetName || file, description: dataset.description || '', bytes: dataset.unpackedBytes || 0, hpaVersion: dataset.hpaVersion, resource: dataset.resource, sourcePageUrl: dataset.sourcePageUrl, sourceSection: dataset.sourceSection };
     if (!file.endsWith('.tsv')) { entries.push({ ...base, columns: [], key: 'unreadable', why: 'not a table' }); continue; }
     let head;
     try { head = await peek(localData.filePath(file)); }
@@ -67,8 +68,6 @@ async function catalog() {
   return entries;
 }
 
-function definition(name) { return docs.OPTIONS[name] || ''; }
-
 // Text for the plan step: one line per table.
 async function overview() {
   const entries = await catalog();
@@ -87,7 +86,7 @@ async function overview() {
     lines.push('', 'Present in the release but not readable here (say so if the question needs one):');
     for (const e of unreadable) lines.push(`- ${e.file} — ${e.title}. ${e.description} (${e.why})`);
   }
-  lines.push('', 'Category terms the atlas uses in these tables:', ...Object.entries(docs.OPTIONS).filter(([k]) => /enriched|enhanced|specificity|detected|highest|Tau|prognostic|Enhanced|Supported|Approved|Uncertain|^High$|^Medium$|^Low$|location/i.test(k)).map(([k, v]) => `- ${k}: ${v}`));
+  lines.push('', 'Category definitions accompany source reads and apply only to their named columns. Shared category labels can have different meanings across assays. Definitions explain category criteria; per-gene validation methods require their own recorded evidence.');
   return lines.join('\n');
 }
 
@@ -195,11 +194,13 @@ function render(reading, focus = [], options = {}) {
   const shown = matches.slice(offset, options.rows === undefined ? undefined : offset + options.rows);
   reading.shownColumns = viewColumns;
   reading.shownRows = shown;
+  const definitions = sourceDefinitions(e, shown, [], viewColumns);
+  const definitionsText = Object.keys(definitions.definitions).length || definitions.unavailable_definitions ? `\nSource column definitions: ${JSON.stringify(definitions)}` : '';
   const complete = shown.length === rows.length && viewColumns.length === cols.length;
   if (!rows.length) return { text: `${e.file}: ${filtered || 'no rows for this gene'}.`, shown: 0, total: reading.unfiltered ?? 0, matching: 0, complete: true, next_offset: null };
   if (e.key === 'master') {
     const lines = shown.flatMap(row => viewColumns.map(k => `${k}: ${isMissing(row[k]) ? '[not recorded]' : row[k]}`));
-    return { text: `${e.file} (one row per gene; ${viewColumns.length}/${available.length} columns shown):\n${lines.join('\n')}`, shown: shown.length, total: rows.length, matching: matches.length, complete, next_offset: offset + shown.length < matches.length ? offset + shown.length : null };
+    return { text: `${e.file} (one row per gene; ${viewColumns.length}/${available.length} columns shown):\n${lines.join('\n')}${definitionsText}`, shown: shown.length, total: rows.length, matching: matches.length, complete, next_offset: offset + shown.length < matches.length ? offset + shown.length : null };
   }
   const notes = [];
   if (filtered) notes.push(filtered);
@@ -208,7 +209,7 @@ function render(reading, focus = [], options = {}) {
   if (offset || shown.length < matches.length) notes.push(`showing ${shown.length} rows at offset ${offset} of ${matches.length} matching rows`);
   if (viewColumns.length < cols.length) notes.push(`showing ${viewColumns.length}/${cols.length} columns matching focus`);
   const lines = shown.map(r => viewColumns.map(c => r[c]).join(' | '));
-  return { text: `${e.file} (${notes.join('; ')})\ncolumns: ${viewColumns.join(' | ')}\n${lines.join('\n')}`, shown: shown.length, total: rows.length, matching: matches.length, complete, next_offset: offset + shown.length < matches.length ? offset + shown.length : null };
+  return { text: `${e.file} (${notes.join('; ')})\ncolumns: ${viewColumns.join(' | ')}\n${lines.join('\n')}${definitionsText}`, shown: shown.length, total: rows.length, matching: matches.length, complete, next_offset: offset + shown.length < matches.length ? offset + shown.length : null };
 }
 
 // Require an actual shown row/field and its value. Empty fields, partial fragments, and a value

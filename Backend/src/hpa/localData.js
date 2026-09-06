@@ -61,6 +61,7 @@ class LocalData {
     this.refreshing = null;
     this.tables = new Map();
     this.indexes = new Map();
+    this.indexLoads = new Map();
     this.unreachable = new Set();
   }
 
@@ -152,10 +153,17 @@ class LocalData {
     if (!dataset) throw new Error(`HPA dataset '${fileName}' is not available offline.`);
     const filePath = this.filePath(fileName);
     const stat = await fsp.stat(filePath);
-    const identity = `${fileName}:${stat.size}:${stat.mtimeMs}`;
+    const identity = `${filePath}:${stat.size}:${stat.mtimeMs}`;
     const cached = this.indexes.get(fileName);
     if (cached && cached.identity === identity) return cached.index;
+    if (this.indexLoads.has(identity)) return this.indexLoads.get(identity);
+    const pending = this.buildGeneIndex(fileName, filePath, stat, identity);
+    this.indexLoads.set(identity, pending);
+    try { return await pending; }
+    finally { this.indexLoads.delete(identity); }
+  }
 
+  async buildGeneIndex(fileName, filePath, stat, identity) {
     const ranges = new Map();
     let header = null;
     let current = null;
@@ -166,14 +174,13 @@ class LocalData {
     for await (const chunk of stream) {
       const buffer = leftover.length ? Buffer.concat([leftover, chunk]) : chunk;
       let lineStart = 0;
-      for (let i = 0; i < buffer.length; i++) {
-        if (buffer[i] !== NEWLINE) continue;
+      for (let i = buffer.indexOf(NEWLINE); i !== -1; i = buffer.indexOf(NEWLINE, lineStart)) {
         const absolute = offset + lineStart;
         if (header === null) {
           header = parseHeader(buffer.toString('utf8', lineStart, i));
         } else if (i > lineStart) {
-          let tab = lineStart;
-          while (tab < i && buffer[tab] !== TAB) tab++;
+          const nextTab = buffer.indexOf(TAB, lineStart);
+          const tab = nextTab === -1 || nextTab > i ? i : nextTab;
           const key = buffer.toString('ascii', lineStart, tab);
           if (key !== current) {
             if (current !== null) ranges.set(current, { start: currentStart, end: absolute });
@@ -251,11 +258,18 @@ class LocalData {
 
   // Resolves a symbol, synonym, or Ensembl id to the master row, like the online search does.
   async resolveGene(query) {
+    return (await this.resolveGenes([query]))[0];
+  }
+
+  // Resolve a supplied list against one master-table snapshot, preserving input order.
+  async resolveGenes(queries) {
     const master = await this.master();
-    const key = String(query || '').trim().toUpperCase();
-    if (!key) return null;
-    const row = master.byEnsembl.get(key) || master.byEnsembl.get(query) || master.byName.get(key) || null;
-    return row ? { gene: row.Gene, ensembl: row.Ensembl, row } : null;
+    return queries.map(query => {
+      const key = String(query || '').trim().toUpperCase();
+      if (!key) return null;
+      const row = master.byEnsembl.get(key) || master.byName.get(key);
+      return row ? { gene: row.Gene, ensembl: row.Ensembl, row } : null;
+    });
   }
 }
 

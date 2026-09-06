@@ -34,7 +34,13 @@ Rules:
 - When a note says rows or columns were left out and the answer needs them, do not answer from the part shown: set found to false and fill "need_more" with the table and the focus words or filter that would bring the missing rows or columns. You get one more read.
 - If the rows do not contain what the question asks, set found to false and say what is missing.`;
 
-async function investigatorTrail({ gene: geneQuery, question, mode: requestedMode = 'offline' }, { onStep } = {}, adapter = require('../../hpa/geneDataAdapter')) {
+async function investigatorTrail(args, ctx = {}, adapter = require('../../hpa/geneDataAdapter')) {
+  if (args.genes !== undefined) {
+    if (args.gene !== undefined) throw new Error('Supply gene or genes, not both');
+    return require('./investigatorBulk')(args, ctx, adapter);
+  }
+  const { gene: geneQuery, question, mode: requestedMode = 'offline' } = args;
+  const { onStep } = ctx;
   const startedAt = Date.now();
   const stats = { promptTokens: 0, completionTokens: 0, totalTokens: 0, perStep: {} };
   const q = question || `Tell me about ${geneQuery}`;

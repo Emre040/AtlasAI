@@ -43,34 +43,6 @@ function findColumn(rows, name) {
   return cols.find(c => c === name) || cols.find(c => lower(c) === lower(name)) || null;
 }
 
-// The catalog of operations the planner reads. Descriptions say what the operation does to a
-// table; nothing about any particular database.
-const TOOL_CATALOG = [
-  { name: 'search', inputs: 0, args: { question: 'a question describing which genes to find, in plain words' }, produces: 'a gene table: one row per gene matching the question, with the gene facts the search returns',
-    description: 'Finds genes by a question ("kinases enriched in the pancreas that are secreted to blood"). Runs a search agent that knows the database\'s search grammar and returns the matching genes with their facts.' },
-  { name: 'lookup', inputs: 1, args: { question: 'a question about one gene with {gene} where the gene name goes', max_genes: 'optional cap on how many genes of the input table to ask about', as: 'optional name for the value column (default value)' }, produces: 'the input genes with columns answer, value (or the "as" name), entity, table, found',
-    description: 'Asks a reading agent one factual question about each gene of the input table, in parallel; each answer cites the database row it rests on. Use it for questions that need reading and judgement; for a plain value from a known table use measure, which is exact and free, and for "which entity is highest per gene" use measure of all entities followed by top_per_group. Not for summaries or conclusions: the report does those.' },
-  { name: 'measure', inputs: 1, args: { table: 'a per-gene table of the database', value_column: 'the column to read', entity_column: 'optional: the column that names the entity (tissue, cell type, cancer)', entity: 'optional: which entity to read; omit to read every entity as separate rows', as: 'name for the value column in the output (default value); name it after what it holds, such as liver_nTPM, so later steps can refer to it' }, produces: 'the input rows with the value added first under the "as" name (and, when every entity is read, the entity column under its dataset name)',
-    description: 'Reads a value straight from a named table for every gene of the input table: exact, no model call. With an entity ("liver") one row per gene; without, one row per gene per entity, which pivot can turn into a matrix. Two measures joined later keep both values apart when each names its column with "as".' },
-  { name: 'union', inputs: 2, args: {}, produces: 'genes present in either input (one row per gene)', description: 'Genes in either table.' },
-  { name: 'intersect', inputs: 2, args: {}, produces: 'the rows of the first input whose gene is also in the second', description: 'Genes in both tables (rows and columns of the first; join to add the second\'s columns).' },
-  { name: 'difference', inputs: 2, args: {}, produces: 'the rows of the first input whose gene is absent from the second', description: 'Genes in the first table but not the second.' },
-  { name: 'concat', inputs: 2, args: {}, produces: 'all rows of the first input followed by all rows of the second', description: 'Stacks two tables with the same columns, keeping every row (no matching on gene): for example two count tables labelled with a route.' },
-  { name: 'join', inputs: 2, args: { how: '"inner" (default) or "left"', on: 'optional column to match on instead of gene (for tables without genes, such as counts per entity)' }, produces: 'each row of the first input combined with every row of the second input for the same gene (the second\'s columns suffixed with _2 when names clash)', description: 'Joins two tables by gene, like SQL: a long second table (one row per gene and entity) keeps all its rows.' },
-  { name: 'filter', inputs: 1, args: { where: [{ column: 'name', op: OPS.join(' | '), value: 'value, or a list for "in"' }] }, produces: 'the rows that satisfy every clause', description: 'Keeps rows by column conditions. Numbers compare numerically, text by case-insensitive equality or containment.' },
-  { name: 'select', inputs: 1, args: { columns: ['names to keep'], rename: { old: 'new' }, add: { new_column: 'a constant value written into every row, such as a label' } }, produces: 'the same rows with only those columns (plus any added constants)', description: 'Keeps and renames columns, and can add a constant column to label the rows before concat.' },
-  { name: 'rank', inputs: 1, args: { by: 'column', order: '"desc" (default) or "asc"', top: 'optional N' }, produces: 'rows sorted by the column with a rank column, cut to the top N', description: 'Sorts by a numeric column.' },
-  { name: 'aggregate', inputs: 1, args: { group_by: 'optional column', column: 'numeric column', metrics: ['count | sum | mean | median | min | max'] }, produces: 'one row per group with the requested metrics', description: 'Summarises a column, optionally per group.' },
-  { name: 'top_per_group', inputs: 1, args: { group_by: 'column that defines the groups (default gene)', by: 'numeric column', n: 'rows to keep per group (default 1)', order: '"desc" (default) or "asc"' }, produces: 'the n highest (or lowest) rows of each group, with a rank column', description: 'Keeps the top rows within each group: for example the entity with the highest value for every gene.' },
-  { name: 'compute', inputs: 1, args: { name: 'new column', expr: 'arithmetic over column names and numbers: + - * / parentheses and log2, log10, ln, abs, sqrt, exp, min, max; for example "log2((pancreas_nTPM + 1) / (liver_nTPM + 1))"' }, produces: 'the rows with the new column', description: 'Adds a column computed from numeric columns; rows where a value is missing or the result is not finite get null.' },
-  { name: 'pivot', inputs: 1, args: { row: 'column for rows (default gene)', column: 'column for columns (default entity)', value: 'value column (default value)', top: 'optional: keep the N rows with the highest maximum', top_columns: 'optional: keep the N columns with the highest maximum' }, produces: 'a matrix with row_labels and col_labels, for a heatmap', description: 'Turns long rows (gene, entity, value) into a matrix; cap rows and columns for a readable heatmap.' },
-  { name: 'chart', inputs: 1, args: { type: 'bar | lollipop | dot_plot | diverging_bar | grouped_bar | scatter | bubble | heatmap | radar | line | volcano', x: 'label column (bar family) or x column (scatter)', y: 'value column', group: 'optional group column (grouped_bar, radar)', size: 'optional size column (bubble)', title: 'title', x_label: 'axis label', y_label: 'axis label' }, produces: 'a figure', description: 'Draws the input table. A heatmap takes a pivot output; other types take rows with the named columns.' }
-];
-
-function catalogText() {
-  return TOOL_CATALOG.map(t => `- ${t.name}: ${t.description} Inputs: ${t.inputs}. Args: ${JSON.stringify(t.args)}. Produces: ${t.produces}.`).join('\n');
-}
-
 // ---- table operations ----------------------------------------------------------------------------
 
 function wherePredicate(columns, where = []) {
@@ -234,11 +206,19 @@ const METRICS = ['count', 'sum', 'mean', 'median', 'sd', 'q1', 'q3', 'min', 'max
 
 // Summarises a column per group as rows arrive; values are kept per group for the order
 // statistics, nothing else is held.
-function aggregator({ group_by, column, metrics = ['count'] } = {}, columns) {
+function aggregator({ group_by, group_by_columns, column, metrics = ['count'] } = {}, columns) {
   const col = column ? resolveIn(columns, column) : null;
   if (column && !col) throw new Error(`aggregate: no column named "${column}" (columns: ${columns.slice(0, 30).join(', ')})`);
   const groupCol = group_by ? resolveIn(columns, group_by) : null;
   if (group_by && !groupCol) throw new Error(`aggregate: no column named "${group_by}" (columns: ${columns.slice(0, 30).join(', ')})`);
+  if (group_by_columns !== undefined && (!Array.isArray(group_by_columns) || !group_by_columns.length)) throw new Error('aggregate: group_by_columns must be a nonempty array');
+  if (group_by && group_by_columns !== undefined) throw new Error('aggregate: use group_by or group_by_columns, not both');
+  const groupCols = (group_by_columns || []).map(name => {
+    const found = resolveIn(columns, name);
+    if (!found) throw new Error(`aggregate: no grouping column named "${name}"`);
+    return found;
+  });
+  if (new Set(groupCols).size !== groupCols.length) throw new Error('aggregate: grouping columns must be distinct');
   const wanted = (Array.isArray(metrics) ? metrics : [metrics]).map(m => lower(m));
   const unknown = wanted.filter(m => !METRICS.includes(m));
   if (unknown.length) throw new Error(`aggregate: unknown metric ${unknown.join(', ')} (metrics: ${METRICS.join(', ')})`);
@@ -246,9 +226,10 @@ function aggregator({ group_by, column, metrics = ['count'] } = {}, columns) {
   const groups = new Map();
   return {
     add(r) {
-      const g = groupCol ? String(r[groupCol] ?? '') : 'all';
+      const labels = groupCols.map(name => r[name] === undefined ? null : r[name]);
+      const g = groupCols.length ? JSON.stringify(labels) : groupCol ? String(r[groupCol] ?? '') : 'all';
       let st = groups.get(g);
-      if (!st) { st = { count: 0, missing: 0, vals: [], distinct: new Set() }; groups.set(g, st); }
+      if (!st) { st = { labels, count: 0, missing: 0, vals: [], distinct: new Set() }; groups.set(g, st); }
       st.count++;
       if (col) {
         const raw = r[col];
@@ -263,7 +244,7 @@ function aggregator({ group_by, column, metrics = ['count'] } = {}, columns) {
         const sorted = [...vals].sort((a, b) => a - b);
         const sum = vals.reduce((a, v) => a + v, 0);
         const mean = vals.length ? sum / vals.length : null;
-        const o = groupCol ? { [groupCol]: g } : {};
+        const o = groupCols.length ? Object.fromEntries(groupCols.map((name, index) => [name, st.labels[index]])) : groupCol ? { [groupCol]: g } : {};
         for (const m of wanted) {
           if (m === 'count') o.count = st.count;
           else if (m === 'sum') o.sum = sum;
@@ -363,10 +344,13 @@ function profiler(columns) {
         const filled = s.n - s.blank;
         const kind = filled === 0 ? 'empty' : s.nums / filled >= 0.95 ? 'number' : 'text';
         const top = [...s.distinct.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([v]) => (v.length > 40 ? `${v.slice(0, 39)}…` : v));
+        const fullExamples = [...s.distinct.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([v]) => v);
         const grammar = kind === 'text' ? listGrammar(s.samples) : null;
         return {
           column: c, kind, rows: s.n, blank_pct: s.n ? Math.round(100 * s.blank / s.n) : 0,
           distinct: s.distinct.size >= 1000 ? '1000+' : String(s.distinct.size), examples: top,
+          full_examples: fullExamples,
+          observed_values: kind === 'text' && s.distinct.size < 1000 ? [...s.distinct.keys()] : null,
           min: kind === 'number' ? s.min : undefined, max: kind === 'number' ? s.max : undefined,
           list: grammar && grammar.sep ? `list of '${grammar.shape}' items separated by '${grammar.sep}'` : (grammar && grammar.shape !== 'item' ? `'${grammar.shape}'` : undefined)
         };
@@ -672,12 +656,19 @@ function pivot(rows, { row = 'gene', column, value, top = 0, top_columns = 0 } =
   if (!rc || !cc || !vc) throw new Error(`pivot: needs row, column and value columns (asked for ${row}, ${column || '?'}, ${value || '?'}); columns: ${columnsOf(rows).slice(0, 30).join(', ')}`);
   const rowLabels = [], colLabels = [], ri = new Map(), ci = new Map();
   for (const r of rows) { const a = String(r[rc] ?? ''), b = String(r[cc] ?? ''); if (!ri.has(a)) { ri.set(a, rowLabels.length); rowLabels.push(a); } if (!ci.has(b)) { ci.set(b, colLabels.length); colLabels.push(b); } }
-  const matrix = rowLabels.map(() => Array(colLabels.length).fill(0));
-  for (const r of rows) { const v = num(r[vc]); if (v !== null) matrix[ri.get(String(r[rc] ?? ''))][ci.get(String(r[cc] ?? ''))] = v; }
+  const matrix = rowLabels.map(() => Array(colLabels.length).fill(null));
+  const filled = new Set();
+  for (const r of rows) {
+    const i = ri.get(String(r[rc] ?? '')), j = ci.get(String(r[cc] ?? ''));
+    const key = `${i}:${j}`;
+    if (filled.has(key)) throw new Error(`pivot: duplicate cell for ${r[rc]}, ${r[cc]}; aggregate duplicates explicitly first`);
+    filled.add(key); matrix[i][j] = num(r[vc]);
+  }
+  const maximum = values => Math.max(-Infinity, ...values.filter(v => v !== null));
   let keepRows = rowLabels.map((_, i) => i);
-  if (top > 0 && top < rowLabels.length) keepRows = keepRows.map(i => ({ i, s: Math.max(...matrix[i]) })).sort((a, b) => b.s - a.s).slice(0, top).map(x => x.i);
+  if (top > 0 && top < rowLabels.length) keepRows = keepRows.map(i => ({ i, s: maximum(matrix[i]) })).sort((a, b) => b.s - a.s).slice(0, top).map(x => x.i);
   let keepCols = colLabels.map((_, j) => j);
-  if (top_columns > 0 && top_columns < colLabels.length) keepCols = keepCols.map(j => ({ j, s: Math.max(...keepRows.map(i => matrix[i][j])) })).sort((a, b) => b.s - a.s).slice(0, top_columns).map(x => x.j);
+  if (top_columns > 0 && top_columns < colLabels.length) keepCols = keepCols.map(j => ({ j, s: maximum(keepRows.map(i => matrix[i][j])) })).sort((a, b) => b.s - a.s).slice(0, top_columns).map(x => x.j);
   return { matrix: keepRows.map(i => keepCols.map(j => matrix[i][j])), row_labels: keepRows.map(i => rowLabels[i]), col_labels: keepCols.map(j => colLabels[j]) };
 }
 
@@ -688,43 +679,44 @@ function chartSpec(args, input) {
     if (!input || !Array.isArray(input.matrix)) throw new Error('chart: heatmap needs a pivot output');
     return { ...base, matrix: input.matrix, row_labels: input.row_labels, col_labels: input.col_labels };
   }
-  const rows = Array.isArray(input) ? input : input?.rows || [];
+  let rows = Array.isArray(input) ? input : input?.rows || [];
   if (!rows.length) throw new Error('chart: no rows');
-  const x = findColumn(rows, args.x) || findColumn(rows, 'gene') || findColumn(rows, 'label');
-  const y = findColumn(rows, args.y) || findColumn(rows, 'value');
+  const x = findColumn(rows, args.x);
+  const y = findColumn(rows, args.y);
   if (!x || !y) throw new Error(`chart: columns not found (x ${args.x}, y ${args.y}); available: ${columnsOf(rows).join(', ')}`);
   const group = args.group ? findColumn(rows, args.group) : null;
   const size = args.size ? findColumn(rows, args.size) : null;
+  const label = args.label ? findColumn(rows, args.label) : null;
+  if (args.group && !group) throw new Error(`chart: no group column ${args.group}`);
+  if (args.size && !size) throw new Error(`chart: no size column ${args.size}`);
+  if (args.label && !label) throw new Error(`chart: no label column ${args.label}`);
+  const numeric = [y, ...(['scatter', 'bubble', 'volcano'].includes(args.type) ? [x] : []), ...(size ? [size] : [])];
+  const valid = rows.filter(r => numeric.every(c => num(r[c]) !== null));
+  base.omitted_rows = rows.length - valid.length;
+  if (base.omitted_rows && args.missing !== 'omit') throw new Error(`chart: ${base.omitted_rows} rows have missing numeric values; inspect them, then use missing=omit to exclude them explicitly`);
+  rows = valid;
+  if (!rows.length) throw new Error('chart: no rows with measured numeric values');
   if (['scatter', 'bubble', 'volcano'].includes(args.type)) {
-    return { ...base, data: rows.map(r => ({ x: num(r[x]) ?? 0, y: num(r[y]) ?? 0, label: String(r.gene ?? r.label ?? r[x] ?? ''), size: size ? (num(r[size]) ?? 10) : 10 })) };
+    return { ...base, data: rows.map(r => ({ x: num(r[x]), y: num(r[y]), label: label ? String(r[label] ?? '') : '', size: size ? num(r[size]) : 10 })) };
   }
-  if (args.type === 'line') return { ...base, data: rows.map(r => ({ x: r[x], y: num(r[y]) ?? 0, series: group ? String(r[group]) : undefined })) };
-  const data = rows.map(r => ({ label: String(r[x] ?? ''), value: num(r[y]) ?? 0, ...(group ? { group: String(r[group] ?? '') } : {}) }));
+  if (args.type === 'line') return { ...base, data: rows.map(r => ({ x: r[x], y: num(r[y]), series: group ? String(r[group]) : undefined })) };
+  const data = rows.map(r => ({ label: String(r[x] ?? ''), value: num(r[y]), ...(group ? { group: String(r[group] ?? '') } : {}) }));
   if (['grouped_bar', 'radar', 'stacked_bar'].includes(args.type) && !group) throw new Error(`chart: ${args.type} needs a group column`);
   return { ...base, data };
 }
 
 // Exact per-gene reads from a named table: one row per gene (with an entity) or per gene per entity.
-async function measure(rows, { table, value_column, entity_column, entity, as }, limit = 8) {
-  const valueName = String(as || '').trim() || 'value';
+async function measure(rows, { table, value_column, entity_column, entity, as, aggregate: reducer }, limit = 8) {
+  const valueName = String(as || '').trim();
+  if (!valueName) throw new Error('measure: as must name the output column');
+  if (entity && !entity_column) throw new Error('measure: entity requires an explicit entity_column');
+  if (reducer && !['min', 'max', 'mean', 'median'].includes(reducer)) throw new Error(`measure: unsupported aggregate ${reducer}`);
   const entry = await geneData.entry(table);
   if (!entry) throw new Error(`measure: no table named "${table}" in the release`);
   const valueCol = entry.columns.find(c => lower(c) === lower(value_column));
   if (!valueCol) throw new Error(`measure: "${table}" has no column "${value_column}" (columns: ${entry.columns.join(', ')})`);
   let entityCol = entity_column ? entry.columns.find(c => lower(c) === lower(entity_column)) : null;
   if (entity_column && !entityCol) throw new Error(`measure: "${table}" has no column "${entity_column}"`);
-  // No entity column named: find the one that holds the entity, or the first text column that
-  // is not the gene, so "liver" reads the liver row and a long read keeps its entity names.
-  const inferEntityColumn = rows => {
-    if (entityCol || !rows.length) return;
-    const candidates = entry.columns.filter(c => c !== valueCol && !/^(gene|ensembl|gene name)$/i.test(c));
-    if (entity) {
-      entityCol = candidates.find(c => rows.some(r => lower(r[c]) === lower(entity))) || null;
-      if (!entityCol) throw new Error(`measure: no column of "${table}" holds "${entity}" (columns: ${entry.columns.join(', ')})`);
-    } else if (rows.length > 1) {
-      entityCol = candidates.find(c => rows.every(r => num(r[c]) === null && String(r[c] ?? '') !== '')) || null;
-    }
-  };
   const out = [];
   const queue = [...rows];
   const worker = async () => {
@@ -737,11 +729,17 @@ async function measure(rows, { table, value_column, entity_column, entity, as },
       for (const k of ['gene', 'ensembl', 'note', valueName]) delete rest[k];
       const make = (fresh, extra = {}) => { const o = { ...ident, ...fresh }; for (const [k, v] of Object.entries(rest)) if (!(k in o)) o[k] = v; return Object.assign(o, extra); };
       if (!gene) { out.push(make({ [valueName]: null }, { note: 'gene not in release' })); continue; }
-      let reading;
-      try { reading = await geneData.read(gene, entry.file); } catch (e) { out.push(make({ [valueName]: null }, { note: e.message })); continue; }
-      try { inferEntityColumn(reading.rows); } catch (e) { out.push(make({ [valueName]: null }, { note: e.message })); continue; }
+      const reading = await geneData.read(gene, entry.file);
       const rowsFor = entityCol && entity ? reading.rows.filter(x => lower(x[entityCol]) === lower(entity)) : reading.rows;
-      if (entity || !entityCol) {
+      if (entity || !entityCol || reducer) {
+        if (rowsFor.length > 1 && !reducer) throw new Error(`measure: ${gene.ensembl} has ${rowsFor.length} matching rows in ${table}; select an entity, provide aggregate explicitly, or intersect the raw dataset with the gene artifact to retain all rows`);
+        if (reducer) {
+          const values = rowsFor.map(row => num(row[valueCol])).filter(v => v !== null).sort((a, b) => a - b);
+          const n = values.length;
+          const value = !n ? null : reducer === 'min' ? values[0] : reducer === 'max' ? values[n - 1] : reducer === 'mean' ? values.reduce((a, b) => a + b, 0) / n : n % 2 ? values[(n - 1) / 2] : (values[n / 2 - 1] + values[n / 2]) / 2;
+          out.push(make({ [valueName]: value, [`${valueName}_source_rows`]: rowsFor.length, [`${valueName}_numeric_rows`]: n }));
+          continue;
+        }
         const row = rowsFor[0];
         out.push(make({ [valueName]: row ? (num(row[valueCol]) ?? row[valueCol] ?? null) : null }, row ? {} : { note: 'no row' }));
       } else {
@@ -753,4 +751,4 @@ async function measure(rows, { table, value_column, entity_column, entity, as },
   return out;
 }
 
-module.exports = { TOOL_CATALOG, catalogText, applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, findColumn, keyOf, num };
+module.exports = { applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, findColumn, keyOf, num };

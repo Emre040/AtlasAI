@@ -148,7 +148,11 @@ def render_heatmap(chart, out_path):
     fig_w = min(24, max(8, n_cols * 0.6 + 3))
     fig_h = min(20, max(4, n_rows * 0.3 + 2))
     plt.figure(figsize=(fig_w, fig_h))
-    plt.imshow(matrix, aspect='auto', cmap='YlOrRd')
+    import numpy as np
+    values = np.ma.masked_invalid(np.asarray(matrix, dtype=float))
+    palette = plt.get_cmap('YlOrRd').copy()
+    palette.set_bad('#dddddd')
+    plt.imshow(values, aspect='auto', cmap=palette)
     _apply_title(chart)
     _apply_labels(chart)
     if col_labels:
@@ -169,7 +173,8 @@ def render_grouped_bar(chart, out_path):
     categories = sorted(set(d.get('label') for d in data))
     group_index = {g: i for i, g in enumerate(groups)}
     cat_index = {c: i for i, c in enumerate(categories)}
-    values = [[0 for _ in categories] for _ in groups]
+    import numpy as np
+    values = [[np.nan for _ in categories] for _ in groups]
     for d in data:
         g = d.get('group')
         c = d.get('label')

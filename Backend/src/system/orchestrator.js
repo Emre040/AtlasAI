@@ -48,9 +48,10 @@ const defs = [
   {
     name: 'investigator_hpa',
     description:
-      'Answers one question about one gene from the Human Protein Atlas per-gene tables (expression per tissue, cell ' +
+      'Investigates a question about one gene or a supplied list using Human Protein Atlas source tables (expression per tissue, cell ' +
       'type, brain region, immune cell, cell line and cancer; subcellular location; secretome; prognostics; interaction ' +
-      'partners; antibodies; classes). Use when the user names a gene or ENSG id. ' +
+      'partners; antibodies; classes). Pass gene for the existing single-gene investigation, or genes for bulk lookups. ' +
+      'Bulk Investigator locates the right sources and returns complete measurement tables, source references and missing values. ' +
       'Examples: "What is the liver nTPM of ALB?", "Which cell type expresses INS most?", "Tell me about BRCA1". ' +
       'The answer cites the table row it rests on; present it directly.',
     parameters: {
@@ -60,13 +61,17 @@ const defs = [
           type: 'string',
           description: 'The gene identifier to look up (gene symbol like BRCA1, or ENSG id like ENSG00000073734).'
         },
+        genes: {
+          type: 'array', items: { type: 'string' },
+          description: 'Optional supplied list. Investigator chooses source tables and applies lookups across the whole list; do not also supply gene.'
+        },
         question: {
           type: 'string',
-          description: 'The question to answer about this gene.'
+          description: 'The complete question, including requested measurements, tissues, source cohorts, statistics and limitations.'
         },
         mode: MODE_PARAMETER
       },
-      required: ['gene'],
+      required: [],
       additionalProperties: false
     },
     handler: investigatorTrail
@@ -176,7 +181,7 @@ async function execute(name, args, ctx = {}) {
 
   const rawQuery = String(ctx.rawQuery || '').trim();
   if (name === 'investigator_hpa') {
-    if (!parsed.gene) {
+    if (parsed.genes === undefined && !parsed.gene) {
       const ensgMatch = rawQuery.match(/\bENSG\d{9,}\b/i);
       if (ensgMatch) parsed.gene = ensgMatch[0].toUpperCase();
     }

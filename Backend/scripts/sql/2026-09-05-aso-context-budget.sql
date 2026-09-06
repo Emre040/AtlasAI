@@ -1,0 +1,2 @@
+-- Withdrawn proposal: ASO preserves native history without a separate byte budget.
+-- No schema migration is required for this change. Do not add aso_context_bytes.

@@ -105,6 +105,40 @@ async function resolveGene(query) {
   return resolved ? { gene: resolved.gene, ensembl: resolved.ensembl } : null;
 }
 
+async function resolveGenes(queries) {
+  return (await localData.resolveGenes(queries)).map(gene => gene ? { gene: gene.gene, ensembl: gene.ensembl } : null);
+}
+
+// One source read for a supplied cohort. Full rows stay in the tool layer. Indexed sources
+// are indexed once before any gene reads; small unindexed tables are loaded only once.
+async function readMany(genes, file) {
+  const e = await entry(file);
+  if (!e || ['unreadable', 'lookup', 'stream'].includes(e.key)) throw new Error(`No bulk gene read for ${file}${e?.why ? ': ' + e.why : ''}`);
+  const result = new Map();
+  const unique = [...new Map(genes.map(gene => [gene.ensembl, gene])).values()];
+  if (!unique.length) return { entry: e, byGene: result };
+  if (e.key === 'master') {
+    const master = await localData.master();
+    for (const gene of unique) result.set(gene.ensembl, master.byEnsembl.has(gene.ensembl) ? [master.byEnsembl.get(gene.ensembl)] : []);
+  } else if (e.key === 'scan') {
+    const wanted = new Set(unique.map(gene => gene.ensembl));
+    for (const gene of unique) result.set(gene.ensembl, []);
+    for (const row of (await localData.table(e.file)).rows) {
+      if (wanted.has(row[e.geneColumn])) result.get(row[e.geneColumn]).push(row);
+    }
+  } else {
+    await localData.geneIndex(e.file);
+    const queue = [...unique];
+    await Promise.all(Array.from({ length: Math.min(8, unique.length) }, async () => {
+      while (queue.length) {
+        const gene = queue.shift();
+        result.set(gene.ensembl, await localData.geneRows(e.file, e.key === 'ensembl' ? gene.ensembl : gene.gene));
+      }
+    }));
+  }
+  return { entry: e, byGene: result };
+}
+
 // The gene's rows in one table: a list of rows (each an object column → value); the master
 // table yields its single row with empty cells dropped.
 async function read(gene, file) {
@@ -213,4 +247,4 @@ function cited(reading, citation, value = null) {
 
 function pageUrl(gene) { return `https://www.proteinatlas.org/${gene.ensembl}-${gene.gene}`; }
 
-module.exports = { name: 'Human Protein Atlas per-gene tables', catalog, overview, entry, resolveGene, read, applyWhere, render, cited, pageUrl, definition, sources: docs.SOURCES };
+module.exports = { name: 'Human Protein Atlas per-gene tables', catalog, overview, entry, resolveGene, resolveGenes, read, readMany, applyWhere, render, cited, pageUrl, definition, sources: docs.SOURCES };

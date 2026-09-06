@@ -66,10 +66,12 @@ const count = n => Number(n).toLocaleString('en-US');
 // One line per column from a profile: what kind of values it holds and which ones. A source
 // table lists a categorical column's values in full (spelling matters for filters); a result card
 // lists a few, since its rows are on the desk.
-function columnLine(c, vocab = VOCAB_MAX) {
+function columnLine(c, vocab = VOCAB_MAX, brief = false) {
   const blank = c.blank_pct ? `; ${c.blank_pct}% blank` : '';
   if (c.kind === 'empty') return `${c.column}: no values recorded`;
   if (c.kind === 'number') return `${c.column}: number ${c.min === c.max ? count(c.min) : `${count(c.min)} to ${count(c.max)}`}${blank}${c.distinct === '1000+' ? '' : `; ${c.distinct} distinct`}`;
+  // A brief line says what the column is; the values come when the column is asked for.
+  if (brief && !(Array.isArray(c.observed_values) && c.observed_values.length <= 3)) return `${c.column}: text, ${c.distinct} distinct${blank}${c.list ? `; ${c.list}` : ''}`;
   const values = Array.isArray(c.observed_values) && c.observed_values.length <= vocab ? c.observed_values : null;
   if (values) return `${c.column}: ${values.length === 1 ? 'always' : `${values.length} values:`} ${values.map(v => v.length > CELL ? `${v.slice(0, CELL - 1)}…` : v).join(' | ')}${blank}${c.list ? `; ${c.list}` : ''}`;
   const examples = (c.full_examples || c.examples || []).slice(0, vocab === VOCAB_MAX ? EXAMPLES : 3).map(v => v.length > CELL ? `${v.slice(0, CELL - 1)}…` : v);
@@ -82,13 +84,13 @@ function columnLine(c, vocab = VOCAB_MAX) {
 // for the columns that were asked for. A table costs what was asked of it.
 function tableCard({ name, title, description, access, columns, profile, sample, scanned, capped, focus = null, whole = focus === null }) {
   const wide = columns.length > WIDE_COLUMNS;
-  const head = `${name} — ${title || name}${description ? `. ${description}` : ''}${access ? ` [${access}]` : ''}; ${columns.length} columns${scanned ? ` (values from ${capped ? 'the first ' : ''}${count(scanned)} rows)` : ''}${whole && wide ? ' (wide: a few values per column; open it with columns for every value of a column)' : ''}`;
+  const head = `${name} — ${title || name}${description ? `. ${description}` : ''}${access ? ` [${access}]` : ''}; ${columns.length} columns${scanned ? ` (values from ${capped ? 'the first ' : ''}${count(scanned)} rows)` : ''}${whole && wide ? ' (wide: what each column holds; open it with columns for the values of a column)' : ''}`;
   const lines = [head];
   const profiled = new Map((profile || []).map(c => [c.column, c]));
   const asked = new Set(focus || []);
   const detailed = whole ? columns : columns.filter(c => asked.has(c));
   if (!whole) lines.push(`  columns: ${columns.join(' | ')}`);
-  for (const column of detailed) lines.push(`  ${profiled.has(column) ? columnLine(profiled.get(column), asked.has(column) || !wide ? VOCAB_MAX : CARD_VOCAB) : column}`);
+  for (const column of detailed) lines.push(`  ${profiled.has(column) ? columnLine(profiled.get(column), asked.has(column) || !wide ? VOCAB_MAX : CARD_VOCAB, wide && !asked.has(column)) : column}`);
   // Sample rows of a wide table show its first columns; the column lines above show the rest.
   const rowColumns = whole && wide ? columns.slice(0, ROW_COLUMNS) : detailed;
   const more = rowColumns.length < detailed.length ? ` | … +${detailed.length - rowColumns.length} columns` : '';

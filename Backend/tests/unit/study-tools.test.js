@@ -28,6 +28,15 @@ test('a typed label is words: a number in it is refused by select and classify a
   assert.deepEqual(tools.classify(rows, { name: 'tier', rules: [{ where: [{ column: 'score', op: '>', value: 0.5 }], value: 'strong' }], otherwise: 'weak' }).map(r => r.tier), ['strong', 'weak']);
 });
 
+test('a cross join puts two results side by side, row by row', () => {
+  const total = tools.withColumns([{ count: 62 }], ['count']);
+  const part = tools.withColumns([{ count: 5 }], ['count']);
+  const out = tools.join(total, part, 'cross');
+  assert.deepEqual(tools.columnsOf(out), ['count', 'count_2']);
+  assert.deepEqual(out, [{ count: 62, count_2: 5 }]);
+  assert.equal(tools.join(tools.withColumns([{ a: 1 }, { a: 2 }], ['a']), tools.withColumns([{ b: 'x' }, { b: 'y' }], ['b']), 'cross').length, 4);
+});
+
 test('a profile lists the keys or labels inside structured cells', () => {
   const cells = [
     { spec: 'liver: 12.5;kidney: 3.0', prog: 'potential prognostic favorable (1.5e-4)' },

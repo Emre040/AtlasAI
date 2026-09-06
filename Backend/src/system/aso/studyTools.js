@@ -180,7 +180,15 @@ function setOp(kind, left, right, on = null) {
 // SQL-like: a left row joined with every right row of the same gene, so a long table (one row per
 // gene and entity) keeps all its rows.
 function join(left, right, how = 'inner', on = null, onColumns) {
-  if (!['inner', 'left', 'right', 'full'].includes(how)) throw new Error('join: how must be inner, left, right or full');
+  // A cross join pairs every row of a with every row of b: two single-row results side by side.
+  if (how === 'cross') {
+    const leftCols = columnsOf(left), rightCols = columnsOf(right), leftSet = new Set(leftCols);
+    const rightNames = new Map(rightCols.map(c => [c, leftSet.has(c) ? `${c}_2` : c]));
+    const out = [];
+    for (const l of left) for (const r of right) out.push({ ...Object.fromEntries(leftCols.map(c => [c, l[c] === undefined ? null : l[c]])), ...Object.fromEntries(rightCols.map(c => [rightNames.get(c), r[c] === undefined ? null : r[c]])) });
+    return withColumns(out, [...leftCols, ...rightNames.values()]);
+  }
+  if (!['inner', 'left', 'right', 'full'].includes(how)) throw new Error('join: how must be inner, left, right, full or cross');
   if (on && onColumns !== undefined) throw new Error('join: use on or on_columns, not both');
   if (onColumns !== undefined && (!Array.isArray(onColumns) || !onColumns.length || onColumns.some(name => typeof name !== 'string' || !name.trim()))) throw new Error('join: on_columns must be a nonempty array of column names');
   const composite = onColumns !== undefined;

@@ -70,11 +70,11 @@ test('without a list, fetch returns every row a filter selects; with match, the 
   assert.match(matched.requests[0].messages[1].content, /LIST\n3 points supplied; none is a gene of the release, so fetch matches them against a column \(match\)/);
 });
 
-test('errors come back as history lines with the columns the model needs, and repeats stop the loop', async () => {
+test('errors come back as history lines with the columns the model needs, and repeats under new titles stop the loop', async () => {
   const { run, requests } = await investigator([
     response(call('fetch', { title: 'x', description: 'y', table: 'rna_tissue_consensus.tsv', fields: ['expression'] })),
-    response(call('fetch', { title: 'x', description: 'y', table: 'rna_tissue_consensus.tsv', fields: ['expression'] })),
-    response(call('fetch', { title: 'x', description: 'y', table: 'rna_tissue_consensus.tsv', fields: ['expression'] }))
+    response(call('fetch', { title: 'x again', description: 'y', table: 'rna_tissue_consensus.tsv', fields: ['expression'] })),
+    response(call('fetch', { title: 'x once more', description: 'y', table: 'rna_tissue_consensus.tsv', fields: ['expression'] }))
   ]);
   const result = await run({ points: ['EGFR'], question: 'expression' });
   assert.equal(result.status, 'partial');

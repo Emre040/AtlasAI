@@ -145,8 +145,10 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
           if (!spec) throw new Error(`no tool ${name}`);
           args = decodeArguments(JSON.parse(call.function.arguments || '{}'), spec.function.parameters, name);
           validate(args, spec.function.parameters, name);
-          const key = fingerprint({ name, args });
-          if (name !== 'finish' && done.has(key)) { history.push(`turn ${turn}: ${name}(${argsLine(args)}) repeated; ${done.get(key)}`); continue; }
+          // The same fetch under another title is the same fetch.
+          const { title: _title, description: _description, ...bareArgs } = args;
+          const key = fingerprint({ name, args: bareArgs });
+          if (name !== 'finish' && done.has(key)) { history.push(`turn ${turn}: ${name}(${argsLine(bareArgs)}) repeated; ${done.get(key)}`); continue; }
           if (name === 'find_tables') {
             const text = findTables(args.about);
             history.push(`turn ${turn}: find_tables "${args.about}" →\n${text.split('\n').map(l => `    ${l}`).join('\n')}`);

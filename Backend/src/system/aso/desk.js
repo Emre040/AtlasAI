@@ -111,7 +111,7 @@ const INLINE_CELLS = 160; // a result this small (rows × shown columns) is show
 // Whether a result is small enough to sit on the desk whole.
 function inline(rows, columns) { return rows.length > 0 && rows.length * Math.min(columns.length, ROW_COLUMNS) <= INLINE_CELLS; }
 
-function resultLine({ id, title = '', description = '', origin, rows = [], columns = [], matrix, figure, images, text }) {
+function resultLine({ id, title = '', description = '', origin, rows = [], columns = [], matrix, figure, images, text, consumed = false }) {
   const head = title ? `${id} "${title}"` : id;
   if (text && !rows.length && !matrix && !figure) {
     const body = String(text).replace(/\s+/g, ' ').trim();
@@ -124,7 +124,9 @@ function resultLine({ id, title = '', description = '', origin, rows = [], colum
   }
   const lines = [`${head} (${count(rows.length)} rows: ${namedColumns(columns)}) ← ${origin}`];
   if (description) lines.push(`  ${description}`);
-  if (inline(rows, columns)) lines.push(...sampleLines(rows, columns, rows.length).map((l, i) => `  ${i}: ${l}`));
+  // Rows sit inline while nothing has read the result yet; once an operation consumed it, its
+  // rows live on in the successor and the line stays a line (open shows them again).
+  if (!consumed && inline(rows, columns)) lines.push(...sampleLines(rows, columns, rows.length).map((l, i) => `  ${i}: ${l}`));
   return lines.join('\n');
 }
 

@@ -63,6 +63,7 @@ test('plan, delegate, compute a chain, and finish a report bound to the data', a
   assert.match(desk2, /HISTORY\nturn 1: plan: 3 deliverables\nturn 1: t1 investigator_hpa "Lung and liver nTPM" done → a1 "Lung and liver nTPM" \(4 rows\)/);
   assert.match(desk2, /PLAN\n1\. \[todo\] lung and liver nTPM \| table\n2\. \[todo\] heatmap \| heatmap/);
   const desk3 = requests[2].messages[1].content;
+  assert.match(desk3, /a1 "Lung and liver nTPM" \(4 rows: [^\n]*\n  Lung and liver nTPM, described\na2 "Heat matrix"/, 'once the pivot read a1, its rows leave the desk');
   assert.match(desk3, /a2 "Heat matrix" matrix 2 × 2 \(rows: EGFR, ERBB2; columns: liver, lung\) ← pivot t2 of a1; a heatmap input\n  Heat matrix, described/);
   assert.match(desk3, /a3 "Heat" figure heatmap ← chart t3\(artifact=a2, type=heatmap\) \(rendered\)/);
   assert.match(requests[3].messages[1].content, /a4 "Bars" figure grouped_bar/);

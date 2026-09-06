@@ -433,9 +433,11 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
 
   function deskText(turn) {
     const running = [...state.running.values()].map(j => `${j.id} ${j.tool} "${String(j.args.title || '').slice(0, 100)}" ${Math.round((Date.now() - j.startedAt) / 1000)} s`).join('\n') || '(nothing running)';
+    // An artifact a later operation read shows no rows: they live on in the successor.
+    const consumed = new Set(state.artifacts.flatMap(a => a.inputs || []));
     // The artifacts whose every row is on the desk this turn; open answers for them from the desk.
-    state.wholeOnDesk = new Set(state.artifacts.filter(a => Array.isArray(a.rows) && desk.inline(a.rows, a.columns)).map(a => a.id));
-    const lines = state.artifacts.map(a => desk.resultLine({ id: a.id, title: a.label, description: a.description, origin: origin(a), rows: a.rows || [], columns: a.columns, matrix: a.matrix, figure: a.figure, images: a.images, text: a.text }));
+    state.wholeOnDesk = new Set(state.artifacts.filter(a => Array.isArray(a.rows) && !consumed.has(a.id) && desk.inline(a.rows, a.columns)).map(a => a.id));
+    const lines = state.artifacts.map(a => desk.resultLine({ id: a.id, title: a.label, description: a.description, origin: origin(a), rows: a.rows || [], columns: a.columns, matrix: a.matrix, figure: a.figure, images: a.images, text: a.text, consumed: consumed.has(a.id) }));
     const views = [...state.views.values()].map(v => v.text);
     const sections = [
       desk.section('STUDY', goal),

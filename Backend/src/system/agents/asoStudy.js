@@ -80,7 +80,7 @@ The desk in the message is your whole working set and stays in front of you ever
 
 How a study goes:
 1. plan lists the deliverables, one item per requested table, figure of a given type, cohort or interpretation; independent work starts in the same turn.
-2. A cohort, the ${entity}s matching a description, comes from ${search}, which runs the ${db.database} search for it. The records of a list of ${entity}s come from investigator_hpa, which finds the tables that hold them. Both run in the background and return tables that are used as they are. A dataset name stands in for a table when the question is about the whole dataset: a count over every ${entity}, a whole-table ranking.
+2. A cohort, the ${entity}s matching a description, comes from ${search}, which runs the ${db.database} search for it. The records of a list of ${entity}s come from investigator_hpa, which finds the tables that hold them and reads the list's rows by index, in seconds. Both run in the background and return tables that are used as they are. A dataset name stands in for a table when the question is about the whole dataset: a count over every ${entity}, a whole-table ranking; an operation over a dataset streams every row of it.
 3. Operations compute on artifact ids. Dependent steps chain in one run call with @id references (pivot then heatmap; filter, rank, chart); independent calls go in the same turn.
 4. finish delivers the report from the data: tables and figures by id, and findings as claims, each bound to the rows and columns it rests on. The report prints those cells beside the claim, so every number a claim states is among them or was computed into an artifact the claim cites. Limitations state what the evidence cannot establish, in words. A plan item that cannot be delivered goes in not_done with the reason.
 Values are reported as recorded: units, zeros, blanks, repeated rows and ties. A missing record is absence from this source.
@@ -403,7 +403,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
 
   // One table operation: inputs resolved (artifacts, datasets, streams), the operation applied.
   async function computeOut(toolName, args) {
-    const inputColumns = new Set(), inputRefs = new Set();
+    const inputColumns = new Set(), inputRefs = new Set(), reads = [];
     let streamed = false;
     const rowsOf = async (key, other = null) => {
       const ref = String(args[key] ?? '').trim();
@@ -423,10 +423,13 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
       const genes = otherRef && state.byId.has(otherRef) ? get(otherRef).rows || null : null;
       // A filter that pins the entity key reads those entities by index; the rest of its clauses apply in memory.
       const pinned = toolName === 'filter' && !genes && ['ensembl', 'name'].includes(entry.key) ? pinnedEntities(entry, args.where) : null;
+      const t0 = Date.now();
       const rows = pinned
         ? await datasetRows(entry, { genes: (await geneData.resolveGenes(pinned)).filter(Boolean), limit: parallel })
         : await datasetRows(entry, { genes, where: toolName === 'filter' ? args.where : null, limit: parallel });
       streamed = toolName === 'filter' && !genes && !pinned && !['master', 'lookup', 'scan'].includes(entry.key);
+      // What reading the dataset cost, so the history shows it beside the result.
+      if (['ensembl', 'name', 'stream'].includes(entry.key)) reads.push(genes || pinned ? `${entry.file} read by index for ${(genes || pinned).length} ${identity.entity}s in ${Math.round((Date.now() - t0) / 1000)} s` : `${entry.file} streamed whole in ${Math.round((Date.now() - t0) / 1000)} s`);
       for (const c of ['gene', 'ensembl', ...entry.columns]) inputColumns.add(c);
       return tools.withColumns(rows, [...inputColumns]);
     };
@@ -462,7 +465,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
       case 'chart': { const a = get(args.artifact); inputRefs.add(a.id); out = { figure: tools.chartSpec(args, a.matrix || a.rows) }; break; }
       default: throw new Error(`unknown operation ${toolName}`);
     }
-    return { out, inputColumns, inputs: [...inputRefs] };
+    return { out, inputColumns, inputs: [...inputRefs], reads };
   }
 
   const made = new Map();   // fingerprint of an operation → the artifact it made
@@ -483,12 +486,12 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     const label = toolName === 'chart' ? String(args.title || `${args.type} chart`).slice(0, 80) : `${toolName}(${desk.argsLine(args, 100)})`;
     await log('tool.start', { id, tool: toolName, kind: toolName === 'chart' ? 'chart' : 'tool', label, args, inputs }, id);
     try {
-      const { out, inputColumns, inputs: resolvedInputs } = await computeOut(toolName, args);
+      const { out, inputColumns, inputs: resolvedInputs, reads } = await computeOut(toolName, args);
       inputs = resolvedInputs;
       if (out.rows) out.rows = tools.freshFirst(out.rows, [...inputColumns]);
       const a = await addArtifact({ kind: out.figure ? 'figure' : 'data', label: toolName === 'chart' ? label : `${toolName} of ${inputs.join(', ')}`, rows: out.rows, matrix: out.matrix, figure: out.figure, meta: out.figure ? { omitted_rows: out.figure.omitted_rows || 0 } : out.meta, tool: toolName, args, inputs, toolId: id });
       made.set(key, a.id);
-      remember(`${toolName}(${desk.argsLine(args, 140)}) → ${a.id} (${a.size}${a.kind === 'figure' && !a.images.length ? ', not rendered' : ''})`);
+      remember(`${toolName}(${desk.argsLine(args, 140)}) → ${a.id} (${a.size}${a.kind === 'figure' && !a.images.length ? ', not rendered' : ''}${reads.length ? `; ${reads.join('; ')}` : ''})`);
       await log('tool.done', { id, tool: toolName, kind: out.figure ? 'chart' : 'tool', artifact: artifactEvent(a), ms: Date.now() - t0 }, id);
       return { ok: true, artifact: a };
     } catch (err) {

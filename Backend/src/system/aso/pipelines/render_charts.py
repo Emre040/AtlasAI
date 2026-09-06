@@ -14,11 +14,33 @@ import matplotlib.colors as mcolors
 
 
 def _save_figure(figure, out_path):
-    """Include the full measured extent of visible labels in the exported image."""
+    """Include the full measured extent of visible labels in the exported image. A log axis keeps
+    tick labels for ticks beyond its limits; they sit off the figure and are not part of it."""
     from matplotlib.text import Text
+    figure.canvas.draw()
+    renderer = figure.canvas.get_renderer()
     labels = [artist for artist in figure.findobj(Text)
-              if artist.get_visible() and artist.get_text()]
+              if artist.get_visible() and artist.get_text() and artist.get_window_extent(renderer).overlaps(figure.bbox)]
     figure.savefig(out_path, dpi=150, bbox_inches='tight', bbox_extra_artists=labels)
+
+
+def _column_values(chart, axis):
+    """The plotted values of the x or y column: points for the numeric charts, values for the bar family."""
+    data = chart.get('data', [])
+    if chart.get('type') in ('scatter', 'bubble', 'volcano', 'line'):
+        return [d.get(axis) for d in data]
+    return [d.get('value') for d in data] if axis == 'y' else []
+
+
+def _log_axis(ax, drawn, values):
+    """A log axis; values at or below zero (a zero reading, a log ratio) call for symlog, linear near zero."""
+    numbers = [v for v in values if v is not None]
+    positives = [abs(v) for v in numbers if v != 0]
+    setter = ax.set_xscale if drawn == 'x' else ax.set_yscale
+    if numbers and all(v > 0 for v in numbers):
+        setter('log')
+    else:
+        setter('symlog', linthresh=min(positives) if positives else 1.0)
 
 
 def _apply_labels(chart, swap=False):
@@ -30,6 +52,11 @@ def _apply_labels(chart, swap=False):
         plt.xlabel(xl)
     if yl:
         plt.ylabel(yl)
+    # x_scale and y_scale follow the columns; a horizontal chart draws the y column on the x axis.
+    for axis in ('x', 'y'):
+        if chart.get(f'{axis}_scale') == 'log':
+            drawn = ('y' if axis == 'x' else 'x') if swap else axis
+            _log_axis(plt.gca(), drawn, _column_values(chart, axis))
     if 'x_domain' in chart:
         plt.xlim(*chart['x_domain'])
     if 'y_domain' in chart:
@@ -272,7 +299,15 @@ def render_heatmap(chart, out_path):
     values = np.ma.masked_invalid(np.asarray(matrix, dtype=float))
     palette = plt.get_cmap('YlOrRd').copy()
     palette.set_bad('#dddddd')
-    plt.imshow(values, aspect='auto', cmap=palette)
+    norm = None
+    if chart.get('scale') == 'log':
+        present = values.compressed()
+        positives = np.abs(present[present != 0])
+        if present.size and (present > 0).all():
+            norm = mcolors.LogNorm(vmin=present.min(), vmax=present.max())
+        else:
+            norm = mcolors.SymLogNorm(linthresh=positives.min() if positives.size else 1.0, vmin=present.min() if present.size else 0, vmax=present.max() if present.size else 1)
+    plt.imshow(values, aspect='auto', cmap=palette, norm=norm)
     _apply_title(chart)
     _apply_labels(chart)
     if col_labels:

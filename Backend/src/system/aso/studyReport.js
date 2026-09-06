@@ -154,7 +154,9 @@ function reportIssues(args, state) {
 
 function figureLine(artifact) {
   const f = artifact.figure || {};
-  return `Figure ${artifact.id}: ${f.type}${f.title ? ` "${f.title}"` : ''}${f.x_label || f.y_label ? ` (${[f.x_label, f.y_label].filter(Boolean).join(' vs ')})` : ''}${artifact.inputs?.length ? ` from ${artifact.inputs.join(', ')}` : ''}`;
+  const axis = (label, scale) => label ? `${label}${scale === 'log' ? ' (log)' : ''}` : '';
+  const axes = [axis(f.x_label, f.x_scale), axis(f.y_label, f.y_scale)].filter(Boolean);
+  return `Figure ${artifact.id}: ${f.type}${f.title ? ` "${f.title}"` : ''}${axes.length ? ` (${axes.join(' vs ')})` : ''}${f.scale === 'log' ? ' (log colour scale)' : ''}${artifact.inputs?.length ? ` from ${artifact.inputs.join(', ')}` : ''}`;
 }
 
 function evidenceText(bound) {

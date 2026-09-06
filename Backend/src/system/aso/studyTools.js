@@ -8,7 +8,6 @@
  * produced. Set operations key on `ensembl` when present, else on `gene`.
  */
 
-const geneData = require('../../hpa/geneDataAdapter');
 const { SCALAR_SCHEMA } = require('./valueSchemas');
 const { statedNumbers } = require('./numbers');
 
@@ -179,11 +178,24 @@ function setOp(kind, left, right, on = null) {
 
 // SQL-like: a left row joined with every right row of the same gene, so a long table (one row per
 // gene and entity) keeps all its rows.
+// Names for the columns b brings into a join: a name a already uses, or an earlier column of b
+// took, gets the first free numbered suffix (_2, _3, …), so no two output columns share a name.
+function suffixedNames(columns, taken) {
+  const used = new Set(taken), names = new Map();
+  for (const column of columns) {
+    let name = column;
+    for (let n = 2; used.has(name); n++) name = `${column}_${n}`;
+    used.add(name);
+    names.set(column, name);
+  }
+  return names;
+}
+
 function join(left, right, how = 'inner', on = null, onColumns) {
   // A cross join pairs every row of a with every row of b: two single-row results side by side.
   if (how === 'cross') {
-    const leftCols = columnsOf(left), rightCols = columnsOf(right), leftSet = new Set(leftCols);
-    const rightNames = new Map(rightCols.map(c => [c, leftSet.has(c) ? `${c}_2` : c]));
+    const leftCols = columnsOf(left), rightCols = columnsOf(right);
+    const rightNames = suffixedNames(rightCols, leftCols);
     const out = [];
     for (const l of left) for (const r of right) out.push({ ...Object.fromEntries(leftCols.map(c => [c, l[c] === undefined ? null : l[c]])), ...Object.fromEntries(rightCols.map(c => [rightNames.get(c), r[c] === undefined ? null : r[c]])) });
     return withColumns(out, [...leftCols, ...rightNames.values()]);
@@ -209,11 +221,10 @@ function join(left, right, how = 'inner', on = null, onColumns) {
     if (values.some(value => typeof value === 'object' || (typeof value === 'number' && !Number.isFinite(value)))) throw new Error('join: composite key values must be finite scalar values');
     return [JSON.stringify(values)];
   };
-  const leftCols = columnsOf(left), rightCols = columnsOf(right), leftSet = new Set(leftCols);
+  const leftCols = columnsOf(left), rightCols = columnsOf(right);
   const rightFields = rightCols.filter(column => !rightKeys.includes(column) && (composite || !['gene', 'ensembl'].includes(column)));
-  const rightNames = new Map(rightFields.map(column => [column, leftSet.has(column) ? `${column}_2` : column]));
+  const rightNames = suffixedNames(rightFields, leftCols);
   const projected = [...leftCols, ...rightNames.values()];
-  if (new Set(projected).size !== projected.length) throw new Error('join: output column collision; rename conflicting columns explicitly before joining');
   const identityColumns = ['gene', 'ensembl'].filter(column => leftCols.includes(column) || rightCols.includes(column));
   const outputColumns = [...new Set([...projected, ...identityColumns])];
   const merge = (l, r) => {
@@ -954,8 +965,25 @@ function chartDomains(args, axes) {
   return domains;
 }
 
+// Axis and cell scales: log where the values span orders of magnitude. Linear is the default
+// and is not recorded. x_scale and y_scale follow the x and y columns; scale colours heatmap cells.
+function chartScales(args) {
+  const scales = {};
+  const heatmap = args.type === 'heatmap', numericX = ['scatter', 'bubble', 'volcano', 'line'].includes(args.type);
+  for (const name of ['x_scale', 'y_scale', 'scale']) {
+    const value = args[name];
+    if (value === undefined || value === 'linear') continue;
+    if (value !== 'log') throw new Error(`chart: ${name} must be linear or log`);
+    if (heatmap && name !== 'scale') throw new Error(`chart: a heatmap colours its cells; scale sets that, not ${name}`);
+    if (!heatmap && name === 'scale') throw new Error(`chart: scale colours heatmap cells; ${args.type} takes ${numericX ? 'x_scale or ' : ''}y_scale`);
+    if (name === 'x_scale' && !numericX) throw new Error(`chart: x of ${args.type} holds labels; y_scale scales the values`);
+    scales[name] = value;
+  }
+  return scales;
+}
+
 function chartSpec(args, input) {
-  const base = { type: args.type, title: args.title || '', x_label: args.x_label || '', y_label: args.y_label || '' };
+  const base = { type: args.type, title: args.title || '', x_label: args.x_label || '', y_label: args.y_label || '', ...chartScales(args) };
   if (args.type === 'heatmap') {
     if (!input || !Array.isArray(input.matrix)) throw new Error('chart: heatmap needs a pivot output');
     return { ...base, ...chartDomains(args, {}), matrix: input.matrix, row_labels: input.row_labels, col_labels: input.col_labels };
@@ -995,50 +1023,4 @@ function chartSpec(args, input) {
   return { ...base, ...chartDomains(args, axes), data };
 }
 
-// Exact per-gene reads from a named table: one row per gene (with an entity) or per gene per entity.
-async function measure(rows, { table, value_column, entity_column, entity, as, aggregate: reducer }, limit = 8) {
-  const valueName = String(as || '').trim();
-  if (!valueName) throw new Error('measure: as must name the output column');
-  if (entity && !entity_column) throw new Error('measure: entity requires an explicit entity_column');
-  if (reducer && !['min', 'max', 'mean', 'median'].includes(reducer)) throw new Error(`measure: unsupported aggregate ${reducer}`);
-  const entry = await geneData.entry(table);
-  if (!entry) throw new Error(`measure: no table named "${table}" in the release`);
-  const valueCol = entry.columns.find(c => lower(c) === lower(value_column));
-  if (!valueCol) throw new Error(`measure: "${table}" has no column "${value_column}" (columns: ${entry.columns.join(', ')})`);
-  let entityCol = entity_column ? entry.columns.find(c => lower(c) === lower(entity_column)) : null;
-  if (entity_column && !entityCol) throw new Error(`measure: "${table}" has no column "${entity_column}"`);
-  const out = [];
-  const queue = [...rows];
-  const worker = async () => {
-    while (queue.length) {
-      const r = queue.shift();
-      const gene = await geneData.resolveGene(r.ensembl || r.gene);
-      // The input row travels along: a measure adds a column to the table it was given.
-      const ident = { gene: gene ? gene.gene : r.gene, ensembl: gene ? gene.ensembl : (r.ensembl || null) };
-      const rest = { ...r };
-      for (const k of ['gene', 'ensembl', 'note', valueName]) delete rest[k];
-      const make = (fresh, extra = {}) => { const o = { ...ident, ...fresh }; for (const [k, v] of Object.entries(rest)) if (!(k in o)) o[k] = v; return Object.assign(o, extra); };
-      if (!gene) { out.push(make({ [valueName]: null }, { note: 'gene not in release' })); continue; }
-      const reading = await geneData.read(gene, entry.file);
-      const rowsFor = entityCol && entity ? reading.rows.filter(x => lower(x[entityCol]) === lower(entity)) : reading.rows;
-      if (entity || !entityCol || reducer) {
-        if (rowsFor.length > 1 && !reducer) throw new Error(`measure: ${gene.ensembl} has ${rowsFor.length} matching rows in ${table}; select an entity, provide aggregate explicitly, or intersect the raw dataset with the gene artifact to retain all rows`);
-        if (reducer) {
-          const values = rowsFor.map(row => num(row[valueCol])).filter(v => v !== null).sort((a, b) => a - b);
-          const n = values.length;
-          const value = !n ? null : reducer === 'min' ? values[0] : reducer === 'max' ? values[n - 1] : reducer === 'mean' ? values.reduce((a, b) => a + b, 0) / n : n % 2 ? values[(n - 1) / 2] : (values[n / 2 - 1] + values[n / 2]) / 2;
-          out.push(make({ [valueName]: value, [`${valueName}_source_rows`]: rowsFor.length, [`${valueName}_numeric_rows`]: n }));
-          continue;
-        }
-        const row = rowsFor[0];
-        out.push(make({ [valueName]: row ? (num(row[valueCol]) ?? row[valueCol] ?? null) : null }, row ? {} : { note: 'no row' }));
-      } else {
-        for (const row of rowsFor) out.push(make({ [entityCol]: row[entityCol], [valueName]: num(row[valueCol]) ?? row[valueCol] ?? null }));
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, Math.max(1, rows.length)) }, worker));
-  return out;
-}
-
-module.exports = { aggregateMany, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, inList, applyWhere, wherePredicate, freshFirst, correlate, overlap, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, withColumns, findColumn, keyOf, num, isMissing };
+module.exports = { aggregateMany, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, inList, applyWhere, wherePredicate, freshFirst, correlate, overlap, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, columnsOf, withColumns, findColumn, keyOf, num, isMissing };

@@ -37,6 +37,14 @@ test('a cross join puts two results side by side, row by row', () => {
   assert.equal(tools.join(tools.withColumns([{ a: 1 }, { a: 2 }], ['a']), tools.withColumns([{ b: 'x' }, { b: 'y' }], ['b']), 'cross').length, 4);
 });
 
+test('a column b brings whose name is taken gets the first free numbered suffix, in any join', () => {
+  const left = tools.withColumns([{ gene: 'TP53', ensembl: 'ENSG_TP53', nTPM: 1, nTPM_2: 2 }], ['gene', 'ensembl', 'nTPM', 'nTPM_2']);
+  const right = tools.withColumns([{ gene: 'TP53', ensembl: 'ENSG_TP53', nTPM: 3, nTPM_2: 4 }], ['gene', 'ensembl', 'nTPM', 'nTPM_2']);
+  const out = tools.join(left, right, 'inner');
+  assert.deepEqual(tools.columnsOf(out), ['gene', 'ensembl', 'nTPM', 'nTPM_2', 'nTPM_3', 'nTPM_2_2']);
+  assert.deepEqual(out, [{ gene: 'TP53', ensembl: 'ENSG_TP53', nTPM: 1, nTPM_2: 2, nTPM_3: 3, nTPM_2_2: 4 }]);
+});
+
 test('a profile lists the keys or labels inside structured cells', () => {
   const cells = [
     { spec: 'liver: 12.5;kidney: 3.0', prog: 'potential prognostic favorable (1.5e-4)' },

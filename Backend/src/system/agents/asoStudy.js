@@ -44,6 +44,7 @@ const VIEW_ROWS = 10;             // rows an open shows by default
 
 const S = { type: 'string' };
 const N = { type: 'integer' };
+const SCALE = { type: 'string', enum: ['linear', 'log'] };
 const tool = (name, description, properties = {}, required = []) => ({ name, description, parameters: { type: 'object', properties, required } });
 // An operation names its result for a reader: a title and a description.
 const op = (name, description, properties = {}, required = []) => tool(name, description, { title: S, description: S, ...properties }, ['title', 'description', ...required]);
@@ -51,7 +52,7 @@ const STUDY_TOOLS = [
   tool('plan', 'The deliverables the study owes: one item per requested table, figure (its chart type), cohort (gene_set) or interpretation. Replaces the plan.', { items: { type: 'array', items: { type: 'object', properties: { step: S, kind: { type: 'string', enum: studyPlan.KINDS } }, required: ['step', 'kind'] } } }, ['items']),
   tool('note', 'Keep a decision or open question on the desk; replace overwrites note N.', { text: S, replace: N }, ['text']),
   tool('open', 'Show rows of an artifact: rows and offset page it, columns narrow it.', { artifact: A, rows: N, offset: N, columns: { type: 'array', items: S } }, ['artifact']),
-  tool('run', 'Run dependent operations together; a step names an operation and its args, and refers to an earlier step as @id.', { steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
+  tool('run', 'Run dependent operations together; a step names an operation and its args, and refers to an earlier step of the same call as @id (an existing artifact by its own id).',{ steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
   op('combine', 'Rows of a and b as one table: union (either, one row per entity), intersect (rows of a whose entity is in b), difference (rows of a whose entity is not in b) or concat (all rows of a, then all of b). on matches by a column instead of the entity.', { a: A, b: A, how: { type: 'string', enum: ['union', 'intersect', 'difference', 'concat'] }, on: S }, ['a', 'b', 'how']),
   TABLE_OPERATIONS.get('join'),
   TABLE_OPERATIONS.get('filter'),
@@ -61,7 +62,7 @@ const STUDY_TOOLS = [
   TABLE_OPERATIONS.get('classify'),
   TABLE_OPERATIONS.get('compute'),
   op('pivot', 'A matrix for a heatmap: rows from row, columns from column, cells from value (aggregate duplicates first).', { artifact: A, row: S, column: S, value: S }, ['artifact', 'column', 'value']),
-  op('chart', 'Draw an artifact; the title is the figure title. Bar family: x labels, y values, group for series (grouped_bar needs it). scatter/bubble: numeric x and y, label names points, group colours them. heatmap takes a pivot. missing=omit skips rows with a missing number.', { artifact: A, type: { type: 'string', enum: studyPlan.CHART_KINDS }, x: S, y: S, group: S, size: S, label: S, x_label: S, y_label: S, missing: { type: 'string', enum: ['error', 'omit'] } }, ['artifact', 'type']),
+  op('chart', 'Draw an artifact; the title is the figure title. Bar family: x labels, y values, group for series (grouped_bar needs it). scatter/bubble: numeric x and y, label names points, group colours them. heatmap takes a pivot. Values spanning orders of magnitude (expression) read on a log scale: x_scale, y_scale for axes, scale for heatmap cells. missing=omit skips rows with a missing number.', { artifact: A, type: { type: 'string', enum: studyPlan.CHART_KINDS }, x: S, y: S, group: S, size: S, label: S, x_label: S, y_label: S, x_scale: SCALE, y_scale: SCALE, scale: SCALE, missing: { type: 'string', enum: ['error', 'omit'] } }, ['artifact', 'type']),
   TABLE_OPERATIONS.get('correlate'),
   op('overlap', 'Entities a and b share, against every entity of the database or a universe artifact: shared, expected, fold, hypergeometric p; group_by tests each group of a.', { a: A, b: A, universe: A, on: S, group_by: S }, ['a', 'b']),
   op('explode', 'One row per item of a list cell; "key: number" items become <as>_key and <as>_value, "label (number)" <as>_label and <as>_value, others <as>_item.', { artifact: A, column: S, as: S }, ['artifact', 'column']),
@@ -440,7 +441,11 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     // The artifacts whose every row is on the desk this turn; open answers for them from the desk.
     state.wholeOnDesk = new Set(state.artifacts.filter(a => Array.isArray(a.rows) && !consumed.has(a.id) && desk.inline(a.rows, a.columns)).map(a => a.id));
     const lines = state.artifacts.map(a => desk.resultLine({ id: a.id, title: a.label, description: a.description, origin: origin(a), rows: a.rows || [], columns: a.columns, matrix: a.matrix, figure: a.figure, images: a.images, text: a.text, consumed: consumed.has(a.id) }));
-    const views = [...state.views.values()].map(v => v.text);
+    // A view stays whole until a later turn's operation consumes its artifact; then it folds to
+    // its receipt, since the rows live on in the successor and open shows them again.
+    const consumedAfter = new Map();
+    for (const a of state.artifacts) for (const input of a.inputs || []) consumedAfter.set(input, Math.max(consumedAfter.get(input) ?? -Infinity, a.turn));
+    const views = [...state.views.entries()].map(([key, v]) => (consumedAfter.get(key.split('|')[0]) ?? -Infinity) > v.turn ? v.receipt : v.text);
     const sections = [
       desk.section('STUDY', goal),
       desk.section('PLAN', studyPlan.planText(state.plan, agentNames.has('deep_research_hpa') ? { gene_set: 'gene_set ← deep_research_hpa' } : {})),

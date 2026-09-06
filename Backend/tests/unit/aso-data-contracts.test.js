@@ -2,8 +2,6 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const Module = require('node:module');
 const { chartSpec, pivot, aggregate } = require('../../src/system/aso/studyTools');
 
 test('multi-column aggregation retains separate group labels without delimiter collisions', async () => {
@@ -37,22 +35,14 @@ test('pivot preserves missing cells and refuses ambiguous repeated measurements'
   assert.throws(() => pivot([...rows, { ...rows[0], n: 3 }], { row: 'id', column: 'group', value: 'n' }), /duplicate cell/);
 });
 
-test('measurement never silently chooses the first source row or hides read errors', async () => {
-  const filename = require.resolve('../../src/system/aso/studyTools');
-  const loaded = new Module(filename, module); loaded.filename = filename; loaded.paths = Module._nodeModulePaths(require('node:path').dirname(filename));
-  const original = loaded.require.bind(loaded);
-  const adapter = {
-    async entry() { return { file: 'raw.tsv', columns: ['ID', 'unit', 'reading'] }; },
-    async resolveGene() { return { gene: 'EXAMPLE', ensembl: 'ENSG00000000001' }; },
-    async read() { return { rows: [{ ID: 'ENSG00000000001', unit: 'A', reading: '3' }, { ID: 'ENSG00000000001', unit: 'A', reading: '9' }] }; }
-  };
-  loaded.require = name => name === '../../hpa/geneDataAdapter' ? adapter : original(name);
-  loaded._compile(await fs.readFile(filename, 'utf8'), filename);
-  const args = { table: 'raw.tsv', value_column: 'reading', as: 'result' };
-  await assert.rejects(() => loaded.exports.measure([{ gene: 'EXAMPLE' }], args), /2 matching rows/);
-  await assert.rejects(() => loaded.exports.measure([{ gene: 'EXAMPLE' }], { ...args, entity: 'A' }), /explicit entity_column/);
-  const rows = await loaded.exports.measure([{ gene: 'EXAMPLE' }], { ...args, aggregate: 'median' });
-  assert.equal(rows[0].result, 6); assert.equal(rows[0].result_source_rows, 2);
-  adapter.read = async () => { throw new Error('source unavailable'); };
-  await assert.rejects(() => loaded.exports.measure([{ gene: 'EXAMPLE' }], args), /source unavailable/);
+test('a log scale follows the x and y columns of a chart, and colours the cells of a heatmap', () => {
+  const rows = [{ gene: 'A', x: 1, y: 10 }, { gene: 'B', x: 100, y: 0 }];
+  const scatter = chartSpec({ type: 'scatter', x: 'x', y: 'y', x_scale: 'log', y_scale: 'linear' }, rows);
+  assert.equal(scatter.x_scale, 'log'); assert.equal('y_scale' in scatter, false, 'linear is the default and is not recorded');
+  assert.equal(chartSpec({ type: 'lollipop', x: 'gene', y: 'y', y_scale: 'log' }, rows).y_scale, 'log');
+  assert.throws(() => chartSpec({ type: 'lollipop', x: 'gene', y: 'y', x_scale: 'log' }, rows), /x of lollipop holds labels; y_scale scales the values/);
+  assert.throws(() => chartSpec({ type: 'scatter', x: 'x', y: 'y', scale: 'log' }, rows), /scale colours heatmap cells; scatter takes x_scale or y_scale/);
+  const matrix = pivot([{ id: 'one', group: 'A', n: 1 }, { id: 'two', group: 'B', n: 1000 }], { row: 'id', column: 'group', value: 'n' });
+  assert.equal(chartSpec({ type: 'heatmap', scale: 'log' }, matrix).scale, 'log');
+  assert.throws(() => chartSpec({ type: 'heatmap', y_scale: 'log' }, matrix), /a heatmap colours its cells; scale sets that, not y_scale/);
 });

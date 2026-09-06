@@ -140,6 +140,23 @@ test('opening an artifact that is whole on the desk is answered from the desk, w
   assert.doesNotMatch(desk3, /\nVIEWS\n/);
 });
 
+test('a view folds to its receipt once a later turn consumes its artifact; opening it again brings it back', async t => {
+  const { run, requests } = await study(t, [
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' }))),
+    response(call('open', { artifact: 'a1', columns: ['nTPM'] })),
+    response(call('rank', named('Ranked', { artifact: 'a1', by: 'nTPM' }))),
+    response(call('open', { artifact: 'a1', columns: ['nTPM'] })),
+    response(call('finish', { tables: [{ artifact: 'a2' }] }))
+  ]);
+  const result = await run({});
+  assert.equal(result.outcome, 'completed', result.summary);
+  assert.match(requests[2].messages[1].content, /\nVIEWS\na1 rows 0–3 of 4 \(nTPM\)\n  0: 32\.2\n/);
+  const folded = requests[3].messages[1].content;
+  assert.match(folded, /\nVIEWS\na1 rows 0–3 of 4 \(opened at turn 2; open again to see them\)\n/);
+  assert.doesNotMatch(folded, /  0: 32\.2/);
+  assert.match(requests[4].messages[1].content, /\nVIEWS\na1 rows 0–3 of 4 \(nTPM\)\n  0: 32\.2\n/);
+});
+
 test('an identical agent call is answered by the earlier job', async t => {
   const { run, requests, agentCalls } = await study(t, [
     response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' }))),

@@ -9,6 +9,7 @@
  */
 
 const geneData = require('../../hpa/geneDataAdapter');
+const { SCALAR_SCHEMA } = require('./valueSchemas');
 
 const UNARY_OPS = ['is_missing', 'is_present', 'is_numeric', 'is_non_numeric'];
 const OPS = ['>', '>=', '<', '<=', '=', '!=', 'contains', 'in', ...UNARY_OPS];
@@ -89,6 +90,55 @@ function wherePredicate(columns, where = []) {
     if (a === null || b === null) return false;
     return op === '>' ? a > b : op === '>=' ? a >= b : op === '<' ? a < b : a <= b;
   });
+}
+
+const CLASSIFY_DESCRIPTION = 'Add a categorical column using ordered predicate rules and an explicit otherwise value. The first matching rule wins; every row is retained and existing columns cannot be overwritten.';
+const CLASSIFY_SCALAR = { ...SCALAR_SCHEMA, description: 'Exact scalar literal: text, finite number, boolean, or null. This is a value, not an expression or artifact reference.' };
+const CLASSIFY_SCHEMA = {
+  type: 'object', properties: {
+    name: { type: 'string', description: 'New output column name; existing columns cannot be overwritten.' },
+    rules: { type: 'array', description: 'Ordered rules. The first rule whose where predicates all hold supplies its value. An empty where matches every row.', items: {
+      type: 'object', properties: {
+        where: { type: 'array', items: { type: 'object', properties: {
+          column: { type: 'string' }, op: { type: 'string', enum: OPS },
+          value: { description: 'Comparison value, or list for in; omit for unary predicates.' },
+          column_b: { type: 'string', description: 'Compare with this column instead of a constant.' }
+        }, required: ['column', 'op'] } },
+        value: CLASSIFY_SCALAR
+      }, required: ['where', 'value']
+    } },
+    otherwise: CLASSIFY_SCALAR
+  }, required: ['name', 'rules', 'otherwise']
+};
+
+function classify(rows, args = {}) {
+  const columns = columnsOf(rows);
+  const name = args.name;
+  if (typeof name !== 'string' || !name.trim()) throw new Error('classify: provide a new output column name');
+  if (findColumn(rows, name)) throw new Error(`classify: column ${JSON.stringify(name)} already exists`);
+  const scalar = value => value === null || typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value));
+  if (!Object.hasOwn(args, 'otherwise') || !scalar(args.otherwise)) throw new Error('classify: otherwise must be an explicit scalar value (text, finite number, boolean or null)');
+  if (!Array.isArray(args.rules)) throw new Error('classify: rules must be an ordered array');
+  const predicates = args.rules.map((rule, index) => {
+    if (!rule || typeof rule !== 'object' || Array.isArray(rule) || !Array.isArray(rule.where)) throw new Error(`classify: rule ${index + 1} needs a where array`);
+    if (!Object.hasOwn(rule, 'value') || !scalar(rule.value)) throw new Error(`classify: rule ${index + 1} value must be an explicit scalar`);
+    if (rule.where.some(clause => !clause || typeof clause !== 'object' || Array.isArray(clause) || !Object.hasOwn(clause, 'column') || !Object.hasOwn(clause, 'op'))) throw new Error(`classify: rule ${index + 1} predicates need column and op`);
+    return wherePredicate(columns, rule.where);
+  });
+  const matched = args.rules.map(() => 0);
+  let otherwiseRows = 0;
+  const result = withColumns(rows.map(row => {
+    const index = predicates.findIndex(predicate => predicate(row));
+    if (index === -1) otherwiseRows++; else matched[index]++;
+    return { ...row, [name]: index === -1 ? args.otherwise : args.rules[index].value };
+  }), [...columns, name]);
+  const domain = [...new Map([...args.rules.map(rule => rule.value), args.otherwise].map(value => [`${typeof value}:${JSON.stringify(value)}`, value])).values()];
+  Object.defineProperty(result, 'classification', { value: {
+    name, semantics: 'first_matching_rule', rules: structuredClone(args.rules), otherwise: args.otherwise,
+    domain, input_rows: rows.length, matched_rows: matched, otherwise_rows: otherwiseRows,
+    predicate_columns: [...new Set(args.rules.flatMap(rule => rule.where.flatMap(clause => [clause.column, clause.column_b].filter(Boolean))).map(column => findColumn(rows, column)))]
+  } });
+  return result;
 }
 
 function applyWhere(rows, where = []) {
@@ -324,7 +374,7 @@ const METRICS = ['count', 'numeric_count', 'zero', 'sum', 'mean', 'median', 'sd'
 
 // Summarises a column per group as rows arrive; values are kept per group for the order
 // statistics, nothing else is held.
-function aggregator({ group_by, group_by_columns, column, metrics = ['count'] } = {}, columns) {
+function aggregator({ group_by, group_by_columns, group_domains, column, metrics = ['count'] } = {}, columns) {
   const col = column ? resolveIn(columns, column) : null;
   if (column && !col) throw new Error(`aggregate: no column named "${column}" (columns: ${columns.slice(0, 30).join(', ')})`);
   const groupCol = group_by ? resolveIn(columns, group_by) : null;
@@ -341,13 +391,52 @@ function aggregator({ group_by, group_by_columns, column, metrics = ['count'] } 
   const unknown = wanted.filter(m => !METRICS.includes(m));
   if (unknown.length) throw new Error(`aggregate: unknown metric ${unknown.join(', ')} (metrics: ${METRICS.join(', ')})`);
   if (!col && wanted.some(m => m !== 'count')) throw new Error('aggregate: name the column to summarise (only count works without one)');
+  const grouping = groupCols.length ? groupCols : groupCol ? [groupCol] : [];
+  let domains = null;
+  if (group_domains !== undefined) {
+    if (!grouping.length) throw new Error('aggregate: group_domains requires group_by or group_by_columns');
+    if (!Array.isArray(group_domains) || !group_domains.length) throw new Error('aggregate: group_domains must be a nonempty array of { column, values }');
+    const byColumn = new Map();
+    for (const domain of group_domains) {
+      if (!domain || typeof domain !== 'object' || Array.isArray(domain) || typeof domain.column !== 'string' || !Array.isArray(domain.values) || Object.keys(domain).some(key => !['column', 'values'].includes(key))) throw new Error('aggregate: each group domain must contain only column and an array of values');
+      const name = resolveIn(columns, domain.column);
+      if (!name || !grouping.includes(name)) throw new Error(`aggregate: group domain column "${domain.column}" is not a grouping column`);
+      if (byColumn.has(name)) throw new Error(`aggregate: duplicate domain for grouping column "${name}"`);
+      const members = new Set();
+      for (const value of domain.values) {
+        if (!(value === null || typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value)))) throw new Error(`aggregate: domain values for "${name}" must be finite JSON scalars (string, number, boolean or null)`);
+        if (members.has(value)) throw new Error(`aggregate: duplicate typed domain value for "${name}": ${JSON.stringify(value)}`);
+        members.add(value);
+      }
+      byColumn.set(name, { values: [...domain.values], members });
+    }
+    const missing = grouping.filter(name => !byColumn.has(name));
+    if (missing.length) throw new Error(`aggregate: group_domains must define every grouping column; missing ${missing.join(', ')}`);
+    domains = grouping.map(name => byColumn.get(name));
+  }
   const groups = new Map();
+  const empty = labels => ({ labels, count: 0, missing: 0, vals: [], distinct: new Set() });
+  // Declared order fixes the full Cartesian product, independently of source row order.
+  // An explicit empty domain has no combinations; any observed row is then rejected.
+  if (domains && domains.every(domain => domain.values.length)) {
+    const indices = domains.map(() => 0);
+    while (true) {
+      const labels = domains.map((domain, i) => domain.values[indices[i]]);
+      groups.set(JSON.stringify(labels), empty(labels));
+      let i = indices.length - 1;
+      while (i >= 0 && ++indices[i] === domains[i].values.length) { indices[i] = 0; i--; }
+      if (i < 0) break;
+    }
+  }
   return {
     add(r) {
-      const labels = (groupCols.length ? groupCols : groupCol ? [groupCol] : []).map(name => r[name] === undefined ? null : r[name]);
+      const labels = grouping.map(name => r[name] === undefined ? null : r[name]);
+      if (domains) labels.forEach((value, i) => {
+        if (!domains[i].members.has(value)) throw new Error(`aggregate: observed value ${JSON.stringify(value)} is outside declared domain for "${grouping[i]}"`);
+      });
       const g = labels.length ? JSON.stringify(labels) : 'all';
       let st = groups.get(g);
-      if (!st) { st = { labels, count: 0, missing: 0, vals: [], distinct: new Set() }; groups.set(g, st); }
+      if (!st) { st = empty(labels); groups.set(g, st); }
       st.count++;
       if (col) {
         const raw = r[col];
@@ -575,7 +664,16 @@ const sig = p => (p === null || p === undefined || !Number.isFinite(p) ? null : 
 
 function correlatePairs(pairs, how) {
   const n = pairs.length;
-  if (n < 3) return { n, r: null, p_value: null, note: 'fewer than 3 rows with both values' };
+  if (n < 2) return { n, r: null, p_value: null, note: 'fewer than 2 rows with both values' };
+  if (n === 2) {
+    if (pairs[0][0] === pairs[1][0] || pairs[0][1] === pairs[1][1]) return { n, r: null, p_value: null, note: 'a column has no variation' };
+    const r = Math.sign(pairs[1][0] - pairs[0][0]) * Math.sign(pairs[1][1] - pairs[0][1]);
+    // Pearson's two-sided n=2 null distribution has mass only at +/-1 (p=1).
+    // Spearman's existing asymptotic t approximation has zero degrees of freedom.
+    return how === 'spearman'
+      ? { n, r, p_value: null, note: 'Spearman asymptotic p-value is undefined for 2 pairs' }
+      : { n, r, p_value: 1 };
+  }
   let xs = pairs.map(q => q[0]), ys = pairs.map(q => q[1]);
   if (how === 'spearman') { xs = ranks(xs); ys = ranks(ys); }
   const mx = xs.reduce((a, v) => a + v, 0) / n, my = ys.reduce((a, v) => a + v, 0) / n;
@@ -601,7 +699,7 @@ function correlate(rows, { x, y, method = 'pearson', group_by } = {}) {
   for (const [g, rs] of groups) {
     const pairs = rs.map(r => [num(r[xc]), num(r[yc])]).filter(([a, b]) => a !== null && b !== null);
     const stat = correlatePairs(pairs, how);
-    if (!groupCol && stat.n < 3) throw new Error(`correlate: only ${stat.n} rows have both "${xc}" and "${yc}" as numbers; at least 3 are needed`);
+    if (!groupCol && stat.n < 2) throw new Error(`correlate: only ${stat.n} rows have both "${xc}" and "${yc}" as numbers; at least 2 are needed`);
     out.push({ ...(groupCol ? { [groupCol]: g } : {}), x: xc, y: yc, method: how, ...stat });
   }
   return out;
@@ -895,4 +993,4 @@ async function measure(rows, { table, value_column, entity_column, entity, as, a
   return out;
 }
 
-module.exports = { FILTER_OPS: OPS, applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, withColumns, findColumn, keyOf, num, isMissing };
+module.exports = { CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, withColumns, findColumn, keyOf, num, isMissing };

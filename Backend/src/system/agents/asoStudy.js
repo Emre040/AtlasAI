@@ -16,6 +16,7 @@ const { AsyncLocalStorage } = require('node:async_hooks');
 const { inference, getActiveModel } = require('../../inference/gateway');
 const { platformConfig } = require('../../policy/config');
 const tools = require('../aso/studyTools');
+const { SCALAR_SCHEMA } = require('../aso/valueSchemas');
 const geneData = require('../../hpa/geneDataAdapter');
 const { createWorkspace, updateWorkspace } = require('../aso/workspaceStore');
 const { registerArtifact } = require('../aso/artifactStore');
@@ -72,8 +73,9 @@ const STUDY_TOOLS = [
   tool('select', 'Keep columns, rename them, add constant columns. Preserve gene and ensembl for subsequent gene operations.', { artifact: A, columns: { type: 'array', items: S }, rename: { type: 'object', additionalProperties: S, description: 'Map exact original column names to new names' }, add: { type: 'object', additionalProperties: {}, description: 'Map new column names to exact constant values' } }, ['artifact']),
   tool('rank', 'Sort by a numeric column (adds rank); top includes ties at its boundary unless ties=truncate; missing values stay unranked when no top is requested.', { artifact: A, by: S, order: { type: 'string', enum: ['desc', 'asc'] }, top: N, ties: { type: 'string', enum: ['include', 'truncate'] }, then_by: THEN_BY }, ['artifact', 'by']),
   tool('top_per_group', 'Keep the n highest rows per group (default group gene). Streams a whole dataset.', { artifact: A, group_by: S, by: S, n: N, order: { type: 'string', enum: ['desc', 'asc'] }, ties: { type: 'string', enum: ['include', 'truncate'] }, then_by: THEN_BY }, ['artifact', 'by']),
-  tool('aggregate', 'count counts source rows; numeric_count counts numeric measurements; zero, sum, mean, median, sd, q1, q3, min, max, missing and distinct summarize a column. group_by groups by one column; group_by_columns groups by several columns in one operation and retains each group label separately for grouped charts. Streams a whole dataset.', { artifact: A, group_by: S, group_by_columns: { type: 'array', items: S, description: 'Group by this combination of columns, keeping each label in its own output column. Use instead of group_by.' }, column: S, metrics: { type: 'array', items: { type: 'string', enum: ['count', 'numeric_count', 'zero', 'sum', 'mean', 'median', 'sd', 'q1', 'q3', 'min', 'max', 'missing', 'distinct'] } } }, ['artifact', 'metrics']),
-  tool('compute', 'Add a column from an expression over columns and numbers: + - * / ( ) log2 log10 ln abs sqrt exp min max; + also joins text, as in a + " / " + b.', { artifact: A, name: S, expr: { type: 'string', description: 'Exact column names; backticks quote names containing spaces. Double-quoted strings are literal text.' } }, ['artifact', 'name', 'expr']),
+  tool('aggregate', 'count counts source rows; numeric_count counts numeric measurements; zero, sum, mean, median, sd, q1, q3, min, max, missing and distinct summarize a column. group_by groups by one column; group_by_columns groups by several columns in one operation and retains each group label separately for grouped charts. With group_domains, emit every declared category combination including empty groups (counts 0, undefined statistics null), rejecting observed labels outside the domains. Streams a whole dataset.', { artifact: A, group_by: S, group_by_columns: { type: 'array', items: S, description: 'Group by this combination of columns, keeping each label in its own output column. Use instead of group_by.' }, group_domains: { type: 'array', description: 'Optional complete domains for every grouping column. Preserve exact scalar types; zero, null and blank strings are distinct labels. Output follows grouping-column order and each values order. Empty values yields no combinations.', items: { type: 'object', properties: { column: S, values: { type: 'array', items: SCALAR_SCHEMA } }, required: ['column', 'values'] } }, column: S, metrics: { type: 'array', items: { type: 'string', enum: tools.AGGREGATE_METRICS } } }, ['artifact', 'metrics']),
+  tool('classify', tools.CLASSIFY_DESCRIPTION, { artifact: A, ...tools.CLASSIFY_SCHEMA.properties }, ['artifact', ...tools.CLASSIFY_SCHEMA.required]),
+  tool('compute', 'Add a column from an expression over columns and numbers: + - * / ( ) log2 log10 ln abs sqrt exp min max; + also joins text, as in a + " / " + b.', { artifact: A, name: S, expr: { type: 'string', description: 'Exact column names; quoted tokens name an existing column first, otherwise they are literal text. No comparisons or SQL CASE; use classify for ordered conditional rules.' } }, ['artifact', 'name', 'expr']),
   tool('pivot', 'Reshape long rows into a matrix, retaining all input row and column labels. row defaults to gene. When the question requests a subset, select it with the table tools before pivoting.', { artifact: A, row: S, column: S, value: S }, ['artifact', 'column', 'value']),
   tool('chart', 'Draw an artifact: x the label column and y the value column (bar family), both numeric for scatter; heatmap takes a pivot. Missing numeric values fail unless missing=omit; omissions are recorded.', { artifact: A, type: CHART_TYPE, x: { type: 'string', description: 'X column; required except for a matrix heatmap' }, y: { type: 'string', description: 'Numeric Y/value column; required except for a matrix heatmap' }, group: S, size: S, label: S, title: S, x_label: S, y_label: S, x_domain: { type: 'array', items: { type: 'number' }, description: 'Explicit numeric limits for the rendered X axis; two increasing values containing all plotted values.' }, y_domain: { type: 'array', items: { type: 'number' }, description: 'Explicit numeric limits for the rendered Y axis; two increasing values containing all plotted values.' }, missing: { type: 'string', enum: ['error', 'omit'] } }, ['artifact', 'type']),
   tool('correlate', 'Pearson or Spearman correlation of two numeric columns: r, p and n; group_by gives one per group.', { artifact: A, x: S, y: S, method: { type: 'string', enum: ['pearson', 'spearman'] }, group_by: S }, ['artifact', 'x', 'y']),
@@ -82,7 +84,7 @@ const STUDY_TOOLS = [
   tool('skip', 'Nothing to do until something running returns.', { reason: S }, ['reason']),
   tool('finish', 'Submit exact tables/figures and any requested interpretation. summary is optional. tables reads saved measurements; all rows unless rows requests a labelled preview. completed attaches existing evidence to plan items in this call. Preserve missing work.', { completed: { type: 'array', description: 'Complete plan items using existing artifact IDs without a separate update_plan turn; each evidence binding is checked before any is applied.', items: { type: 'object', properties: { item: N, artifacts: { type: 'array', items: S } }, required: ['item', 'artifacts'] } }, summary: { type: 'string', description: 'Optional requested interpretation or necessary source limitation, with an artifact citation in every factual paragraph. Omit when tables and figures already answer the request. Do not repeat their numerical lists or invent causes. Preserve Investigator evidence classification and uncertainty; associations are not validated applications.' }, tables: { type: 'array', items: { type: 'object', properties: { artifact: S, columns: { type: 'array', items: S }, title: S, rows: N }, required: ['artifact', 'columns'] } } })
 ];
-const TABLE_TOOLS = new Set(['measure', 'union', 'intersect', 'difference', 'concat', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'compute', 'pivot', 'chart', 'correlate', 'overlap', 'standardize', 'explode']);
+const TABLE_TOOLS = new Set(['measure', 'union', 'intersect', 'difference', 'concat', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'compute', 'classify', 'pivot', 'chart', 'correlate', 'overlap', 'standardize', 'explode']);
 const FOR_EACH = { type: 'object', description: 'once per value; $item stands for it', properties: { values: { type: 'array', items: S }, column: S, of: A, as: S } };
 const NODE = { type: 'integer', description: 'plan item carried out' };
 const PROFILE_MAX_ROWS = 200000;  // rows a describe scans in one file
@@ -103,7 +105,7 @@ The conversation preserves decisions and tool exchanges. Receipts describe resul
 
 Preserve source units, missing values, record coverage, repeated measurements and ties. State denominators and aggregation semantics. A zero is a measurement; a missing record establishes only absence from that source. It does not establish biological absence, an experiment's history, or a causal explanation. Preserve evidence reliability and qualifiers. Apply transformations only when requested.
 
-Use exact tables and figures as the answer when sufficient. Omit finish.summary unless the request needs interpretation or a necessary source limitation. Do not repeat numerical lists or invent biological or methodological explanations for observed differences.
+Use exact tables and figures as the answer when sufficient. Omit finish.summary unless the request needs interpretation or a necessary source limitation. Do not repeat numerical lists or invent biological or methodological explanations for observed differences. Distinguish source observations, retrieved methods and possible explanations. Describe an untested explanation as a hypothesis; the measurements alone do not establish its cause. Source schema samples describe only the displayed records, never every cohort member.
 
 Before finish, check the original deliverables against the returned evidence, including every requested group and tied result. A completed tool or plan item does not prove the whole question is answered. finish.tables renders saved data exactly; use it for numerical results instead of rewriting them in prose. Each factual paragraph cites its supporting artifact and stays within what that source establishes. If work is impossible, identify the exact gap and revise the plan explicitly.
 
@@ -345,7 +347,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
 
   const agentSpecs = orchestrator.getToolSpecs().filter(t => t.function.name !== 'aso_hpa').map(t => {
     if (t.function.name !== 'investigator_hpa') return t;
-    return { ...t, function: { ...t.function, description: 'Delegate the complete source measurement question for a supplied list: raw values, per-gene statistics, missing/zero counts, top source entities and simple ratios. Pass genes for user-supplied names or from for a saved cohort. Investigator discovers sources and returns ready-to-use tables for all requested outputs together. Existing single-gene investigation remains available through gene. No list preparation, raw filtering or source-schema inspection is needed before calling.', parameters: { ...t.function.parameters, required: [], properties: {
+    return { ...t, function: { ...t.function, description: 'Delegate the complete source measurement question for a supplied list: raw values, per-gene statistics, nested grouped summaries, ordered classifications, missing/zero counts, top source entities and simple ratios. Pass genes for user-supplied names or from for a saved cohort. Investigator discovers sources and returns ready-to-use tables for all requested outputs together. Existing single-gene investigation remains available through gene. No list preparation, raw filtering or source-schema inspection is needed before calling.', parameters: { ...t.function.parameters, required: [], properties: {
       ...t.function.parameters.properties,
       genes: { type: 'array', items: S, description: 'Supplied gene names for a bulk question. Use from when the list is already saved.' },
       from: { type: 'string', description: 'Saved result ID containing the supplied list. The runtime passes its genes and existing values to Investigator. No column selection or list copying is needed. Supply one of gene, genes or from.' }
@@ -412,7 +414,7 @@ const receipt = a => {
   if (a.kind === 'figure') return `${a.id} (${a.size}; ${a.images.length} rendered images; ${a.meta.omitted_rows || 0} rows omitted for missing values)`;
   if (a.matrix) return `${a.id} (${a.size}; rows ${a.matrix.row_labels.slice(0, 8).join(', ')}${a.matrix.row_labels.length > 8 ? ', …' : ''}; columns ${a.matrix.col_labels.slice(0, 8).join(', ')}${a.matrix.col_labels.length > 8 ? ', …' : ''})`;
   if (a.text) return `${a.id}: ${a.text}`;
-  const predicateColumns = a.tool === 'filter' ? a.meta.predicate_columns || [] : [];
+  const predicateColumns = a.tool === 'classify' ? [...new Set([...(a.meta.classifications || []).map(item => item.name), ...(a.meta.predicate_columns || [])])] : a.tool === 'filter' ? a.meta.predicate_columns || [] : [];
   const orderingColumns = a.meta.ordering_columns || [];
   const columns = orderingColumns.length
     ? shownColumns(a.columns, [...new Set([...['gene', 'ensembl'].filter(column => a.columns.includes(column)), ...orderingColumns])])
@@ -459,10 +461,21 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
     job.promise = orchestrator.execute(tool, executionArgs, { db, visitorId: ctx.visitorId, rawQuery: '', includeRows: true, onStep: forward, inputRows, studyGoal: goal, studyTask: plannedItem?.text, reasoningEffort: effort, runControl: ctx.runControl, signal: ctx.signal, viewDirectory: path.join(workspace.workspaceDir, 'agent-views', id) })
       .then(async ({ result }) => {
         addSpecialistUsage(tool, result?.tokens);
-        if (result?.bulk && result.error && !result.tables?.length) throw new Error(result.error);
+        const saveSourceEvidence = async () => {
+          if (!result?.source_evidence?.length) return;
+          const incomplete = ['partial', 'incomplete'].includes(result.status);
+          const execution = incomplete ? { status: 'partial', source_status: result.status, error: result.error, remaining_for_aso: result.remaining_for_aso || [], not_in_release: result.not_in_release || [] } : undefined;
+          const a = await addArtifact({ kind: 'note', label: 'Retrieved source descriptions and schema samples', rows: result.source_evidence, columns: tools.columnsOf(result.source_evidence), tool, args, inputs, toolId: id, meta: { evidence_kind: 'retrieved_source_context', hpa_version: result.hpa_version, ...(execution ? { execution } : {}) } });
+          observe(`${a.id}: saved ${result.source_evidence.length} exact source reads from ${id}. These descriptions, definitions and displayed sample records are source context, not cohort-wide measurements. Open only the needed rows/columns for a report claim. Sources: ${JSON.stringify(result.source_evidence.map(row => ({ read_id: row.read_id, table: row.table })))}.`, { source: `artifact ${a.id}`, refs: [a.id, ...inputs] });
+          await log('tool.done', { id, tool, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);
+        };
+        if (result?.bulk && !result.tables?.length) {
+          await saveSourceEvidence();
+          throw new Error(result.error || `Investigator returned no table: ${JSON.stringify(result.not_in_release)}`);
+        }
         const outputs = result?.bulk ? result.tables.map(table => ({
           kind: 'data', label: table.name, rows: table.rows, columns: table.columns,
-          meta: { bulk: true, status: result.status, error: result.error, answer: result.answer, lookups: table.provenance, coverage: table.coverage, calculations: table.calculations, sort: table.sort, created_columns: table.created_columns, input_count: result.input_count, unresolved_inputs: result.unresolved_inputs, not_in_release: result.not_in_release, remaining_for_aso: result.remaining_for_aso || [] }
+          meta: { bulk: true, status: result.status, error: result.error, answer: result.answer, lookups: table.provenance, coverage: table.coverage, calculations: table.calculations, reductions: table.reductions, record_rows: table.record_rows, classifications: table.classifications, sort: table.sort, created_columns: table.created_columns, input_count: result.input_count, unresolved_inputs: result.unresolved_inputs, not_in_release: result.not_in_release, remaining_for_aso: result.remaining_for_aso || [] }
         })) : [agentArtifact(tool, args, result)];
         if (!outputs.length) throw new Error(`Investigator returned no table: ${JSON.stringify(result.not_in_release)}`);
         for (const built of outputs) {
@@ -471,13 +484,14 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
           const meta = a.meta.bulk ? {
             status: a.meta.status, error: a.meta.error,
             lookups: (a.meta.lookups || []).map(({ source_description, input_count, ...lookup }) => lookup),
-            coverage: a.meta.coverage, calculations: a.meta.calculations, sort: a.meta.sort,
+            coverage: a.meta.coverage, calculations: a.meta.calculations, reductions: a.meta.reductions, classifications: a.meta.classifications, sort: a.meta.sort,
             unresolved_inputs: a.meta.unresolved_inputs, not_in_release: a.meta.not_in_release
           } : a.meta;
           observe(`${id} ${tool} returned ${result?.bulk ? a.label + ': ' : ''}${receipt(a)}${result?.remaining_for_aso?.length ? `\nUnfinished work for ASO: ${JSON.stringify(result.remaining_for_aso)}` : ''}${result?.bulk && inputs.length ? `\nIncludes input fields from ${inputs.join(', ')}. Full schema remains available through schema; open with provenance=true reads full metadata.` : ''}\nProvenance: ${JSON.stringify({ ...(result?.bulk ? {} : { args }), meta })}`, { source: `artifact ${a.id}`, refs: [a.id, ...inputs] });
           remember(`${tool} → ${a.id} (${a.size})`);
           await log('tool.done', { id, tool, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);
         }
+        await saveSourceEvidence();
       })
       .catch(async err => {
         state.failed++;
@@ -552,6 +566,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         case 'overlap': out = { rows: tools.overlap(await rowsOf('a', 'b'), await rowsOf('b', 'a'), await rowsOf('universe'), args.on || null, args.group_by || null) }; break;
         case 'standardize': out = { rows: tools.standardize(await rowsOf('artifact'), args) }; break;
         case 'explode': out = { rows: tools.explode(await rowsOf('artifact'), args.column, args.as) }; break;
+        case 'classify': { const rows = tools.classify(await rowsOf('artifact'), args); out = { rows, meta: { classifications: [rows.classification], predicate_columns: rows.classification.predicate_columns } }; break; }
         case 'compute': out = { rows: tools.compute(await rowsOf('artifact'), String(args.name), String(args.expr)) }; break;
         case 'pivot': out = { matrix: tools.pivot(await rowsOf('artifact'), args) }; break;
         case 'chart': { const a = get(args.artifact); inputRefs.add(a.id); const input = a.matrix || (args.type === 'heatmap' && args.value ? tools.pivot(a.rows, { row: args.y, column: args.x, value: args.value }) : a.rows); out = { figure: tools.chartSpec(args, input) }; break; }
@@ -587,7 +602,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
     const { for_each: _spec, ...rest } = args;
     const sub = (v, x) => (typeof x === 'string' ? x.split('$item').join(v).split('${item}').join(v) : Array.isArray(x) ? x.map(y => sub(v, y)) : x && typeof x === 'object' ? Object.fromEntries(Object.entries(x).map(([k, y]) => [k, sub(v, y)])) : x);
     const rows = [], outputColumns = new Set([itemCol]), predicateColumns = new Set(), orderingColumns = new Set();
-    const failed = [];
+    const failed = [], classifications = [];
     const inputColumns = new Set();
     for (const [index, v] of values.entries()) {
       try {
@@ -596,6 +611,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         if (!Array.isArray(r.out.rows)) throw new Error('the operation gave no rows');
         if (r.out.rows.some(row => Object.hasOwn(row, itemCol) && row[itemCol] !== v)) throw new Error(`for_each.as column ${itemCol} conflicts with a source value; choose a distinct output name`);
         for (const c of tools.columnsOf(r.out.rows)) outputColumns.add(c);
+        for (const classification of r.out.meta?.classifications || []) classifications.push({ ...classification, for_each: { column: itemCol, value: v, index } });
         for (const c of r.out.meta?.predicate_columns || []) predicateColumns.add(c);
         for (const c of r.out.meta?.ordering_columns || []) orderingColumns.add(c);
         for (const row of r.out.rows) rows.push({ [itemCol]: v, ...row });
@@ -603,7 +619,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
       } catch (err) { failed.push({ index, item: v, error: err.message }); }
     }
     const execution = { status: failed.length ? 'partial' : 'completed', requested: values.length, completed: values.length - failed.length, failed };
-    return { out: { rows: tools.withColumns(rows, [...outputColumns]), meta: { execution, ...(predicateColumns.size ? { predicate_columns: [...predicateColumns] } : {}), ...(orderingColumns.size ? { ordering_columns: [itemCol, ...orderingColumns] } : {}) } }, inputColumns, inputs: [...inputRefs] };
+    return { out: { rows: tools.withColumns(rows, [...outputColumns]), meta: { execution, ...(classifications.length ? { classifications } : {}), ...(predicateColumns.size ? { predicate_columns: [...predicateColumns] } : {}), ...(orderingColumns.size ? { ordering_columns: [itemCol, ...orderingColumns] } : {}) } }, inputColumns, inputs: [...inputRefs] };
   }
 
   async function runTableTool(tool, args, { announce = true } = {}) {

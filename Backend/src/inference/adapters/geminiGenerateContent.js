@@ -37,6 +37,12 @@ function convertSchema(schema) {
   const out = {};
   const type = typeof schema.type === 'string' ? schema.type.toLowerCase() : null;
   if (schema.description) out.description = String(schema.description);
+  if (Array.isArray(schema.anyOf)) {
+    if (!schema.anyOf.length) throw new Error('Gemini schema anyOf must contain at least one alternative');
+    out.anyOf = schema.anyOf.map(convertSchema);
+    return out;
+  }
+  if (type === 'null') { out.type = 'NULL'; return out; }
   if (Array.isArray(schema.enum)) { out.type = 'STRING'; out.enum = schema.enum.map(String); return out; }
   if (type === 'object') {
     const properties = schema.properties && typeof schema.properties === 'object' ? schema.properties : null;

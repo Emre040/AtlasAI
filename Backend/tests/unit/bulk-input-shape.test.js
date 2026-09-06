@@ -86,10 +86,10 @@ test('bulk preserves original source exclusions even when the delegated question
   const original = 'Compare region measurements only. Exclude subregions; retain zero and missing values.\nReturn all requested evidence exactly.';
   const { result, requests } = await study({ ctx: { studyGoal: original, studyTask: 'Retrieve the region measurements' }, decide: ({ request, turn }) => {
     const user = request.messages.find(message => message.role === 'user').content;
-    assert.ok(user.includes(`Original study request (context and constraints for the assigned work):\n${original}\n\nComplete source directory`));
+    assert.ok(user.includes(`Original study context (constraints only; not additional assigned deliverables):\n${original}\nEnd of original study context.\n\nASSIGNMENT`));
     assert.match(user, /Question: Retrieve all source observations and assess the requested views\./);
     assert.match(user, /Assigned plan result: Retrieve the region measurements/);
-    assert.match(request.messages[0].content, /original study request's constraints/);
+    assert.match(request.messages[0].content, /original study context constrains this work/);
     return turn === 1 ? apply('observed') : ['finish', { results: ['observed'], not_in_release: [] }];
   } });
   assert.equal(result.status, 'ok'); assert.equal(requests.length, 2);
@@ -99,7 +99,7 @@ test('bulk preserves the full exact original request including literal lists, wh
   const original = 'Exact request:\r\n' + Array.from({ length: 600 }, (_, i) => `literal_name_${i}`).join(', ') + '\nKeep all categories α/β; source limits apply.  ';
   const { result } = await study({ ctx: { studyGoal: original }, decide: ({ request, turn }) => {
     const user = request.messages.find(message => message.role === 'user').content;
-    assert.ok(user.includes(`Original study request (context and constraints for the assigned work):\n${original}\n\nComplete source directory`));
+    assert.ok(user.includes(`Original study context (constraints only; not additional assigned deliverables):\n${original}\nEnd of original study context.\n\nASSIGNMENT`));
     assert.ok(user.includes('literal_name_599')); assert.ok(user.includes('α/β'));
     return turn === 1 ? apply('observed') : ['finish', { results: ['observed'], not_in_release: [] }];
   } });
@@ -111,7 +111,7 @@ test('bulk omits only an exactly duplicate original request', async () => {
   for (const original of [question, question + ' ']) {
     const { result } = await study({ ctx: { studyGoal: original }, decide: ({ request, turn }) => {
       const user = request.messages.find(message => message.role === 'user').content;
-      assert.equal(user.includes('Original study request ('), original !== question);
+      assert.equal(user.includes('Original study context ('), original !== question);
       if (original === question) assert.equal(user.split(question).length - 1, 1);
       return turn === 1 ? apply('observed') : ['finish', { results: ['observed'], not_in_release: [] }];
     } });

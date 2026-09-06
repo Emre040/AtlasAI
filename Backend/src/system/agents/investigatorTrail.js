@@ -31,8 +31,9 @@ const ANSWER_SYSTEM = `You are answering a question about one gene using rows re
 
 Return JSON: { "found": true | false, "answer": "<the answer, with the value and its unit or category name>", "value": "<the exact value or category as written in the row, or null>", "entity": "<the tissue, cell type or other row label the value belongs to, or null>", "table": "<exact file name read>", "cited_row": "<the row you used, copied verbatim from the rows shown, or null>", "cited_coverage": null | { "read_id": "<read ID>", "table": "<exact source file>", "metric": "source_rows" | "matching_rows", "value": <exact count> }, "confidence": "high" | "medium" | "low", "notes": ["<source limitations, ties or other requested evidence>"], "need_more": null | { "table": "<file name>", "focus": ["<words naming the rows or columns you still need>"], "where": [ { "column": "...", "op": "...", "value": "..." } ] } }
 Rules:
-- The cited row must be copied exactly from the rows shown; the answer is rejected if it cannot be found among them.
-- A source-row count uses cited_coverage with the exact read ID and reported source_rows or matching_rows, including zero matches. A row count is not a count of nonmissing measurements or distinct entities.
+- When supplied, the cited row must be copied exactly from the rows shown; the answer is rejected if it cannot be found among them.
+- When citing a row, value must be recorded in that row. You may additionally cite runtime coverage as scope evidence; its count is validated separately from the row value. Both supplied citations must be valid.
+- For a source-row count answer, use cited_row=null and cited_coverage with the exact read ID and reported source_rows or matching_rows, including zero matches; value must equal that count. A row count is not a count of nonmissing measurements or distinct entities.
 - A maximum, minimum or ranking is read across all rows shown; say so in the notes if only part of the table was shown.
 - When a note says rows or columns were left out and the answer needs them, set found to false and fill "need_more" with the table and the focus words or filter that would bring the missing evidence. Request a new source view when needed; previously read evidence remains available.
 - need_more filters also support is_missing, is_present, is_numeric and is_non_numeric with column and op only. Missing is null/blank/NA; non_numeric excludes missing cells, and numeric includes zero and negatives.
@@ -54,11 +55,10 @@ function evidenceText(readings) {
   }).join('\n\n');
 }
 
-function coverageCitation(answer, sources) {
-  const citation = answer.cited_coverage;
+function coverageCitation(citation, sources) {
   if (!citation || !['source_rows', 'matching_rows'].includes(citation.metric) || !Number.isSafeInteger(citation.value) || citation.value < 0) return null;
   const matching = sources.filter(source => source.entry.file === citation.table && (!citation.read_id || source.id === citation.read_id));
-  if (matching.length !== 1 || !['number', 'string'].includes(typeof answer.value) || String(answer.value).trim() === '' || Number(answer.value) !== citation.value) return null;
+  if (matching.length !== 1) return null;
   const source = matching[0];
   return coverageFor(source)[citation.metric] === citation.value ? source : null;
 }
@@ -144,6 +144,7 @@ async function investigatorTrail(args, ctx = {}, adapter = require('../../hpa/ge
     let answer = null;
     let grounded = false;
     let selectedSource = null;
+    let selectedCoverage = null;
     let evidenceStatus = 'not_answered';
     let stopReason = null, stopMessage = null;
     const progress = new RepairProgress();
@@ -184,15 +185,24 @@ async function investigatorTrail(args, ctx = {}, adapter = require('../../hpa/ge
         break;
       }
       const sources = readings.filter(read => read.entry.file === String(answer.table || '').trim());
-      selectedSource = answer.cited_coverage ? coverageCitation(answer, sources) : sources.find(source => adapter.cited(source.reading, answer.cited_row, answer.value)) || null;
-      grounded = Boolean(selectedSource);
-      evidenceStatus = grounded ? answer.cited_coverage ? 'coverage' : 'observed' : 'invalid_citation';
+      const hasRow = answer.cited_row !== undefined && answer.cited_row !== null;
+      const hasCoverage = answer.cited_coverage !== undefined && answer.cited_coverage !== null;
+      const rowSource = hasRow ? sources.find(source => adapter.cited(source.reading, answer.cited_row, answer.value)) || null : null;
+      const coverageSource = hasCoverage ? coverageCitation(answer.cited_coverage, sources) : null;
+      const countValueMatches = coverageSource && ['number', 'string'].includes(typeof answer.value) && String(answer.value).trim() !== '' && Number(answer.value) === answer.cited_coverage.value;
+      grounded = Boolean(hasRow ? rowSource && (!hasCoverage || coverageSource) : coverageSource && countValueMatches);
+      selectedSource = grounded ? hasRow ? rowSource : coverageSource : null;
+      selectedCoverage = grounded ? coverageSource : null;
+      evidenceStatus = grounded ? hasRow ? 'observed' : 'coverage' : 'invalid_citation';
       if (!grounded) {
-        const knownRow = !answer.cited_coverage && sources.some(source => adapter.cited(source.reading, answer.cited_row));
-        const issue = !sources.length ? 'unknown_source' : answer.cited_coverage ? 'invalid_coverage' : knownRow ? 'invalid_value' : 'invalid_row';
-        const feedback = knownRow ? 'Your row citation is valid, but the supplied value is not recorded in that row. Return the exact value from that row, or request the evidence the question needs.' : 'Your citation is not verified. The table must exactly name a source read above. Copy a shown row exactly, or cite an exact runtime coverage count with its read_id, table, metric and value. Otherwise set found to false. Do not substitute a different source.';
+        const knownRow = hasRow && sources.some(source => adapter.cited(source.reading, answer.cited_row));
+        const issue = !sources.length ? 'unknown_source' : hasRow && !rowSource ? knownRow ? 'invalid_value' : 'invalid_row' : hasCoverage && !coverageSource ? 'invalid_coverage' : !hasRow && coverageSource ? 'invalid_coverage_value' : 'missing_citation';
+        const feedback = issue === 'invalid_value' ? 'Your row citation is valid, but the supplied value is not recorded in that row. Return the exact value from that row, or request the evidence the question needs.'
+          : issue === 'invalid_coverage' ? 'Your supplied coverage citation does not match a unique source read and its exact runtime count. Correct its read_id, table, metric and value, or omit it when the answer only cites a row. A valid row cannot make an incorrect coverage count valid.'
+            : issue === 'invalid_coverage_value' ? 'Your coverage citation is valid, but a coverage-only answer must set value to its exact count and cited_row to null. To answer with a measurement or category, cite the exact shown row and its value instead.'
+              : 'Your citation is not verified. The table must exactly name a source read above. Copy a shown row exactly and use a value recorded in it, or set cited_row to null and cite an exact runtime coverage count. Every supplied row and coverage citation must be valid; one cannot substitute for the other. Otherwise set found to false.';
         await onStep?.({ stage: 'reasoning_step', label: 'Citation not verified', message: feedback });
-        if (!repair(issue, feedback, sources.length ? { table: sources[0].entry.file, row: knownRow } : {})) break;
+        if (!repair(issue, feedback, sources.length ? { table: sources[0].entry.file, row: knownRow, coverage: Boolean(coverageSource) } : {})) break;
       } else {
         break;
       }
@@ -223,8 +233,8 @@ async function investigatorTrail(args, ctx = {}, adapter = require('../../hpa/ge
       notes: found && Array.isArray(answer.notes) ? answer.notes : [],
       chart_id: sourceEntry ? sourceEntry.file.replace(/\.tsv$/, '') : null,
       exact_label: found ? answer.entity ?? null : null,
-      cited_row: found && !answer.cited_coverage ? answer.cited_row || null : null,
-      cited_coverage: found && answer.cited_coverage ? { ...answer.cited_coverage, read_id: selectedSource.id } : null,
+      cited_row: found ? answer.cited_row || null : null,
+      cited_coverage: found && selectedCoverage ? { ...answer.cited_coverage, read_id: selectedCoverage.id } : null,
       grounded,
       not_in_release: cannot,
       gene: gene.gene,
@@ -235,7 +245,7 @@ async function investigatorTrail(args, ctx = {}, adapter = require('../../hpa/ge
       pages_fetched: readings.map(r => r.entry.file),
       citations: readings.map(r => ({ page: r.entry.file, title: r.entry.title, url: adapter.pageUrl(gene), rows: r.reading.rows.length, source_rows: r.sourceRows, shown_rows: r.rendered.shown, where: r.clauses, read_id: r.id })),
       tokens: tokensOut(stats),
-      validation: { passed: grounded ? 1 : 0, total: 1, checks: [{ check: evidenceStatus === 'coverage' ? 'Cited coverage matches the exact runtime source count' : ['no_gene_rows', 'no_matching_rows', 'no_recorded_values', 'no_view_matches'].includes(evidenceStatus) ? 'Source absence, missing values or view coverage verified in this release' : 'Cited row exists in the exact source rows shown', pass: grounded }] }
+      validation: { passed: grounded ? 1 : 0, total: 1, checks: [{ check: evidenceStatus === 'coverage' ? 'Cited coverage matches the exact runtime source count' : ['no_gene_rows', 'no_matching_rows', 'no_recorded_values', 'no_view_matches'].includes(evidenceStatus) ? 'Source absence, missing values or view coverage verified in this release' : selectedCoverage ? 'Cited row and value exist in the exact source rows shown, and accompanying coverage matches its runtime count' : 'Cited row and value exist in the exact source rows shown', pass: grounded }] }
     };
   } catch (err) {
     await onStep?.({ stage: 'error', label: 'Error', message: err.message });

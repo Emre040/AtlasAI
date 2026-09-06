@@ -219,3 +219,73 @@ test('expired deadlines and invalid shared-control decisions fail before inferen
     else assert.match(result.error, /allowed: true or allowed: false/);
   }
 });
+
+test('a category row with exact ancillary coverage is accepted without replacing its value with the count', async () => {
+  const cited_coverage = { read_id: 'r1', table: 'source.tsv', metric: 'matching_rows', value: 2 };
+  const { result, requests } = await setup({ sources: [source('source.tsv', [{ Gene: 'ID1', Tissue: 'A', units: 'Recorded' }, { Gene: 'ID1', Tissue: 'B', units: 'Uncertain' }])], plan: { reads: [{ table: 'source.tsv' }] }, answer: () => rowAnswer({ value: 'Recorded', cited_row: 'A | Recorded', cited_coverage }) });
+  assert.equal(requests.length, 2); assert.equal(result.found, true); assert.equal(result.evidence_status, 'observed');
+  assert.equal(result.extracted_value, 'Recorded'); assert.equal(result.cited_row, 'A | Recorded');
+  assert.deepEqual(result.cited_coverage, cited_coverage);
+  assert.match(result.validation.checks[0].check, /row and value.*coverage/);
+});
+
+test('a numeric measurement plus coverage retains both exact citations with independent values', async () => {
+  const cited_coverage = { read_id: 'r1', table: 'source.tsv', metric: 'source_rows', value: 2 };
+  const { result, requests } = await setup({ sources: [source()], plan: { reads: [{ table: 'source.tsv' }] }, answer: () => rowAnswer({ cited_coverage }) });
+  assert.equal(requests.length, 2); assert.equal(result.found, true); assert.equal(result.extracted_value, '12');
+  assert.equal(result.cited_row, 'A | 12'); assert.deepEqual(result.cited_coverage, cited_coverage);
+});
+
+test('valid coverage cannot bypass an invalid supplied row or an unobserved row value', async () => {
+  for (const cited_row of ['A | invented', 'A | 12', '']) {
+    const { result } = await setup({ sources: [source()], plan: { reads: [{ table: 'source.tsv' }] }, answer: () => rowAnswer({ value: 2, cited_row, cited_coverage: { read_id: 'r1', table: 'source.tsv', metric: 'source_rows', value: 2 } }) });
+    assert.equal(result.found, false, cited_row); assert.equal(result.evidence_status, 'invalid_citation');
+    assert.equal(result.cited_row, null); assert.equal(result.cited_coverage, null); assert.equal(result.extracted_value, null);
+  }
+});
+
+test('a valid row cannot bypass an incorrect ancillary coverage count or source reference', async () => {
+  for (const cited_coverage of [
+    { read_id: 'r1', table: 'source.tsv', metric: 'matching_rows', value: 99 },
+    { read_id: 'r9', table: 'source.tsv', metric: 'matching_rows', value: 2 },
+    { read_id: 'r1', table: 'unread.tsv', metric: 'matching_rows', value: 2 },
+    { read_id: 'r1', table: 'source.tsv', metric: 'distinct_entities', value: 2 },
+    false
+  ]) {
+    const { result, requests } = await setup({ sources: [source()], plan: { reads: [{ table: 'source.tsv' }] }, answer: () => rowAnswer({ cited_coverage }) });
+    assert.equal(result.found, false, JSON.stringify(cited_coverage)); assert.equal(result.evidence_status, 'invalid_citation');
+    assert.match(requests[2].user, /coverage citation does not match/);
+  }
+});
+
+test('coverage for an earlier read keeps its own read ID when the answer cites a later exact row', async () => {
+  const cited_coverage = { read_id: 'r1', table: 'source.tsv', metric: 'matching_rows', value: 1 };
+  const { result } = await setup({ sources: [source()], plan: { reads: [{ table: 'source.tsv', where: [{ column: 'Tissue', op: '=', value: 'A' }] }, { table: 'source.tsv', where: [{ column: 'Tissue', op: '=', value: 'B' }] }] }, answer: () => rowAnswer({ value: '9', entity: 'B', cited_row: 'B | 9', cited_coverage }) });
+  assert.equal(result.found, true); assert.equal(result.cited_row, 'B | 9');
+  assert.deepEqual(result.cited_coverage, cited_coverage); assert.equal(result.coverage.length, 2);
+});
+
+test('a valid row does not resolve an ambiguous coverage reference across different views', async () => {
+  const { result } = await setup({ sources: [source()], plan: { reads: [{ table: 'source.tsv', rows: 1, offset: 0 }, { table: 'source.tsv', rows: 1, offset: 1 }] }, answer: () => rowAnswer({ cited_coverage: { table: 'source.tsv', metric: 'source_rows', value: 2 } }) });
+  assert.equal(result.found, false); assert.equal(result.evidence_status, 'invalid_citation');
+});
+
+test('valid coverage cannot authorize a row omitted from the displayed source page', async () => {
+  const { result } = await setup({ sources: [source()], plan: { reads: [{ table: 'source.tsv', rows: 1, offset: 1 }] }, answer: () => rowAnswer({ cited_coverage: { read_id: 'r1', table: 'source.tsv', metric: 'source_rows', value: 2 } }) });
+  assert.equal(result.found, false); assert.equal(result.evidence_status, 'invalid_citation');
+});
+
+test('coverage-only answers bind the answer value to the exact count and explain mismatches', async () => {
+  const { result, requests } = await setup({ sources: [source()], plan: { reads: [{ table: 'source.tsv' }] }, answer: () => rowAnswer({ value: 'Recorded', cited_row: null, cited_coverage: { read_id: 'r1', table: 'source.tsv', metric: 'source_rows', value: 2 } }) });
+  assert.equal(result.found, false); assert.equal(result.evidence_status, 'invalid_citation');
+  assert.match(requests[2].user, /coverage-only answer must set value to its exact count/);
+});
+
+test('repairing ancillary coverage preserves the valid row without additional source reads', async () => {
+  const { result, requests, reads } = await setup({ sources: [source()], plan: { reads: [{ table: 'source.tsv' }] }, answer: ({ attempt, user }) => {
+    if (attempt > 1) assert.match(user, /coverage citation does not match/);
+    return rowAnswer({ cited_coverage: { read_id: 'r1', table: 'source.tsv', metric: 'source_rows', value: attempt === 1 ? 99 : 2 } });
+  } });
+  assert.equal(result.found, true); assert.equal(requests.length, 3); assert.equal(reads.length, 1);
+  assert.equal(result.cited_coverage.value, 2); assert.equal(result.cited_row, 'A | 12');
+});

@@ -30,7 +30,7 @@ function completionIssue(item, byId) {
   if (!tables.length) return 'requires a saved result table';
   const unfinished = a => [...(a.meta?.remaining_for_aso || []), ...(a.meta?.not_in_release || [])];
   if (tables.some(a => !unfinished(a).length)) return null;
-  return `Investigator returned supporting data with unfinished requirements: ${[...new Set(tables.flatMap(a => unfinished(a).map(item => item.requirement)))].join('; ')}. Complete that work or revise the plan explicitly`;
+  return `Investigator returned supporting data with unfinished requirements: ${[...new Set(tables.flatMap(a => unfinished(a).map(item => item.requirement)))].join('; ')}. Complete the assigned work and attach its complete evidence, or mark the item dropped with an explicit limitation. Changing the plan text alone does not resolve unfinished evidence`;
 }
 
 module.exports = { KINDS, CHART_KINDS, createItem, validateItem, completionIssue, isReport };

@@ -11,6 +11,14 @@ function object(value, label) {
 
 function validate(value, schema, label) {
   if (schema.enum && !schema.enum.includes(value)) throw new Error(`${label} must be one of ${schema.enum.join(', ')}`);
+  if (Array.isArray(schema.anyOf)) {
+    if (!schema.anyOf.some(option => { try { validate(value, option, label); return true; } catch { return false; } })) throw new Error(`${label} must match one of the declared value types`);
+    return;
+  }
+  if (schema.type === 'null') {
+    if (value !== null) throw new Error(`${label} must be null`);
+    return;
+  }
   if (!schema.type) return;
   if (schema.type === 'object') {
     object(value, label);

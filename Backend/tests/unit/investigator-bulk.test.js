@@ -205,7 +205,7 @@ test('bulk Investigator uses two model turns for 600 genes and never sends the f
       assert.match(request.messages[1].content, /Assigned plan result: Compare measurements with the earlier result/);
       assert.match(request.messages[1].content, /gene and ensembl identifiers plus 1 inherited columns retained/);
       assert.doesNotMatch(request.messages[1].content, /"prior"/);
-      assert.match(request.messages[1].content, /Original study request \(context and constraints for the assigned work\):\nUNRELATED_STUDY_TASK/);
+      assert.match(request.messages[1].content, /Original study context \(constraints only; not additional assigned deliverables\):\nUNRELATED_STUDY_TASK/);
       const tool = requests.length === 1
         ? functionCall('apply_bulk', { name: 'values', lookups: [f.lookup('organ A', 'a_units'), f.lookup('organ B', 'b_units')] }, 'read')
         : functionCall('finish', { results: ['values'], answer: 'Source measurements returned. Mechanistic interpretation is unavailable.', not_in_release: [{ requirement: 'mechanism', why: 'No mechanism evidence in these source tables' }] }, 'done');

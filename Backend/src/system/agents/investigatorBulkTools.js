@@ -1,7 +1,8 @@
 'use strict';
 
-const { FILTER_OPS, num, isMissing, wherePredicate, columnsOf, withColumns, compute, rank } = require('../aso/studyTools');
+const { CLASSIFY_SCHEMA, classify, FILTER_OPS, num, isMissing, wherePredicate, columnsOf, withColumns, compute, rank } = require('../aso/studyTools');
 
+const SOURCE_RECORD = Symbol('source_record');
 const S = { type: 'string' };
 const THEN_BY = { type: 'array', description: 'Secondary keys order equal primary scores without changing their tied rank. text uses exact lexical order; number requires numeric values; auto orders numeric values numerically and other scalar values lexically. Missing values remain last.', items: { type: 'object', properties: { column: S, order: { type: 'string', enum: ['asc', 'desc'] }, type: { type: 'string', enum: ['auto', 'number', 'text'] } }, required: ['column'] } };
 const REDUCERS = ['min', 'max', 'mean', 'median', 'sum', 'count', 'numeric_count', 'distinct_count', 'missing', 'zero'];
@@ -24,7 +25,8 @@ const APPLY_BULK = {
         columns: { type: 'array', items: S, description: 'Exact source columns to retain in rows mode; include entity labels and source values.' },
         top_by: S, top: { type: 'integer', description: 'Requested numeric rows per gene, sorted by top_by; all boundary ties are included unless ties=truncate.' }, order: { type: 'string', enum: ['asc', 'desc'] }, ties: { type: 'string', enum: ['include', 'truncate'] }, then_by: THEN_BY
       }, required: ['table', 'match_column'] } },
-      derive: { type: 'array', description: 'Optional calculations over the combined result, using the registered compute tool. Division by zero stays missing.', items: { type: 'object', properties: { name: S, expr: S }, required: ['name', 'expr'] } },
+      derive: { type: 'array', description: 'Optional calculations over the combined result, using the registered compute tool. Division by zero stays missing.', items: { type: 'object', properties: { name: S, expr: { type: 'string', description: "Arithmetic over exact columns and numbers: + - * /, parentheses, unary minus, log2 log10 ln log abs sqrt exp min max. Quoted tokens name an existing column first; otherwise they are literal text. + concatenates text. No comparisons, SQL CASE, conditionals, or array/object expressions. Division by zero and nonfinite numeric results become null. Each step may use earlier derived columns." } }, required: ['name', 'expr'] } },
+      classify: { type: 'array', description: 'Optional categorical columns after derive and before sort, using the registered ordered-rule classifier. Every step has explicit rules and otherwise; earlier derived/classified columns are available.', items: CLASSIFY_SCHEMA },
       sort: { type: 'object', description: 'Optional requested ranking of the completed table. Omit top to retain every input, including missing values. Boundary ties are included unless ties=truncate.', properties: { by: S, order: { type: 'string', enum: ['asc', 'desc'] }, top: { type: 'integer' }, ties: { type: 'string', enum: ['include', 'truncate'] }, then_by: THEN_BY }, required: ['by'] }
     }, required: ['name', 'lookups'] }
   }
@@ -123,10 +125,10 @@ function createBulkTools({ supplied, resolved, inputRows, adapter }) {
         if (!rows.length) missingGenes++;
         if (rowsMode) {
           const selected = lookup.top_by === undefined ? rows : rank(withColumns(rows, entry.columns), lookup.top_by, lookup.order || 'desc', lookup.top, lookup.ties, lookup.then_by);
-          if (!selected.length) resultRows.push({ ...base[i], ...Object.fromEntries(lookup.columns.map(key => [key, null])), source_rows: rows.length, lookup_status: !gene ? 'gene_not_in_release' : rows.length ? 'no_numeric_values' : 'no_matching_rows' });
+          if (!selected.length) resultRows.push({ ...base[i], [SOURCE_RECORD]: false, ...Object.fromEntries(lookup.columns.map(key => [key, null])), source_rows: rows.length, lookup_status: !gene ? 'gene_not_in_release' : rows.length ? 'no_numeric_values' : 'no_matching_rows' });
           for (const row of selected) {
             for (const key of lookup.columns) if (Object.hasOwn(base[i], key) && !isMissing(base[i][key]) && base[i][key] !== row[key] && !(num(base[i][key]) !== null && num(base[i][key]) === num(row[key]))) throw new Error(`Source column ${key} conflicts with an input value; rename the input column or use a scalar lookup with a new alias`);
-            resultRows.push({ ...base[i], ...Object.fromEntries(lookup.columns.map(key => [key, row[key]])), ...(lookup.top_by === undefined ? {} : { rank: row.rank }), source_rows: rows.length });
+            resultRows.push({ ...base[i], [SOURCE_RECORD]: true, ...Object.fromEntries(lookup.columns.map(key => [key, row[key]])), ...(lookup.top_by === undefined ? {} : { rank: row.rank }), source_rows: rows.length });
           }
         } else {
           const missing = lookup.value_column ? rows.filter(row => isMissing(row[lookup.value_column])).length : 0;
@@ -146,6 +148,12 @@ function createBulkTools({ supplied, resolved, inputRows, adapter }) {
       if (columnsOf(resultRows).includes(step.name)) throw new Error(`Derived column ${step.name} already exists`);
       resultRows = compute(resultRows, step.name, step.expr);
     }
+    if (args.classify !== undefined && !Array.isArray(args.classify)) throw new Error('apply_bulk.classify must be an array');
+    const classifications = [];
+    for (const step of args.classify || []) {
+      resultRows = classify(resultRows, step);
+      classifications.push(resultRows.classification);
+    }
     if (args.sort) {
       if (args.sort.top !== undefined && (!Number.isSafeInteger(args.sort.top) || args.sort.top < 1)) throw new Error('sort.top must be a positive integer');
       resultRows = rank(resultRows, args.sort.by, args.sort.order || 'desc', args.sort.top, args.sort.ties, args.sort.then_by);
@@ -155,8 +163,9 @@ function createBulkTools({ supplied, resolved, inputRows, adapter }) {
     const newColumns = currentColumns.filter(key => !baseColumns.includes(key));
     const measurements = newColumns.filter(key => !/_source_rows$|_missing_rows$/.test(key));
     const columns = [...new Set(['gene', 'ensembl', ...measurements, ...newColumns, ...currentColumns])];
+    const recordRows = rowMode ? resultRows.map(row => row[SOURCE_RECORD]) : null;
     resultRows = withColumns(resultRows.map(row => Object.fromEntries(columns.map(key => [key, row[key] === undefined ? null : row[key]]))), columns);
-    return { name: args.name, rows: resultRows, columns, created_columns: columns.filter(key => !baseColumns.includes(key)), provenance, coverage, unresolved_inputs: resolved.filter(gene => !gene).length, calculations: args.derive || [], ...(args.sort ? { sort: args.sort } : {}) };
+    return { name: args.name, rows: resultRows, columns, created_columns: columns.filter(key => !baseColumns.includes(key)), provenance, coverage, unresolved_inputs: resolved.filter(gene => !gene).length, calculations: args.derive || [], classifications, ...(recordRows ? { record_rows: recordRows } : {}), ...(args.sort ? { sort: args.sort } : {}) };
   } };
 }
 

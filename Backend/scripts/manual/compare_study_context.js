@@ -102,12 +102,28 @@ async function main() {
     const original = gateway.createChatCompletion.bind(gateway);
     gateway.createChatCompletion = async request => {
       const requestIndex = requests.length;
-      const item = { request, started_at: Date.now() };
+      const selected = gateway.getActiveModel();
+      const effectiveEffort = request.reasoning_effort || selected.reasoningEffort;
+      if (selected.configKey !== 'gemini-3.8-flash' || effectiveEffort !== 'low') throw new Error('Every evaluation inference must use gemini-3.8-flash with low reasoning effort');
+      const item = { request, started_at: Date.now(), model: {
+        id: selected.id, config_key: selected.configKey, model_id: selected.modelId,
+        provider_key: selected.providerKey, adapter_key: selected.adapterKey,
+        default_reasoning_effort: selected.reasoningEffort,
+        effective_reasoning_effort: effectiveEffort,
+        reasoning_effort_source: request.reasoning_effort ? 'request' : 'model configuration'
+      } };
       requests.push(item);
-      const response = await original(request);
-      Object.assign(item, { finished_at: Date.now(), response });
-      await fs.writeFile(path.join(values.out, `inference-${String(requestIndex + 1).padStart(3, '0')}.json`), JSON.stringify(item), { mode: 0o600 });
-      return response;
+      try {
+        const response = await original(request);
+        item.response = response;
+        return response;
+      } catch (error) {
+        item.error = { kind: 'inference_failed', ...(Number.isSafeInteger(error.status) ? { http_status: error.status } : {}), usage: 'unknown unless recorded by the gateway' };
+        throw error;
+      } finally {
+        item.finished_at = Date.now();
+        await fs.writeFile(path.join(values.out, `inference-${String(requestIndex + 1).padStart(3, '0')}.json`), JSON.stringify(item), { mode: 0o600 });
+      }
     };
     console.log(JSON.stringify({ model: model.configKey, reasoning_effort: values.effort || model.reasoningEffort, release: config.current().activeHpaVersion, baseline: values.baseline || null, max_turns: maxTurns, goal }));
     const { result } = await gateway.runWithActiveModel(model, () => inference.withContext({ purpose: 'manual' }, () => orchestrator.execute(bulkGenes ? 'investigator_hpa' : 'aso_hpa', { ...(bulkGenes ? { genes: bulkGenes, question: goal } : { goal }), mode: 'offline', max_turns: maxTurns, ...(values.effort ? { reasoning_effort: values.effort } : {}), ...(values['context-bytes'] ? { context_budget_bytes: Number(values['context-bytes']) } : {}) }, {
@@ -124,6 +140,8 @@ async function main() {
     const inspections = allCalls.filter(c => ['open', 'describe', 'datasets'].includes(c.tool));
     const uniqueInspections = new Set(inspections.map(c => JSON.stringify(c)));
     const summary = { variant: values.baseline || 'candidate', case: values.case || values['goal-file'], model: model.configKey, hpa_version: config.current().activeHpaVersion, max_turns: maxTurns, result, accounting: { calls: db.calls.length, input_tokens: total('input_tokens'), cached_input_tokens: total('cached_input_tokens'), output_tokens: total('output_tokens'), total_tokens: total('total_tokens'), cost_usd: total('cost_microusd') / 1e6 }, context: { inspections: inspections.length, repeated_inspections: inspections.length - uniqueInspections.size }, isolated_writes: db.writes };
+    const meteredCalls = db.calls.filter(call => call.total_tokens !== null && call.total_tokens !== undefined && Number.isFinite(Number(call.total_tokens))).length;
+    Object.assign(summary.accounting, { attempted_calls: requests.length, unknown_usage_calls: requests.length - meteredCalls, tokens_are_lower_bound: meteredCalls !== requests.length });
     const agentStarts = events.filter(e => e.stage === 'tool.start').map(e => JSON.parse(e.message)).filter(e => e.kind === 'agent');
     summary.agent_invocations = Object.fromEntries([...new Set(agentStarts.map(e => e.tool))].map(name => [name, agentStarts.filter(e => e.tool === name).length]));
     summary.main_model_calls = turns.length;

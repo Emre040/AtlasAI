@@ -3,12 +3,26 @@
 // Numbers a summary states, with the precision they were written at: a decimal, a number of a
 // thousand or more, or scientific notation. Small whole numbers (counts, ranks, list markers)
 // are too ambiguous to check.
-const NUMBER = /(?<![\w.])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+]?\d+)?(?![\w])/g;
+const NUMBER = /(?<![\w.])[-+−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+−]?\d+)?(?![\w])/g;
+// Scientific notation in human-readable reports denotes the same number as e notation.
+// Match it as one span so its mantissa is never screened as a separate measurement.
+const SCIENTIFIC = /(?<![\w.])([-+−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(?:×|⋅|·|\*)\s*10\s*(?:\^\s*([+\-−]?\d+)|([⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+))(?![\w⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻])/g;
+const SUPERSCRIPT = Object.fromEntries([...'⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻'].map((symbol, i) => [symbol, '0123456789+-'[i]]));
+function numericMentions(text) {
+  const value = String(text || ''), found = [], spans = [];
+  for (const match of value.matchAll(SCIENTIFIC)) {
+    const exponent = match[2] === undefined ? [...match[3]].map(c => SUPERSCRIPT[c]).join('') : match[2].replaceAll('−', '-');
+    found.push({ raw: match[0], clean: `${match[1].replace(/,/g, '').replaceAll('−', '-')}e${exponent}`, index: match.index });
+    spans.push([match.index, match.index + match[0].length]);
+  }
+  for (const match of value.matchAll(NUMBER)) {
+    if (!spans.some(([start, end]) => match.index >= start && match.index < end)) found.push({ raw: match[0], clean: match[0].replace(/,/g, '').replaceAll('−', '-'), index: match.index });
+  }
+  return found.sort((a, b) => a.index - b.index);
+}
 function statedNumbers(text) {
   const out = [];
-  for (const m of String(text || '').matchAll(NUMBER)) {
-    const raw = m[0];
-    const clean = raw.replace(/,/g, '');
+  for (const { raw, clean } of numericMentions(text)) {
     const value = Number(clean);
     if (!Number.isFinite(value)) continue;
     const mantissa = clean.split(/[eE]/)[0];
@@ -28,7 +42,7 @@ function artifactNumbers(a) {
   const push = v => { if (Number.isFinite(v)) values.push(v); };
   if (a.rows) for (const r of a.rows) for (const v of Object.values(r)) {
     if (typeof v === 'number') push(v);
-    else if (typeof v === 'string' && v && /\d/.test(v)) { const n = Number(v.replace(/,/g, '')); if (Number.isFinite(n)) push(n); else for (const m of v.matchAll(NUMBER)) push(Number(m[0].replace(/,/g, ''))); }
+    else if (typeof v === 'string' && v && /\d/.test(v)) { const n = Number(v.replace(/,/g, '')); if (Number.isFinite(n)) push(n); else for (const m of numericMentions(v)) push(Number(m.clean)); }
   }
   const matrix = a.matrix?.matrix || a.figure?.matrix;
   if (matrix) for (const row of matrix) for (const v of row) if (v !== null && v !== undefined) push(Number(v));
@@ -70,7 +84,7 @@ function verificationIssues(summary, state) {
   const text = String(summary || '');
   const common = Float64Array.from([
     ...state.artifacts.filter(a => a.rows).map(a => a.rows.length),
-    ...[...String(state.goal || '').matchAll(NUMBER)].map(m => Number(m[0].replace(/,/g, '')))
+    ...numericMentions(state.goal).map(m => Number(m.clean))
   ].filter(Number.isFinite)).sort();
   const issues = [];
   for (const block of evidenceBlocks(text)) {

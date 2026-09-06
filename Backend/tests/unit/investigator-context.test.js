@@ -84,6 +84,11 @@ test('bulk context discovers arbitrary sources and inherited data without repeat
   assert.equal(calls, 5); assert.equal(sourceReads, 1);
   assert.equal(result.tables[0].rows[599].observed_units, 599);
   assert.equal(result.tables[0].rows[599].inherited_field_103, 'retained_value_103');
+  assert.equal(result.source_evidence.length, 1);
+  assert.equal(result.source_evidence[0].description, entry.description);
+  assert.equal(result.source_evidence[0].hpa_version, 'test');
+  assert.deepEqual(result.source_evidence[0].request, { table: entry.file });
+  assert.deepEqual(result.source_evidence[0].sample.rows, [['INPUT_0', 'sample A', '0', 'Supported']]);
 });
 
 test('an unavailable source remains discoverable and its exact schema can be inspected without a false source read', async () => {
@@ -96,7 +101,7 @@ test('an unavailable source remains discoverable and its exact schema can be ins
     assert.deepEqual(schema.columns, entry.columns);
     assert.equal(schema.key, 'stream');
     assert.match(schema.access_note, /streaming/);
-    return response('finish', { results: [], answer: 'Per-input lookup unavailable for this source.', not_in_release: [], remaining_for_aso: [{ requirement: 'Read this source', why: schema.access_note }] }, 'finish');
+    return response('finish', { results: [], answer: 'Per-input lookup unavailable for this source.', not_in_release: [], unfinished_requirements: [{ requirement: 'Read this source', why: schema.access_note }] }, 'finish');
   });
   const result = await run({ genes: ['ONE'], question: 'Read this source.' }, {}, {
     async catalog() { return [entry]; }, async entry() { return entry; }, async resolveGenes() { return [{ gene: 'ONE', ensembl: 'ID1' }]; },

@@ -722,3 +722,25 @@ test('loaded operations can process existing evidence while a different speciali
   assert.equal(result.outcome, 'completed');
   assert.equal(result.failed, 0);
 });
+
+test('retrieved source context survives specialist handoff as separately citable evidence', async t => {
+  const sourceEvidence = [{ read_id: 'source_1', table: 'methods.tsv', hpa_version: 'test', description: 'Observed specimens were independently processed.', sample: { columns: ['Group', 'Records'], rows: [['SYNTHETIC', '17']], more: false } }];
+  const f = await fixture(t, ({ request, turn }) => {
+    if (turn === 1) return response(call('set_plan', { items: [{ step: 'Retrieve source readings', kind: 'table' }] }), call('investigator_hpa', { gene: 'SYNTHETIC', question: 'Read source values', node: 1 }));
+    if (turn === 2) {
+      assert.match(transcript(request), /a2: saved 1 exact source reads/);
+      assert.doesNotMatch(transcript(request), /Observed specimens were independently processed/);
+      return response(call('open', { what: 'a2', columns: ['table', 'description', 'sample'] }));
+    }
+    assert.equal(turn, 3);
+    assert.match(transcript(request), /Observed specimens were independently processed/);
+    return response(call('finish', { summary: 'The source describes independently processed specimens (a2).', tables: [{ artifact: 'a1', columns: ['gene', 'value'] }] }));
+  }, async () => ({ result: { bulk: true, status: 'ok', tables: [{ name: 'observations', columns: ['gene', 'value'], rows: [{ gene: 'SYNTHETIC', value: 7 }], provenance: [], coverage: [] }], source_evidence: sourceEvidence, not_in_release: [], remaining_for_aso: [], hpa_version: 'test' } }));
+  const result = await f.run();
+  assert.equal(result.outcome, 'completed');
+  assert.deepEqual(result.plan[0].artifacts, ['a1']);
+  const source = result.artifacts.find(a => a.summary.id === 'a2');
+  const saved = JSON.parse(await fs.readFile(source.storage_uri, 'utf8'));
+  assert.deepEqual(saved.rows, sourceEvidence);
+  assert.equal(saved.provenance.evidence_kind, 'retrieved_source_context');
+});

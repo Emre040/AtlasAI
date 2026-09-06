@@ -14,3 +14,12 @@ test('reports insert exact artifact values, preserve zeros and missing values, a
   assert.throws(() => renderReport({ tables: [{ artifact: 'a1', columns: ['wrong'] }] }, state), /exact columns/);
   assert.throws(() => renderReport({ tables: [{ artifact: 'missing', columns: ['value'] }] }, state), /saved row artifact/);
 });
+
+test('a report retains the complete requested cohort and structured labels without a hidden row cutoff', () => {
+  const a = { id: 'a1', label: 'Complete cohort', columns: ['identifier', 'labels'],
+    rows: Array.from({ length: 601 }, (_, i) => ({ identifier: `entity_${i}`, labels: [{ category: 'first' }, { category: 'second' }] })) };
+  const report = renderReport({ tables: [{ artifact: 'a1', columns: a.columns }] }, { byId: new Map([['a1', a]]) });
+  assert.match(report, /entity_600/);
+  assert.match(report, /\[{"category":"first"},{"category":"second"}\]/);
+  assert.doesNotMatch(report, /Showing|\[object Object\]/);
+});

@@ -133,7 +133,8 @@ test('lookup inspection uses an extra row to distinguish a page from a complete 
   const exact = await readPage(rows(10), rowPageOptions({ rows: 10 }));
   assert.equal(exact.total, 10);
   assert.equal(exact.more, false);
-  for (const options of [{ rows: 0 }, { rows: 201 }, { offset: -1 }, { offset: 1.5 }]) assert.throws(() => rowPageOptions(options));
+  assert.deepEqual(rowPageOptions({ rows: 257 }), { rows: 257, offset: 0 });
+  for (const options of [{ rows: 0 }, { rows: 1.5 }, { rows: Number.MAX_SAFE_INTEGER + 1 }, { offset: -1 }, { offset: 1.5 }]) assert.throws(() => rowPageOptions(options));
 });
 
 test('compact pages preserve exact column ordering, special characters, zeros and nulls', () => {

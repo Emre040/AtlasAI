@@ -1,7 +1,5 @@
 'use strict';
 
-const MAX_STEPS = 64;
-
 function object(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`);
   return value;
@@ -29,7 +27,7 @@ function validate(value, schema, label) {
 }
 
 function references(value, found = new Set()) {
-  if (typeof value === 'string' && /^@[A-Za-z][A-Za-z0-9_]{0,63}$/.test(value)) { found.add(value.slice(1)); return found; }
+  if (typeof value === 'string' && /^@[A-Za-z][A-Za-z0-9_]*$/.test(value)) { found.add(value.slice(1)); return found; }
   if (!value || typeof value !== 'object') return found;
   if (Object.hasOwn(value, '$ref')) throw new Error('Use the string "@step_id" for a batch reference');
   for (const item of Object.values(value)) references(item, found);
@@ -37,7 +35,7 @@ function references(value, found = new Set()) {
 }
 
 function resolve(value, bindings) {
-  if (typeof value === 'string' && /^@[A-Za-z][A-Za-z0-9_]{0,63}$/.test(value)) {
+  if (typeof value === 'string' && /^@[A-Za-z][A-Za-z0-9_]*$/.test(value)) {
     const id = value.slice(1);
     if (!bindings.has(id)) throw new Error(`No completed output for ${id}`);
     return bindings.get(id);
@@ -50,15 +48,15 @@ function resolve(value, bindings) {
 // This is a data-flow executor over registered operations, not an eval/JavaScript sandbox.
 // The complete graph and argument shapes are checked before the first operation runs.
 async function executeBatch({ steps, outputs }, { specifications, execute, concurrency }) {
-  if (!Array.isArray(steps) || !steps.length || steps.length > MAX_STEPS) throw new Error(`run requires 1–${MAX_STEPS} steps`);
+  if (!Array.isArray(steps) || !steps.length) throw new Error('run requires a nonempty array of registered operations');
   if (!Array.isArray(outputs) || !outputs.length || outputs.some(id => typeof id !== 'string')) throw new Error('outputs must name the step outputs to inspect');
   if (!Number.isSafeInteger(concurrency) || concurrency < 1) throw new Error('Batch concurrency must be a positive integer');
   const byId = new Map();
   for (const raw of steps) {
     object(raw, 'step');
-    if (typeof raw.id !== 'string' || !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(raw.id) || byId.has(raw.id)) throw new Error(`Invalid or duplicate step id ${JSON.stringify(raw.id)}`);
+    if (typeof raw.id !== 'string' || !/^[A-Za-z][A-Za-z0-9_]*$/.test(raw.id) || byId.has(raw.id)) throw new Error(`Invalid or duplicate step id ${JSON.stringify(raw.id)}`);
     const spec = specifications.get(raw.tool);
-    if (!spec) throw new Error(`${raw.tool} is not a batch operation; use help for available operations`);
+    if (!spec) throw new Error(`${raw.tool} is not a batch operation; choose a registered data operation from the capability directory and load its schema with load_tools`);
     if (typeof raw.args !== 'string') throw new Error(`${raw.id}.args must be a JSON object encoded as a string`);
     let args;
     try { args = object(JSON.parse(raw.args), `${raw.id}.args`); }
@@ -93,9 +91,13 @@ async function executeBatch({ steps, outputs }, { specifications, execute, concu
     await Promise.all(ready.map(async step => {
       try {
         const result = await execute(step.tool, resolve(step.args, bindings));
+        if (typeof result?.artifact?.id === 'string') {
+          step.artifact = result.artifact.id;
+          results.set(step.id, result);
+        }
         if (!result || result.ok !== true || typeof result.artifact?.id !== 'string') throw new Error(result?.error || `${step.tool} returned no artifact`);
-        step.status = 'done'; step.artifact = result.artifact.id;
-        bindings.set(step.id, result.artifact.id); results.set(step.id, result);
+        step.status = 'done';
+        bindings.set(step.id, result.artifact.id);
       } catch (error) { step.status = 'failed'; step.error = error.message; }
     }));
   }
@@ -104,4 +106,4 @@ async function executeBatch({ steps, outputs }, { specifications, execute, concu
     outputs: outputs.filter(id => results.has(id)).map(id => ({ id, ...results.get(id) })) };
 }
 
-module.exports = { executeBatch, validate, MAX_STEPS };
+module.exports = { executeBatch, validate };

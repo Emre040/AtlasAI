@@ -6,6 +6,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 const Module = require('node:module');
+const { CapabilityCatalog } = require('../../src/system/aso/capabilityCatalog');
 
 let callId = 0;
 const call = (name, args) => {
@@ -30,6 +31,11 @@ async function fixture(t, decide, execute, options = {}) {
   const entry = options.entry || { file: 'mapping.tsv', key: 'lookup', title: 'Mapping', columns: ['name', 'value'] };
   let artifact = 0;
   const stubs = {
+    // Most tests isolate execution with tools already loaded. Cold-discovery tests
+    // below use the real initial catalog and actual load_tools exchanges.
+    '../aso/capabilityCatalog': { CapabilityCatalog: options.nativeDiscovery ? CapabilityCatalog : class extends CapabilityCatalog {
+      constructor(args) { super({ ...args, coreNames: args.tools.map(tool => tool.function.name) }); }
+    } },
     '../../inference/gateway': { getActiveModel: () => ({ id: 1, configKey: 'test-model' }), inference: {
       assignContext() {},
       chat: { completions: { async create(request) { requests.push(request); return decide({ request, turn: requests.length, agentDone }); } } }
@@ -98,6 +104,70 @@ test('the real loop retains an agent completion during inference and refuses a p
   const saved = JSON.parse(await fs.readFile(path.join(f.directory, 'context', 'turn-04.request.json'), 'utf8'));
   assert.deepEqual(saved, f.requests[3]);
   assert.equal(f.events.filter(e => e.stage === 'finish.refused').length, 1);
+});
+
+test('a cold coordinator discovers exact native tools without losing specialist access', async t => {
+  const f = await fixture(t, ({ request, turn }) => {
+    const names = request.tools.map(tool => tool.function.name);
+    if (turn === 1) {
+      assert.ok(names.includes('deep_research_hpa'));
+      assert.ok(names.includes('investigator_hpa'));
+      assert.ok(names.includes('load_tools'));
+      assert.ok(!names.includes('aggregate'));
+      assert.match(request.messages[0].content, /aggregate/);
+      return response(call('set_plan', { items: [{ step: 'Calculate the available values mean', kind: 'table' }] }),
+        call('load_tools', { names: ['aggregate'] }));
+    }
+    if (turn === 2) {
+      assert.ok(names.includes('aggregate'));
+      assert.ok(!names.includes('measure'));
+      const spec = request.tools.find(tool => tool.function.name === 'aggregate');
+      assert.ok(spec.function.parameters.required.includes('metrics'));
+      return response(call('aggregate', { artifact: 'mapping.tsv', column: 'value', metrics: ['mean'], node: 1 }));
+    }
+    return response(call('finish', { summary: 'The mean is 8 (a1).' }));
+  }, undefined, { nativeDiscovery: true, entry: { file: 'mapping.tsv', key: 'stream', title: 'Mapping', columns: ['name', 'value'] } });
+  const result = await f.run();
+  assert.equal(result.outcome, 'completed', result.error);
+  assert.equal(result.failed, 0);
+  assert.equal(result.turns, 3);
+});
+
+test('planning and delegation wait for real evidence and include specialist tokens', async t => {
+  const f = await fixture(t, ({ request, turn }) => {
+    if (turn === 1) return response(call('set_plan', { items: [{ step: 'Find the requested cohort', kind: 'gene_set' }] }),
+      call('deep_research_hpa', { goal: 'Find TEST', node: 1 }));
+    assert.equal(turn, 2);
+    assert.match(transcript(request), /TEST/);
+    return response(call('finish', { summary: 'TEST belongs to the returned cohort (a1).' }));
+  }, async () => {
+    await new Promise(resolve => setTimeout(resolve, 10));
+    return { result: { status: 'ok', result: { rows: [{ Gene: 'TEST', value: 7 }] },
+      tokens: { prompt: 50, completion: 5, total: 55 } } };
+  }, { nativeDiscovery: true });
+  const result = await f.run();
+  assert.equal(result.outcome, 'completed');
+  assert.equal(f.requests.length, 2, 'No extra inference merely to say skip');
+  assert.deepEqual(result.tokens, { prompt: 70, completion: 9, total: 79 });
+  assert.equal(result.token_breakdown.aso_hpa.total, 24);
+  assert.equal(result.token_breakdown.deep_research_hpa.total, 55);
+});
+
+test('filtering a cohort preserves declared fields that have no recorded value', async t => {
+  const f = await fixture(t, ({ request, turn }) => {
+    if (turn === 1) return response(call('set_plan', { items: [{ step: 'Find cohort', kind: 'gene_set' }] }),
+      call('deep_research_hpa', { goal: 'Find the cohort', node: 1 }));
+    if (turn === 2) return response(call('filter', { artifact: 'a1', where: [{ column: 'gene', op: '=', value: 'EMPTY' }] }));
+    if (turn === 3) return response(call('open', { what: 'a2', columns: ['gene', 'recorded_value'] }));
+    assert.match(transcript(request), /recorded_value/);
+    assert.doesNotMatch(transcript(request), /open failed|No column/);
+    return response(call('finish', { summary: 'No value is recorded for EMPTY in the source (a2).' }));
+  }, async () => ({ result: { status: 'ok', result: { rows: [{ Gene: 'EMPTY', recorded_value: '' }, { Gene: 'OBSERVED', recorded_value: 7 }] } } }));
+  const result = await f.run();
+  assert.equal(result.outcome, 'completed');
+  const filtered = JSON.parse(await fs.readFile(result.artifacts[1].storage_uri, 'utf8'));
+  assert.ok(filtered.columns.includes('recorded_value'));
+  assert.equal(filtered.rows[0].recorded_value, null);
 });
 
 test('planning and a specialist can start together using declared tools on the first turn', async t => {
@@ -266,7 +336,7 @@ test('native tools retain raw master columns, correct arguments and matched prov
     if (turn === 1) return response(call('set_plan', { items: [{ step: 'Select and calculate', kind: 'table' }] }));
     const names = request.tools.map(t => t.function.name);
     assert.ok(names.includes('filter') && names.includes('compute') && names.includes('measure'));
-    assert.ok(!names.includes('run') && !names.includes('help') && !names.includes('aso_hpa'));
+    assert.ok(names.includes('run') && !names.includes('help') && !names.includes('aso_hpa'));
     if (turn === 2) return response(call('schema', { what: 'example.tsv' }));
     if (turn === 3) return response(call('filter', { artifact: 'example.tsv', where: [{ column: 'Gene', op: '=', value: 'EXAMPLE' }] }));
     if (turn === 4) return response(call('compute', { artifact: 'a1', expr: 'score * 7', name: 'scaled', node: 1 }));
@@ -444,4 +514,81 @@ test('skip alongside an inspection waits for the agent instead of polling the mo
   });
   assert.equal((await f.run()).outcome, 'completed');
   assert.equal(f.requests.length, 3);
+});
+
+
+test('dependent registered operations execute together and expose only requested result receipts', async t => {
+  const f = await fixture(t, ({ request, turn }) => {
+    if (turn === 1) return response(
+      call('set_plan', { items: [{ step: 'Summarize source groups', kind: 'table' }, { step: 'Plot group means', kind: 'bar' }] }),
+      call('load_tools', { names: ['aggregate', 'compute'] }));
+    if (turn === 2) return response(call('run', { steps: [
+      { id: 'groups', tool: 'aggregate', args: JSON.stringify({ artifact: 'mapping.tsv', group_by: 'name', column: 'value', metrics: ['mean'] }) },
+      { id: 'scaled', tool: 'compute', args: JSON.stringify({ artifact: '@groups', name: 'scaled', expr: 'mean * 10', node: 1 }) },
+      { id: 'figure', tool: 'chart', args: JSON.stringify({ artifact: '@scaled', type: 'bar', x: 'name', y: 'scaled', node: 2 }) }
+    ], outputs: ['scaled', 'figure'] }));
+    assert.equal(turn, 3);
+    const result = JSON.parse(request.messages.findLast(m => m.role === 'tool').content);
+    assert.equal(result.status, 'completed');
+    assert.deepEqual(result.outputs.map(output => output.artifact), ['a2', 'a3']);
+    assert.match(result.observations, /artifact a2/);
+    assert.doesNotMatch(result.observations, /artifact a1/);
+    return response(call('finish', { summary: 'The group measurements are saved in a2 and plotted in a3.', tables: [{ artifact: 'a2', columns: ['name', 'scaled'] }] }));
+  }, null, { nativeDiscovery: true, entry: { file: 'mapping.tsv', key: 'stream', columns: ['name', 'value'] }, rows: [{ name: 'first', value: 2 }, { name: 'first', value: 4 }, { name: 'second', value: 9 }] });
+  const result = await f.run();
+  assert.equal(result.outcome, 'completed', result.error);
+  assert.equal(result.turns, 3);
+  assert.equal(result.tool_calls, 3);
+  const table = JSON.parse(await fs.readFile(result.artifacts[1].storage_uri, 'utf8'));
+  assert.deepEqual(table.rows.map(row => [row.name, row.scaled]), [['first', 30], ['second', 90]]);
+});
+
+test('repeating an unresolved finish cannot disable completion validation', async t => {
+  const f = await fixture(t, ({ turn }) => {
+    if (turn === 1) return response(call('set_plan', { items: [{ step: 'Draw requested chart', kind: 'bar' }] }));
+    assert.ok(turn <= 3, 'unchanged rejected finish must stop without arbitrary further retries');
+    return response(call('finish', { summary: 'Everything is complete and the chart proves it.' }));
+  });
+  const result = await f.run();
+  assert.equal(result.outcome, 'incomplete');
+  assert.equal(result.incomplete_reason, 'unresolved_finish_evidence');
+  assert.doesNotMatch(result.summary, /Everything is complete/);
+  assert.equal(result.plan[0].status, 'todo');
+});
+
+test('row inspection does not repeat specialist narrative and full provenance remains available explicitly', async t => {
+  const f = await fixture(t, ({ request, turn }) => {
+    if (turn === 1) return response(call('set_plan', { items: [{ step: 'Read requested measurements', kind: 'table' }] }), call('investigator_hpa', { genes: ['EXAMPLE'], question: 'Get measurements', node: 1 }));
+    if (turn === 2) {
+      const receipt = transcript(request);
+      assert.match(receipt, /"columns":\["gene","value"\]/);
+      assert.match(receipt, /EXAMPLE/);
+      assert.doesNotMatch(receipt, /SPECIALIST_NARRATIVE/);
+      return response(call('open', { what: 'a1', columns: ['gene', 'value'] }));
+    }
+    if (turn === 3) {
+      const read = JSON.parse(request.messages.findLast(message => message.role === 'tool').content);
+      assert.match(read.observations, /EXAMPLE/);
+      assert.doesNotMatch(read.observations, /SPECIALIST_NARRATIVE/);
+      return response(call('open', { what: 'a1', columns: ['gene'], provenance: true }));
+    }
+    assert.equal(turn, 4);
+    assert.match(JSON.parse(request.messages.findLast(message => message.role === 'tool').content).observations, /SPECIALIST_NARRATIVE/);
+    return response(call('finish', { summary: 'Requested evidence is saved in a1.' }));
+  }, async () => ({ result: { bulk: true, found: true, status: 'ok', answer: 'SPECIALIST_NARRATIVE', tables: [{ name: 'measurement', rows: [{ gene: 'EXAMPLE', value: 7 }], columns: ['gene', 'value'], created_columns: ['value'], provenance: [{ table: 'source.tsv' }], coverage: [], calculations: [] }], not_in_release: [] } }));
+  assert.equal((await f.run()).outcome, 'completed');
+});
+
+test('a failed cohort repair exposes unresolved requirements without creating a misleading empty cohort', async t => {
+  const f = await fixture(t, ({ request, turn }) => {
+    if (turn === 1) return response(call('set_plan', { items: [{ step: 'Select the exact requested cohort', kind: 'gene_set' }] }), call('deep_research_hpa', { goal: 'Keep the requested exclusion', node: 1 }));
+    assert.equal(turn, 2);
+    assert.match(transcript(request), /required exclusion/);
+    assert.match(transcript(request), /unresolved_requirements/);
+    return response(call('update_plan', { item: 1, status: 'dropped', note: 'The required exclusion could not be validated' }), call('finish', { summary: 'The required exclusion could not be validated, so the cohort was not queried.' }));
+  }, async () => ({ result: { status: 'error', error: 'Required criteria remain unresolved', stop_reason: 'no_progress_cycle', result: { validation_passed: false, unresolved_requirements: [{ id: 'r1', requirement: 'required exclusion', operator: 'NOT', status: 'unresolved' }] } } }));
+  const result = await f.run();
+  assert.equal(result.outcome, 'incomplete');
+  assert.equal(result.failed, 1);
+  assert.equal(result.artifacts.length, 0);
 });

@@ -12,6 +12,8 @@ const geneData = require('../../hpa/geneDataAdapter');
 
 const OPS = ['>', '>=', '<', '<=', '=', '!=', 'contains', 'in'];
 
+function isMissing(v) { return v === null || v === undefined || (typeof v === 'string' && (!v.trim() || v.trim().toUpperCase() === 'NA')); }
+
 // A number from a cell; an empty cell, NA or text is null, never zero.
 function num(v) {
   if (v === null || v === undefined || typeof v === 'boolean') return null;
@@ -36,7 +38,10 @@ function keysOf(row, on = null) {
 function requireKeys(rows, on, opName) {
   if (rows.some(r => !keysOf(r, on).length)) throw new Error(`${opName}: every row needs a ${on ? `"${on}"` : 'gene or ensembl'} column to match on (use concat to stack tables that share no key)`);
 }
-function columnsOf(rows) { const set = new Set(); for (const r of rows.slice(0, 200)) for (const k of Object.keys(r)) set.add(k); return [...set]; }
+function columnsOf(rows) { const set = new Set(rows.columns || []); for (const r of rows) for (const k of Object.keys(r)) set.add(k); return [...set]; }
+// A table's schema survives an empty selection. Array metadata is deliberately not serialized
+// as data; artifact writers store these columns alongside the rows.
+function withColumns(rows, columns) { Object.defineProperty(rows, 'columns', { value: [...new Set(columns)], configurable: true, writable: true }); return rows; }
 function findColumn(rows, name) {
   if (!name) return null;
   const cols = columnsOf(rows);
@@ -80,8 +85,8 @@ function wherePredicate(columns, where = []) {
 }
 
 function applyWhere(rows, where = []) {
-  if (!rows.length) return [];
-  return rows.filter(wherePredicate(columnsOf(rows), where));
+  const columns = columnsOf(rows);
+  return withColumns(rows.filter(wherePredicate(columns, where)), columns);
 }
 
 // A result's new columns go right after gene and ensembl, so the first look at it shows what
@@ -92,62 +97,140 @@ function freshFirst(rows, inputColumns = []) {
   const carried = new Set(inputColumns);
   const fresh = cols.filter(c => !carried.has(c) && c !== 'gene' && c !== 'ensembl');
   if (!fresh.length) return rows;
-  const order = [...new Set(['gene', 'ensembl', ...fresh, ...cols])];
-  return rows.map(r => { const o = {}; for (const k of order) if (k in r) o[k] = r[k]; return o; });
+  const order = [...new Set([...['gene', 'ensembl'].filter(column => cols.includes(column)), ...fresh, ...cols])];
+  return withColumns(rows.map(r => { const o = {}; for (const k of order) if (k in r) o[k] = r[k]; return o; }), order);
 }
 
 function setOp(kind, left, right, on = null) {
-  if (kind === 'concat') return [...left, ...right];
+  const columns = [...new Set([...columnsOf(left), ...columnsOf(right)])];
+  if (kind === 'concat') return withColumns([...left, ...right], columns);
   requireKeys(left, on, kind); requireKeys(right, on, kind);
   const rightKeys = new Set(right.flatMap(r => keysOf(r, on)));
   const inRight = r => keysOf(r, on).some(k => rightKeys.has(k));
-  if (kind === 'union') { const seen = new Set(); return [...left, ...right].filter(r => { const keys = keysOf(r, on); if (keys.some(k => seen.has(k))) return false; for (const k of keys) seen.add(k); return true; }); }
-  if (kind === 'intersect') return left.filter(inRight);
-  if (kind === 'difference') return left.filter(r => !inRight(r));
+  if (kind === 'union') { const seen = new Set(); return withColumns([...left, ...right].filter(r => { const keys = keysOf(r, on); if (keys.some(k => seen.has(k))) return false; for (const k of keys) seen.add(k); return true; }), columns); }
+  if (kind === 'intersect') return withColumns(left.filter(inRight), columnsOf(left));
+  if (kind === 'difference') return withColumns(left.filter(r => !inRight(r)), columnsOf(left));
   throw new Error(`unknown set operation ${kind}`);
 }
 
 // SQL-like: a left row joined with every right row of the same gene, so a long table (one row per
 // gene and entity) keeps all its rows.
-function join(left, right, how = 'inner', on = null) {
-  const onCol = on ? (findColumn(left, on) || on) : null;
-  const onRight = on ? (findColumn(right, on) || on) : null;
-  requireKeys(left, onCol, 'join'); requireKeys(right, onRight, 'join');
-  const groups = new Map();
-  for (const r of right) for (const k of keysOf(r, onRight)) { if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); }
-  const leftCols = new Set(columnsOf(left));
-  const out = [];
-  for (const l of left) {
-    // Ensembl ids first; the gene name only when that finds nothing, so a right table with both
-    // keys does not match twice.
-    let matches = [];
-    for (const k of keysOf(l, onCol)) { matches = groups.get(k) || []; if (matches.length) break; }
-    if (!matches.length) { if (how === 'left') out.push({ ...l }); continue; }
-    for (const r of matches) {
-      const merged = { ...l };
-      for (const [k, v] of Object.entries(r)) {
-        if (k === 'gene' || k === 'ensembl' || k === onRight) continue;
-        merged[leftCols.has(k) ? `${k}_2` : k] = v;
-      }
-      out.push(merged);
+function join(left, right, how = 'inner', on = null, onColumns) {
+  if (!['inner', 'left', 'right', 'full'].includes(how)) throw new Error('join: how must be inner, left, right or full');
+  if (on && onColumns !== undefined) throw new Error('join: use on or on_columns, not both');
+  if (onColumns !== undefined && (!Array.isArray(onColumns) || !onColumns.length || onColumns.some(name => typeof name !== 'string' || !name.trim()))) throw new Error('join: on_columns must be a nonempty array of column names');
+  const composite = onColumns !== undefined;
+  const names = composite ? onColumns : on ? [on] : [];
+  const resolve = (rows, side) => names.map(name => {
+    const column = findColumn(rows, name);
+    if (!column) throw new Error(`join: no column "${name}" on ${side} (columns: ${columnsOf(rows).join(', ')})`);
+    return column;
+  });
+  const leftKeys = resolve(left, 'left'), rightKeys = resolve(right, 'right');
+  if (new Set(leftKeys).size !== leftKeys.length || new Set(rightKeys).size !== rightKeys.length) throw new Error('join: on_columns must name distinct columns');
+  if (!composite) { requireKeys(left, leftKeys[0] || null, 'join'); requireKeys(right, rightKeys[0] || null, 'join'); }
+  const keys = (row, columns) => {
+    if (!composite) return keysOf(row, columns[0] || null);
+    const values = columns.map(column => row[column]);
+    // Missing join components do not identify an entity, including when both sides lack them.
+    if (values.some(isMissing)) return [];
+    if (values.some(value => typeof value === 'object' || (typeof value === 'number' && !Number.isFinite(value)))) throw new Error('join: composite key values must be finite scalar values');
+    return [JSON.stringify(values)];
+  };
+  const leftCols = columnsOf(left), rightCols = columnsOf(right), leftSet = new Set(leftCols);
+  const rightFields = rightCols.filter(column => !rightKeys.includes(column) && (composite || !['gene', 'ensembl'].includes(column)));
+  const rightNames = new Map(rightFields.map(column => [column, leftSet.has(column) ? `${column}_2` : column]));
+  const projected = [...leftCols, ...rightNames.values()];
+  if (new Set(projected).size !== projected.length) throw new Error('join: output column collision; rename conflicting columns explicitly before joining');
+  const identityColumns = ['gene', 'ensembl'].filter(column => leftCols.includes(column) || rightCols.includes(column));
+  const outputColumns = [...new Set([...projected, ...identityColumns])];
+  const merge = (l, r) => {
+    const out = Object.fromEntries(outputColumns.map(column => [column, null]));
+    if (l) for (const column of leftCols) out[column] = l[column] === undefined ? null : l[column];
+    if (r) {
+      for (const [column, name] of rightNames) out[name] = r[column] === undefined ? null : r[column];
+      if (!l) for (const [index, column] of leftKeys.entries()) out[column] = r[rightKeys[index]] === undefined ? null : r[rightKeys[index]];
+      for (const column of identityColumns) if (isMissing(out[column]) && !isMissing(r[column])) out[column] = r[column];
     }
+    return out;
+  };
+  const groups = new Map();
+  for (const [index, row] of right.entries()) for (const key of keys(row, rightKeys)) {
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ row, index });
   }
-  return out;
+  const out = [], matchedRight = new Set();
+  for (const l of left) {
+    let matches = [];
+    for (const key of keys(l, leftKeys)) { matches = groups.get(key) || []; if (matches.length) break; }
+    if (!matches.length && ['left', 'full'].includes(how)) out.push(merge(l, null));
+    for (const match of matches) { matchedRight.add(match.index); out.push(merge(l, match.row)); }
+  }
+  if (['right', 'full'].includes(how)) for (const [index, row] of right.entries()) if (!matchedRight.has(index)) out.push(merge(null, row));
+  return withColumns(out, outputColumns);
 }
 
 function select(rows, columns = [], rename = {}, add = {}) {
-  if (!rows.length) return [];
   const wanted = Array.isArray(columns) && columns.length ? columns : columnsOf(rows);
   const keep = wanted.map(c => { const found = findColumn(rows, c); if (!found) throw new Error(`select: no column named "${c}" (columns: ${columnsOf(rows).slice(0, 30).join(', ')})`); return found; });
   const constants = add && typeof add === 'object' ? Object.entries(add) : [];
-  return rows.map(r => { const o = {}; for (const c of keep) o[rename[c] || c] = r[c]; if (r.gene !== undefined && o.gene === undefined) o.gene = r.gene; if (r.ensembl !== undefined && o.ensembl === undefined) o.ensembl = r.ensembl; for (const [k, v] of constants) o[k] = v; return o; });
+  const renamed = keep.map(c => rename[c] || c);
+  if (new Set(renamed).size !== renamed.length || constants.some(([k]) => renamed.includes(k))) throw new Error('select: output column names must be distinct');
+  if (keep.some((c, i) => ['gene', 'ensembl'].includes(renamed[i]) && renamed[i] !== c && columnsOf(rows).includes(renamed[i]))) throw new Error('select: a renamed column cannot replace retained gene identifiers');
+  const outputColumns = [...new Set([...keep.map(c => rename[c] || c), ...['gene', 'ensembl'].filter(c => columnsOf(rows).includes(c)), ...constants.map(([k]) => k)])];
+  return withColumns(rows.map(r => { const o = {}; for (const c of keep) o[rename[c] || c] = r[c] === undefined ? null : r[c]; if (r.gene !== undefined && o.gene === undefined) o.gene = r.gene; if (r.ensembl !== undefined && o.ensembl === undefined) o.ensembl = r.ensembl; for (const [k, v] of constants) o[k] = v; return o; }), outputColumns);
 }
 
-function rank(rows, by, order = 'desc', top = 0) {
+function secondaryOrder(columns, thenBy = []) {
+  if (!Array.isArray(thenBy)) throw new Error('then_by must be an array of sort columns');
+  const rules = thenBy.map(rule => {
+    const column = resolveIn(columns, rule?.column);
+    if (!column) throw new Error(`then_by: no column named "${rule?.column}"`);
+    const order = rule.order === undefined ? 'asc' : rule.order;
+    const type = rule.type === undefined ? 'auto' : rule.type;
+    if (!['asc', 'desc'].includes(order)) throw new Error('then_by order must be asc or desc');
+    if (!['auto', 'number', 'text'].includes(type)) throw new Error('then_by type must be auto, number or text');
+    return { column, order, type };
+  });
+  if (new Set(rules.map(rule => rule.column)).size !== rules.length) throw new Error('then_by columns must be distinct');
+  return {
+    keys(row) {
+      return rules.map(({ column, type }) => {
+        const raw = row[column];
+        if (isMissing(raw)) return null;
+        if (typeof raw === 'object') throw new Error(`then_by: ${column} must contain scalar values`);
+        const value = num(raw);
+        if (type === 'number' && value === null) throw new Error(`then_by: ${column} contains a nonnumeric value`);
+        return type !== 'text' && value !== null ? { kind: 0, value } : { kind: 1, value: String(raw) };
+      });
+    },
+    compare(a, b) {
+      for (const [index, rule] of rules.entries()) {
+        const x = a[index], y = b[index];
+        if (x === null || y === null) { if (x !== y) return x === null ? 1 : -1; continue; }
+        const compared = x.kind - y.kind || (x.value < y.value ? -1 : x.value > y.value ? 1 : 0);
+        if (compared) return rule.order === 'asc' ? compared : -compared;
+      }
+      return 0;
+    }
+  };
+}
+
+function rank(rows, by, order = 'desc', top = 0, ties = 'include', thenBy = []) {
   const column = findColumn(rows, by);
   if (!column) throw new Error(`rank: no column named "${by}"`);
-  const sorted = rows.map(r => ({ r, v: num(r[column]) })).filter(x => x.v !== null).sort((a, b) => order === 'asc' ? a.v - b.v : b.v - a.v).map((x, i) => ({ ...x.r, rank: i + 1 }));
-  return top > 0 ? sorted.slice(0, top) : sorted;
+  if (!['asc', 'desc'].includes(order)) throw new Error('rank: order must be asc or desc');
+  if (!['include', 'truncate'].includes(ties)) throw new Error('rank: ties must be include or truncate');
+  if (!Number.isSafeInteger(top) || top < 0) throw new Error('rank: top must be a nonnegative integer');
+  const secondary = secondaryOrder(columnsOf(rows), thenBy);
+  const sortable = rows.map(r => ({ r, v: num(r[column]), keys: secondary.keys(r) }));
+  const sorted = sortable.filter(x => x.v !== null).sort((a, b) => (order === 'asc' ? a.v - b.v : b.v - a.v) || secondary.compare(a.keys, b.keys));
+  let cutoff = top > 0 ? Math.min(top, sorted.length) : sorted.length;
+  if (top > 0 && ties === 'include') while (cutoff < sorted.length && sorted[cutoff].v === sorted[cutoff - 1].v) cutoff++;
+  let previous, position = 0;
+  const ranked = sorted.slice(0, cutoff).map((x, i) => { if (i === 0 || x.v !== previous) position = i + 1; previous = x.v; return { ...x.r, rank: position }; });
+  if (!top) ranked.push(...sortable.filter(x => x.v === null).sort((a, b) => secondary.compare(a.keys, b.keys)).map(x => ({ ...x.r, rank: null })));
+  return withColumns(ranked, [...columnsOf(rows), 'rank']);
 }
 
 function resolveIn(columns, name) {
@@ -157,29 +240,47 @@ function resolveIn(columns, name) {
 
 // Keeps the n highest (or lowest) rows of each group as rows arrive, so a million-row dataset
 // needs only groups × n rows of memory.
-function topKeeper({ group_by = 'gene', by, n = 1, order = 'desc' } = {}, columns) {
+function topKeeper({ group_by = 'gene', by, n = 1, order = 'desc', ties = 'include', then_by = [] } = {}, columns) {
   const groupCol = resolveIn(columns, group_by);
   const column = resolveIn(columns, by);
   if (!groupCol) throw new Error(`top_per_group: no column named "${group_by}" (columns: ${columns.slice(0, 30).join(', ')})`);
   if (!column) throw new Error(`top_per_group: no column named "${by}" (columns: ${columns.slice(0, 30).join(', ')})`);
-  const keep = Math.max(1, Number(n) || 1);
+  if (!Number.isSafeInteger(n) || n < 1) throw new Error('top_per_group: n must be a positive integer');
+  if (!['include', 'truncate'].includes(ties)) throw new Error('top_per_group: ties must be include or truncate');
+  if (!['asc', 'desc'].includes(order)) throw new Error('top_per_group: order must be asc or desc');
+  const keep = n;
   const asc = order === 'asc';
+  const secondary = secondaryOrder(columns, then_by);
+  const compare = (a, b) => (asc ? a.v - b.v : b.v - a.v) || secondary.compare(a.keys, b.keys);
   const groups = new Map();
   return {
     add(r) {
       const v = num(r[column]);
-      if (v === null) return;
-      const g = String(r[groupCol] ?? '');
-      let arr = groups.get(g);
-      if (!arr) { arr = []; groups.set(g, arr); }
+      const item = { r, v, keys: secondary.keys(r) };
+      const g = JSON.stringify([r[groupCol] === undefined ? null : r[groupCol]]);
+      let group = groups.get(g);
+      if (!group) { group = { values: [], missing: [] }; groups.set(g, group); }
+      const arr = group.values;
+      if (v === null) { if (!arr.length) group.missing.push(item); return; }
+      group.missing = [];
       const last = arr[arr.length - 1];
-      if (arr.length < keep || (asc ? v < last.v : v > last.v)) {
-        arr.push({ r, v });
-        arr.sort((a, b) => asc ? a.v - b.v : b.v - a.v);
-        if (arr.length > keep) arr.pop();
+      if (arr.length < keep || compare(item, last) < 0 || (ties === 'include' && v === last.v)) {
+        arr.push(item);
+        arr.sort(compare);
+        let cutoff = Math.min(keep, arr.length);
+        if (ties === 'include') while (cutoff < arr.length && arr[cutoff].v === arr[cutoff - 1].v) cutoff++;
+        arr.splice(cutoff);
       }
     },
-    result() { const out = []; for (const arr of groups.values()) arr.forEach((x, i) => out.push({ ...x.r, rank: i + 1 })); return out; }
+    result() {
+      const out = [];
+      for (const { values, missing } of groups.values()) {
+        let previous, position = 0;
+        values.forEach((x, i) => { if (i === 0 || x.v !== previous) position = i + 1; previous = x.v; out.push({ ...x.r, rank: position }); });
+        if (!values.length) out.push(...missing.sort((a, b) => secondary.compare(a.keys, b.keys)).map(item => ({ ...item.r, rank: null })));
+      }
+      return withColumns(out, [...columns, 'rank']);
+    }
   };
 }
 
@@ -202,7 +303,7 @@ function quantile(sorted, q) {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
 }
 
-const METRICS = ['count', 'sum', 'mean', 'median', 'sd', 'q1', 'q3', 'min', 'max', 'missing', 'distinct'];
+const METRICS = ['count', 'numeric_count', 'zero', 'sum', 'mean', 'median', 'sd', 'q1', 'q3', 'min', 'max', 'missing', 'distinct'];
 
 // Summarises a column per group as rows arrive; values are kept per group for the order
 // statistics, nothing else is held.
@@ -226,28 +327,31 @@ function aggregator({ group_by, group_by_columns, column, metrics = ['count'] } 
   const groups = new Map();
   return {
     add(r) {
-      const labels = groupCols.map(name => r[name] === undefined ? null : r[name]);
-      const g = groupCols.length ? JSON.stringify(labels) : groupCol ? String(r[groupCol] ?? '') : 'all';
+      const labels = (groupCols.length ? groupCols : groupCol ? [groupCol] : []).map(name => r[name] === undefined ? null : r[name]);
+      const g = labels.length ? JSON.stringify(labels) : 'all';
       let st = groups.get(g);
       if (!st) { st = { labels, count: 0, missing: 0, vals: [], distinct: new Set() }; groups.set(g, st); }
       st.count++;
       if (col) {
         const raw = r[col];
-        if (raw === null || raw === undefined || String(raw).trim() === '') st.missing++;
+        if (isMissing(raw)) st.missing++;
         else { st.distinct.add(String(raw)); const v = num(raw); if (v !== null) st.vals.push(v); }
       }
     },
     result() {
       const out = [];
+      if (!groups.size && !groupCol && !groupCols.length) groups.set('all', { labels: [], count: 0, missing: 0, vals: [], distinct: new Set() });
       for (const [g, st] of groups) {
         const vals = st.vals;
         const sorted = [...vals].sort((a, b) => a - b);
         const sum = vals.reduce((a, v) => a + v, 0);
         const mean = vals.length ? sum / vals.length : null;
-        const o = groupCols.length ? Object.fromEntries(groupCols.map((name, index) => [name, st.labels[index]])) : groupCol ? { [groupCol]: g } : {};
+        const o = groupCols.length ? Object.fromEntries(groupCols.map((name, index) => [name, st.labels[index]])) : groupCol ? { [groupCol]: st.labels[0] } : {};
         for (const m of wanted) {
           if (m === 'count') o.count = st.count;
-          else if (m === 'sum') o.sum = sum;
+          else if (m === 'numeric_count') o.numeric_count = vals.length;
+          else if (m === 'zero') o.zero = vals.filter(v => v === 0).length;
+          else if (m === 'sum') o.sum = vals.length ? sum : null;
           else if (m === 'mean') o.mean = mean;
           else if (m === 'median') o.median = quantile(sorted, 0.5);
           else if (m === 'sd') o.sd = vals.length > 1 ? Math.sqrt(vals.reduce((a, v) => a + (v - mean) ** 2, 0) / (vals.length - 1)) : null;
@@ -260,7 +364,7 @@ function aggregator({ group_by, group_by_columns, column, metrics = ['count'] } 
         }
         out.push(o);
       }
-      return out;
+      return withColumns(out, [...(groupCols.length ? groupCols : groupCol ? [groupCol] : []), ...wanted]);
     }
   };
 }
@@ -331,7 +435,7 @@ function profiler(columns) {
         s.n++;
         const v = r[c];
         const t = v === null || v === undefined ? '' : String(v).trim();
-        if (!t) { s.blank++; continue; }
+        if (isMissing(v)) { s.blank++; continue; }
         const x = num(t);
         if (x !== null) { s.nums++; if (x < s.min) s.min = x; if (x > s.max) s.max = x; }
         if (s.distinct.has(t)) s.distinct.set(t, s.distinct.get(t) + 1); else if (s.distinct.size < 1000) s.distinct.set(t, 1);
@@ -536,7 +640,7 @@ function standardize(rows, { column, method = 'zscore', as } = {}) {
     ranks(present).forEach((rk, i) => byValue.set(present[i], (rk - 0.5) / present.length * 100));
     f = v => byValue.get(v);
   } else throw new Error(`standardize: unknown method "${method}" (zscore, minmax, percentile)`);
-  return rows.map((r, i) => ({ ...r, [name]: vals[i] === null ? null : round(f(vals[i]), 4) }));
+  return withColumns(rows.map((r, i) => { const value = vals[i] === null ? null : f(vals[i]); return { ...r, [name]: value === null || !Number.isFinite(value) ? null : value }; }), [...columnsOf(rows), name]);
 }
 
 // A small arithmetic language for compute: column names (quote names with spaces), numbers,
@@ -648,7 +752,7 @@ function compute(rows, name, expr) {
     if (node.quoted) { node.str = node.col; delete node.col; continue; }
     throw new Error(`compute: no column "${node.col}" (columns: ${columnsOf(rows).slice(0, 20).join(', ')})`);
   }
-  return rows.map(r => { const v = evaluate(tree, r, resolved); return { ...r, [name]: typeof v === 'string' ? v : (v === null || !Number.isFinite(v) ? null : Number(v.toFixed(4))) }; });
+  return withColumns(rows.map(r => { const v = evaluate(tree, r, resolved); return { ...r, [name]: typeof v === 'string' ? v : (v === null || !Number.isFinite(v) ? null : v) }; }), [...columnsOf(rows), name]);
 }
 
 function pivot(rows, { row = 'gene', column, value, top = 0, top_columns = 0 } = {}) {
@@ -673,11 +777,25 @@ function pivot(rows, { row = 'gene', column, value, top = 0, top_columns = 0 } =
 }
 
 // A chart specification for the renderer from named columns; generic across chart types.
+function chartDomains(args, axes) {
+  const domains = {};
+  for (const axis of ['x', 'y']) {
+    const name = `${axis}_domain`, domain = args[name];
+    if (domain === undefined) continue;
+    if (!Array.isArray(domain) || domain.length !== 2 || domain.some(value => typeof value !== 'number' || !Number.isFinite(value)) || domain[0] >= domain[1]) throw new Error(`chart: ${name} must contain two finite increasing numbers`);
+    const values = axes[axis];
+    if (!Array.isArray(values)) throw new Error(`chart: ${name} requires a numeric displayed ${axis} axis for ${args.type}`);
+    if (values.some(value => value < domain[0] || value > domain[1])) throw new Error(`chart: ${name} would clip plotted values or their baseline`);
+    domains[name] = [...domain];
+  }
+  return domains;
+}
+
 function chartSpec(args, input) {
   const base = { type: args.type, title: args.title || '', x_label: args.x_label || '', y_label: args.y_label || '' };
   if (args.type === 'heatmap') {
     if (!input || !Array.isArray(input.matrix)) throw new Error('chart: heatmap needs a pivot output');
-    return { ...base, matrix: input.matrix, row_labels: input.row_labels, col_labels: input.col_labels };
+    return { ...base, ...chartDomains(args, {}), matrix: input.matrix, row_labels: input.row_labels, col_labels: input.col_labels };
   }
   let rows = Array.isArray(input) ? input : input?.rows || [];
   if (!rows.length) throw new Error('chart: no rows');
@@ -697,12 +815,20 @@ function chartSpec(args, input) {
   rows = valid;
   if (!rows.length) throw new Error('chart: no rows with measured numeric values');
   if (['scatter', 'bubble', 'volcano'].includes(args.type)) {
-    return { ...base, data: rows.map(r => ({ x: num(r[x]), y: num(r[y]), label: label ? String(r[label] ?? '') : '', size: size ? num(r[size]) : 10 })) };
+    return { ...base, ...chartDomains(args, { x: rows.map(r => num(r[x])), y: rows.map(r => num(r[y])) }), data: rows.map(r => ({ x: num(r[x]), y: num(r[y]), label: label ? String(r[label] ?? '') : '', size: size ? num(r[size]) : 10 })) };
   }
-  if (args.type === 'line') return { ...base, data: rows.map(r => ({ x: r[x], y: num(r[y]), series: group ? String(r[group]) : undefined })) };
+  if (args.type === 'line') {
+    const xs = rows.map(r => num(r[x]));
+    const numericX = xs.every(value => value !== null);
+    return { ...base, ...chartDomains(args, { x: numericX ? xs : null, y: rows.map(r => num(r[y])) }), data: rows.map((r, i) => ({ x: args.x_domain === undefined ? r[x] : xs[i], y: num(r[y]), series: group ? String(r[group]) : undefined })) };
+  }
   const data = rows.map(r => ({ label: String(r[x] ?? ''), value: num(r[y]), ...(group ? { group: String(r[group] ?? '') } : {}) }));
   if (['grouped_bar', 'radar', 'stacked_bar'].includes(args.type) && !group) throw new Error(`chart: ${args.type} needs a group column`);
-  return { ...base, data };
+  const horizontal = ['dot_plot', 'lollipop', 'diverging_bar'].includes(args.type);
+  const baseline = ['bar', 'grouped_bar', 'lollipop', 'diverging_bar'].includes(args.type) ? [0] : [];
+  const values = [...baseline, ...data.map(point => point.value)];
+  const axes = horizontal ? { x: values } : ['bar', 'grouped_bar'].includes(args.type) ? { y: values } : {};
+  return { ...base, ...chartDomains(args, axes), data };
 }
 
 // Exact per-gene reads from a named table: one row per gene (with an entity) or per gene per entity.
@@ -751,4 +877,4 @@ async function measure(rows, { table, value_column, entity_column, entity, as, a
   return out;
 }
 
-module.exports = { applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, findColumn, keyOf, num };
+module.exports = { applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, withColumns, findColumn, keyOf, num, isMissing };

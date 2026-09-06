@@ -2,6 +2,7 @@
 
 // The tools the chat model can call. Each handler is an agent; the orchestrator only validates
 // arguments, fills in what the model left out, and forwards progress steps.
+const { inference } = require('../inference/gateway');
 const investigatorTrail = require('./agents/investigatorTrail');
 const deepResearchTrail = require('./agents/deepResearchTrail');
 const checkInclusion = require('./agents/checkInclusion');
@@ -189,7 +190,7 @@ async function execute(name, args, ctx = {}) {
   }
   if ((name === 'deep_research_hpa' || name === 'aso_hpa') && !parsed.goal && rawQuery) parsed.goal = rawQuery;
 
-  const result = await handler(parsed, { ...ctx, onStep });
+  const result = await inference.withContext({ agentKey: name }, () => handler(parsed, { ...ctx, onStep }));
   return { result, steps };
 }
 

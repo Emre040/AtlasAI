@@ -22,6 +22,10 @@ def _apply_labels(chart, swap=False):
         plt.xlabel(xl)
     if yl:
         plt.ylabel(yl)
+    if 'x_domain' in chart:
+        plt.xlim(*chart['x_domain'])
+    if 'y_domain' in chart:
+        plt.ylim(*chart['y_domain'])
 
 
 def _apply_title(chart):
@@ -61,29 +65,93 @@ def render_line(chart, out_path):
     _apply_title(chart)
     _apply_labels(chart)
     if len(series_map) > 1:
-        plt.legend()
+        plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0)
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
     plt.close()
+
+
+def _place_scatter_labels(ax, data):
+    """Place complete labels in measured free space, keeping raw coordinates unchanged."""
+    from matplotlib.transforms import Bbox
+    fig = ax.figure
+    labels = [(i, str(point.get('label', ''))) for i, point in enumerate(data)
+              if point.get('label') and point.get('x') is not None and point.get('y') is not None]
+    if not labels:
+        return []
+    padding = 4.0
+    while True:
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        bounds = ax.get_window_extent(renderer)
+        sizes = {}
+        for i, label in labels:
+            text = ax.text(0, 0, label, fontsize=7)
+            box = text.get_window_extent(renderer)
+            sizes[i] = (box.width, box.height)
+            text.remove()
+        placed = []
+        crowded = False
+        ordered = sorted(labels, key=lambda item: (data[item[0]]['y'], data[item[0]]['x'], item[1]))
+        for i, label in ordered:
+            point = data[i]
+            px, py = ax.transData.transform((point['x'], point['y']))
+            width, height = sizes[i]
+            x = min(max(px + padding, bounds.x0 + padding), bounds.x1 - width - padding)
+            target_y = py + padding + height / 2
+            candidates = {target_y, bounds.y0 + padding + height / 2, bounds.y1 - padding - height / 2}
+            for prior in placed:
+                box = prior['box']
+                candidates.update([box.y0 - padding - height / 2, box.y1 + padding + height / 2])
+            selected = None
+            for y in sorted(candidates, key=lambda value: (abs(value - target_y), value)):
+                box = Bbox.from_bounds(x, y - height / 2, width, height)
+                if box.x0 < bounds.x0 or box.x1 > bounds.x1 or box.y0 < bounds.y0 or box.y1 > bounds.y1:
+                    continue
+                def separated(other):
+                    return (box.x1 + padding <= other.x0 + 1e-6 or other.x1 + padding <= box.x0 + 1e-6
+                            or box.y1 + padding <= other.y0 + 1e-6 or other.y1 + padding <= box.y0 + 1e-6)
+                if any(not separated(prior['box']) for prior in placed):
+                    continue
+                selected = {'index': i, 'label': label, 'box': box, 'x': x, 'y': y,
+                            'displaced': abs(y - target_y) > padding or x < px}
+                break
+            if selected is None:
+                crowded = True
+                break
+            placed.append(selected)
+        if not crowded:
+            break
+        # Label area is derived from the actual text. No label count cutoff or data transform.
+        width_px = max(width for width, _ in sizes.values()) + 2 * padding
+        height_px = sum(height + 2 * padding for _, height in sizes.values())
+        current_width, current_height = fig.get_size_inches()
+        fig.set_size_inches(max(current_width, current_width * (width_px + bounds.width) / bounds.width),
+                            max(current_height, current_height * (height_px + bounds.height) / bounds.height))
+        fig.tight_layout()
+    annotations = []
+    for item in placed:
+        point = data[item['index']]
+        position = ax.transAxes.inverted().transform((item['x'], item['y']))
+        arrow = {'arrowstyle': '-', 'color': '0.5', 'lw': 0.55} if item['displaced'] else None
+        annotations.append(ax.annotate(item['label'], (point['x'], point['y']),
+                          xytext=position, textcoords='axes fraction', ha='left', va='center',
+                          fontsize=7, alpha=0.9, arrowprops=arrow))
+    return annotations
 
 
 def render_scatter(chart, out_path):
     data = chart.get('data', [])
     xs = [d.get('x') for d in data]
     ys = [d.get('y') for d in data]
-    point_labels = [d.get('label', '') for d in data]
-    plt.figure(figsize=(8, 6))
-    plt.scatter(xs, ys, alpha=0.7, s=40)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.scatter(xs, ys, alpha=0.7, s=40)
     _apply_title(chart)
     _apply_labels(chart)
-    # Annotate points if labels exist
-    for i, lbl in enumerate(point_labels):
-        if lbl and xs[i] is not None and ys[i] is not None:
-            plt.annotate(lbl, (xs[i], ys[i]), fontsize=7, alpha=0.8,
-                         textcoords='offset points', xytext=(4, 4))
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
-    plt.close()
+    fig.tight_layout()
+    _place_scatter_labels(ax, data)
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
 
 def render_dot_plot(chart, out_path):
     data = chart.get('data', [])
@@ -130,7 +198,7 @@ def render_stacked_bar(chart, out_path):
     _apply_title(chart)
     _apply_labels(chart)
     if len(stacks) > 1:
-        plt.legend()
+        plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0)
     plt.xticks(rotation=20, ha='right')
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
@@ -190,7 +258,7 @@ def render_grouped_bar(chart, out_path):
     _apply_title(chart)
     _apply_labels(chart)
     if len(groups) > 1:
-        plt.legend()
+        plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0)
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
     plt.close()

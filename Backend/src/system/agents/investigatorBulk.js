@@ -6,19 +6,27 @@ const { FILES } = require('../../hpa/localData');
 const { validate } = require('../aso/batchOperations');
 const { APPLY_BULK, createBulkTools } = require('./investigatorBulkTools');
 const { columnsOf } = require('../aso/studyTools');
-const { previewRows, rowPageOptions } = require('../aso/observationViews');
+const { previewRows, rowPageOptions, cellValue, createViewReader } = require('../aso/observationViews');
+const { AgentStop, RepairProgress, createAgentControl, fingerprint } = require('../aso/agentControl');
 
-const SYSTEM = `You are Investigator. Answer the supplied question for the supplied list of genes using the release's source tables. The tool layer holds the full list; its size does not require one model call per gene. You discover where the data is and apply the same lookup to the whole list.
+const SYSTEM = `You are Investigator. Answer the assigned question for the supplied gene list using imported raw source tables. The complete list and prior measurements stay in the tool layer. Discover the relevant sources, inspect their exact columns, and use apply_bulk for the whole list.
 
-Use apply_bulk to read exact values. Choose the source table, its gene-matching column, value column, and any tissue/cell/cohort filters from the catalog. Several scalar lookups combine into one result, retaining the input's existing measurements. Request all measurements needed together. A row-mode lookup retains entity labels and raw rows, optionally the top rows per gene. Use explicit aggregates only when requested or needed to represent repeated source measurements; never silently select one repeated row. Simple derived comparisons and requested ranking use apply_bulk's derive and sort options. Missing values and zero denominators stay missing.
+The source directory lists every imported source and its access method. inspect_table supplies exact columns, source descriptions, sample rows and relevant category definitions. inspect_input supplies existing input columns when needed for a calculation; do not retrieve prior measurements again. Source schemas and samples are evidence about structure, not about the whole cohort.
 
-The supplied list is already chosen. Do not redefine its biological inclusion criteria. You retrieve source data and compute per-input statistics and requested ranking. ASO owns set combinations, counts across different cohorts, correlations and figures. A union list does not establish which input belongs to which cohort. If the assignment includes such work, return the measurements and identify that work in remaining_for_aso; do not reread sources trying to reconstruct cohort membership. Respect the exact source cohort, unit, evidence strength and requested statistic. A category value is not a measured concentration; a missing table row is not proof of biological absence. When the source cannot establish part of the question, retain that part as not_in_release. Do not add mechanistic explanations absent from the source.
+Combine all requested per-input measurements, statistics, labels of extrema, simple derived comparisons and ranking in apply_bulk. Preserve ties when reporting extrema, source units, missing values and zero denominators. Distinguish counting source rows, nonmissing measurements and distinct entities. Use the statistic the question requests. Do not redefine the supplied cohort or invent pseudocounts, transformations or biological explanations.
 
-Inspect a source table only if its schema or sample rows are needed to choose the lookup. Use returned source coverage to correct failed or ambiguous lookups. Full results stay in the tool layer. Their receipts give bounded previews; use open_result to inspect other saved rows when needed, without rereading the source. You do not need to see every row to return a complete table. finish names the result tables to return and gives a concise source-supported explanation, without copying lists of values. Return all requested results, including missingness and unanswered requirements. When an assigned plan result is provided, fulfill that result as well as the question: returning raw rows alone does not fulfill requested statistics, comparisons or top rows. Only report unfinished work explicitly present in your question or assigned result.`;
+Canonical gene and ensembl identifiers are already retained. In rows mode select entity labels and measurements; omit duplicate source gene columns. Source columns cannot overwrite different inherited values. Scalar aliases keep differently scoped measurements separate.
+
+Full results remain saved. Receipts show new columns, coverage and a preview; inherited input fields remain available. open_result reads other saved rows or columns without repeating source lookups. You do not need to inspect every row to return a complete result. Describe coverage from computed coverage fields; never extrapolate cohort counts from a preview. finish returns result names and a short explanation of the source and limitations; the tables carry numerical result lists.
+
+An explicit open_result may return a text_fragment of a complete saved JSON view. Continue it with view and next_text_offset as text_offset; this cursor is not a row offset. A fragment is not an empty result or a truncated source value. To inspect a particular large cell or nested item, select cell.row, cell.column and an optional exact JSON Pointer path.
+
+Fulfill the question and assigned result. ASO handles figures, correlations, set combinations and counts across cohorts; return necessary measurements and record such explicitly assigned remaining work in remaining_for_aso. Other study tasks are outside this assignment. For unavailable source evidence use not_in_release. A missing record establishes only no record in that source, not biological absence or whether an experiment ever occurred. Preserve source evidence strength and uncertainty.`;
 
 const TOOLS = [APPLY_BULK,
-  { type: 'function', function: { name: 'inspect_table', description: 'Inspect exact columns, metadata and a few source rows for one supplied gene before choosing a bulk lookup.', parameters: { type: 'object', properties: { table: { type: 'string' } }, required: ['table'] } } },
-  { type: 'function', function: { name: 'open_result', description: 'Read a page of a saved apply_bulk result. Use this for rows beyond its preview; do not repeat source lookups to see already returned data.', parameters: { type: 'object', properties: { name: { type: 'string' }, rows: { type: 'integer', description: 'Requested page size, 1 to 200; default 10. The byte limit may shorten the page.' }, offset: { type: 'integer', description: 'Zero-based row offset; default 0.' }, columns: { type: 'array', items: { type: 'string' } } }, required: ['name'] } } },
+  { type: 'function', function: { name: 'inspect_table', description: 'Inspect exact source columns, descriptions, example rows and category definitions. about selects matching columns; terms requests exact release-defined terms.', parameters: { type: 'object', properties: { table: { type: 'string' }, about: { type: 'string' }, terms: { type: 'array', items: { type: 'string' } } }, required: ['table'] } } },
+  { type: 'function', function: { name: 'inspect_input', description: 'Discover inherited input columns without retrieving measurements again. Omit columns for the complete schema only; choose exact columns to inspect a sample of existing values.', parameters: { type: 'object', properties: { columns: { type: 'array', items: { type: 'string' } } } } } },
+  { type: 'function', function: { name: 'open_result', description: 'Read an exact saved-result selection by name, or continue its saved JSON text view by view and text_offset. Large selections are paged in transport without dropping cells or rereading sources. Use only one selection mode.', parameters: { type: 'object', properties: { name: { type: 'string' }, rows: { type: 'integer', description: 'Requested positive row count; default10. Delivery may span text fragments.' }, offset: { type: 'integer', description: 'Zero-based row offset; default0.' }, columns: { type: 'array', items: { type: 'string' } }, cell: { type: 'object', description: 'Select one cell instead of a row window; path optionally selects its exact nested value.', properties: { row: { type: 'integer' }, column: { type: 'string' }, path: { type: 'string', description: 'JSON Pointer within the cell; omit for the complete cell.' } }, required: ['row', 'column'] }, view: { type: 'string', description: 'Saved view ID from an earlier fragment; use without name or row/cell selectors.' }, text_offset: { type: 'integer', description: 'Returned next_text_offset for view continuation; distinct from row offset.' } } } } },
   { type: 'function', function: { name: 'finish', description: 'Return the named complete result tables without transcribing their rows. Preserve unanswered requirements.', parameters: { type: 'object', properties: {
     results: { type: 'array', items: { type: 'string' } }, answer: { type: 'string' },
     not_in_release: { type: 'array', items: { type: 'object', properties: { requirement: { type: 'string' }, why: { type: 'string' } }, required: ['requirement', 'why'] } },
@@ -27,48 +35,86 @@ const TOOLS = [APPLY_BULK,
 ];
 
 // Only a bounded preview enters inference. The returned result retains every supplied row.
+function resultColumns(table) {
+  return [...new Set(['gene', 'ensembl', ...table.created_columns])].filter(key => table.columns.includes(key));
+}
+
 function receipt(table) {
-  const details = { name: table.name, rows: table.rows.length, columns: table.columns, coverage: table.coverage, sources: table.provenance, calculations: table.calculations, sort: table.sort, unresolved_inputs: table.unresolved_inputs };
-  const selected = table.columns.filter(key => !/_source_rows$|_missing_rows$/.test(key)).slice(0, 12);
-  const view = previewRows(table.rows, selected, 2048, table.rows.length <= 40 ? 40 : 2);
+  const columns = resultColumns(table);
+  const details = { name: table.name, rows: table.rows.length, columns, column_count: table.columns.length, inherited_columns: { count: table.columns.filter(key => !columns.includes(key)).length, inspect: 'inspect_input' }, coverage: table.coverage, sources: [...new Set(table.provenance.map(source => source.table))], unresolved_inputs: table.unresolved_inputs };
+  const selected = columns.filter(key => !/_source_rows$|_missing_rows$/.test(key));
+  const view = previewRows(table.rows, selected, 2048);
   details.preview = { columns: selected, rows: view.rows.map(row => selected.map(key => row[key])), more: view.more, next_offset: view.rows.length };
   return details;
+}
+
+function sourceDirectory(entries) {
+  return entries.map(entry => {
+    const access = ['master', 'ensembl', 'name', 'scan'].includes(entry.key) ? 'bulk lookup' : entry.key === 'lookup' ? 'reference table' : entry.key;
+    return `${entry.file} | ${entry.title || entry.file} | ${access}${entry.why ? `: ${entry.why}` : ''}`;
+  }).join('\n');
+}
+
+function sourceDefinitions(adapter, entry, sample, terms = []) {
+  const candidates = new Set([...terms, ...entry.columns, ...sample.flatMap(row => Object.values(row).flatMap(value => String(value ?? '').split(/[,;|]/).map(part => part.trim())))]);
+  return Object.fromEntries([...candidates].map(term => [term, adapter.definition(term)]).filter(([, definition]) => definition));
 }
 
 async function investigatorBulk({ genes, question, mode = 'offline' }, ctx = {}, adapter = require('../../hpa/geneDataAdapter')) {
   const started = Date.now();
   const stats = { prompt: 0, completion: 0, total: 0 };
   const results = new Map();
+  const views = createViewReader({ budgetBytes: ctx.resultBytes === undefined ? 4096 : ctx.resultBytes, archive: ctx.viewArchive });
   let release, resolved = [];
   const { onStep } = ctx;
   const emit = (stage, label, message) => onStep?.({ stage, label, message });
   try {
+    const control = createAgentControl({ ctx, stats: { get totalTokens() { return stats.total; } }, agentKey: 'investigator_hpa' });
+    const progress = new RepairProgress(), completedCalls = new Map();
+    let evidenceRevision = 0;
     if (!Array.isArray(genes) || !genes.length || genes.some(gene => typeof gene !== 'string' || !gene.trim())) throw new Error('Bulk Investigator requires a nonempty array of gene names');
     if (typeof question !== 'string' || !question.trim()) throw new Error('Bulk Investigator requires a question');
     if (ctx.inputRows && ctx.inputRows.length !== genes.length) throw new Error('Bulk input rows do not match the supplied list');
+    await control.checkpoint('Resolve bulk sources');
     release = await resolveAgentMode(mode, [FILES.master]);
     if (release.mode !== 'offline') throw new Error('Bulk Investigator requires the local release');
     await emit('start', 'Bulk Investigator', `${genes.length} supplied genes. Question: ${question}`);
     resolved = await adapter.resolveGenes(genes);
     const ops = createBulkTools({ supplied: genes, resolved, inputRows: ctx.inputRows, adapter });
-    const messages = [{ role: 'system', content: SYSTEM }, { role: 'user', content: `Supplied list: ${genes.length} genes; ${resolved.filter(Boolean).length} resolved in this release. The full list is held by apply_bulk.${ctx.inputRows ? `\nExisting input columns retained by apply_bulk: ${JSON.stringify(columnsOf(ctx.inputRows))}. These columns are available to derive expressions; do not retrieve them again.` : ''}\nQuestion: ${question}${ctx.studyTask ? `\nAssigned plan result: ${ctx.studyTask}` : ''}\n\nCatalog:\n${await adapter.overview()}` }];
-    for (let turn = 1; turn <= 8; turn++) {
-      if (turn === 7) messages.push({ role: 'user', content: 'Two model turns remain. Return the completed result tables with finish. State unfinished work in remaining_for_aso or unavailable source evidence in not_in_release. Do not repeat completed lookups.' });
+    const inputColumns = [...new Set(['gene', 'ensembl', ...(ctx.inputRows ? columnsOf(ctx.inputRows) : [])])];
+    const messages = [{ role: 'system', content: SYSTEM }, { role: 'user', content: `Supplied list: ${genes.length} genes; ${resolved.filter(Boolean).length} resolved in this release. The full list is held by apply_bulk.${ctx.inputRows ? `\nExisting input: ${inputColumns.length} columns retained by apply_bulk. inspect_input discovers their exact names and prior values if needed.` : ''}\nQuestion: ${question}${ctx.studyTask ? `\nAssigned plan result: ${ctx.studyTask}` : ''}\n\nComplete source directory (inspect_table for exact schemas and definitions):\n${sourceDirectory(await adapter.catalog())}` }];
+    for (;;) {
+      await control.checkpoint('Bulk decision', true);
       const response = await inference.chat.completions.create({ messages, tools: TOOLS, temperature: 0, ...(ctx.reasoningEffort ? { reasoning_effort: ctx.reasoningEffort } : {}) });
       const usage = response.usage || {};
       stats.prompt += usage.prompt_tokens || 0; stats.completion += usage.completion_tokens || 0; stats.total = stats.prompt + stats.completion;
+      await control.checkpoint('Bulk decision: returned');
       const message = { ...response.choices?.[0]?.message, role: 'assistant' };
       messages.push(message);
       const calls = message.tool_calls || [];
-      if (!calls.length) { messages.push({ role: 'user', content: 'Use apply_bulk to obtain the requested evidence, or finish with the requirements that cannot be answered.' }); continue; }
+      if (!calls.length) {
+        progress.record({ issue: 'no_tool_call', evidenceRevision }, 'Investigator repeated a response without a source action or a validated finish');
+        messages.push({ role: 'user', content: 'Use apply_bulk to obtain the requested evidence, or finish with the requirements that cannot be answered.' }); continue;
+      }
       for (const call of calls) {
         let result;
+        let requestKey = fingerprint(call.function);
+        await control.checkpoint('Bulk tool');
         try {
           const name = call.function.name;
           const spec = TOOLS.find(tool => tool.function.name === name);
           if (!spec) throw new Error(`Unknown Investigator tool ${name}`);
           const args = JSON.parse(call.function.arguments);
           validate(args, spec.function.parameters, name);
+          // Result labels do not make an identical source computation new evidence.
+          const identity = name === 'apply_bulk' ? Object.fromEntries(Object.entries(args).filter(([key]) => key !== 'name')) : args;
+          requestKey = fingerprint({ name, args: identity });
+          if (completedCalls.has(requestKey)) {
+            progress.record({ issue: 'repeated_completed_call', evidenceRevision, requestKey }, 'Investigator repeated a completed operation without new evidence');
+            result = { already_available: true, ...completedCalls.get(requestKey), message: 'Use the existing tool receipt or open_result; this operation has already completed.' };
+            messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
+            continue;
+          }
           if (name === 'apply_bulk') {
             if (results.has(args.name)) throw new Error(`Result ${args.name} already exists; choose a new name for a revised lookup`);
             await emit('execution_step', 'apply_bulk', `${args.name}: ${args.lookups.length} lookups across ${genes.length} genes`);
@@ -81,16 +127,45 @@ async function investigatorBulk({ genes, question, mode = 'offline' }, ctx = {},
             const entry = await adapter.entry(args.table);
             if (!entry) throw new Error(`No table ${args.table}`);
             const gene = resolved.find(Boolean);
-            const sample = gene ? (await adapter.read(gene, entry.file)).rows.slice(0, 2) : [];
-            result = { table: entry.file, description: entry.description, columns: entry.columns, bytes: entry.bytes, ...(Buffer.byteLength(JSON.stringify(sample)) <= 4096 ? { sample } : { sample_omitted: 'Rows exceed preview size; exact columns are listed.' }) };
+            const columns = args.about ? entry.columns.filter(column => column.toLowerCase().includes(args.about.toLowerCase())) : entry.columns;
+            if (args.about && !columns.length) throw new Error(`No columns matching ${JSON.stringify(args.about)} in ${entry.file}; inspect without about for the complete schema`);
+            const readable = !['stream', 'unreadable'].includes(entry.key);
+            const raw = gene && readable ? (await adapter.read(gene, entry.file)).rows : [];
+            const view = previewRows(raw, columns, 2048);
+            const sample = view.rows.map(row => Object.fromEntries(columns.map(column => [column, row[column]])));
+            const definitions = sourceDefinitions(adapter, { ...entry, columns }, sample, args.terms);
+            result = { table: entry.file, description: entry.description, columns, column_count: entry.columns.length, key: entry.key, ...(entry.why ? { access_note: entry.why } : {}), sample: { gene: gene?.gene, columns, rows: sample.map(row => columns.map(column => row[column])), more: view.more }, definitions, ...(args.terms ? { undefined_terms: args.terms.filter(term => !definitions[term]) } : {}) };
+          } else if (name === 'inspect_input') {
+            const columns = args.columns || inputColumns;
+            if (columns.some(column => !inputColumns.includes(column))) throw new Error(`Unknown input columns; inspect_input without columns returns the exact schema`);
+            result = { columns, column_count: inputColumns.length, rows: genes.length };
+            if (args.columns) {
+              const input = resolved.map((gene, index) => ({ ...ctx.inputRows?.[index], gene: gene ? gene.gene : genes[index], ensembl: gene ? gene.ensembl : null }));
+              const view = previewRows(input, columns, 2048);
+              result.sample = { columns, rows: view.rows.map(row => columns.map(column => row[column])), more: view.more };
+            }
           } else if (name === 'open_result') {
-            const table = results.get(args.name);
-            if (!table) throw new Error(`No saved result ${args.name}; available: ${[...results.keys()].join(', ')}`);
-            const { rows, offset } = rowPageOptions(args);
-            const columns = args.columns || table.columns.slice(0, 12);
-            if (!columns.length || columns.some(key => !table.columns.includes(key))) throw new Error(`Choose result columns from ${table.columns.join(', ')}`);
-            const view = previewRows(table.rows.slice(offset, offset + rows), columns, 4096);
-            result = { name: table.name, columns, rows: view.rows.map(row => columns.map(key => row[key])), offset, total: table.rows.length, more: offset + view.rows.length < table.rows.length, next_offset: offset + view.rows.length };
+            if (args.view !== undefined) {
+              if (['name', 'rows', 'offset', 'columns', 'cell'].some(key => args[key] !== undefined)) throw new Error('A view continuation takes only view and text_offset');
+              result = views.read(args);
+            } else {
+              if (args.text_offset !== undefined) throw new Error('text_offset requires a saved view; offset selects table rows');
+              const table = results.get(args.name);
+              if (!table) throw new Error(`No saved result ${args.name}; available: ${[...results.keys()].join(', ')}`);
+              let selection;
+              if (args.cell !== undefined) {
+                if (['rows', 'offset', 'columns'].some(key => args[key] !== undefined)) throw new Error('A cell selection cannot also select a row window');
+                selection = { name: table.name, cell: args.cell, value: cellValue(table.rows, table.columns, args.cell) };
+              } else {
+                const { rows, offset } = rowPageOptions(args);
+                const columns = args.columns || resultColumns(table);
+                if (!columns.length || columns.some(key => !table.columns.includes(key))) throw new Error(`Choose result columns from ${table.columns.join(', ')}`);
+                const selected = table.rows.slice(offset, offset + rows);
+                selection = { name: table.name, columns, rows: selected.map(row => columns.map(key => row[key] === undefined ? null : row[key])), offset, total: table.rows.length, more: offset + selected.length < table.rows.length, next_offset: offset + selected.length };
+              }
+              result = views.open(selection, { source: `open_result ${table.name}`, refs: [table.name] });
+            }
+            if (ctx.viewDirectory) await views.archive.flush(ctx.viewDirectory);
           } else {
             if (args.results.some(name => !results.has(name))) throw new Error('finish results must name existing apply_bulk outputs');
             if (!args.results.length && !args.not_in_release.length && !args.remaining_for_aso?.length) throw new Error('Return result tables or explain which requirements remain unanswered');
@@ -98,18 +173,23 @@ async function investigatorBulk({ genes, question, mode = 'offline' }, ctx = {},
             await emit('complete', 'Bulk answer', args.answer);
             return { bulk: true, found: tables.length > 0, status: args.not_in_release.length || args.remaining_for_aso?.length ? 'partial' : 'ok', answer: args.answer, tables, not_in_release: args.not_in_release, remaining_for_aso: args.remaining_for_aso || [], input_count: genes.length, unresolved_inputs: resolved.filter(gene => !gene).length, mode: 'offline', hpa_version: release.hpaVersion, tokens: { total: stats }, seconds: (Date.now() - started) / 1000 };
           }
+          completedCalls.set(requestKey, { tool: name, previous_call_id: call.id, ...(name === 'apply_bulk' ? { name: result.name } : {}) });
+          evidenceRevision++;
         } catch (error) {
+          if (error instanceof AgentStop) throw error;
+          progress.record({ issue: 'rejected_call', evidenceRevision, requestKey, error: error.message }, 'Investigator repeated a rejected operation without resolving its error');
           result = { error: error.message };
           await emit('reasoning_step', 'Correct bulk lookup', error.message);
         }
+        await control.checkpoint('Bulk tool: returned');
         messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
       }
     }
-    throw new Error('Bulk Investigator did not finish within eight turns');
   } catch (error) {
     await emit('error', 'Bulk Investigator', error.message);
-    if (results.size) return { bulk: true, found: true, status: 'partial', error: error.message, answer: 'Investigator stopped before completing its assignment. Completed lookup tables are retained; their existence does not establish that every requirement was fulfilled.', tables: [...results.values()], not_in_release: [], remaining_for_aso: [{ requirement: ctx.studyTask || question, why: error.message }], input_count: genes.length, unresolved_inputs: resolved.filter(gene => !gene).length, mode: 'offline', hpa_version: release.hpaVersion, tokens: { total: stats }, seconds: (Date.now() - started) / 1000 };
-    return { bulk: true, found: false, error: error.message, mode: 'offline', tokens: { total: stats } };
+    const stop = error instanceof AgentStop ? { stop_reason: error.reason, incomplete: true } : {};
+    if (results.size) return { bulk: true, found: true, status: 'partial', ...stop, error: error.message, answer: 'Investigator stopped before completing its assignment. Completed lookup tables are retained; their existence does not establish that every requirement was fulfilled.', tables: [...results.values()], not_in_release: [], remaining_for_aso: [{ requirement: ctx.studyTask || question, why: error.message }], input_count: genes.length, unresolved_inputs: resolved.filter(gene => !gene).length, mode: 'offline', hpa_version: release.hpaVersion, tokens: { total: stats }, seconds: (Date.now() - started) / 1000 };
+    return { bulk: true, found: false, status: 'incomplete', ...stop, error: error.message, mode: 'offline', tokens: { total: stats } };
   }
 }
 

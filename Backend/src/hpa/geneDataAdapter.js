@@ -10,39 +10,36 @@
  */
 
 const fs = require('node:fs');
-const fsp = require('node:fs/promises');
-const { localData, FILES } = require('./localData');
+const readline = require('node:readline');
+const { localData, FILES, parseHeader, parseCells } = require('./localData');
 const docs = require('./searchDocs');
 
-const MAX_FILE_BYTES = 1.6e9;   // larger tables are sample-level exports; indexing them per request is not interactive
 const CATALOG_TTL_MS = 5 * 60 * 1000;
 const GENE_ID = /^ENS[A-Z]*G\d+/;
 
 let cached = null;
 
-function stripBom(s) { return s.replace(/^﻿/, ''); }
-function unquote(cell) { return cell.length >= 2 && cell.startsWith('"') && cell.endsWith('"') ? cell.slice(1, -1).replace(/""/g, '"') : cell; }
-
-// Header and first data line of a table, without reading the file.
+// Read complete header and first data record; a wide raw table has no arbitrary header cutoff.
 async function peek(filePath) {
-  const handle = await fsp.open(filePath, 'r');
+  const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+  const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  let header = null;
   try {
-    const buffer = Buffer.alloc(16384);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    const lines = buffer.toString('utf8', 0, bytesRead).split('\n');
-    return { header: stripBom(lines[0] || '').split('\t').map(unquote), first: (lines[1] || '').split('\t').map(unquote) };
-  } finally { await handle.close(); }
+    for await (const line of lines) {
+      if (header === null) header = parseHeader(line);
+      else if (line.length) return { header, first: parseCells(line) };
+    }
+    return { header: header || [], first: [] };
+  } finally { lines.close(); stream.destroy(); }
 }
 
-const MAX_SCAN_BYTES = 150e6;   // a table whose gene column is not the first is read whole and filtered
-const MAX_LOOKUP_BYTES = 2e6;   // small reference tables (tissue → organ, cell type → lineage) are readable whole
 const HUMAN_GENE_ID = /^ENSG\d+/;
 
 // Every table of the active release the agent can read, with the atlas's description and its
 // columns. How a table is read follows from its shape: rows keyed by a human gene id in the
 // first column (indexed), by a gene name in the first column, by a gene id in a later column
-// (scanned), or a small reference table with no gene at all (read whole). Larger files are listed
-// as present but not readable here, so the agent can say so instead of guessing.
+// (streamed), or a reference table with no gene at all (read whole). File size does not change
+// whether source evidence is available; readers choose indexed or streaming access by shape.
 async function catalog() {
   if (cached && Date.now() - cached.at < CATALOG_TTL_MS) return cached.entries;
   const registry = await localData.refreshRegistry();
@@ -52,18 +49,17 @@ async function catalog() {
     const base = { file, title: dataset.datasetName || file, description: dataset.description || '', bytes: dataset.unpackedBytes || 0 };
     if (!file.endsWith('.tsv')) { entries.push({ ...base, columns: [], key: 'unreadable', why: 'not a table' }); continue; }
     let head;
-    try { head = await peek(localData.filePath(file)); } catch { continue; }
+    try { head = await peek(localData.filePath(file)); }
+    catch (error) { entries.push({ ...base, columns: [], key: 'unreadable', why: `source could not be read: ${error.message}` }); continue; }
     const columns = head.header;
-    // Too large to index per gene; it still streams through filter, aggregate and top_per_group.
-    if (base.bytes > MAX_FILE_BYTES) { entries.push({ ...base, columns, key: 'stream', why: `${Math.round(base.bytes / 1e9)} GB sample-level export; no per-gene reads` }); continue; }
     if (file === FILES.master) { entries.push({ ...base, columns, key: 'master' }); continue; }
     const geneColumn = head.first.findIndex(v => HUMAN_GENE_ID.test(v || ''));
     const nameKeyed = /^gene$/i.test(columns[0] || '') && geneColumn === 1;
     if (geneColumn === 0) entries.push({ ...base, columns, key: 'ensembl' });
     else if (nameKeyed) entries.push({ ...base, columns, key: 'name' });
-    else if (geneColumn > 0 && base.bytes <= MAX_SCAN_BYTES) entries.push({ ...base, columns, key: 'scan', geneColumn: columns[geneColumn] });
-    else if (geneColumn < 0 && !GENE_ID.test(head.first[0] || '') && base.bytes <= MAX_LOOKUP_BYTES && !/^ens/i.test(columns[0] || '')) entries.push({ ...base, columns, key: 'lookup' });
-    else entries.push({ ...base, columns, key: 'stream', why: geneColumn < 0 ? 'not keyed by a gene; no per-gene reads' : 'too large to scan for one gene; no per-gene reads' });
+    else if (geneColumn > 0) entries.push({ ...base, columns, key: 'scan', geneColumn: columns[geneColumn] });
+    else if (geneColumn < 0 && !GENE_ID.test(head.first[0] || '') && !/^ens/i.test(columns[0] || '')) entries.push({ ...base, columns, key: 'lookup' });
+    else entries.push({ ...base, columns, key: 'stream', why: 'not keyed by a human gene; no per-gene reads' });
   }
   const rank = { master: 0, ensembl: 1, name: 1, scan: 1, lookup: 2, stream: 3, unreadable: 4 };
   entries.sort((a, b) => rank[a.key] - rank[b.key] || a.file.localeCompare(b.file));
@@ -123,7 +119,7 @@ async function readMany(genes, file) {
   } else if (e.key === 'scan') {
     const wanted = new Set(unique.map(gene => gene.ensembl));
     for (const gene of unique) result.set(gene.ensembl, []);
-    for (const row of (await localData.table(e.file)).rows) {
+    for await (const row of localData.rows(e.file)) {
       if (wanted.has(row[e.geneColumn])) result.get(row[e.geneColumn]).push(row);
     }
   } else {
@@ -140,7 +136,7 @@ async function readMany(genes, file) {
 }
 
 // The gene's rows in one table: a list of rows (each an object column → value); the master
-// table yields its single row with empty cells dropped.
+// table retains its declared columns, including fields with no recorded value.
 async function read(gene, file) {
   const e = await entry(file);
   if (!e) throw new Error(`no table named "${file}" in the release`);
@@ -150,13 +146,13 @@ async function read(gene, file) {
     const master = await localData.master();
     const row = master.byEnsembl.get(gene.ensembl);
     if (!row) return { entry: e, rows: [] };
-    const kept = Object.fromEntries(Object.entries(row).filter(([, v]) => String(v ?? '').trim() !== '' && v !== 'NA'));
-    return { entry: e, rows: [kept] };
+    return { entry: e, rows: [row] };
   }
   if (e.key === 'lookup') return { entry: e, rows: (await localData.table(e.file)).rows };
   if (e.key === 'scan') {
-    const table = await localData.table(e.file);
-    return { entry: e, rows: table.rows.filter(r => r[e.geneColumn] === gene.ensembl) };
+    const rows = [];
+    for await (const row of localData.rows(e.file)) if (row[e.geneColumn] === gene.ensembl) rows.push(row);
+    return { entry: e, rows };
   }
   const rows = await localData.geneRows(e.file, e.key === 'ensembl' ? gene.ensembl : gene.gene);
   return { entry: e, rows };
@@ -166,82 +162,74 @@ async function read(gene, file) {
 // Applied by code before rendering, so counts and thresholds are exact and not left to the model.
 function applyWhere(reading, where = []) {
   const { entry: e, rows } = reading;
+  const { wherePredicate } = require('../system/aso/studyTools');
   const clauses = [];
   for (const w of Array.isArray(where) ? where : []) {
     const column = e.columns.find(c => c.toLowerCase() === String(w?.column || '').toLowerCase());
     const op = String(w?.op || '=').trim();
-    if (!column || !['>', '>=', '<', '<=', '=', '!=', 'contains'].includes(op)) continue;
+    if (!column) throw new Error(`filter: no column named "${w?.column}" in ${e.file}`);
+    if (!['>', '>=', '<', '<=', '=', '!=', 'contains', 'in'].includes(op)) throw new Error(`filter: unknown op "${op}"`);
     clauses.push({ column, op, value: w.value });
   }
   if (!clauses.length) return { reading, clauses: [] };
-  const num = v => { const n = Number(v); return Number.isFinite(n) ? n : null; };
-  const keep = rows.filter(r => clauses.every(({ column, op, value }) => {
-    const cell = r[column];
-    if (op === 'contains') return String(cell ?? '').toLowerCase().includes(String(value ?? '').toLowerCase());
-    if (op === '=' || op === '!=') { const same = String(cell ?? '').toLowerCase() === String(value ?? '').toLowerCase() || (num(cell) !== null && num(cell) === num(value)); return op === '=' ? same : !same; }
-    const a = num(cell), b = num(value);
-    if (a === null || b === null) return false;
-    return op === '>' ? a > b : op === '>=' ? a >= b : op === '<' ? a < b : a <= b;
-  }));
+  const keep = rows.filter(wherePredicate(e.columns, clauses));
   return { reading: { entry: e, rows: keep, unfiltered: rows.length, clauses }, clauses };
 }
 
-// Compact text of the rows for the answer step; a focus keeps only rows mentioning any of the
-// given words when that leaves something, so a 1,200-row table does not have to be read whole.
-const MAX_ROWS_SHOWN = 400;
-const MAX_COLUMNS_SHOWN = 40;
-
-function render(reading, focus = []) {
+// Source views are complete unless the caller requests focus or a page. The exact view is
+// retained for citation validation, so unseen rows never count as evidence the agent read.
+function render(reading, focus = [], options = {}) {
   const { entry: e, rows } = reading;
+  const { isMissing } = require('../system/aso/studyTools');
   const filtered = reading.unfiltered !== undefined ? `${rows.length} of ${reading.unfiltered} rows match ${reading.clauses.map(c => `${c.column} ${c.op} ${c.value}`).join(' and ')}` : null;
-  if (!rows.length) return { text: `${e.file}: ${filtered || 'no rows for this gene'}.`, shown: 0, total: reading.unfiltered ?? 0 };
-  if (e.key === 'master') {
-    const row = rows[0];
-    return { text: `${e.file} (one row per gene):\n${Object.entries(row).map(([k, v]) => `${k}: ${v}`).join('\n')}`, shown: 1, total: 1 };
-  }
   const words = focus.map(f => String(f).toLowerCase()).filter(Boolean);
-  const matches = words.length ? rows.filter(r => Object.values(r).some(v => words.some(w => String(v).toLowerCase().includes(w)))) : rows;
-  let shown = matches.length ? matches : rows;
+  const offset = options.offset === undefined ? 0 : options.offset;
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Source view offset must be a nonnegative integer');
+  if (options.rows !== undefined && (!Number.isSafeInteger(options.rows) || options.rows < 1)) throw new Error('Source view rows must be a positive integer');
+  const available = e.columns;
+  const cols = options.columns || available.filter(c => e.key === 'master' || (!/^gene$/i.test(c) && !/^gene name$/i.test(c) && c !== e.geneColumn));
+  if (!Array.isArray(cols) || cols.some(c => !available.includes(c))) throw new Error(`Source view columns must exist in ${e.file}`);
+  const columnFocus = !options.columns && words.length ? cols.filter(c => words.some(w => c.toLowerCase().includes(w))) : [];
+  const viewColumns = columnFocus.length ? columnFocus : cols;
+  const matches = words.length && !columnFocus.length ? rows.filter(r => viewColumns.some(c => words.some(w => String(r[c] ?? '').toLowerCase().includes(w)))) : rows;
+  const shown = matches.slice(offset, options.rows === undefined ? undefined : offset + options.rows);
+  reading.shownColumns = viewColumns;
+  reading.shownRows = shown;
+  const complete = shown.length === rows.length && viewColumns.length === cols.length;
+  if (!rows.length) return { text: `${e.file}: ${filtered || 'no rows for this gene'}.`, shown: 0, total: reading.unfiltered ?? 0, matching: 0, complete: true, next_offset: null };
+  if (e.key === 'master') {
+    const lines = shown.flatMap(row => viewColumns.map(k => `${k}: ${isMissing(row[k]) ? '[not recorded]' : row[k]}`));
+    return { text: `${e.file} (one row per gene; ${viewColumns.length}/${available.length} columns shown):\n${lines.join('\n')}`, shown: shown.length, total: rows.length, matching: matches.length, complete, next_offset: offset + shown.length < matches.length ? offset + shown.length : null };
+  }
   const notes = [];
   if (filtered) notes.push(filtered);
-  if (matches.length && matches.length < rows.length) notes.push(`${matches.length} of ${rows.length} rows, those mentioning ${words.map(w => `"${w}"`).join(', ')}`);
+  if (matches.length < rows.length) notes.push(`${matches.length} of ${rows.length} rows mention ${words.map(w => `"${w}"`).join(', ')}`);
   else if (!filtered) notes.push(`${rows.length} rows`);
-  if (shown.length > MAX_ROWS_SHOWN) { shown = shown.slice(0, MAX_ROWS_SHOWN); notes.push(`only the first ${MAX_ROWS_SHOWN} shown; narrow with focus words for the rest`); }
-  let cols = e.columns.filter(c => !/^gene$/i.test(c) && !/^gene name$/i.test(c) && c !== e.geneColumn);
-  if (cols.length > MAX_COLUMNS_SHOWN) {
-    // A wide table has one column per sample; the columns whose names mention a focus word come first.
-    const wanted = cols.filter(c => words.some(w => c.toLowerCase().includes(w)));
-    const rest = cols.filter(c => !wanted.includes(c));
-    cols = [...wanted, ...rest].slice(0, MAX_COLUMNS_SHOWN);
-    notes.push(`${cols.length} of ${e.columns.length} columns shown${wanted.length ? `, those mentioning ${words.map(w => `"${w}"`).join(', ')} first` : ''}`);
-  }
-  reading.shownColumns = cols;   // the citation check must look at the same columns the model saw
-  const lines = shown.map(r => cols.map(c => r[c]).join(' | '));
-  return { text: `${e.file} (${notes.join('; ')})\ncolumns: ${cols.join(' | ')}\n${lines.join('\n')}`, shown: shown.length, total: rows.length };
+  if (offset || shown.length < matches.length) notes.push(`showing ${shown.length} rows at offset ${offset} of ${matches.length} matching rows`);
+  if (viewColumns.length < cols.length) notes.push(`showing ${viewColumns.length}/${cols.length} columns matching focus`);
+  const lines = shown.map(r => viewColumns.map(c => r[c]).join(' | '));
+  return { text: `${e.file} (${notes.join('; ')})\ncolumns: ${viewColumns.join(' | ')}\n${lines.join('\n')}`, shown: shown.length, total: rows.length, matching: matches.length, complete, next_offset: offset + shown.length < matches.length ? offset + shown.length : null };
 }
 
-// Whether a cited row really is one of the rows shown to the model: the whole line, or most of
-// its cells (a 40-column row copied with a number reformatted still counts; an invented row does not).
+// Require an actual shown row/field and its value. Empty fields, partial fragments, and a value
+// copied from a different row cannot validate a citation.
 function cited(reading, citation, value = null) {
   const needle = String(citation || '').trim().toLowerCase();
   if (!needle) return false;
-  const { entry: e, rows } = reading;
-  if (e.key === 'master') return Object.entries(rows[0] || {}).some(([k, v]) => needle.includes(String(v).toLowerCase()) || `${k}: ${v}`.toLowerCase() === needle);
-  const cols = reading.shownColumns || e.columns.filter(c => !/^gene$/i.test(c) && !/^gene name$/i.test(c) && c !== e.geneColumn).slice(0, MAX_COLUMNS_SHOWN);
-  const citedCells = needle.split('|').map(s => s.trim()).filter(Boolean);
-  // The value must sit in the cited row when it is a cell of the table; a derived value (a
-  // count, a ratio) is not a cell anywhere and is not held against the citation.
-  const literal = value === null || value === undefined ? null : String(value).trim().toLowerCase();
-  const isCell = literal !== null && rows.some(r => cols.some(c => { const x = String(r[c] ?? '').trim().toLowerCase(); return x === literal || (Number.isFinite(Number(literal)) && x !== '' && Number(x) === Number(literal)); }));
-  const wanted = isCell ? literal : null;
-  return rows.some(r => {
-    const cells = cols.map(c => String(r[c] ?? '').trim().toLowerCase());
-    const line = cells.join(' | ');
-    if (line === needle || needle.includes(line) || line.includes(needle)) return true;
-    if (citedCells.length < 2) return false;
-    const hits = citedCells.filter(c => cells.includes(c) || cells.some(x => x && (Number(x) === Number(c) && Number.isFinite(Number(c))))).length;
-    const enough = hits >= Math.ceil(citedCells.length * 0.6);
-    return enough && (wanted === null || cells.some(x => x === wanted || (Number.isFinite(Number(wanted)) && Number(x) === Number(wanted))));
+  const { num, isMissing } = require('../system/aso/studyTools');
+  const e = reading.entry, rows = reading.shownRows || [], cols = reading.shownColumns || [];
+  const same = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase() || (num(a) !== null && num(a) === num(b));
+  if (e.key === 'master') {
+    const citedLines = needle.split('\n').map(line => line.trim()).filter(Boolean);
+    const fields = rows.flatMap(row => cols.filter(k => !isMissing(row[k])).map(k => ({ text: `${k}: ${row[k]}`.toLowerCase(), value: row[k] })));
+    return citedLines.every(line => fields.some(field => field.text === line)) && (value === null || value === undefined || fields.some(field => citedLines.includes(field.text) && same(field.value, value)));
+  }
+  const citedCells = needle.split('|').map(s => s.trim());
+  return rows.some(row => {
+    const cells = cols.map(c => row[c]);
+    const fullLine = cells.map(cell => String(cell ?? '').trim().toLowerCase()).join(' | ');
+    const matches = fullLine === needle || (citedCells.length === cells.length && citedCells.every((cell, i) => same(cell, cells[i])));
+    return matches && cells.some(cell => !isMissing(cell)) && (value === null || value === undefined || cells.some(cell => !isMissing(cell) && same(cell, value)));
   });
 }
 

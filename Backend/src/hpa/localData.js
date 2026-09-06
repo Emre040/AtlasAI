@@ -15,22 +15,32 @@ const REGISTRY_REFRESH_MS = 60_000;
 const NEWLINE = 0x0a;
 const TAB = 0x09;
 
-// HPA quotes cells that contain separators; a bare cell is returned as is.
-function unquote(cell) {
-  if (cell.length >= 2 && cell.charCodeAt(0) === 34 && cell.charCodeAt(cell.length - 1) === 34) {
-    return cell.slice(1, -1).replace(/""/g, '"');
+// Decode HPA's quoted cells, including embedded tabs and escaped quote characters.
+function parseCells(line) {
+  const text = line.replace(/\r$/, '');
+  if (!text.includes('"')) return text.split('\t');
+  const cells = []; let cell = '', quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"' && (quoted || cell === '')) {
+      if (quoted && text[i + 1] === '"') { cell += '"'; i++; }
+      else quoted = !quoted;
+    } else if (c === '\t' && !quoted) { cells.push(cell); cell = ''; }
+    else cell += c;
   }
-  return cell;
+  if (quoted) throw new Error('Unterminated quoted TSV cell');
+  cells.push(cell);
+  return cells;
 }
 
 function parseHeader(line) {
-  return line.replace(/^﻿/, '').split('\t').map(unquote);
+  return parseCells(line.replace(/^﻿/, ''));
 }
 
 function parseLine(header, line) {
-  const cells = line.split('\t');
+  const cells = parseCells(line);
   const row = {};
-  for (let i = 0; i < header.length; i++) row[header[i]] = cells[i] === undefined ? '' : unquote(cells[i]);
+  for (let i = 0; i < header.length; i++) row[header[i]] = cells[i] === undefined ? '' : cells[i];
   return row;
 }
 
@@ -128,7 +138,7 @@ class LocalData {
 
   // Streams a TSV row by row as objects keyed by header. `where` filters rows before they are
   // materialized so large files are never fully held in memory.
-  async *rows(fileName, { where = null } = {}) {
+  async *rows(fileName, { where = null, onHeader = null } = {}) {
     const dataset = await this.describe(fileName);
     if (!dataset) throw new Error(`HPA dataset '${fileName}' is not available offline.`);
     const stream = fs.createReadStream(this.filePath(fileName), { encoding: 'utf8' });
@@ -137,6 +147,7 @@ class LocalData {
     for await (const line of lines) {
       if (header === null) {
         header = parseHeader(line);
+        onHeader?.(header);
         continue;
       }
       if (line.length === 0) continue;
@@ -146,8 +157,8 @@ class LocalData {
     }
   }
 
-  // Long-format files (one row per gene and entity) are sorted by gene, so a byte-range index
-  // built in one pass lets a single gene's rows be read without scanning the file again.
+  // Build byte ranges directly from the raw file. A gene can occupy multiple disjoint blocks;
+  // importing a release never requires sorting, rewriting, or precomputing its measurements.
   async geneIndex(fileName) {
     const dataset = await this.describe(fileName);
     if (!dataset) throw new Error(`HPA dataset '${fileName}' is not available offline.`);
@@ -170,30 +181,33 @@ class LocalData {
     let currentStart = 0;
     let offset = 0;
     let leftover = Buffer.alloc(0);
+    const closeRange = end => {
+      if (current === null) return;
+      if (!ranges.has(current)) ranges.set(current, []);
+      ranges.get(current).push({ start: currentStart, end });
+    };
+    const visitLine = (buffer, start, end, absolute) => {
+      if (end > start && buffer[end - 1] === 0x0d) end--;
+      if (header === null) { header = parseHeader(buffer.toString('utf8', start, end)); return; }
+      if (end <= start) return;
+      const nextTab = buffer.indexOf(TAB, start);
+      const tab = nextTab === -1 || nextTab > end ? end : nextTab;
+      const key = buffer[start] === 34 ? parseCells(buffer.toString('utf8', start, end))[0] : buffer.toString('utf8', start, tab);
+      if (key !== current) { closeRange(absolute); current = key; currentStart = absolute; }
+    };
     const stream = fs.createReadStream(filePath, { highWaterMark: 1 << 20 });
     for await (const chunk of stream) {
       const buffer = leftover.length ? Buffer.concat([leftover, chunk]) : chunk;
       let lineStart = 0;
       for (let i = buffer.indexOf(NEWLINE); i !== -1; i = buffer.indexOf(NEWLINE, lineStart)) {
-        const absolute = offset + lineStart;
-        if (header === null) {
-          header = parseHeader(buffer.toString('utf8', lineStart, i));
-        } else if (i > lineStart) {
-          const nextTab = buffer.indexOf(TAB, lineStart);
-          const tab = nextTab === -1 || nextTab > i ? i : nextTab;
-          const key = buffer.toString('ascii', lineStart, tab);
-          if (key !== current) {
-            if (current !== null) ranges.set(current, { start: currentStart, end: absolute });
-            current = key;
-            currentStart = absolute;
-          }
-        }
+        visitLine(buffer, lineStart, i, offset + lineStart);
         lineStart = i + 1;
       }
       leftover = buffer.subarray(lineStart);
       offset += lineStart;
     }
-    if (current !== null) ranges.set(current, { start: currentStart, end: stat.size });
+    if (leftover.length) visitLine(leftover, 0, leftover.length, offset);
+    closeRange(stat.size);
     const index = Object.freeze({ header: header || [], ranges });
     this.indexes.set(fileName, { identity, index });
     return index;
@@ -201,13 +215,22 @@ class LocalData {
 
   async geneRows(fileName, ensembl) {
     const index = await this.geneIndex(fileName);
-    const range = index.ranges.get(ensembl);
-    if (!range) return [];
+    const ranges = index.ranges.get(ensembl);
+    if (!ranges) return Object.defineProperty([], 'columns', { value: index.header, configurable: true });
     const handle = await fsp.open(this.filePath(fileName), 'r');
     try {
-      const buffer = Buffer.alloc(range.end - range.start);
-      await handle.read(buffer, 0, buffer.length, range.start);
-      return buffer.toString('utf8').split('\n').filter(line => line.length > 0).map(line => parseLine(index.header, line));
+      const rows = [];
+      for (const range of ranges) {
+        const buffer = Buffer.alloc(range.end - range.start);
+        let offset = 0;
+        while (offset < buffer.length) {
+          const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, range.start + offset);
+          if (!bytesRead) throw new Error(`HPA dataset '${fileName}' changed while reading its indexed rows`);
+          offset += bytesRead;
+        }
+        for (const line of buffer.toString('utf8').split('\n')) if (line.replace(/\r$/, '').length) rows.push(parseLine(index.header, line));
+      }
+      return Object.defineProperty(rows, 'columns', { value: index.header, configurable: true });
     } finally {
       await handle.close();
     }
@@ -218,15 +241,15 @@ class LocalData {
     const dataset = await this.describe(fileName);
     if (!dataset) throw new Error(`HPA dataset '${fileName}' is not available offline.`);
     const stat = await fsp.stat(this.filePath(fileName));
-    const identity = `${fileName}:${stat.size}:${stat.mtimeMs}`;
+    const identity = `${this.filePath(fileName)}:${stat.size}:${stat.mtimeMs}`;
     const cached = this.tables.get(fileName);
     if (cached && cached.identity === identity) return cached.table;
     const rows = [];
     let header = null;
-    for await (const row of this.rows(fileName)) {
-      if (header === null) header = Object.keys(row);
+    for await (const row of this.rows(fileName, { onHeader: value => { header = value; } })) {
       rows.push(row);
     }
+    Object.defineProperty(rows, 'columns', { value: header || [], configurable: true });
     // Left extensible so callers can attach lazily built indexes (see master()).
     const table = { fileName, header: header || [], rows, dataset };
     this.tables.set(fileName, { identity, table });
@@ -275,4 +298,4 @@ class LocalData {
 
 const localData = new LocalData();
 
-module.exports = { localData, LocalData, FILES };
+module.exports = { localData, LocalData, FILES, parseHeader, parseLine, parseCells };

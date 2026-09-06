@@ -23,18 +23,17 @@ const { resolveAgentMode } = require('../../hpa/agentMode');
 const { localData, FILES } = require('../../hpa/localData');
 const { StudyContext, bytes } = require('../aso/studyContext');
 const { StudyConversation, planText } = require('../aso/studyConversation');
-const { validate } = require('../aso/batchOperations');
+const { CapabilityCatalog } = require('../aso/capabilityCatalog');
+const { validate, executeBatch } = require('../aso/batchOperations');
 const studyPlan = require('../aso/studyPlan');
 const { renderReport } = require('../aso/studyReport');
 const { rowPageOptions, readPage, formatPage, previewRows } = require('../aso/observationViews');
 const { unverifiedNumbers, verificationIssues } = require('../aso/summaryEvidence');
 
-const MAX_TURNS_DEFAULT = 40;     // platform_config.aso_max_steps overrides
 const MAX_STALLS = 2;             // turns in a row with nothing to do before the loop ends
 const WAKE_DEBOUNCE_MS = 300;     // completions this close together wake the loop once
 const JOB_WAIT_MS = 15 * 60_000;  // longest the loop waits for a running agent
 const FINISH_ROWS = 40;           // rows of each cited artifact shown when a finish is refused
-const MAX_FINISH_REFUSALS = 2;    // a summary with numbers from nowhere is sent back this many times
 const CELL = 60;                  // characters per shown cell
 const RESULT_BYTES = 8192;        // one delivery page; never a conversation limit
 const PREVIEW_BYTES = 2048;       // a receipt; full rows stay in the artifact
@@ -46,64 +45,67 @@ const S = { type: 'string' };
 const N = { type: 'integer' };
 const RESULT_KIND = { type: 'string', enum: studyPlan.KINDS, description: 'gene_set for a biological selection question; table for measurements/calculations; a chart type such as heatmap/bar/scatter for one figure; interpretation for gene-specific evidence; summary for the final report.' };
 const CHART_TYPE = { type: 'string', enum: studyPlan.CHART_KINDS };
+const THEN_BY = { type: 'array', description: 'Secondary columns order equal primary scores while preserving their tied rank; missing values remain last.', items: { type: 'object', properties: { column: S, order: { type: 'string', enum: ['asc', 'desc'] }, type: { type: 'string', enum: ['auto', 'number', 'text'], description: 'auto compares numbers numerically and other scalar values lexically; text uses exact lexical order.' } }, required: ['column'] } };
 const tool = (name, description, properties = {}, required = []) => ({ name, description, parameters: { type: 'object', properties, required } });
 // One line each: the rules in the prompt do the teaching.
 const STUDY_TOOLS = [
   tool('set_plan', 'Plan requested results: Deep Research selects cohorts; Investigator retrieves measurements and statistics for the supplied list; ASO combines results and draws figures. Describe outcomes without choosing low-level operations or guessing columns. Use a separate gene_set step for each selection and a separate step for each chart. Include interpretation only when requested.', { items: { type: 'array', items: { type: 'object', properties: { step: { type: 'string', description: 'Describe the requested result in words; item numbers are assigned automatically.' }, kind: RESULT_KIND, inputs: S }, required: ['step', 'kind'] } } }, ['items']),
+  tool('run', 'Execute dependent registered data operations together. Use @step_id for a preceding output in artifact/a/b arguments. Exact operation schemas come from load_tools; no custom code or agent calls. Only requested outputs enter context; intermediates remain saved and inspectable.', { steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: { type: 'string', description: 'JSON object of that registered tool arguments; references use @step_id.' } }, required: ['id', 'tool', 'args'] } }, outputs: { type: 'array', items: S, description: 'Step IDs whose resulting evidence should be returned.' } }, ['steps', 'outputs']),
   tool('update_plan', 'Revise a plan item (1-based), or append at the next number. artifacts lists evidence for done. A gene_set needs Deep Research, interpretation needs Investigator, and a chart kind needs a rendered figure of that type. Tag completing calls with node to avoid bookkeeping turns.', { item: N, status: { type: 'string', enum: ['todo', 'doing', 'done', 'dropped'] }, note: S, step: S, kind: RESULT_KIND, inputs: S, artifacts: { type: 'array', items: S } }, ['item']),
   tool('note', 'Record a decision or unresolved question. replace overwrites note N; empty text with replace removes it. Cite observation/artifact IDs for evidence.', { text: S, replace: N }, ['text']),
   tool('recall', 'Read the rest of a paged observation by id and offset, or search saved source evidence with query. limit caps search matches (default 12, max 30). The conversation already retains earlier results and corrections.', { id: S, query: S, offset: N, limit: N }),
   tool('datasets', 'Discover source files when investigating a gap reported by a specialist. Investigator already has the source catalog for measurement questions. about matches a word in names, titles or columns; omitted about lists all names.', { about: S }),
   tool('schema', 'Inspect saved result columns, or a source schema for a reported specialist gap. Investigator discovers measurement sources itself. about restricts both names and samples to matching columns; omit it for all names. Use describe for categories or distributions.', { what: S, about: S }, ['what']),
   tool('describe', 'Profile a dataset or artifact: column kinds, blanks, distinct values, examples, ranges and list grammar. columns narrows the profile; the result is saved for recall.', { what: S, columns: { type: 'array', items: S } }, ['what']),
-  tool('open', 'Read dataset or artifact rows and full artifact provenance. rows (1–200) and columns select a page; offset is the zero-based row offset. Cells are never shortened. Saved observations can be recalled.', { what: S, rows: N, offset: N, columns: { type: 'array', items: S } }, ['what']),
+  tool('open', 'Read exact rows and columns. A positive rows count and zero-based offset select a page. provenance=true adds full source/operation metadata when needed; ordinary reads return the selected data and lineage. Cells are never shortened; recall continues long observations.', { what: S, rows: N, offset: N, columns: { type: 'array', items: S }, provenance: { type: 'boolean' } }, ['what']),
   tool('explode', 'One row per item of a list cell: "key: number" items give <as>_key and <as>_value columns, "label (number)" gives <as>_label and <as>_value, plain items <as>_item.', { artifact: A, column: S, as: S }, ['artifact', 'column']),
   tool('measure', 'Direct source read for a gap reported by Investigator; delegate ordinary measurement questions to investigator_hpa with genes or from. Existing columns are retained; with entity one row per gene, otherwise one row per gene and entity, retaining the source entity column name. as names the new column. An entity requires entity_column. Multiple matching rows require an explicit aggregate, or read all raw rows with intersect.', { artifact: A, table: { type: 'string', description: 'dataset name' }, value_column: S, entity_column: S, entity: S, as: S, aggregate: { type: 'string', enum: ['min', 'max', 'mean', 'median'] } }, ['artifact', 'table', 'value_column', 'as']),
   tool('union', 'Genes in either artifact.', { a: A, b: A }, ['a', 'b']),
   tool('intersect', 'Rows of a whose gene is in b.', { a: A, b: A }, ['a', 'b']),
   tool('difference', 'Rows of a whose gene is not in b.', { a: A, b: A }, ['a', 'b']),
   tool('concat', 'All rows of a then all rows of b.', { a: A, b: A }, ['a', 'b']),
-  tool('join', 'Rows of a combined with matching rows of b by gene (or "on"); clashing names of b get _2.', { a: A, b: A, how: { type: 'string', enum: ['inner', 'left'] }, on: S }, ['a', 'b']),
+  tool('join', 'Combine matching rows. Default gene identity, or exact on column, or on_columns for a typed tuple. full/right retain unmatched source rows; missing keys never match. Clashing measurement columns get _2.', { a: A, b: A, how: { type: 'string', enum: ['inner', 'left', 'right', 'full'] }, on: S, on_columns: { type: 'array', items: S, description: 'Exact columns forming a composite match key; use instead of on.' } }, ['a', 'b']),
   tool('filter', 'Filter returned result rows by exact values or numeric thresholds; every clause must hold. Use Deep Research to select biological cohorts and Investigator to retrieve measurements for supplied names. op in takes a list; column_b compares columns. Can stream a raw dataset when addressing a reported specialist gap.', { artifact: A, where: { type: 'array', items: { type: 'object', properties: { column: S, op: { type: 'string', enum: ['>', '>=', '<', '<=', '=', '!=', 'contains', 'in'] }, value: { description: 'a value, or a list of values for in' }, column_b: { type: 'string', description: 'compare with this column of the same row instead of value' } }, required: ['column', 'op'] } } }, ['artifact', 'where']),
   tool('select', 'Keep columns, rename them, add constant columns. Preserve gene and ensembl for subsequent gene operations.', { artifact: A, columns: { type: 'array', items: S }, rename: { type: 'string', description: 'JSON object from original column names to new names' }, add: { type: 'string', description: 'JSON object from new column names to constant values' } }, ['artifact']),
-  tool('rank', 'Sort by a numeric column (adds rank); top keeps the first N.', { artifact: A, by: S, order: { type: 'string', enum: ['desc', 'asc'] }, top: N }, ['artifact', 'by']),
-  tool('top_per_group', 'Keep the n highest rows per group (default group gene). Streams a whole dataset.', { artifact: A, group_by: S, by: S, n: N, order: { type: 'string', enum: ['desc', 'asc'] } }, ['artifact', 'by']),
-  tool('aggregate', 'count, sum, mean, median, sd, q1, q3, min, max, missing, distinct of a column. group_by groups by one column; group_by_columns groups by several columns in one operation and retains each group label separately for grouped charts. Streams a whole dataset.', { artifact: A, group_by: S, group_by_columns: { type: 'array', items: S, description: 'Group by this combination of columns, keeping each label in its own output column. Use instead of group_by.' }, column: S, metrics: { type: 'array', items: { type: 'string', enum: ['count', 'sum', 'mean', 'median', 'sd', 'q1', 'q3', 'min', 'max', 'missing', 'distinct'] } } }, ['artifact', 'metrics']),
+  tool('rank', 'Sort by a numeric column (adds rank); top includes ties at its boundary unless ties=truncate; missing values stay unranked when no top is requested.', { artifact: A, by: S, order: { type: 'string', enum: ['desc', 'asc'] }, top: N, ties: { type: 'string', enum: ['include', 'truncate'] }, then_by: THEN_BY }, ['artifact', 'by']),
+  tool('top_per_group', 'Keep the n highest rows per group (default group gene). Streams a whole dataset.', { artifact: A, group_by: S, by: S, n: N, order: { type: 'string', enum: ['desc', 'asc'] }, ties: { type: 'string', enum: ['include', 'truncate'] }, then_by: THEN_BY }, ['artifact', 'by']),
+  tool('aggregate', 'count counts source rows; numeric_count counts numeric measurements; zero, sum, mean, median, sd, q1, q3, min, max, missing and distinct summarize a column. group_by groups by one column; group_by_columns groups by several columns in one operation and retains each group label separately for grouped charts. Streams a whole dataset.', { artifact: A, group_by: S, group_by_columns: { type: 'array', items: S, description: 'Group by this combination of columns, keeping each label in its own output column. Use instead of group_by.' }, column: S, metrics: { type: 'array', items: { type: 'string', enum: ['count', 'numeric_count', 'zero', 'sum', 'mean', 'median', 'sd', 'q1', 'q3', 'min', 'max', 'missing', 'distinct'] } } }, ['artifact', 'metrics']),
   tool('compute', 'Add a column from an expression over columns and numbers: + - * / ( ) log2 log10 ln abs sqrt exp min max; + also joins text, as in a + " / " + b.', { artifact: A, name: S, expr: { type: 'string', description: 'Exact column names; backticks quote names containing spaces. Double-quoted strings are literal text.' } }, ['artifact', 'name', 'expr']),
   tool('pivot', 'Reshape long rows into a matrix, retaining all input row and column labels. row defaults to gene. When the question requests a subset, select it with the table tools before pivoting.', { artifact: A, row: S, column: S, value: S }, ['artifact', 'column', 'value']),
-  tool('chart', 'Draw an artifact: x the label column and y the value column (bar family), both numeric for scatter; heatmap takes a pivot. Missing numeric values fail unless missing=omit; omissions are recorded.', { artifact: A, type: CHART_TYPE, x: { type: 'string', description: 'X column; required except for a matrix heatmap' }, y: { type: 'string', description: 'Numeric Y/value column; required except for a matrix heatmap' }, group: S, size: S, label: S, title: S, x_label: S, y_label: S, missing: { type: 'string', enum: ['error', 'omit'] } }, ['artifact', 'type']),
+  tool('chart', 'Draw an artifact: x the label column and y the value column (bar family), both numeric for scatter; heatmap takes a pivot. Missing numeric values fail unless missing=omit; omissions are recorded.', { artifact: A, type: CHART_TYPE, x: { type: 'string', description: 'X column; required except for a matrix heatmap' }, y: { type: 'string', description: 'Numeric Y/value column; required except for a matrix heatmap' }, group: S, size: S, label: S, title: S, x_label: S, y_label: S, x_domain: { type: 'array', items: { type: 'number' }, description: 'Explicit numeric limits for the rendered X axis; two increasing values containing all plotted values.' }, y_domain: { type: 'array', items: { type: 'number' }, description: 'Explicit numeric limits for the rendered Y axis; two increasing values containing all plotted values.' }, missing: { type: 'string', enum: ['error', 'omit'] } }, ['artifact', 'type']),
   tool('correlate', 'Pearson or Spearman correlation of two numeric columns: r, p and n; group_by gives one per group.', { artifact: A, x: S, y: S, method: { type: 'string', enum: ['pearson', 'spearman'] }, group_by: S }, ['artifact', 'x', 'y']),
   tool('overlap', 'Rows two tables share by gene (or "on"), against a universe (an artifact or a dataset such as proteinatlas.tsv): shared, expected, fold and a hypergeometric p; group_by tests every group of a in one call.', { a: A, b: A, universe: A, on: S, group_by: S }, ['a', 'b', 'universe']),
   tool('standardize', 'Add a column with a numeric column rescaled: zscore, minmax or percentile.', { artifact: A, column: S, method: { type: 'string', enum: ['zscore', 'minmax', 'percentile'] }, as: S }, ['artifact', 'column', 'method']),
   tool('skip', 'Nothing to do until something running returns.', { reason: S }, ['reason']),
-  tool('finish', 'Submit the study. tables inserts exact saved measurements automatically. Each table needs artifact and exact columns; rows defaults to 40 (maximum 200). Missing work must be stated.', { summary: { type: 'string', description: 'Concise interpretation with an artifact citation in every factual paragraph, including Investigator evidence when used. Put numerical result lists in tables instead of retyping them here. Preserve the source evidence classification and qualifiers; a cohort or dataset name does not establish evidence strength. State supported conclusions and limitations without upgrading associations to validated applications.' }, tables: { type: 'array', items: { type: 'object', properties: { artifact: S, columns: { type: 'array', items: S }, title: S, rows: N }, required: ['artifact', 'columns'] } } }, ['summary'])
+  tool('finish', 'Submit the study. tables inserts exact saved measurements automatically. Each table needs artifact and exact columns; All rows are included unless rows explicitly requests a preview; partial tables are labelled. Missing work must be stated.', { summary: { type: 'string', description: 'Only the requested evidence-supported interpretation and limitations, with an artifact citation in every factual paragraph. Do not repeat per-entity numerical lists already in tables, add unrequested biological background, or explain causes absent from the retrieved evidence. Include Investigator evidence when used. Put numerical result lists in tables instead of retyping them here. Preserve the source evidence classification and qualifiers; a cohort or dataset name does not establish evidence strength. State supported conclusions and limitations without upgrading associations to validated applications.' }, tables: { type: 'array', items: { type: 'object', properties: { artifact: S, columns: { type: 'array', items: S }, title: S, rows: N }, required: ['artifact', 'columns'] } } }, ['summary'])
 ];
 const TABLE_TOOLS = new Set(['measure', 'union', 'intersect', 'difference', 'concat', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'compute', 'pivot', 'chart', 'correlate', 'overlap', 'standardize', 'explode']);
 const FOR_EACH = { type: 'object', description: 'once per value; $item stands for it', properties: { values: { type: 'array', items: S }, column: S, of: S, as: S } };
 const NODE = { type: 'integer', description: 'plan item carried out' };
-const MAX_FOR_EACH = 1000;
 const PROFILE_MAX_ROWS = 200000;  // rows a describe scans in one file
 const profileCache = new Map();   // file|columns → card, for this process
 
-function systemPrompt() {
-  return `Coordinate the researcher's requested study using the existing HPA agents and table tools. Work from imported raw datasets and saved artifacts. Every measurement, gene set and figure must come from a tool. Complete the requested deliverables without adding unrelated analyses.
+function systemPrompt(directory) {
+  return `Coordinate the requested HPA study using registered agents and data tools. Tools produce the evidence; your job is to choose the questions, combine results and explain supported conclusions. Complete exactly the requested outputs.
 
-Delegate source measurements to investigator_hpa. If the user supplies gene names, start investigator_hpa with genes=[those names] and the whole measurement question in your first response, alongside set_plan. When a cohort arrives from Deep Research, pass from=<its result ID>. Investigator discovers the source tables/columns and retrieves the data in bulk. Do not bootstrap a supplied list by filtering raw datasets, or inspect source schemas on Investigator's behalf. Your table operations work on returned results for comparisons, ranking, set operations and charts. Direct source reads remain available for a specific gap that Investigator reports; ordinary measurement retrieval belongs to Investigator.
+Plan deliverables with set_plan and start independent work in the same response. Use gene_set for cohort selection, table for a complete measurement question including raw records and per-input summaries, the requested chart type for each figure, interpretation for a requested gene investigation, and summary for the report. node marks the plan item a result completes.
 
-Use the specialists throughout the study:
-- deep_research_hpa owns biological gene-set selection and constructs the database search. Delegate each distinct selection question with the user's exact inclusion/exclusion criteria; do not weaken the categories, merge different questions, or reconstruct biological definitions with raw category-string filters. Start independent searches together, including later selections that do not depend on the first results. Keep distinct cohorts in separate artifacts, then use set tools to combine them. Inspect returned queries and any criteria the agent could not express.
-- investigator_hpa handles source discovery and measurements for a supplied list as well as its existing single-gene investigations. Delegate the complete measurement question once using from=<saved result ID>, or genes=[the names already supplied by the user]. Include the requested per-gene statistics, missing/zero counts, top source entities and simple ratios in that question, so Investigator returns the required tables together. The runtime supplies the list; no gene-column selection or copying is needed. Investigator finds the sources and uses apply_bulk for these operations. Use kind=table for the complete measurement result. Keep single-gene interpretation calls when the study asks to investigate particular genes individually. Start them while independent work proceeds.
-- Coordinate the scientific questions, combine cohorts and draw the requested figures. Use returned bulk tables directly. Apply an additional numerical transformation only when the question requests it, and avoid making extra tables just to rename or reorder displayed columns. finish.tables selects the columns to show. Avoid duplicating a delegated lookup with schema/filter/measure calls while it runs. Existing table tools remain available for requested calculations, transformations and inspection. Pass artifact IDs instead of copying gene lists from previews. Do not write custom code or database queries.
+Deep Research selects biological cohorts from the exact requested criteria. Investigator discovers sources and retrieves measurements, statistics, associated labels, ranking and derived values for a supplied list. Pass the whole assignment with from=<saved cohort> or genes=<user-supplied names>; keep the list and source rows in artifacts. Use gene for focused interpretation. Keep distinct cohorts and assays separate. Inspect reported source gaps; an explicit no-record result is a valid answer about coverage, not a reason to invent data or repeat the same search.
 
-Plan the requested outcomes: gene_set for each biological selection, table for a complete measurement question including requested statistics and simple derived comparisons, the chart type (heatmap, scatter, bar, etc.) for each individual figure, interpretation for requested gene-level evidence, summary for the final report. Use these result kinds rather than guessing low-level operations. Revise steps as evidence arrives. Tag the call that completes a step with node=N; its saved result marks the step automatically. Preparatory calls need no node. Update the plan alongside useful work. Finish all requested work or explicitly drop an impossible step with its reason.
+Keep raw retrieval, per-input statistics and associated labels in the same Investigator assignment. Its results can satisfy several requested outputs; do not create a separate ASO calculation phase for statistics Investigator already supports.
 
-Call independent tools together. Agents return in the background. Do not duplicate a question already assigned to a running agent by starting another search or reconstructing it with raw filters. Work on independent returned results while waiting, or skip if all useful work depends on the pending result. Use returned artifact IDs in subsequent turns. A failed call reports its error: correct the arguments using that feedback.
+Use returned results directly. Compose dependent data operations with run once their input schemas are known; it uses registered tools and saved artifact references. Run independent calls together and skip only when useful work depends on running jobs. Load additional native tools by name when needed; every capability is listed below. Existing tools remain available through load_tools. Do not write custom code or SQL.
 
-The original goal and every tool exchange remain in the conversation. Results show their source arguments and newly created columns with a small row preview. All rows remain in the artifact. schema shows column names and samples; about restricts it to relevant fields. describe scans a column's values only when a profile is needed. open selects exact rows/columns; recall reads a longer saved observation. Reuse what is already known.
+The conversation preserves decisions and tool exchanges. Receipts describe results; open reads exact rows and columns, and additional inspection tools expose saved schemas and source evidence. A saved row that was not shown is not evidence for a prose detail: inspect its exact rows/columns before making that claim. Prefer the requested summaries over extra row-level narration, and artifact references over copying tables or creating presentation-only artifacts.
 
-A dataset name works wherever a table tool takes an artifact. Gene operations require gene/ensembl: preserve those identifiers when selecting columns. measure adds its named column to the input, so successive measurements retain earlier values. Keep source units and missing values; choose an aggregation explicitly for multiple source measurements. Undefined ratios remain missing; do not introduce pseudocounts. Use rank for a global top list, top_per_group for maxima within each group, and aggregate for grouped counts/statistics. When grouping by multiple attributes, use aggregate.group_by_columns to retain separate labels for a grouped chart; do not encode the groups into a combined string. for_each repeats an operation across discovered values using $item. A heatmap uses pivot; grouped_bar uses group. Missing chart values require missing=omit and recorded omissions.
+Preserve source units, missing values, record coverage, repeated measurements and ties. State denominators and aggregation semantics. A zero is a measurement; a missing record establishes only absence from that source. It does not establish biological absence, an experiment's history, or a causal explanation. Preserve evidence reliability and qualifiers. Apply transformations only when requested.
 
-Before finish, check the original requested outputs, cohort selection, units, sources and scientific interpretation. Inspect returned agent evidence. finish.tables inserts exact saved values; summary cites artifacts for interpretation, figures and limitations. Preserve source qualifiers in prose, headings and figures, and describe differing cohort results separately. Label calculated quantities from the actual expression, with the numerator and denominator in that order; ratios of matching units and their logarithms are dimensionless. Measurements retain their source units. Keep alternative assays distinct. Report absent matches and missing measurements explicitly. Plan completion verifies execution, not scientific correctness. Never claim unfinished work succeeded.`;
+Report the requested findings and limitations. Tables already carry exact measurements: do not narrate numerical result lists again. Interpret only comparisons the question requests, without inventing biological or methodological explanations for observed differences. A plausible explanation is not source evidence.
+
+Before finish, check the original deliverables against the returned evidence, including every requested group and tied result. A completed tool or plan item does not prove the whole question is answered. finish.tables renders saved data exactly; use it for numerical results instead of rewriting them in prose. Each factual paragraph cites its supporting artifact and stays within what that source establishes. If work is impossible, identify the exact gap and revise the plan explicitly.
+
+ADDITIONAL CAPABILITIES — request their native schemas with load_tools:
+${directory}`;
 }
 
 // ---- context rendering -----------------------------------------------------------------------------
@@ -207,8 +209,8 @@ function describeArgs(args, max = 160) {
 function normalizeSearchRow(r) {
   const out = { gene: r.Gene ?? r.gene ?? null, ensembl: r.Ensembl ?? r.ensembl ?? null };
   for (const [k, v] of Object.entries(r)) {
-    if (['Gene', 'Ensembl', 'gene', 'ensembl'].includes(k) || v === null || v === undefined || v === 'NA' || String(v).trim() === '') continue;
-    out[k] = v;
+    if (['Gene', 'Ensembl', 'gene', 'ensembl'].includes(k)) continue;
+    out[k] = v === null || v === undefined || v === 'NA' || String(v).trim() === '' ? null : v;
   }
   return out;
 }
@@ -222,13 +224,17 @@ function scalarRow(obj) {
 // What an agent's result becomes: rows for a gene set or an answer, text for a lookup.
 function agentArtifact(tool, args, result) {
   if (tool === 'deep_research_hpa') {
-    if (result?.status !== 'ok') throw new Error(result?.error || 'search failed');
+    if (result?.status !== 'ok') {
+      const error = new Error(result?.error || 'search failed');
+      error.details = { stop_reason: result?.stop_reason, unresolved_requirements: result?.result?.unresolved_requirements, requirements: result?.result?.requirements };
+      throw error;
+    }
     const r = result.result || {};
     return { kind: 'data', label: String(args.goal || 'search').slice(0, 80), rows: (r.rows || []).map(normalizeSearchRow), meta: { search_url: r.search_urls?.[0] || null, query: r.plan || null, not_expressible: (r.not_expressible || []).map(c => c.requirement), mode: r.mode || null } };
   }
   if (tool === 'investigator_hpa') {
     if (result?.error && result.found !== true) throw new Error(result.error);
-    return { kind: 'answer', label: `${result.gene || args.gene}: ${String(args.question || '').slice(0, 60)}`, rows: [{ gene: result.gene || args.gene, ensembl: result.ensembl || null, question: args.question || '', found: result.found === true, answer: result.answer || '', value: result.extracted_value ?? null, entity: result.exact_label ?? null, table: result.source_section || null, cited_row: result.cited_row || null }], meta: { not_in_release: result.not_in_release || [], notes: result.notes || [], citations: result.citations || [], grounded: result.grounded } };
+    return { kind: 'answer', label: `${result.gene || args.gene}: ${String(args.question || '').slice(0, 60)}`, rows: [{ gene: result.gene || args.gene, ensembl: result.ensembl || null, question: args.question || '', found: result.found === true, answer: result.answer || '', value: result.extracted_value ?? null, entity: result.exact_label ?? null, table: result.source_section || null, cited_row: result.cited_row || null }], meta: { not_in_release: result.not_in_release || [], notes: result.notes || [], citations: result.citations || [], grounded: result.grounded, evidence_status: result.evidence_status, coverage: result.coverage, cited_coverage: result.cited_coverage } };
   }
   if (tool === 'check_inclusion_hpa') {
     return { kind: 'answer', label: `${args.gene} in search result?`, rows: [scalarRow(result)], meta: {} };
@@ -247,12 +253,22 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
   const orchestrator = require('../orchestrator'); // at call time: the orchestrator requires this module too
   const config = platformConfig();
   if (context_budget_bytes !== undefined) throw new Error('context_budget_bytes is no longer supported: ASO preserves its conversation without automatic compaction.');
-  const maxTurns = Number(max_turns) > 0 ? Number(max_turns) : (config.asoMaxSteps || MAX_TURNS_DEFAULT);
+  const maxTurns = max_turns === undefined ? config.asoMaxSteps : max_turns;
+  if (!Number.isSafeInteger(maxTurns) || maxTurns < 1) throw new Error('The caller or platform must provide a positive integer study turn allowance');
   const agentMode = await resolveAgentMode(requestedMode ?? 'offline', [FILES.master]);
   const mode = agentMode.mode;
   const startedAt = Date.now();
   const tokens = { prompt: 0, completion: 0, total: 0 };
-  const addUsage = usage => { tokens.prompt += usage?.prompt_tokens || 0; tokens.completion += usage?.completion_tokens || 0; tokens.total += (usage?.prompt_tokens || 0) + (usage?.completion_tokens || 0); };
+  const mainTokens = { prompt: 0, completion: 0, total: 0 };
+  const specialistTokens = {};
+  const addSpecialistUsage = (name, usage) => {
+    if (usage === undefined) return;
+    const stats = typeof usage.total === 'object' ? usage.total : usage;
+    for (const key of ['prompt', 'completion', 'total']) if (!Number.isFinite(stats[key]) || stats[key] < 0) throw new Error(`${name} returned invalid token accounting for ${key}`);
+    const sum = specialistTokens[name] || (specialistTokens[name] = { prompt: 0, completion: 0, total: 0 });
+    for (const key of ['prompt', 'completion', 'total']) { sum[key] += stats[key]; tokens[key] += stats[key]; }
+  };
+  const addUsage = usage => { mainTokens.prompt += usage?.prompt_tokens || 0; mainTokens.completion += usage?.completion_tokens || 0; mainTokens.total += (usage?.prompt_tokens || 0) + (usage?.completion_tokens || 0); tokens.prompt += usage?.prompt_tokens || 0; tokens.completion += usage?.completion_tokens || 0; tokens.total += (usage?.prompt_tokens || 0) + (usage?.completion_tokens || 0); };
 
   const workspace = await createWorkspace(db, { visitorId: ctx.visitorId, inferenceModelId: getActiveModel().id, requestText: goal, planJson: { goal, mode, hpa_version: agentMode.hpaVersion, version: 'native-study' } });
   inference.assignContext({ workspaceId: workspace.id });
@@ -289,7 +305,20 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     } else state.history.push({ turn: state.turn, items: [text] });
   };
   const planItem = studyPlan.createItem;
-  const completionIssue = item => studyPlan.completionIssue(item, state.byId);
+  const completionIssue = item => {
+    const visited = new Set(), partial = [];
+    const inspect = id => {
+      if (visited.has(id)) return;
+      visited.add(id);
+      const artifact = state.byId.get(id);
+      if (!artifact) return; // Raw source names have no saved-artifact lineage.
+      if (artifact.meta?.execution?.status === 'partial') partial.push(artifact.id);
+      for (const input of artifact.inputs || []) inspect(input);
+    };
+    for (const id of Array.isArray(item.artifacts) ? item.artifacts : []) inspect(id);
+    if (partial.length) return `incomplete execution in selected evidence ancestry: ${partial.join(', ')}; completed rows are supporting evidence only. Repair the failed work and attach complete output, or revise the plan explicitly`;
+    return studyPlan.completionIssue(item, state.byId);
+  };
   // A preparatory operation may advance a step without completing its promised output.
   const markNode = async (n, artifactId, expectedItem) => {
     const item = state.plan[n - 1];
@@ -327,7 +356,8 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
       const properties = { ...t.function.parameters.properties, node: NODE, ...(TABLE_TOOLS.has(name) && !['chart', 'pivot'].includes(name) ? { for_each: FOR_EACH } : {}) };
       return { ...t, function: { ...t.function, parameters: { ...t.function.parameters, properties } } };
     });
-  const system = systemPrompt();
+  const capabilities = new CapabilityCatalog({ tools: toolSpecs, coreNames: ['set_plan', 'open', 'chart', 'run', 'skip', 'finish', ...agentNames] });
+  const system = systemPrompt(capabilities.directory());
 
   const get = id => {
     const key = String(id || '').trim();
@@ -381,7 +411,7 @@ const receipt = a => {
   if (a.text) return `${a.id}: ${a.text}`;
   if (!a.rows || !a.rows.length) return `${a.id} (${a.size})`;
   const columns = a.meta.bulk
-    ? shownColumns(a.columns, a.columns.filter(key => !/_source_rows$|_missing_rows$/.test(key)).slice(0, 12))
+    ? shownColumns(a.columns, [...new Set([...['gene', 'ensembl'].filter(key => a.columns.includes(key)), ...(a.meta.created_columns || a.columns).filter(key => !/_source_rows$|_missing_rows$/.test(key))])])
     : shownColumns(a.columns);
   return `${a.id} (${a.size}; showing ${columns.length}/${a.columns.length} columns: ${columns.join(', ')}; describe/open for other columns):\n${formatPage(previewRows(a.rows, columns, PREVIEW_BYTES, a.rows.length <= 40 ? 40 : 2), columns)}`;
 };
@@ -399,7 +429,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
       if (args.gene !== undefined || args.genes !== undefined) throw new Error('Use one of gene, genes or from');
       const input = get(args.from);
       if (!Array.isArray(input.rows) || input.rows.some(row => !row.ensembl && !row.gene)) throw new Error(`${args.from} must contain gene rows`);
-      inputRows = input.rows;
+      inputRows = tools.withColumns(input.rows, input.columns);
       inputs.push(input.id);
       delete executionArgs.from;
       executionArgs.genes = inputRows.map(row => row.ensembl || row.gene);
@@ -411,27 +441,34 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
     const label = String(args.goal || args.question || args.topic || args.gene || tool).slice(0, 80);
     log('tool.start', { id, tool, kind: 'agent', label, args, inputs }, id);
     const forward = async s => log(`agent.${s.stage}`, { id, label: s.label, message: s.message }, id);
-    job.promise = orchestrator.execute(tool, executionArgs, { db, visitorId: ctx.visitorId, rawQuery: '', includeRows: true, onStep: forward, inputRows, studyGoal: goal, studyTask: plannedItem?.text, reasoningEffort: effort })
+    job.promise = orchestrator.execute(tool, executionArgs, { db, visitorId: ctx.visitorId, rawQuery: '', includeRows: true, onStep: forward, inputRows, studyGoal: goal, studyTask: plannedItem?.text, reasoningEffort: effort, runControl: ctx.runControl, signal: ctx.signal, viewDirectory: path.join(workspace.workspaceDir, 'agent-views', id) })
       .then(async ({ result }) => {
+        addSpecialistUsage(tool, result?.tokens);
         if (result?.bulk && result.error && !result.tables?.length) throw new Error(result.error);
         const outputs = result?.bulk ? result.tables.map(table => ({
           kind: 'data', label: table.name, rows: table.rows, columns: table.columns,
-          meta: { bulk: true, status: result.status, error: result.error, answer: result.answer, lookups: table.provenance, coverage: table.coverage, calculations: table.calculations, sort: table.sort, input_count: result.input_count, unresolved_inputs: result.unresolved_inputs, not_in_release: result.not_in_release, remaining_for_aso: result.remaining_for_aso || [] }
+          meta: { bulk: true, status: result.status, error: result.error, answer: result.answer, lookups: table.provenance, coverage: table.coverage, calculations: table.calculations, sort: table.sort, created_columns: table.created_columns, input_count: result.input_count, unresolved_inputs: result.unresolved_inputs, not_in_release: result.not_in_release, remaining_for_aso: result.remaining_for_aso || [] }
         })) : [agentArtifact(tool, args, result)];
         if (!outputs.length) throw new Error(`Investigator returned no table: ${JSON.stringify(result.not_in_release)}`);
         for (const built of outputs) {
           const a = await addArtifact({ ...built, tool, args: node ? { ...args, node } : args, inputs, toolId: id });
           if (node) await markNode(node, a.id, plannedItem);
-          observe(`${id} ${tool} returned ${result?.bulk ? a.label + ': ' : ''}${receipt(a)}${result?.remaining_for_aso?.length ? `\nUnfinished work for ASO: ${JSON.stringify(result.remaining_for_aso)}` : ''}${result?.bulk && inputs.length ? `\nIncludes the input columns from ${inputs.join(', ')}; use this result directly.` : ''}\nProvenance: ${JSON.stringify({ args, meta: a.meta })}`, { source: `artifact ${a.id}`, refs: [a.id, ...inputs] });
+          const meta = a.meta.bulk ? {
+            status: a.meta.status, error: a.meta.error,
+            lookups: (a.meta.lookups || []).map(({ source_description, input_count, ...lookup }) => lookup),
+            coverage: a.meta.coverage, calculations: a.meta.calculations, sort: a.meta.sort,
+            unresolved_inputs: a.meta.unresolved_inputs, not_in_release: a.meta.not_in_release
+          } : a.meta;
+          observe(`${id} ${tool} returned ${result?.bulk ? a.label + ': ' : ''}${receipt(a)}${result?.remaining_for_aso?.length ? `\nUnfinished work for ASO: ${JSON.stringify(result.remaining_for_aso)}` : ''}${result?.bulk && inputs.length ? `\nIncludes input fields from ${inputs.join(', ')}. Full schema remains available through schema; open with provenance=true reads full metadata.` : ''}\nProvenance: ${JSON.stringify({ ...(result?.bulk ? {} : { args }), meta })}`, { source: `artifact ${a.id}`, refs: [a.id, ...inputs] });
           remember(`${tool} → ${a.id} (${a.size})`);
           await log('tool.done', { id, tool, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);
         }
       })
       .catch(async err => {
         state.failed++;
-        state.recent.push(`${id} ${tool} failed: ${err.message}`);
+        state.recent.push(`${id} ${tool} failed: ${err.message}${err.details ? `\nRequired evidence still unresolved: ${JSON.stringify(err.details)}` : ''}`);
         remember(`${tool} failed: ${err.message.slice(0, 90)}`);
-        await log('tool.failed', { id, tool, kind: 'agent', error: err.message, ms: Date.now() - job.startedAt }, id);
+        await log('tool.failed', { id, tool, kind: 'agent', error: err.message, details: err.details, ms: Date.now() - job.startedAt }, id);
       })
       .finally(() => { state.running.delete(id); wakeUp(); });
     return { job: id, agent: tool, status: 'running' };
@@ -452,7 +489,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
           if (a.matrix) throw new Error(`${a.id} is a matrix; only a heatmap chart can take it`);
           if (!a.rows) throw new Error(`${a.id} has no rows`);
           for (const c of a.columns) inputColumns.add(c);
-          return a.rows;
+          return tools.withColumns(a.rows, a.columns);
         }
         const entry = ref ? await geneData.entry(ref) : null;
         if (!entry || entry.key === 'unreadable') throw new Error(`nothing called "${ref || '(no name)'}" on the desk or on disk (artifacts: ${[...state.byId.keys()].join(', ') || 'none'}; datasets lists what is on disk)`);
@@ -461,7 +498,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         const rows = await datasetRows(entry, { genes, where: tool === 'filter' ? args.where : null, limit: parallel });
         streamed = tool === 'filter' && !genes && !['master', 'lookup', 'scan'].includes(entry.key);
         for (const c of ['gene', 'ensembl', ...entry.columns]) inputColumns.add(c);
-        return rows;
+        return tools.withColumns(rows, [...inputColumns]);
       };
       // A whole per-gene dataset named as the input of a streaming tool.
       const wholeDataset = async key => {
@@ -476,10 +513,10 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
       switch (tool) {
         case 'measure': out = { rows: await tools.measure(await rowsOf('artifact'), args, parallel) }; break;
         case 'union': case 'intersect': case 'difference': case 'concat': out = { rows: tools.setOp(tool, await rowsOf('a', 'b'), await rowsOf('b', 'a'), args.on || null) }; break;
-        case 'join': out = { rows: tools.join(await rowsOf('a', 'b'), await rowsOf('b', 'a'), args.how, args.on || null) }; break;
+        case 'join': out = { rows: tools.join(await rowsOf('a', 'b'), await rowsOf('b', 'a'), args.how, args.on || null, args.on_columns) }; break;
         case 'filter': { const rows = await rowsOf('artifact'); out = { rows: streamed ? rows : tools.applyWhere(rows, args.where) }; break; }
         case 'select': { const obj = v => (typeof v === 'string' ? (JSON.parse(v || '{}') || {}) : (v || {})); out = { rows: tools.select(await rowsOf('artifact'), args.columns, obj(args.rename), obj(args.add)) }; break; }
-        case 'rank': out = { rows: tools.rank(await rowsOf('artifact'), args.by, args.order, Number(args.top) || 0) }; break;
+        case 'rank': out = { rows: tools.rank(await rowsOf('artifact'), args.by, args.order, Number(args.top) || 0, args.ties, args.then_by) }; break;
         case 'top_per_group': { const entry = await wholeDataset('artifact'); out = { rows: entry ? await tools.topPerGroupStream(datasetStream(entry), args, ['gene', 'ensembl', ...entry.columns]) : tools.topPerGroup(await rowsOf('artifact'), args) }; break; }
         case 'aggregate': { const entry = await wholeDataset('artifact'); out = { rows: entry ? await tools.aggregateStream(datasetStream(entry), args, ['gene', 'ensembl', ...entry.columns]) : tools.aggregate(await rowsOf('artifact'), args) }; break; }
         case 'correlate': out = { rows: tools.correlate(await rowsOf('artifact'), args) }; break;
@@ -502,37 +539,37 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
     if (!values && spec.column) {
       const ref = String(spec.of ?? args.artifact ?? args.a ?? '').trim();
       let rows;
-      if (state.byId.has(ref)) rows = get(ref).rows || [];
+      if (state.byId.has(ref)) { const a = get(ref); rows = tools.withColumns(a.rows || [], a.columns); }
       else {
         const entry = await geneData.entry(ref);
         if (!entry || entry.key === 'unreadable') throw new Error(`for_each: nothing called "${ref}" to take ${spec.column} from`);
         const seen = new Set();
-        for await (const row of datasetStream(entry)) { const v = String(row[spec.column] ?? '').trim(); if (v) seen.add(v); if (seen.size > MAX_FOR_EACH) break; }
-        rows = [...seen].map(v => ({ [spec.column]: v }));
+        for await (const row of datasetStream(entry)) { const v = String(row[spec.column] ?? '').trim(); if (v) seen.add(v); }
+        rows = tools.withColumns([...seen].map(v => ({ [spec.column]: v })), [spec.column]);
       }
       const col = tools.findColumn(rows, spec.column);
       if (!col) throw new Error(`for_each: no column named "${spec.column}" in ${ref}`);
       values = [...new Set(rows.map(r => String(r[col] ?? '').trim()).filter(Boolean))];
     }
     if (!values || !values.length) throw new Error('for_each: give values, or column (and of) to take the distinct values of a column');
-    if (values.length > MAX_FOR_EACH) throw new Error(`for_each over ${values.length} values would run the operation ${values.length} times; use a group_by tool, or narrow the values`);
     const itemCol = String(spec.as || 'item');
     const { for_each: _spec, ...rest } = args;
     const sub = (v, x) => (typeof x === 'string' ? x.split('$item').join(v).split('${item}').join(v) : Array.isArray(x) ? x.map(y => sub(v, y)) : x && typeof x === 'object' ? Object.fromEntries(Object.entries(x).map(([k, y]) => [k, sub(v, y)])) : x);
-    const rows = [];
+    const rows = [], outputColumns = new Set([itemCol]);
     const failed = [];
     const inputColumns = new Set();
-    for (const v of values) {
+    for (const [index, v] of values.entries()) {
       try {
         const r = await computeOut(tool, sub(v, rest));
-        if (!r.out.rows) throw new Error('the operation gave no rows');
+        if (!Array.isArray(r.out.rows)) throw new Error('the operation gave no rows');
+        if (r.out.rows.some(row => Object.hasOwn(row, itemCol) && row[itemCol] !== v)) throw new Error(`for_each.as column ${itemCol} conflicts with a source value; choose a distinct output name`);
+        for (const c of tools.columnsOf(r.out.rows)) outputColumns.add(c);
         for (const row of r.out.rows) rows.push({ [itemCol]: v, ...row });
         for (const c of r.inputColumns) inputColumns.add(c);
-      } catch (err) { failed.push(`${v}: ${err.message.slice(0, 80)}`); }
+      } catch (err) { failed.push({ index, item: v, error: err.message }); }
     }
-    if (failed.length === values.length) throw new Error(`for_each: every value failed; first: ${failed[0]}`);
-    if (failed.length) state.recent.push(`for_each: ${failed.length} of ${values.length} values failed: ${failed.slice(0, 5).join('; ')}`);
-    return { out: { rows }, inputColumns };
+    const execution = { status: failed.length ? 'partial' : 'completed', requested: values.length, completed: values.length - failed.length, failed };
+    return { out: { rows: tools.withColumns(rows, [...outputColumns]), meta: { execution } }, inputColumns };
   }
 
   async function runTableTool(tool, args, { announce = true } = {}) {
@@ -550,10 +587,19 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
     try {
       const { out, inputColumns } = args.for_each ? await forEach(tool, args) : await computeOut(tool, args);
       if (out.rows) out.rows = tools.freshFirst(out.rows, [...inputColumns]);
-      const a = await addArtifact({ kind: out.figure ? 'figure' : 'data', label: tool === 'chart' ? label : `${tool} of ${inputs.join(', ')}`, rows: out.rows, matrix: out.matrix, figure: out.figure, meta: out.figure ? { omitted_rows: out.figure.omitted_rows || 0 } : undefined, tool, args: node ? { ...args, node } : args, inputs, toolId: id });
-      const observation = observe(`${id} ${tool} -> ${receipt(a)}\nProvenance: ${JSON.stringify(args)}`, { source: `artifact ${a.id}`, refs: [a.id, ...inputs], announce });
+      const a = await addArtifact({ kind: out.figure ? 'figure' : 'data', label: tool === 'chart' ? label : `${tool} of ${inputs.join(', ')}`, rows: out.rows, matrix: out.matrix, figure: out.figure, meta: out.figure ? { omitted_rows: out.figure.omitted_rows || 0 } : out.meta, tool, args: node ? { ...args, node } : args, inputs, toolId: id });
+      const execution = out.meta?.execution;
+      const partial = execution?.status === 'partial';
+      const executionNote = execution ? `\nExecution: ${execution.status}; ${execution.completed}/${execution.requested} items completed. ${partial ? 'Completed rows are retained; read open with provenance=true for every failed item and error.' : ''}` : '';
+      const observation = observe(`${id} ${tool} -> ${receipt(a)}${executionNote}\nProvenance: ${JSON.stringify(args)}`, { source: `artifact ${a.id}`, refs: [a.id, ...inputs], announce });
       remember(`${tool}(${inputs.join(', ')}) → ${a.id} (${a.size})`);
       if (node) await markNode(node, a.id);
+      if (partial) {
+        const error = `for_each: ${execution.failed.length} of ${execution.requested} items failed; completed rows remain in ${a.id}`;
+        state.failed++;
+        await log('tool.failed', { id, tool, kind: 'tool', artifact: artifactEvent(a), error, execution, ms: Date.now() - t0 }, id);
+        return { ok: false, status: 'partial', artifact: a, observation, error };
+      }
       await log('tool.done', { id, tool, kind: out.figure ? 'chart' : 'tool', artifact: artifactEvent(a), ms: Date.now() - t0 }, id);
       return { ok: true, artifact: a, observation };
     } catch (err) {
@@ -571,7 +617,8 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
   });
 
   let finishSummary = null;
-  let finishRefusals = 0;
+  const finishFeedback = new Set();
+  let stopReason = null;
   let unverified = [];
   let planTouched = false;
   let turn = 0;
@@ -582,7 +629,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
     while (turn < maxTurns) {
       turn++;
       state.turn = turn;
-      const offered = toolSpecs;
+      const offered = capabilities.offered();
       const artifactsBefore = state.artifacts.length;
       planTouched = false;
       const snapshot = conversation.prepare(state, maxTurns);
@@ -621,6 +668,10 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         const spec = offered.find(t => t.function.name === call.name);
         if (!spec) throw new Error(`Unknown tool ${call.name}; use a declared tool`);
         validate(call.args, spec.function.parameters, call.name);
+        if (call.name === 'load_tools') {
+          sync++;
+          return { status: 'ok', ...capabilities.load(call.args.names) };
+        }
         if (call.name === 'finish') {
           if (!state.plan.length) throw new Error('finish requires a plan: record the requested results with set_plan first.');
           const unseen = state.artifacts.slice(artifactsBefore).filter(a => a.kind !== 'figure');
@@ -633,17 +684,24 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
           const missing = unverifiedNumbers(summary, state);
           const isFinishStep = studyPlan.isReport;
           const undone = state.plan.map((p, i) => ({ ...p, n: i + 1 })).filter(p => p.status !== 'done' && p.status !== 'dropped' && !isFinishStep(p));
-          if (undone.length && finishRefusals < MAX_FINISH_REFUSALS) {
-            finishRefusals++;
+          const issues = missing.length ? verificationIssues(summary, state) : [];
+          if (undone.length || missing.length) {
+            const feedbackKey = JSON.stringify({ unfinished: undone.map(p => p.n), issues: issues.map(issue => ({ reason: issue.reason, artifacts: [...issue.artifacts].sort(), numbers: [...issue.numbers].sort() })) });
+            if (finishFeedback.has(feedbackKey)) {
+              stopReason = 'unresolved_finish_evidence';
+              await log('finish.refused', { reason: stopReason, plan_items: undone.map(p => p.n), issues });
+              return { status: 'error', error: 'The same completion issues remain unresolved after feedback. No rejected report is accepted; completed artifacts are retained.' };
+            }
+            finishFeedback.add(feedbackKey);
+          }
+          if (undone.length) {
             state.recent.push(`finish refused: the plan says ${undone.map(p => `item ${p.n}`).join(', ')} ${undone.length === 1 ? 'is' : 'are'} not done. A report can only state what was done. Do the work, mark an item dropped with a note saying why, or mark it done only if an artifact shows it is; then finish again.`);
             remember('finish refused: plan items not done');
-            await log('finish.refused', { plan_items: undone.map(p => p.n), attempt: finishRefusals });
+            await log('finish.refused', { plan_items: undone.map(p => p.n), feedback_states: finishFeedback.size });
             sync++;
             return;
           }
-          if (missing.length && finishRefusals < MAX_FINISH_REFUSALS) {
-            finishRefusals++;
-            const issues = verificationIssues(summary, state);
+          if (missing.length) {
             const cited = [...new Set(issues.flatMap(issue => issue.artifacts))];
             observe(`finish refused. Repair these specific passages:\n${issues.map(issue => `${issue.reason}: ${JSON.stringify(issue.paragraph)}\nUnmatched numbers: ${issue.numbers.join(', ')}; cited sources: ${issue.artifacts.join(', ') || 'none'}`).join('\n\n')}\nFor no_source_citation, add the correct artifact ID in that paragraph (a reference elsewhere does not cover it). For number_not_in_cited_artifacts, check the source or compute the quantity. Counts and absence claims need a count/filter result; an empty filter is evidence of zero matches. Keep already supported passages.`, { source: 'finish feedback' });
             for (const id of cited) {
@@ -653,7 +711,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
               else if (a.text) observe(`${a.id}: ${a.text}`, { source: `open ${a.id}`, refs: [a.id] });
             }
             remember('finish refused: numbers not in any artifact');
-            await log('finish.refused', { numbers: missing, issues, attempt: finishRefusals });
+            await log('finish.refused', { numbers: missing, issues, feedback_states: finishFeedback.size });
             sync++;
             return;
           }
@@ -717,10 +775,18 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
           observe(content, { source: `schema ${what}`, refs: [what], projection: columns });
           sync++; return;
         }
+        if (call.name === 'run') {
+          const specifications = new Map(toolSpecs.filter(t => TABLE_TOOLS.has(t.function.name)).map(t => [t.function.name, t.function]));
+          const batch = await executeBatch(call.args, { specifications, concurrency: config.asoParallelLimit,
+            execute: (name, args) => runTableTool(name, args, { announce: false }) });
+          for (const output of batch.outputs) capture(contextMemory.recall({ id: output.observation }));
+          sync++;
+          return { status: batch.status, steps: batch.steps, outputs: batch.outputs.map(output => ({ step: output.id, artifact: output.artifact.id, observation: output.observation })) };
+        }
         if (TABLE_TOOLS.has(call.name)) {
           const result = await runTableTool(call.name, call.args);
           sync++;
-          return result.ok ? { status: 'completed', artifact: result.artifact.id } : { status: 'error', error: result.error };
+          return result.ok ? { status: 'completed', artifact: result.artifact.id } : { status: result.status || 'error', ...(result.artifact ? { artifact: result.artifact.id, observation: result.observation } : {}), error: result.error };
         }
         if (agentNames.has(call.name)) return observationScope.run(null, () => startAgent(call.name, call.args));
         if (call.name === 'datasets') {
@@ -776,7 +842,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
             const pick = call.args.columns;
             if (state.byId.has(what)) {
               const a = get(what);
-              const provenance = JSON.stringify({ tool: a.tool, args: a.args, inputs: a.inputs, meta: a.meta });
+              const provenance = JSON.stringify(call.args.provenance ? { tool: a.tool, args: a.args, inputs: a.inputs, meta: a.meta } : { tool: a.tool, inputs: a.inputs });
               let content;
               if (a.figure) content = JSON.stringify(a.figure);
               else if (a.matrix) content = JSON.stringify(a.matrix);
@@ -831,7 +897,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         parallelCalls = [];
       };
       for (const call of calls) {
-        if (['set_plan', 'update_plan', 'note', 'skip', 'finish'].includes(call.name)) {
+        if (['set_plan', 'update_plan', 'note', 'skip', 'finish', 'load_tools'].includes(call.name)) {
           await drain();
           completedCalls.push(await executeObservedCall(call));
         } else {
@@ -845,7 +911,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         return { message: { role: 'tool', tool_call_id: c.call.id, content: JSON.stringify({ ...c.data, ...(view.text ? { observations: view.text } : {}) }) }, deliveries: view.deliveries };
       });
       conversation.append(message, results);
-      if (finishSummary !== null) break;
+      if (finishSummary !== null || stopReason) break;
       if (!calls.length) {
         stalls++;
         state.recent.push('You called no tool. Call tools, skip while waiting, or finish.');
@@ -853,6 +919,12 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
         continue;
       }
       if (waiting && state.running.size) {
+        stalls = 0;
+        await waitForCompletion();
+        continue;
+      }
+      const hasNewEvidence = completedCalls.some(c => c.ids.length || c.data.status === 'error' || !['set_plan', 'update_plan', 'note', ...agentNames].includes(c.call.name));
+      if (state.running.size && !hasNewEvidence && state.artifacts.length === artifactsBefore) {
         stalls = 0;
         await waitForCompletion();
         continue;
@@ -874,11 +946,11 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
     if (state.running.size) await Promise.allSettled([...state.running.values()].map(job => job.promise));
     // A study that runs out of turns writes no summary: nothing is estimated into the gap.
     const budgetExhausted = finishSummary === null && turn >= maxTurns;
-    const incompleteReason = budgetExhausted ? 'turn_budget_exhausted' : finishSummary === null ? 'stalled' : state.running.size ? 'agents_pending' : unverified.length ? 'unverified_numbers' : state.plan.some(p => p.status !== 'done') ? 'unfinished_or_dropped_steps' : null;
+    const incompleteReason = stopReason || (budgetExhausted ? 'turn_budget_exhausted' : finishSummary === null ? 'stalled' : state.running.size ? 'agents_pending' : unverified.length ? 'unverified_numbers' : state.plan.some(p => p.status !== 'done') ? 'unfinished_or_dropped_steps' : null);
     const outcome = incompleteReason ? 'incomplete' : 'completed';
     if (finishSummary === null) finishSummary = budgetExhausted
       ? `The study stopped at its budget of ${maxTurns} turns before it finished. No summary was written, so nothing here is estimated: the plan shows what was done and what was not, and the artifacts hold everything it made.`
-      : 'The study stopped with nothing left to do.';
+      : `The study stopped before its completion checks passed${stopReason ? ` (${stopReason})` : ''}. Completed artifacts are retained; no rejected narrative has been accepted as a result.`;
     // Numbers still unverified when the study ends are marked where the reader sees them.
     for (const raw of unverified) finishSummary = finishSummary.replace(new RegExp(`(?<![\\w.,])${raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w.,]*\\d)(?! \\[unverified\\])`, 'g'), `${raw} [unverified]`);
 
@@ -891,7 +963,7 @@ const artifactEvent = a => ({ id: a.id, kind: a.kind, label: a.label, size: a.si
     await updateWorkspace(db, workspace.id, { status: 'completed', message: outcome === 'completed' ? 'Study completed' : `Study incomplete: ${incompleteReason}`, finishedUnixMs: Date.now(), planJson: { goal, mode, hpa_version: agentMode.hpaVersion, version: 'native-study', compactions: 0, outcome, incomplete_reason: incompleteReason, plan: state.plan, turns: turn } });
     await contextMemory.flush(path.join(workspace.workspaceDir, 'observations'));
     await logger.close();
-    return { status: 'ok', outcome, incomplete_reason: incompleteReason, workspace_uuid: workspace.uuid, summary: finishSummary, summary_md: summaryMd, artifacts: artifactsSummary(), plan: state.plan, turns: turn, tool_calls: state.toolCalls, failed: state.failed, unverified_numbers: unverified, budget_exhausted: budgetExhausted, compactions: 0, tokens, seconds, mode, hpa_version: agentMode.hpaVersion };
+    return { status: 'ok', outcome, incomplete_reason: incompleteReason, workspace_uuid: workspace.uuid, summary: finishSummary, summary_md: summaryMd, artifacts: artifactsSummary(), plan: state.plan, turns: turn, tool_calls: state.toolCalls, failed: state.failed, unverified_numbers: unverified, budget_exhausted: budgetExhausted, compactions: 0, tokens, token_breakdown: { aso_hpa: mainTokens, ...specialistTokens }, seconds, mode, hpa_version: agentMode.hpaVersion };
   } catch (err) {
     if (state.running.size) await Promise.allSettled([...state.running.values()].map(job => job.promise));
     await log('error', { message: err.message });

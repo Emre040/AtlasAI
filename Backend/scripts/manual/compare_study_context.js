@@ -54,12 +54,25 @@ async function main() {
   await fs.mkdir(values.out, { mode: 0o700 });
   const sourceHashes = {};
   await fs.mkdir(path.join(values.out, 'code'), { mode: 0o700 });
-  for (const name of ['system/agents/asoStudy.js', 'system/agents/investigatorTrail.js', 'system/agents/investigatorBulk.js', 'system/agents/investigatorBulkTools.js', 'system/orchestrator.js', 'system/agents/deepResearchTrail.js', 'system/aso/studyContext.js', 'system/aso/studyConversation.js', 'system/aso/batchOperations.js', 'system/aso/toolHelp.js', 'system/aso/observationViews.js', 'system/aso/summaryEvidence.js', 'system/aso/studyTools.js', 'system/aso/studyPlan.js', 'system/aso/studyReport.js', 'system/aso/pipelines/render_charts.py', 'hpa/localData.js', 'hpa/geneDataAdapter.js', 'inference/adapters/geminiGenerateContent.js', '../package.json', '../package-lock.json']) {
+  async function runtimeFiles(directory) {
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    const files = [];
+    for (const entry of entries) {
+      const filename = path.join(directory, entry.name);
+      if (entry.isDirectory()) files.push(...await runtimeFiles(filename));
+      else if (entry.isFile() && entry.name.endsWith('.js')) files.push(path.relative(path.join(backend, 'src'), filename));
+    }
+    return files;
+  }
+  const names = [...await runtimeFiles(path.join(backend, 'src')), 'system/aso/pipelines/render_charts.py', '../package.json', '../package-lock.json', '../scripts/manual/compare_study_context.js'].sort();
+  for (const name of names) {
     const source = values.baseline && name === 'system/agents/asoStudy.js'
       ? execFileSync('git', ['show', `${values.baseline}:Backend/src/${name}`], { cwd: backend })
       : await fs.readFile(path.join(backend, 'src', name));
     sourceHashes[name] = crypto.createHash('sha256').update(source).digest('hex');
-    await fs.writeFile(path.join(values.out, 'code', path.basename(name)), source, { mode: 0o600 });
+    const snapshotPath = path.join(values.out, 'code', path.relative(backend, path.resolve(backend, 'src', name)));
+    await fs.mkdir(path.dirname(snapshotPath), { recursive: true, mode: 0o700 });
+    await fs.writeFile(snapshotPath, source, { mode: 0o600 });
   }
   if (values.baseline) {
     const filename = require.resolve('../../src/system/agents/asoStudy');
@@ -83,6 +96,7 @@ async function main() {
     require('../../src/hpa/localData').localData.configure({ root: runtime.dataLocalRoot, db });
     const orchestrator = require('../../src/system/orchestrator');
     const { model } = await gateway.resolveActiveModel();
+    if (model.configKey !== 'gemini-3.8-flash' || (values.effort || model.reasoningEffort) !== 'low') throw new Error('This evaluation protocol requires gemini-3.8-flash with low reasoning effort');
     const events = [];
     const requests = [];
     const original = gateway.createChatCompletion.bind(gateway);

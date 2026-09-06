@@ -28,6 +28,8 @@ function fixture(n = 600) {
   let reads = 0;
   const adapter = {
     async entry(file) { return file === entry.file ? entry : null; },
+    async catalog() { return [entry]; },
+    definition() { return ''; },
     async overview() { return `${entry.file}: ${entry.columns.join(', ')}`; },
     async resolveGenes(names) { assert.deepEqual(names, supplied); return resolved; },
     async readMany() { reads++; return { entry, byGene }; }
@@ -70,7 +72,7 @@ test('bulk rows retain entity labels, unknown genes, absent data, and explicit s
   f.resolved[1] = null;
   f.byGene.delete('TEST_ID_2');
   const ops = createBulkTools(f);
-  const result = await ops.applyBulk({ name: 'top', lookups: [{ table: f.entry.file, match_column: 'Target', mode: 'rows', columns: ['Organ', 'Reading [units]'], top_by: 'Reading [units]', top: 1 }] });
+  const result = await ops.applyBulk({ name: 'top', lookups: [{ table: f.entry.file, match_column: 'Target', mode: 'rows', columns: ['Organ', 'Reading [units]'], top_by: 'Reading [units]', top: 1, ties: 'truncate' }] });
   assert.equal(result.rows.length, 3);
   assert.equal(result.rows[0].Organ, 'organ A');
   assert.equal(result.rows[0].source_rows, 2);
@@ -171,7 +173,7 @@ test('Investigator can inspect an unshown saved result page without repeating th
   assert.equal(calls, 3); assert.equal(f.reads(), 1);
 });
 
-test('a turn limit preserves completed bulk tables with an explicit partial result and unfinished task', async () => {
+test('a repeated completed view stops with an explicit partial result and unfinished task', async () => {
   const f = fixture(); let calls = 0;
   const bulk = await load('../../src/system/agents/investigatorBulk', {
     '../../hpa/agentMode': { async resolveAgentMode() { return { mode: 'offline', hpaVersion: 'test' }; } },
@@ -183,8 +185,9 @@ test('a turn limit preserves completed bulk tables with an explicit partial resu
     } } } } }
   });
   const result = await bulk({ genes: f.supplied, question: 'Read measurements and compare cohorts.' }, { studyTask: 'Compare the cohorts' }, f.adapter);
-  assert.equal(calls, 8); assert.equal(result.status, 'partial');
-  assert.match(result.error, /eight turns/);
+  assert.equal(calls, 4); assert.equal(result.status, 'partial');
+  assert.equal(result.stop_reason, 'no_progress_cycle'); assert.equal(result.incomplete, true);
+  assert.match(result.error, /repeated a completed operation/);
   assert.equal(result.tables[0].rows.length, 600); assert.equal(result.tables[0].rows[599].a_units, 1198);
   assert.equal(result.remaining_for_aso[0].requirement, 'Compare the cohorts');
   assert.equal(f.reads(), 1);
@@ -200,7 +203,8 @@ test('bulk Investigator uses two model turns for 600 genes and never sends the f
       assert.equal(request.reasoning_effort, 'low');
       assert.doesNotMatch(JSON.stringify(request), /SPECIMEN_GENE_599/);
       assert.match(request.messages[1].content, /Assigned plan result: Compare measurements with the earlier result/);
-      assert.match(request.messages[1].content, /Existing input columns retained.*prior/);
+      assert.match(request.messages[1].content, /Existing input: 3 columns retained/);
+      assert.doesNotMatch(request.messages[1].content, /"prior"/);
       assert.doesNotMatch(JSON.stringify(request), /UNRELATED_STUDY_TASK/);
       const tool = requests.length === 1
         ? functionCall('apply_bulk', { name: 'values', lookups: [f.lookup('organ A', 'a_units'), f.lookup('organ B', 'b_units')] }, 'read')
@@ -228,8 +232,8 @@ test('the existing single-gene Investigator path retains its response and source
         : { found: true, answer: 'Observed 12 units.', value: '12', entity: 'sample', table: 'one.tsv', cited_row: 'sample | 12', confidence: 'high', notes: ['Source note'] };
     } }
   });
-  const entry = { file: 'one.tsv', title: 'One source' };
-  const adapter = { async resolveGene() { return { gene: 'ONE', ensembl: 'ID1' }; }, async overview() { return 'one.tsv'; }, async entry() { return entry; }, async read() { return { entry, rows: [{ sample: 'sample', value: 12 }] }; }, applyWhere(raw) { return { reading: raw, clauses: [] }; }, render() { return { text: 'sample | 12', total: 1, shown: 1 }; }, cited: () => true, pageUrl: () => 'source' };
+  const entry = { file: 'one.tsv', title: 'One source', columns: ['sample', 'value'] };
+  const adapter = { async resolveGene() { return { gene: 'ONE', ensembl: 'ID1' }; }, async overview() { return 'one.tsv'; }, async entry() { return entry; }, async read() { return { entry, rows: [{ sample: 'sample', value: 12 }] }; }, applyWhere(raw) { return { reading: raw, clauses: [] }; }, render(reading) { reading.shownRows = reading.rows; reading.shownColumns = entry.columns; return { text: 'sample | 12', total: 1, shown: 1 }; }, cited: () => true, pageUrl: () => 'source' };
   const result = await trail({ gene: 'ONE', question: 'Read its value' }, {}, adapter);
   assert.equal(calls, 2); assert.equal(result.found, true); assert.equal(result.extracted_value, '12');
   assert.equal(result.cited_row, 'sample | 12'); assert.deepEqual(result.notes, ['Source note']);

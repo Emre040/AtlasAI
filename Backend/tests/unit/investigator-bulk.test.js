@@ -39,7 +39,7 @@ test('the investigator opens a table, fetches for the whole list and returns the
   assert.match(desk, /  0: EGFR \| ENSG1 \| liver \| 32\.2 \| 2 \| ok/);
   assert.match(desk, /HISTORY\nturn 1: opened rna_tissue_consensus\.tsv \(on the desk\)\nturn 2: fetch → liver_lung \(6 rows; 3 genes with rows, 1 not in the release\)/);
   assert.match(requests[0].messages[0].content, /You are the Investigator in a study over the Test Atlas/);
-  assert.match(requests[0].messages[0].content, /TABLES \(2; open one for its columns and values\)\nrna_tissue_consensus\.tsv — Consensus tissue RNA\ntissues\.tsv — Tissue lookup \(reference table\)/);
+  assert.match(requests[0].messages[0].content, /TABLES \(2; open one for its columns and values\)\nrna_tissue_consensus\.tsv — Consensus tissue RNA\ntissues\.tsv — Tissue lookup/);
   assert.equal(requests[0].tools.length, 4);
   assert.ok(steps.some(s => s.stage === 'complete'));
 });

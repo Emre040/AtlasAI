@@ -25,6 +25,8 @@ const PRODUCER_LABELS = Object.freeze({
   fetch: 'Fetch',
   measure: 'Measure',
   union: 'Union',
+  combine: 'Combine',
+  analysis_combine: 'Combine',
   intersect: 'Intersect',
   difference: 'Difference',
   join: 'Join',

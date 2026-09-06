@@ -14,10 +14,10 @@ const S = { type: 'string' };
 const N = { type: 'integer' };
 
 const FINISH_SCHEMA = {
-  tables: { type: 'array', description: 'Saved tables to print: artifact, optional columns, title, rows (first N).', items: { type: 'object', properties: { artifact: S, columns: { type: 'array', items: S }, title: S, rows: N }, required: ['artifact'] } },
-  figures: { type: 'array', items: S, description: 'Figure ids to include in order; omit for all, [] for none.' },
-  claims: { type: 'array', description: 'Findings, each bound to the rows it rests on: artifact+rows(+columns) for one table, or evidence for several. The cells print beside the claim; every number stated must be among them (rounded is fine).', items: { type: 'object', properties: { text: S, artifact: S, rows: { type: 'array', items: N, description: 'row indices as numbered on the desk' }, columns: { type: 'array', items: S }, evidence: { type: 'array', items: { type: 'object', properties: { artifact: S, rows: { type: 'array', items: N }, columns: { type: 'array', items: S } }, required: ['artifact', 'rows'] } } }, required: ['text'] } },
-  limitations: { type: 'array', items: S, description: 'What the evidence cannot establish; no numbers.' },
+  tables: { type: 'array', description: 'Saved tables to print: artifact, optional columns, title and rows (first N).', items: { type: 'object', properties: { artifact: S, columns: { type: 'array', items: S }, title: S, rows: N }, required: ['artifact'] } },
+  figures: { type: 'array', items: S, description: 'Figure ids in order; omit for all, [] for none.' },
+  claims: { type: 'array', description: 'Findings, each bound to the cells it rests on: artifact and rows (and columns) of one table, or evidence for several. Every number stated is among those cells.', items: { type: 'object', properties: { text: S, artifact: S, rows: { type: 'array', items: N }, columns: { type: 'array', items: S }, evidence: { type: 'array', items: { type: 'object', properties: { artifact: S, rows: { type: 'array', items: N }, columns: { type: 'array', items: S } }, required: ['artifact', 'rows'] } } }, required: ['text'] } },
+  limitations: { type: 'array', items: S, description: 'What the evidence cannot establish, in words.' },
   not_done: { type: 'array', description: 'Plan items not delivered, with the reason.', items: { type: 'object', properties: { item: N, why: S }, required: ['item', 'why'] } }
 };
 

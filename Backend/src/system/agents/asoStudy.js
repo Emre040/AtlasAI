@@ -47,12 +47,9 @@ const tool = (name, description, properties = {}, required = []) => ({ name, des
 const STUDY_TOOLS = [
   tool('plan', 'The deliverables the study owes: one item per requested table, figure (its chart type), cohort (gene_set) or interpretation. Replaces the plan.', { items: { type: 'array', items: { type: 'object', properties: { step: S, kind: { type: 'string', enum: studyPlan.KINDS } }, required: ['step', 'kind'] } } }, ['items']),
   tool('note', 'Keep a decision or open question on the desk; replace overwrites note N.', { text: S, replace: N }, ['text']),
-  tool('open', 'Show rows of a large artifact (rows, offset page it; columns narrow it), or put a dataset on the desk with its columns, values and sample rows. Small artifacts are already whole on the desk.', { what: { type: 'string', description: 'artifact id or dataset name' }, rows: N, offset: N, columns: { type: 'array', items: S } }),
+  tool('open', 'Show rows of a large artifact (rows and offset page it, columns narrow it), or put a dataset on the desk with its columns, values and sample rows.', { what: { type: 'string', description: 'artifact id or dataset name' }, rows: N, offset: N, columns: { type: 'array', items: S } }),
   tool('run', 'Run dependent operations together; a step names an operation and its args, and refers to an earlier step as @id.', { steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
-  tool('union', 'Rows in either table, one per entity.', { a: A, b: A, on: S }, ['a', 'b']),
-  tool('intersect', 'Rows of a whose entity is in b.', { a: A, b: A, on: S }, ['a', 'b']),
-  tool('difference', 'Rows of a whose entity is not in b.', { a: A, b: A, on: S }, ['a', 'b']),
-  tool('concat', 'All rows of a then all rows of b.', { a: A, b: A }, ['a', 'b']),
+  tool('combine', 'Rows of a and b as one table: union (either, one row per entity), intersect (rows of a whose entity is in b), difference (rows of a whose entity is not in b) or concat (all rows of a, then all of b). on matches by a column instead of the entity.', { a: A, b: A, how: { type: 'string', enum: ['union', 'intersect', 'difference', 'concat'] }, on: S }, ['a', 'b', 'how']),
   TABLE_OPERATIONS.get('join'),
   TABLE_OPERATIONS.get('filter'),
   TABLE_OPERATIONS.get('select'),
@@ -63,29 +60,30 @@ const STUDY_TOOLS = [
   TABLE_OPERATIONS.get('compute'),
   TABLE_OPERATIONS.get('fill_missing'),
   tool('pivot', 'A matrix for a heatmap: rows from row, columns from column, cells from value (aggregate duplicates first).', { artifact: A, row: S, column: S, value: S }, ['artifact', 'column', 'value']),
-  tool('chart', 'Draw an artifact. Bar family: x labels, y values, group for series (grouped_bar needs it). scatter/bubble: numeric x and y, label names points, group colours them. heatmap takes a pivot. Missing numbers fail unless missing=omit.', { artifact: A, type: { type: 'string', enum: studyPlan.CHART_KINDS }, x: S, y: S, group: S, size: S, label: S, title: S, x_label: S, y_label: S, missing: { type: 'string', enum: ['error', 'omit'] } }, ['artifact', 'type']),
+  tool('chart', 'Draw an artifact. Bar family: x labels, y values, group for series (grouped_bar needs it). scatter/bubble: numeric x and y, label names points, group colours them. heatmap takes a pivot. missing=omit skips rows with a missing number.', { artifact: A, type: { type: 'string', enum: studyPlan.CHART_KINDS }, x: S, y: S, group: S, size: S, label: S, title: S, x_label: S, y_label: S, missing: { type: 'string', enum: ['error', 'omit'] } }, ['artifact', 'type']),
   TABLE_OPERATIONS.get('correlate'),
   tool('overlap', 'Entities a and b share against a universe (artifact or dataset): shared, expected, fold, hypergeometric p; group_by tests each group of a.', { a: A, b: A, universe: A, on: S, group_by: S }, ['a', 'b', 'universe']),
   tool('standardize', 'Add a rescaled copy of a numeric column: zscore, minmax or percentile.', { artifact: A, column: S, method: { type: 'string', enum: ['zscore', 'minmax', 'percentile'] }, as: S }, ['artifact', 'column', 'method']),
   tool('explode', 'One row per item of a list cell; "key: number" items become <as>_key and <as>_value, "label (number)" <as>_label and <as>_value, others <as>_item.', { artifact: A, column: S, as: S }, ['artifact', 'column']),
   tool('skip', 'Nothing to do until a running agent returns.', { reason: S }, ['reason']),
-  tool('finish', 'Deliver the report from the data: tables and figures by id, findings as claims bound to their rows. Refused when a claim states a number its cells do not hold or a plan item is neither delivered nor in not_done.', FINISH_SCHEMA)
+  tool('finish', 'Deliver the report: tables and figures by id, findings as claims bound to their cells, limitations, not_done.', FINISH_SCHEMA)
 ];
-const TABLE_TOOLS = new Set(['union', 'intersect', 'difference', 'concat', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'classify', 'compute', 'fill_missing', 'pivot', 'chart', 'correlate', 'overlap', 'standardize', 'explode']);
+const TABLE_TOOLS = new Set(['combine', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'classify', 'compute', 'fill_missing', 'pivot', 'chart', 'correlate', 'overlap', 'standardize', 'explode']);
 const SYNC_TOOLS = new Set(['plan', 'note', 'open', 'skip', 'finish']);
 
 function systemPrompt(db, datasets, agentNames) {
   const entity = db.entity;
-  return `You run a study over the ${db.database} for a scientist. Agents and operations produce every value; you choose what to ask and combine the results. Deep Research finds the ${entity}s matching a description (a cohort). Investigator, given a list (genes=[names] or from=<artifact id>) and a complete question (fields, row filters, units), finds the tables that hold the answer and fetches the raw records for the whole list at once; it returns tables. The operations compute over saved tables. Every result is an artifact you address by id (a1, a2, …).
+  const search = agentNames.includes('deep_research_hpa') ? 'deep_research_hpa' : 'the search agent';
+  return `You run a study over the ${db.database} for a scientist. Agents and operations produce every value; you choose what to ask and how to combine the results. ${search} finds the ${entity}s matching a description (a cohort). investigator_hpa takes a list (genes=[names], gene=<name> or from=<artifact id>) and a complete question (fields, row filters, units), finds the tables that hold the answer and fetches the raw records for the whole list at once, returning tables. The operations compute over saved tables. Every result is an artifact with an id (a1, a2, …); the artifacts are the evidence of the study, and the report cites them by id.
 
-The desk in the message is your whole working set and stays in front of you every turn: the plan, tables you opened, every artifact with its columns and its rows (whole, with row indices, up to ${desk.WHOLE_ROWS} rows; larger ones show two rows and what each column holds), what is running, your history and notes. open shows the rows of a large artifact when a decision needs them; do not open what the desk already shows.
+The desk in the message is your whole working set and stays in front of you every turn: the plan, the tables you opened, every artifact with its columns and rows (whole with row indices up to ${desk.WHOLE_ROWS} rows; larger ones show two rows and what each column holds), what is running, your history and your notes. open shows more rows of a large artifact, or puts a dataset on the desk with its columns and values.
 
-How to work:
-1. plan the deliverables first, one item per requested table, figure of a given type, cohort or interpretation and nothing that was not asked for, and start independent work in the same turn.
-2. Delegate cohorts to ${agentNames.includes('deep_research_hpa') ? 'deep_research_hpa' : 'the search agent'} and measurements to investigator_hpa with genes or from. Use its tables directly; do not reread them to copy values.
-3. Compute with the operations on artifact ids. Chain dependent steps in one run call with @id references (pivot then heatmap; filter, rank, chart). Independent calls go in the same turn. A dataset name can stand in for an artifact in an operation.
-4. finish binds the report to the data: tables and figures by id, findings as claims each bound to the rows and columns they rest on. The report prints those cells beside each claim. A claim stating a number its cells do not hold is refused; put such numbers in a computed artifact and cite it.
-The saved artifacts are the evidence of this study and the report cites them by id: a request to cite sources or evidence is met by finish itself, not by looking for references elsewhere. Keep units, zeros, blanks, repeated rows and ties as recorded. A missing record is absence from this source, not biological absence; a recorded zero is a measurement. Limitations state what the evidence cannot establish; they do not explain how a source measured or what a value means beyond what its column says. Transform only when asked. When a deliverable cannot be made, list it in not_done with the reason instead of approximating.
+How a study goes:
+1. plan lists the deliverables, one item per requested table, figure of a given type, cohort or interpretation; independent work starts in the same turn.
+2. Cohorts come from ${search}, records from investigator_hpa; their tables are used as they are.
+3. Operations compute on artifact ids, and a dataset name can stand in for an artifact. Dependent steps chain in one run call with @id references (pivot then heatmap; filter, rank, chart); independent calls go in the same turn.
+4. finish delivers the report from the data: tables and figures by id, and findings as claims, each bound to the rows and columns it rests on. The report prints those cells beside the claim, so every number a claim states is among them or was computed into an artifact the claim cites. Limitations state what the evidence cannot establish, in words. A plan item that cannot be delivered goes in not_done with the reason.
+Values are reported as recorded: units, zeros, blanks, repeated rows and ties. A missing record is absence from this source.
 
 DATASETS ON DISK (open one for its columns and values; investigator_hpa reads them for a supplied list)
 ${datasets.join(', ')}`;
@@ -438,7 +436,10 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     };
     let out;
     switch (toolName) {
-      case 'union': case 'intersect': case 'difference': case 'concat': out = { rows: tools.setOp(toolName, await rowsOf('a', 'b'), await rowsOf('b', 'a'), args.on || null) }; break;
+      case 'combine': {
+        if (!['union', 'intersect', 'difference', 'concat'].includes(args.how)) throw new Error('combine: how is union, intersect, difference or concat');
+        out = { rows: tools.setOp(args.how, await rowsOf('a', 'b'), await rowsOf('b', 'a'), args.on || null) }; break;
+      }
       case 'join': out = executeTableOperation(toolName, args, { a: await rowsOf('a', 'b'), b: await rowsOf('b', 'a') }); break;
       case 'filter': { const rows = await rowsOf('artifact'); out = executeTableOperation(toolName, streamed ? { ...args, where: [] } : args, { artifact: rows }); break; }
       case 'select': case 'classify': case 'compute': case 'fill_missing': case 'correlate': case 'rank': out = executeTableOperation(toolName, args, { artifact: await rowsOf('artifact') }); break;
@@ -462,7 +463,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
   const made = new Map();   // fingerprint of an operation → the artifact it made
   async function runTableTool(toolName, args) {
     args = { ...args };
-    if (['union', 'intersect', 'difference', 'concat', 'join', 'overlap'].includes(toolName) && args.a === undefined && args.artifact !== undefined) args = { ...args, a: args.artifact };
+    if (['combine', 'join', 'overlap'].includes(toolName) && args.a === undefined && args.artifact !== undefined) args = { ...args, a: args.artifact };
     // The same operation on the same inputs is the same artifact; it is not made twice.
     const key = JSON.stringify([toolName, args]);
     if (made.has(key) && state.byId.has(made.get(key))) {

@@ -24,7 +24,7 @@ test('invalid graphs and non-data capabilities fail before any operation execute
   let calls = 0;
   const context = { specifications, concurrency: 2, execute: () => { calls++; } };
   await assert.rejects(() => executeBatch({ steps: [step('one', '@two'), step('two', '@one')], outputs: ['two'] }, context), /cycle/);
-  await assert.rejects(() => executeBatch({ steps: [{ id: 'agent', tool: 'aso_hpa', args: '{}' }], outputs: ['agent'] }, context), /not a batch operation/);
+  await assert.rejects(() => executeBatch({ steps: [{ id: 'agent', tool: 'aso_hpa', args: '{}' }], outputs: ['agent'] }, context), /aso_hpa is not a table operation, so it cannot be a run step \(steps hold /);
   await assert.rejects(() => executeBatch({ steps: [step('one', 'source'), { id: 'two', tool: 'compute', args: '{"artifact":9}' }], outputs: ['one'] }, context), /must be string/);
   assert.equal(calls, 0);
 });

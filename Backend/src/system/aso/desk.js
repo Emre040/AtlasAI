@@ -89,7 +89,10 @@ function tableCard({ name, title, description, access, columns, profile, sample,
   const detailed = whole ? columns : columns.filter(c => asked.has(c));
   if (!whole) lines.push(`  columns: ${columns.join(' | ')}`);
   for (const column of detailed) lines.push(`  ${profiled.has(column) ? columnLine(profiled.get(column), asked.has(column) || !wide ? VOCAB_MAX : CARD_VOCAB) : column}`);
-  if (sample?.length) lines.push(`  rows${whole ? '' : ` (${detailed.join(' | ')})`}: ${sample.map(r => rowLine(r, detailed)).join(' ; ')}`);
+  // Sample rows of a wide table show its first columns; the column lines above show the rest.
+  const rowColumns = whole && wide ? columns.slice(0, ROW_COLUMNS) : detailed;
+  const more = rowColumns.length < detailed.length ? ` | … +${detailed.length - rowColumns.length} columns` : '';
+  if (sample?.length) lines.push(`  rows${whole && !wide ? '' : ` (${rowColumns.join(' | ')})`}: ${sample.map(r => rowLine(r, rowColumns) + more).join(' ; ')}`);
   return lines.join('\n');
 }
 

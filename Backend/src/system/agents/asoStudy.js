@@ -17,7 +17,7 @@ const fs = require('node:fs/promises');
 const { inference, getActiveModel } = require('../../inference/gateway');
 const { platformConfig } = require('../../policy/config');
 const tools = require('../aso/studyTools');
-const { TABLE_OPERATIONS, executeTableOperation, THEN_BY, withRowMask } = require('../aso/tableOperations');
+const { TABLE_OPERATIONS, executeTableOperation, THEN_BY } = require('../aso/tableOperations');
 const geneData = require('../../hpa/geneDataAdapter');
 const { createWorkspace, updateWorkspace } = require('../aso/workspaceStore');
 const { registerArtifact } = require('../aso/artifactStore');
@@ -258,7 +258,9 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
   const remember = text => state.history.push(`turn ${state.turn}: ${text}`);
 
   const catalog = (await geneData.catalog()).filter(e => e.key !== 'unreadable');
-  const agentSpecs = orchestrator.getToolSpecs().filter(t => t.function.name !== 'aso_hpa').map(t => {
+  // The study's agents are the ones that return evidence: a cohort or records. Agents that
+  // answer in prose about the database (definitions, membership) belong to the chat.
+  const agentSpecs = orchestrator.getToolSpecs().filter(t => !['aso_hpa', 'dictionary_expert_hpa', 'check_inclusion_hpa'].includes(t.function.name)).map(t => {
     const properties = { ...t.function.parameters.properties };
     delete properties.mode;
     t = { ...t, function: { ...t.function, parameters: { ...t.function.parameters, properties } } };
@@ -406,7 +408,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
         if (a.matrix) throw new Error(`${a.id} is a matrix; only a heatmap chart can take it`);
         if (!a.rows) throw new Error(`${a.id} has no rows`);
         for (const c of a.columns) inputColumns.add(c);
-        return withRowMask(tools.withColumns([...a.rows], a.columns), a.meta?.record_rows, a.meta?.row_kind);
+        return tools.withColumns([...a.rows], a.columns);
       }
       const entry = ref ? await geneData.entry(ref) : null;
       if (!entry || entry.key === 'unreadable') throw new Error(`nothing called "${ref || '(no name)'}" among the artifacts (${[...state.byId.keys()].join(', ') || 'none'}) or the datasets on disk`);
@@ -421,7 +423,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
         : await datasetRows(entry, { genes, where: toolName === 'filter' ? args.where : null, limit: parallel });
       streamed = toolName === 'filter' && !genes && !pinned && !['master', 'lookup', 'scan'].includes(entry.key);
       for (const c of ['gene', 'ensembl', ...entry.columns]) inputColumns.add(c);
-      return withRowMask(tools.withColumns(rows, [...inputColumns]), rows.map(() => true), 'source_record');
+      return tools.withColumns(rows, [...inputColumns]);
     };
     const wholeDataset = async key => {
       const ref = String(args[key] ?? '').trim();

@@ -45,10 +45,10 @@ const S = { type: 'string' };
 const N = { type: 'integer' };
 const tool = (name, description, properties = {}, required = []) => ({ name, description, parameters: { type: 'object', properties, required } });
 const STUDY_TOOLS = [
-  tool('plan', 'Record the deliverables the study owes, one item per requested table, figure (its chart type) or interpretation; gene_set for a cohort to find. Replaces the current plan.', { items: { type: 'array', items: { type: 'object', properties: { step: { type: 'string', description: 'The deliverable in words' }, kind: { type: 'string', enum: studyPlan.KINDS } }, required: ['step', 'kind'] } } }, ['items']),
-  tool('note', 'Keep a decision or an open question on the desk. replace overwrites note N; empty text with replace removes it.', { text: S, replace: N }, ['text']),
-  tool('open', 'Show rows of a large artifact (small ones are already whole on the desk with their row indices), or put a dataset on the desk (columns, the values each column takes, sample rows). rows and offset page through an artifact, columns narrow the view. The view stays on the desk.', { what: { type: 'string', description: 'artifact id or dataset name' }, rows: N, offset: N, columns: { type: 'array', items: S } }),
-  tool('run', 'Run dependent operations together: each step names a registered operation and its arguments; a later step refers to an earlier one with @id in an artifact argument. Returns the artifact of every step.', { steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
+  tool('plan', 'The deliverables the study owes: one item per requested table, figure (its chart type), cohort (gene_set) or interpretation. Replaces the plan.', { items: { type: 'array', items: { type: 'object', properties: { step: S, kind: { type: 'string', enum: studyPlan.KINDS } }, required: ['step', 'kind'] } } }, ['items']),
+  tool('note', 'Keep a decision or open question on the desk; replace overwrites note N.', { text: S, replace: N }, ['text']),
+  tool('open', 'Show rows of a large artifact (rows, offset page it; columns narrow it), or put a dataset on the desk with its columns, values and sample rows. Small artifacts are already whole on the desk.', { what: { type: 'string', description: 'artifact id or dataset name' }, rows: N, offset: N, columns: { type: 'array', items: S } }),
+  tool('run', 'Run dependent operations together; a step names an operation and its args, and refers to an earlier step as @id.', { steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
   tool('union', 'Rows in either table, one per entity.', { a: A, b: A, on: S }, ['a', 'b']),
   tool('intersect', 'Rows of a whose entity is in b.', { a: A, b: A, on: S }, ['a', 'b']),
   tool('difference', 'Rows of a whose entity is not in b.', { a: A, b: A, on: S }, ['a', 'b']),
@@ -57,19 +57,19 @@ const STUDY_TOOLS = [
   TABLE_OPERATIONS.get('filter'),
   TABLE_OPERATIONS.get('select'),
   TABLE_OPERATIONS.get('rank'),
-  tool('top_per_group', 'Keep the n highest (or lowest) rows per group; group_by defaults to the entity. Streams a whole dataset.', { artifact: A, group_by: S, by: S, n: N, order: { type: 'string', enum: ['desc', 'asc'] }, ties: { type: 'string', enum: ['include', 'truncate'] }, then_by: THEN_BY }, ['artifact', 'by']),
+  tool('top_per_group', 'The n highest (or lowest) rows of by per group; group_by defaults to the entity. Works on a whole dataset.', { artifact: A, group_by: S, by: S, n: N, order: { type: 'string', enum: ['desc', 'asc'] }, ties: { type: 'string', enum: ['include', 'truncate'] }, then_by: THEN_BY }, ['artifact', 'by']),
   TABLE_OPERATIONS.get('aggregate'),
   TABLE_OPERATIONS.get('classify'),
   TABLE_OPERATIONS.get('compute'),
   TABLE_OPERATIONS.get('fill_missing'),
-  tool('pivot', 'A matrix for a heatmap: one row per row value, one column per column value, the value column in the cells. Duplicate cells must be aggregated first.', { artifact: A, row: S, column: S, value: S }, ['artifact', 'column', 'value']),
-  tool('chart', 'Draw an artifact. Bar family: x the label column, y the value column, group for series (grouped_bar needs it). scatter/bubble: numeric x and y, label names the points, group colours them. heatmap takes a pivot matrix. Missing numeric values fail unless missing=omit.', { artifact: A, type: { type: 'string', enum: studyPlan.CHART_KINDS }, x: S, y: S, group: S, size: S, label: S, title: S, x_label: S, y_label: S, missing: { type: 'string', enum: ['error', 'omit'] } }, ['artifact', 'type']),
+  tool('pivot', 'A matrix for a heatmap: rows from row, columns from column, cells from value (aggregate duplicates first).', { artifact: A, row: S, column: S, value: S }, ['artifact', 'column', 'value']),
+  tool('chart', 'Draw an artifact. Bar family: x labels, y values, group for series (grouped_bar needs it). scatter/bubble: numeric x and y, label names points, group colours them. heatmap takes a pivot. Missing numbers fail unless missing=omit.', { artifact: A, type: { type: 'string', enum: studyPlan.CHART_KINDS }, x: S, y: S, group: S, size: S, label: S, title: S, x_label: S, y_label: S, missing: { type: 'string', enum: ['error', 'omit'] } }, ['artifact', 'type']),
   TABLE_OPERATIONS.get('correlate'),
-  tool('overlap', 'Entities two tables share, against a universe (an artifact or a dataset): shared, expected, fold and a hypergeometric p; group_by tests every group of a.', { a: A, b: A, universe: A, on: S, group_by: S }, ['a', 'b', 'universe']),
-  tool('standardize', 'Add a column with a numeric column rescaled: zscore, minmax or percentile.', { artifact: A, column: S, method: { type: 'string', enum: ['zscore', 'minmax', 'percentile'] }, as: S }, ['artifact', 'column', 'method']),
-  tool('explode', 'One row per item of a list cell: "key: number" items give <as>_key and <as>_value, "label (number)" gives <as>_label and <as>_value, plain items <as>_item.', { artifact: A, column: S, as: S }, ['artifact', 'column']),
+  tool('overlap', 'Entities a and b share against a universe (artifact or dataset): shared, expected, fold, hypergeometric p; group_by tests each group of a.', { a: A, b: A, universe: A, on: S, group_by: S }, ['a', 'b', 'universe']),
+  tool('standardize', 'Add a rescaled copy of a numeric column: zscore, minmax or percentile.', { artifact: A, column: S, method: { type: 'string', enum: ['zscore', 'minmax', 'percentile'] }, as: S }, ['artifact', 'column', 'method']),
+  tool('explode', 'One row per item of a list cell; "key: number" items become <as>_key and <as>_value, "label (number)" <as>_label and <as>_value, others <as>_item.', { artifact: A, column: S, as: S }, ['artifact', 'column']),
   tool('skip', 'Nothing to do until a running agent returns.', { reason: S }, ['reason']),
-  tool('finish', 'Deliver the report from the data: tables and figures by artifact id, findings as claims bound to the rows they rest on. Refused when a claim states a number its bound cells do not hold, or a plan item is neither delivered nor in not_done.', FINISH_SCHEMA)
+  tool('finish', 'Deliver the report from the data: tables and figures by id, findings as claims bound to their rows. Refused when a claim states a number its cells do not hold or a plan item is neither delivered nor in not_done.', FINISH_SCHEMA)
 ];
 const TABLE_TOOLS = new Set(['union', 'intersect', 'difference', 'concat', 'join', 'filter', 'select', 'rank', 'top_per_group', 'aggregate', 'classify', 'compute', 'fill_missing', 'pivot', 'chart', 'correlate', 'overlap', 'standardize', 'explode']);
 const SYNC_TOOLS = new Set(['plan', 'note', 'open', 'skip', 'finish']);
@@ -100,6 +100,29 @@ function geneKeys(entry, row) {
   const column = entry.geneColumn || entry.columns.find(c => isEnsembl(row[c]));
   const name = row['Gene name'] ?? (isEnsembl(row.Gene) ? null : row.Gene) ?? null;
   return { gene: name || null, ensembl: column ? row[column] || null : null };
+}
+
+// The dataset columns that hold the entity keys, as geneKeys reads them, lower-cased.
+function keyColumns(entry) {
+  const names = ['gene', 'ensembl'];
+  if (entry.key === 'name') names.push(entry.columns[0], entry.columns[1]);
+  else if (entry.key === 'ensembl') names.push(entry.columns[0]);
+  else if (entry.geneColumn) names.push(entry.geneColumn);
+  for (const c of entry.columns) if (/^gene( name)?$/i.test(c)) names.push(c);
+  return new Set(names.filter(Boolean).map(c => String(c).toLowerCase()));
+}
+
+// The entities a filter pins with = or in on a key column, so they can be read by index
+// instead of streaming the whole table; null when no clause pins the key.
+function pinnedEntities(entry, where) {
+  const keys = keyColumns(entry);
+  for (const clause of Array.isArray(where) ? where : []) {
+    if (!clause || !['=', 'in'].includes(clause.op) || !keys.has(String(clause.column || '').toLowerCase())) continue;
+    const listed = clause.op === 'in' ? tools.inList(clause.value) : clause.value;
+    const values = Array.isArray(listed) ? listed : [listed];
+    if (values.every(v => typeof v === 'string' || typeof v === 'number')) return values.map(String);
+  }
+  return null;
 }
 
 async function* datasetStream(entry) {
@@ -240,7 +263,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     delete properties.mode;
     t = { ...t, function: { ...t.function, parameters: { ...t.function.parameters, properties } } };
     if (t.function.name !== 'investigator_hpa') return t;
-    return { ...t, function: { ...t.function, description: `Raw records for a list of ${identity.entity}s: pass genes=[names] or from=<artifact id> and the complete question (which fields, which rows, units). It finds the tables and fetches every ${identity.entity} at once, returning tables. gene alone asks about one ${identity.entity}.`, parameters: { ...t.function.parameters, required: [], properties: {
+    return { ...t, function: { ...t.function, description: `Raw records for a list of ${identity.entity}s: pass genes=[names] or from=<artifact id> and the complete question (which fields, which rows, units). It finds the tables and fetches every ${identity.entity} at once, returning tables; gene=<name> for a single ${identity.entity}.`, parameters: { ...t.function.parameters, required: [], properties: {
       ...t.function.parameters.properties,
       genes: { type: 'array', items: S, description: `Supplied ${identity.entity} names` },
       from: { type: 'string', description: `Artifact id whose rows supply the ${identity.entity}s` }
@@ -307,10 +330,14 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
   });
 
   // An agent runs in the background through the orchestrator, exactly as a chat message would.
+  // The same question is asked once: an identical call points at the earlier job instead.
+  const agentJobs = new Map();
   function startAgent(toolName, args) {
     if (args.mode !== undefined && args.mode !== mode) throw new Error(`Delegated agents use the study data source: ${mode}`);
     const executionArgs = { ...args, mode };
     const inputs = [];
+    // One entity is a list of one: the investigator returns tables either way.
+    if (toolName === 'investigator_hpa' && args.gene !== undefined && args.genes === undefined && args.from === undefined) { executionArgs.genes = [String(args.gene)]; delete executionArgs.gene; }
     if (toolName === 'investigator_hpa' && args.from !== undefined) {
       if (args.gene !== undefined || args.genes !== undefined) throw new Error('Use one of gene, genes or from');
       const input = get(args.from);
@@ -322,8 +349,15 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
       executionArgs.genes = genes;
     }
     if (toolName === 'investigator_hpa' && args.gene === undefined && args.genes === undefined && args.from === undefined) throw new Error('investigator_hpa needs gene, genes or from');
+    const fingerprint = JSON.stringify([toolName, executionArgs]);
+    const earlier = agentJobs.get(fingerprint);
+    if (earlier) {
+      remember(earlier.made ? `${toolName}(${desk.argsLine(args, 140)}) was already asked as ${earlier.id}: its result is ${earlier.made.join(', ')}` : `${toolName}(${desk.argsLine(args, 140)}) is already running as ${earlier.id}`);
+      return false;
+    }
     const id = `t${++state.ids.t}`;
-    const job = { id, tool: toolName, args, startedAt: Date.now(), kind: 'agent' };
+    const job = { id, tool: toolName, args, startedAt: Date.now(), kind: 'agent', made: null };
+    agentJobs.set(fingerprint, job);
     state.running.set(id, job);
     state.toolCalls++;
     state.agentStarts = (state.agentStarts || 0) + 1;
@@ -347,15 +381,17 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
           const extra = toolName === 'deep_research_hpa' ? ` query: ${String(a.meta.query || '').slice(0, 160)}${a.meta.not_expressible?.length ? `; could not express: ${a.meta.not_expressible.join('; ')}` : ''}` : a.kind === 'answer' ? ` answer: ${String(a.rows[0]?.answer || '').slice(0, 200)}` : '';
           remember(`${id} ${toolName} done → ${a.id} (${a.size})${extra}`);
         }
+        job.made = made.map(a => a.id);
         for (const a of made) await log('tool.done', { id, tool: toolName, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);
       })
       .catch(async err => {
+        agentJobs.delete(fingerprint);
         state.failed++;
         remember(`${id} ${toolName} failed: ${err.message}${err.details ? ` ${JSON.stringify(err.details)}` : ''}`);
         await log('tool.failed', { id, tool: toolName, kind: 'agent', error: err.message, details: err.details, ms: Date.now() - job.startedAt }, id);
       })
       .finally(() => { state.running.delete(id); wakeUp(); });
-    return { job: id };
+    return true;
   }
 
   // One table operation: inputs resolved (artifacts, datasets, streams), the operation applied.
@@ -378,8 +414,12 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
       const otherRef = other ? String(args[other] ?? '').trim() : '';
       if (otherRef && state.byId.has(otherRef)) inputRefs.add(otherRef);
       const genes = otherRef && state.byId.has(otherRef) ? get(otherRef).rows || null : null;
-      const rows = await datasetRows(entry, { genes, where: toolName === 'filter' ? args.where : null, limit: parallel });
-      streamed = toolName === 'filter' && !genes && !['master', 'lookup', 'scan'].includes(entry.key);
+      // A filter that pins the entity key reads those entities by index; the rest of its clauses apply in memory.
+      const pinned = toolName === 'filter' && !genes && ['ensembl', 'name'].includes(entry.key) ? pinnedEntities(entry, args.where) : null;
+      const rows = pinned
+        ? await datasetRows(entry, { genes: (await geneData.resolveGenes(pinned)).filter(Boolean), limit: parallel })
+        : await datasetRows(entry, { genes, where: toolName === 'filter' ? args.where : null, limit: parallel });
+      streamed = toolName === 'filter' && !genes && !pinned && !['master', 'lookup', 'scan'].includes(entry.key);
       for (const c of ['gene', 'ensembl', ...entry.columns]) inputColumns.add(c);
       return withRowMask(tools.withColumns(rows, [...inputColumns]), rows.map(() => true), 'source_record');
     };
@@ -471,11 +511,30 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     }
     const entry = await geneData.entry(what);
     if (!entry || entry.key === 'unreadable') throw new Error(`nothing called ${JSON.stringify(what)} among the artifacts or the datasets on disk`);
-    if (state.opened.has(entry.file)) { remember(`${entry.file} is already on the desk`); return; }
+    // Columns asked for are detailed on the card and the rest are named; opened without columns,
+    // the table is detailed whole. Later opens add columns to the card.
+    const wanted = Array.isArray(args.columns) && args.columns.length ? args.columns.map(c => { const found = entry.columns.find(x => x === c) || entry.columns.find(x => x.toLowerCase() === String(c).toLowerCase()); if (!found) throw new Error(`${entry.file} has no column ${JSON.stringify(c)}; its columns: ${entry.columns.join(', ')}`); return found; }) : null;
+    const opened = state.opened.get(entry.file);
+    if (opened) {
+      if (!opened.focus) { remember(`${entry.file} is already on the desk whole`); return; }
+      const added = (wanted || entry.columns).filter(c => !opened.focus.includes(c));
+      if (!added.length) { remember(`${entry.file} is already on the desk with those columns`); return; }
+      opened.focus = wanted ? [...opened.focus, ...added] : null;
+      remember(wanted ? `${entry.file}: added ${added.join(', ')} to its card` : `${entry.file}: its card now details every column`);
+      return;
+    }
     const [profiled, sample] = await Promise.all([geneData.profile(entry), geneData.sample(entry, 3)]);
-    state.opened.set(entry.file, desk.tableCard({ name: entry.file, title: entry.title, description: entry.description, access: geneData.access(entry), columns: entry.columns, profile: profiled.columns, sample, scanned: profiled.rows, capped: profiled.capped }));
-    remember(`opened ${entry.file} (on the desk)`);
+    state.opened.set(entry.file, { entry, profile: profiled.columns, sample, scanned: profiled.rows, capped: profiled.capped, focus: wanted });
+    remember(`opened ${entry.file} (on the desk${wanted ? `: ${wanted.join(', ')}` : ''})`);
   }
+  const openedCards = () => [...state.opened.values()].map(o => desk.tableCard({ name: o.entry.file, title: o.entry.title, description: o.entry.description, access: geneData.access(o.entry), columns: o.entry.columns, profile: o.profile, sample: o.sample, scanned: o.scanned, capped: o.capped, focus: o.focus }));
+  // Column names an operation's arguments mention, shown first on its card.
+  const argColumns = a => {
+    const names = new Set(a.columns || []), found = [];
+    const walk = v => { if (typeof v === 'string') { if (names.has(v) && !found.includes(v)) found.push(v); } else if (Array.isArray(v)) v.forEach(walk); else if (v && typeof v === 'object') Object.values(v).forEach(walk); };
+    walk(a.args || {});
+    return found;
+  };
 
   // What a large table's columns hold, computed once per artifact.
   const profileOf = a => {
@@ -484,17 +543,21 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
   };
   function deskText(turn) {
     const running = [...state.running.values()].map(j => `${j.id} ${j.tool} "${String(j.args.goal || j.args.question || j.args.gene || '').slice(0, 100)}" ${Math.round((Date.now() - j.startedAt) / 1000)} s`).join('\n') || '(nothing running)';
-    // An artifact that a later operation read is filed under the operation that read it.
+    // The frontier (artifacts nothing has read yet) shows whole or sampled; a consumed table folds
+    // to one line unless it is small enough that folding would cost a turn to reopen; consumed
+    // tables that no frontier artifact read directly are filed together on one line.
     const usedBy = new Map();
     for (const a of state.artifacts) for (const input of a.inputs || []) { if (!usedBy.has(input)) usedBy.set(input, []); usedBy.get(input).push(a.id); }
-    // A consumed table folds unless it is small enough that folding would cost a turn to reopen.
-    const cards = state.artifacts.map(a => desk.resultCard({ id: a.id, label: a.kind === 'answer' || a.kind === 'note' ? a.label : '', origin: origin(a), rows: a.rows || [], columns: a.columns, matrix: a.matrix, figure: a.figure, images: a.images, text: a.text, folded: usedBy.has(a.id) && (a.rows ? a.rows.length : 0) > desk.SMALL_ROWS ? usedBy.get(a.id) : null, profile: usedBy.has(a.id) ? null : profileOf(a) }));
+    const near = new Set(state.artifacts.filter(a => !usedBy.has(a.id)).flatMap(a => a.inputs || []));
+    const filed = state.artifacts.filter(a => usedBy.has(a.id) && !near.has(a.id) && (a.rows ? a.rows.length : 0) > desk.SMALL_ROWS);
+    const cards = state.artifacts.filter(a => !filed.includes(a)).map(a => desk.resultCard({ id: a.id, label: a.kind === 'answer' || a.kind === 'note' ? a.label : '', origin: origin(a), rows: a.rows || [], columns: a.columns, matrix: a.matrix, figure: a.figure, images: a.images, text: a.text, folded: usedBy.has(a.id) && (a.rows ? a.rows.length : 0) > desk.SMALL_ROWS ? usedBy.get(a.id) : null, profile: usedBy.has(a.id) ? null : profileOf(a), first: [...identity.keys, ...argColumns(a)] }));
+    if (filed.length) cards.push(`filed (read by later operations; open by id): ${filed.map(a => `${a.id} (${desk.count(a.rows.length)} rows) ← ${a.tool}`).join('; ')}`);
     // A view is something the model asked to see; it stays on the desk for the whole study.
     const views = [...state.views.values()].map(v => v.text);
     const sections = [
       desk.section('STUDY', goal),
       desk.section('PLAN', studyPlan.planText(state.plan)),
-      ...(state.opened.size ? [desk.section('TABLES OPENED', [...state.opened.values()].join('\n'))] : []),
+      ...(state.opened.size ? [desk.section('TABLES OPENED', openedCards().join('\n'))] : []),
       desk.section('ARTIFACTS', cards.join('\n') || '(none yet)'),
       ...(views.length ? [desk.section('VIEWS', views.join('\n'))] : []),
       desk.section('RUNNING', running),
@@ -591,7 +654,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
           return;
         }
         if (TABLE_TOOLS.has(call.name)) { await runTableTool(call.name, call.args); sync++; return; }
-        if (agentNames.has(call.name)) { startAgent(call.name, call.args); started++; return; }
+        if (agentNames.has(call.name)) { if (startAgent(call.name, call.args)) started++; else sync++; return; }
         throw new Error(`no tool ${call.name}`);
       }
       const guarded = async call => {

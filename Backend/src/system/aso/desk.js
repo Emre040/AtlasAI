@@ -15,7 +15,8 @@ const SAMPLE_ROWS = 2;    // rows shown under a large result card
 const WHOLE_ROWS = 60;    // a result this small is shown whole: cheaper than a turn spent opening it
 const SMALL_ROWS = 12;    // a result this small stays whole even after later operations consumed it
 const DIGITS = 6;         // significant digits a number is displayed with; artifacts keep full precision
-const VOCAB_MAX = 60;     // distinct values listed in full for a categorical column
+const VOCAB_MAX = 60;     // distinct values listed in full for a categorical column of a source table
+const CARD_VOCAB = 12;    // distinct values listed in full on a result card
 const EXAMPLES = 6;       // examples listed for a column with more values than that
 const HISTORY_MAX = 40;   // history lines kept on the desk before the oldest are folded
 
@@ -62,31 +63,37 @@ function argsLine(args, max = 220) {
 
 const count = n => Number(n).toLocaleString('en-US');
 
-// One line per column from a profile: what kind of values it holds and which ones.
-function columnLine(c) {
+// One line per column from a profile: what kind of values it holds and which ones. A source
+// table lists a categorical column's values in full (spelling matters for filters); a result card
+// lists a few, since its rows are on the desk.
+function columnLine(c, vocab = VOCAB_MAX) {
   const blank = c.blank_pct ? `; ${c.blank_pct}% blank` : '';
   if (c.kind === 'empty') return `${c.column}: no values recorded`;
   if (c.kind === 'number') return `${c.column}: number ${c.min === c.max ? count(c.min) : `${count(c.min)} to ${count(c.max)}`}${blank}${c.distinct === '1000+' ? '' : `; ${c.distinct} distinct`}`;
-  const values = Array.isArray(c.observed_values) && c.observed_values.length <= VOCAB_MAX ? c.observed_values : null;
+  const values = Array.isArray(c.observed_values) && c.observed_values.length <= vocab ? c.observed_values : null;
   if (values) return `${c.column}: ${values.length === 1 ? 'always' : `${values.length} values:`} ${values.map(v => v.length > CELL ? `${v.slice(0, CELL - 1)}…` : v).join(' | ')}${blank}${c.list ? `; ${c.list}` : ''}`;
-  const examples = (c.full_examples || c.examples || []).slice(0, EXAMPLES).map(v => v.length > CELL ? `${v.slice(0, CELL - 1)}…` : v);
+  const examples = (c.full_examples || c.examples || []).slice(0, vocab === VOCAB_MAX ? EXAMPLES : 3).map(v => v.length > CELL ? `${v.slice(0, CELL - 1)}…` : v);
   return `${c.column}: text, ${c.distinct} distinct${examples.length ? ` (e.g. ${examples.join(' | ')})` : ''}${blank}${c.list ? `; ${c.list}` : ''}`;
 }
 
-// A source table as a card: what it is, what its columns hold, how a few rows look.
-function tableCard({ name, title, description, access, columns, profile, sample, scanned, capped }) {
+// A source table as a card: what it is, what its columns hold, how a few rows look. Opened
+// for particular columns, the card details those and names the rest, so a wide table costs
+// what was asked of it.
+function tableCard({ name, title, description, access, columns, profile, sample, scanned, capped, focus = null }) {
   const head = `${name} — ${title || name}${description ? `. ${description}` : ''}${access ? ` [${access}]` : ''}; ${columns.length} columns${scanned ? ` (values from ${capped ? 'the first ' : ''}${count(scanned)} rows)` : ''}`;
   const lines = [head];
   const profiled = new Map((profile || []).map(c => [c.column, c]));
-  for (const column of columns) lines.push(`  ${profiled.has(column) ? columnLine(profiled.get(column)) : column}`);
-  if (sample?.length) lines.push(`  rows: ${sample.map(r => rowLine(r, columns)).join(' ; ')}`);
+  const detailed = focus ? columns.filter(c => focus.includes(c)) : columns;
+  if (focus) lines.push(`  columns: ${columns.join(' | ')}`);
+  for (const column of detailed) lines.push(`  ${profiled.has(column) ? columnLine(profiled.get(column)) : column}`);
+  if (sample?.length) lines.push(`  rows${focus ? ` (${detailed.join(' | ')})` : ''}: ${sample.map(r => rowLine(r, detailed)).join(' ; ')}`);
   return lines.join('\n');
 }
 
 // A produced result as a card: id, what made it, its size, its columns and two rows.
 const NOTE_CHARS = 600;   // characters of a text result shown on its card
 
-function resultCard({ id, label, origin, rows, columns, matrix, figure, images, error, text, folded = null, profile = null }) {
+function resultCard({ id, label, origin, rows, columns, matrix, figure, images, error, text, folded = null, profile = null, first = [] }) {
   if (text && !rows?.length && !matrix && !figure) {
     const body = String(text).replace(/\s+/g, ' ').trim();
     return `${id} note${label ? ` "${label}"` : ''} ← ${origin}\n  ${body.length > NOTE_CHARS ? `${body.slice(0, NOTE_CHARS - 1)}… (open ${id} for the rest)` : body}`;
@@ -103,9 +110,15 @@ function resultCard({ id, label, origin, rows, columns, matrix, figure, images, 
   if (folded) return `${head} [used by ${folded.join(', ')}; open ${id} for its rows]`;
   const whole = rows.length <= WHOLE_ROWS;
   const lines = [head];
-  // A large table shows what its columns hold, so the model need not page through it to learn the shape.
-  if (!whole && profile) for (const c of profile) if (c.kind !== 'empty' && (c.kind === 'number' || c.observed_values || c.blank_pct)) lines.push(`  ${columnLine(c)}`);
-  lines.push(...sampleLines(rows, columns, whole ? rows.length : SAMPLE_ROWS).map((l, i) => `  ${whole ? `${i}: ` : ''}${l}`));
+  // Rows show the entity keys and the columns the operation named first, then the rest.
+  const leading = first.filter(c => columns.includes(c));
+  const order = [...leading, ...columns.filter(c => !leading.includes(c))];
+  // A large table says what the columns its rows show hold, so the model need not page through it.
+  if (!whole && profile) {
+    const shownColumns = new Set(order.slice(0, ROW_COLUMNS));
+    for (const c of profile) if (shownColumns.has(c.column) && c.kind !== 'empty' && (c.kind === 'number' || c.observed_values || c.blank_pct)) lines.push(`  ${columnLine(c, CARD_VOCAB)}`);
+  }
+  lines.push(...sampleLines(rows, order, whole ? rows.length : SAMPLE_ROWS).map((l, i) => `  ${whole ? `${i}: ` : ''}${l}`));
   if (!whole) lines.push(`  … ${count(rows.length - SAMPLE_ROWS)} more rows (open ${id} to see them)`);
   return lines.join('\n');
 }

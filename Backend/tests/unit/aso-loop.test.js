@@ -117,3 +117,34 @@ test('finish while an agent runs is refused and the loop waits for the agent; a 
   assert.match(requests[2].messages[1].content, /turn 2: filter\(artifact=a1, where=\[\{"column":"expression","op":">","value":1\}\]\) failed: filter: no column named "expression" \(columns: gene, ensembl, Tissue, nTPM, source_rows, source_status\)/);
   assert.equal(result.failed, 1, 'the failed filter; a refused finish is feedback, not a failure');
 });
+
+test('an identical agent call is answered by the earlier job, and one gene is investigated as a list of one', async t => {
+  const { run, requests, agentCalls } = await study(t, [
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', { gene: 'EGFR', question: 'nTPM' })),
+    response(call('investigator_hpa', { gene: 'EGFR', question: 'nTPM' })),
+    response(call('finish', { tables: [{ artifact: 'a1' }] }))
+  ]);
+  const result = await run({});
+  assert.equal(result.outcome, 'completed', result.summary);
+  assert.deepEqual(agentCalls.map(c => c.args.genes), [['EGFR']], 'asked once, as a list');
+  assert.equal(agentCalls[0].args.gene, undefined);
+  assert.equal(result.agents, 1);
+  assert.match(requests[2].messages[1].content, /turn 2: investigator_hpa\(gene=EGFR, question=nTPM\) was already asked as t1: its result is a1/);
+});
+
+test('a dataset opened for columns is detailed for those; a filter pinning the entity key reads it by index', async t => {
+  const { run, requests } = await study(t, [
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('open', { what: 'rna_tissue_consensus.tsv', columns: ['nTPM'] })),
+    response(call('open', { what: 'rna_tissue_consensus.tsv', columns: ['Tissue'] }), call('filter', { artifact: 'rna_tissue_consensus.tsv', where: [{ column: 'Gene name', op: '=', value: 'ERBB2' }, { column: 'Tissue', op: '=', value: 'lung' }] })),
+    response(call('finish', { tables: [{ artifact: 'a1' }] }))
+  ]);
+  const result = await run({});
+  assert.equal(result.outcome, 'completed', result.summary);
+  const desk2 = requests[1].messages[1].content;
+  assert.match(desk2, /TABLES OPENED\nrna_tissue_consensus\.tsv — Consensus tissue RNA\. Consensus nTPM per tissue \[rows per gene\]; 4 columns \(values from 6 rows\)\n  columns: Gene \| Gene name \| Tissue \| nTPM\n  nTPM: number 0 to 34\.1; 17% blank; 5 distinct\n  rows \(nTPM\): 32\.2 ; 14\.1/);
+  assert.match(desk2, /turn 1: opened rna_tissue_consensus\.tsv \(on the desk: nTPM\)/);
+  const desk3 = requests[2].messages[1].content;
+  assert.match(desk3, /  columns: Gene \| Gene name \| Tissue \| nTPM\n  Tissue: 3 values: liver \| lung \| heart\n  nTPM: number/, 'a later open adds columns to the card');
+  assert.match(desk3, /turn 2: rna_tissue_consensus\.tsv: added Tissue to its card/);
+  assert.match(desk3, /a1 \(1 rows\) ← filter t\d+ of rna_tissue_consensus\.tsv: [^\n]*\n  0: ERBB2 \| ENSG2 \| ERBB2 \| lung \| ENSG2 \| 34\.1/, 'the stream stub holds only EGFR rows, so ERBB2 came through the index; keys and the filtered columns lead the row');
+});

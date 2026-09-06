@@ -14,6 +14,14 @@ const { SCALAR_SCHEMA } = require('./valueSchemas');
 const UNARY_OPS = ['is_missing', 'is_present', 'is_numeric', 'is_non_numeric'];
 const OPS = ['>', '>=', '<', '<=', '=', '!=', 'contains', 'in', ...UNARY_OPS];
 
+// The list an in clause names: an array, a JSON list, or values separated by | or commas.
+function inList(value) {
+  if (typeof value !== 'string') return value;
+  const text = value.trim();
+  if (text.startsWith('[')) { try { return JSON.parse(text); } catch { /* not JSON: a plain list */ } }
+  return text.split(/\s*[|,]\s*/).filter(Boolean);
+}
+
 function isMissing(v) { return v === null || v === undefined || (typeof v === 'string' && (!v.trim() || v.trim().toUpperCase() === 'NA')); }
 
 // A number from a cell; an empty cell, NA or text is null, never zero.
@@ -67,12 +75,7 @@ function wherePredicate(columns, where = []) {
     const otherName = w.column_b ?? w.other ?? w.versus ?? w.against ?? null;
     const columnB = otherName ? (columns.find(c => c === otherName) || columns.find(c => lower(c) === lower(otherName)) || null) : null;
     if (otherName && !columnB) throw new Error(`filter: no column named "${otherName}" (columns: ${columns.slice(0, 30).join(', ')})`);
-    let value = w.value;
-    if (op === 'in' && typeof value === 'string') {
-      const text = value.trim();
-      if (text.startsWith('[')) { try { value = JSON.parse(text); } catch { value = text; } }
-      if (typeof value === 'string') value = value.split(/\s*[|,]\s*/).filter(Boolean);
-    }
+    const value = op === 'in' ? inList(w.value) : w.value;
     clauses.push({ column, op, value, columnB });
   }
   return r => clauses.every(({ column, op, value: fixed, columnB }) => {
@@ -1058,4 +1061,4 @@ async function measure(rows, { table, value_column, entity_column, entity, as, a
   return out;
 }
 
-module.exports = { aggregateMany, fillMissing, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, withColumns, findColumn, keyOf, num, isMissing };
+module.exports = { aggregateMany, fillMissing, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, inList, applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, withColumns, findColumn, keyOf, num, isMissing };

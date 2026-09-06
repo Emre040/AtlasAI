@@ -60,3 +60,11 @@ test('a claim may bind cells from several tables through evidence, and the repor
   assert.match(refused[0], /23\.2, not among the cells it is bound to \(a1 rows 0 columns nTPM\): 23\.2 is at a5 row 0 mean/);
   assert.match(reportIssues({ claims: [{ text: 'no binding' }] }, s)[0], /needs artifact and rows, or evidence/);
 });
+
+test('a number an artifact or any artifact it was made from was made with is part of its evidence', () => {
+  const a6 = { id: 'a6', kind: 'data', label: 'positive', rows: [{ gene: 'EGFR', nTPM: 32.2 }], columns: ['gene', 'nTPM'], tool: 'filter', args: { artifact: 'a1', where: [{ column: 'nTPM', op: '>', value: 10 }] }, inputs: ['a1'] };
+  const a7 = { id: 'a7', kind: 'data', label: 'ranked', rows: [{ gene: 'EGFR', nTPM: 32.2, rank: 1 }], columns: ['gene', 'nTPM', 'rank'], tool: 'rank', args: { artifact: 'a6', by: 'nTPM' }, inputs: ['a6'] };
+  const s = { artifacts: [...state.artifacts, a6, a7], byId: new Map([...state.byId, ['a6', a6], ['a7', a7]]), plan: state.plan };
+  assert.deepEqual(reportIssues({ claims: [{ text: 'EGFR is the only gene above 10 nTPM, at 32.2', artifact: 'a7', rows: [0], columns: ['nTPM'] }] }, s), []);
+  assert.match(reportIssues({ claims: [{ text: 'EGFR is above 15 nTPM', artifact: 'a7', rows: [0], columns: ['nTPM'] }] }, s)[0], /states 15/);
+});

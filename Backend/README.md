@@ -243,6 +243,11 @@ headers are ignored.
 Redis or cluster dependency. Starting, reloading, or deploying it is a separate
 operator action.
 
+A frontend dev server that talks to the production backend runs over HTTPS on
+port 47831 (`HTTPS=true PORT=47831 npm start` in `Frontend/`), the one local
+origin listed in `HPA_CORS_ORIGINS`. The production cookies are `Secure` and
+cross-site, so a plain-HTTP or differently numbered local origin is refused.
+
 ## Backend auto-deployment
 
 The existing API origin owns `POST /deploy/github` and

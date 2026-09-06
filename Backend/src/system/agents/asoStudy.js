@@ -303,10 +303,12 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
         if (result?.bulk) {
           if (!result.tables?.length) throw new Error(result.error || result.note || 'Investigator returned no table');
           for (const table of result.tables) {
-            const a = await addArtifact({ kind: 'data', label: table.title || title, description: table.description || description, rows: table.rows, columns: table.columns, tool: toolName, args, inputs, toolId: id, meta: { lookups: [table.args], coverage: table.coverage, source_file: table.source_file, source_files: [table.source_file], status: result.status, hpa_version: result.hpa_version } });
+            const a = await addArtifact({ kind: 'data', label: table.title || title, description: table.description || description, rows: table.rows, columns: table.columns, tool: toolName, args, inputs, toolId: id, meta: { lookups: [table.args], points: executionArgs.points, coverage: table.coverage, source_file: table.source_file, source_files: [table.source_file], status: result.status, hpa_version: result.hpa_version } });
             made.push(a);
           }
-          remember(`${id} ${toolName} "${title}" done → ${made.map(a => `${a.id} "${a.label}" (${a.size})`).join(', ')}${result.note ? `. Investigator note: ${result.note}` : ''}${result.unresolved?.length ? `. Not in the release: ${result.unresolved.slice(0, 10).join(', ')}` : ''}`);
+          // A fetch that read the same table, fields, filter and points as an earlier artifact says so.
+          const sameAs = a => { const twin = state.artifacts.find(x => x !== a && x.tool === toolName && x.rows?.length === a.rows.length && JSON.stringify(x.meta?.lookups) === JSON.stringify(a.meta.lookups) && JSON.stringify(x.meta?.points) === JSON.stringify(a.meta.points)); return twin ? ` (the same rows as ${twin.id})` : ''; };
+          remember(`${id} ${toolName} "${title}" done → ${made.map(a => `${a.id} "${a.label}" (${a.size})${sameAs(a)}`).join(', ')}${result.note ? `. Investigator note: ${result.note}` : ''}${result.unresolved?.length ? `. Not in the release: ${result.unresolved.slice(0, 10).join(', ')}` : ''}`);
         } else {
           const a = await addArtifact({ ...agentArtifact(toolName, args, result), label: title, description, tool: toolName, args, inputs, toolId: id });
           made.push(a);

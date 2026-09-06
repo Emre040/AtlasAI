@@ -98,6 +98,11 @@ function tableCard({ name, title, description, access, columns, profile, sample,
   return lines.join('\n');
 }
 
+// Column names on one line: every name up to the header limit, else the first ones and a count.
+function namedColumns(columns) {
+  return columns.length <= WIDE_COLUMNS ? columns.join(', ') : `${columns.slice(0, ROW_COLUMNS + 4).join(', ')}, … +${columns.length - ROW_COLUMNS - 4} more columns`;
+}
+
 // A produced result as a line: id, title, size, columns, what made it; then its description.
 // A result of a few rows shows them whole, with indices; anything larger is opened on request.
 const NOTE_CHARS = 600;   // characters of a text result shown on its line
@@ -114,8 +119,7 @@ function resultLine({ id, title = '', description = '', origin, rows = [], colum
     const head2 = `${head} matrix ${matrix.row_labels.length} × ${matrix.col_labels.length} (rows: ${matrix.row_labels.slice(0, 6).map(cell).join(', ')}${matrix.row_labels.length > 6 ? ', …' : ''}; columns: ${matrix.col_labels.slice(0, 6).map(cell).join(', ')}${matrix.col_labels.length > 6 ? ', …' : ''}) ← ${origin}; a heatmap input`;
     return description ? `${head2}\n  ${description}` : head2;
   }
-  const named = columns.length <= WIDE_COLUMNS ? columns.join(', ') : `${columns.slice(0, ROW_COLUMNS + 4).join(', ')}, … +${columns.length - ROW_COLUMNS - 4} more columns`;
-  const lines = [`${head} (${count(rows.length)} rows: ${named}) ← ${origin}`];
+  const lines = [`${head} (${count(rows.length)} rows: ${namedColumns(columns)}) ← ${origin}`];
   if (description) lines.push(`  ${description}`);
   if (rows.length && rows.length <= INLINE_ROWS) lines.push(...sampleLines(rows, columns, rows.length).map((l, i) => `  ${i}: ${l}`));
   return lines.join('\n');
@@ -131,4 +135,4 @@ function historyText(lines) {
 
 function section(title, body) { return `${title}\n${body}`; }
 
-module.exports = { cell, shown, rowLine, sampleLines, argsLine, tableCard, columnLine, resultLine, historyText, section, count, INLINE_ROWS, WIDE_COLUMNS, ROW_COLUMNS };
+module.exports = { cell, shown, rowLine, sampleLines, argsLine, tableCard, columnLine, namedColumns, resultLine, historyText, section, count, INLINE_ROWS, WIDE_COLUMNS, ROW_COLUMNS };

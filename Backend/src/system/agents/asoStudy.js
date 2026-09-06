@@ -270,7 +270,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
         const input = get(args.from);
         if (!Array.isArray(input.rows) || !input.rows.length) throw new Error(`${args.from} has no rows to investigate`);
         const column = args.column ? (input.columns.find(c => c === args.column) || input.columns.find(c => c.toLowerCase() === String(args.column).toLowerCase())) : null;
-        if (args.column && !column) throw new Error(`${args.from} has no column ${JSON.stringify(args.column)}; its columns: ${input.columns.join(', ')}`);
+        if (args.column && !column) throw new Error(`${args.from} has no column ${JSON.stringify(args.column)}; its columns: ${desk.namedColumns(input.columns)}`);
         const values = column ? input.rows.map(row => row[column]) : input.rows.map(row => row[identity.keys[1]] || row[identity.keys[0]]);
         const points = [...new Set(values.filter(v => v !== null && v !== undefined && String(v).trim() !== '').map(String))];
         if (!points.length) throw new Error(`${args.from} has no ${column || identity.entity} values to investigate`);
@@ -420,7 +420,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     if (!named && state.wholeOnDesk?.has(a.id)) { remember(`${a.id} is whole on the desk (rows 0–${a.rows.length - 1})`); return; }
     const rows = Number.isSafeInteger(args.rows) && args.rows > 0 ? args.rows : VIEW_ROWS;
     const offset = Number.isSafeInteger(args.offset) && args.offset >= 0 ? args.offset : 0;
-    const columns = named ? args.columns.map(c => { const found = a.columns.find(x => x === c) || a.columns.find(x => x.toLowerCase() === String(c).toLowerCase()); if (!found) throw new Error(`${a.id} has no column ${JSON.stringify(c)}; its columns: ${a.columns.join(', ')}`); return found; }) : a.columns;
+    const columns = named ? args.columns.map(c => { const found = a.columns.find(x => x === c) || a.columns.find(x => x.toLowerCase() === String(c).toLowerCase()); if (!found) throw new Error(`${a.id} has no column ${JSON.stringify(c)}; its columns: ${desk.namedColumns(a.columns)}`); return found; }) : a.columns;
     // A view of a wide artifact shows its keys, the columns its operation named and the first
     // columns; naming columns shows any of them.
     const lead = [...identity.keys, ...argColumns(a)].filter(c => columns.includes(c));

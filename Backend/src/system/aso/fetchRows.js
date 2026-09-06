@@ -10,13 +10,14 @@
  */
 
 const { wherePredicate, withColumns, isMissing } = require('./studyTools');
+const { namedColumns } = require('./desk');
 
 const STATUS = Object.freeze({ ok: 'ok', noRows: 'no rows in table', noMatch: 'no rows match filter', notInRelease: 'not in release' });
 const MAX_HELD_ROWS = 5000000;   // rows one result may hold in memory; a larger selection needs a filter
 
 function resolveColumn(entry, name) {
   const found = entry.columns.find(c => c === name) || entry.columns.find(c => c.toLowerCase() === String(name).toLowerCase());
-  if (!found) throw new Error(`${entry.file} has no column ${JSON.stringify(name)}; its columns: ${entry.columns.join(', ')}`);
+  if (!found) throw new Error(`${entry.file} has no column ${JSON.stringify(name)}; its columns: ${namedColumns(entry.columns)}`);
   return found;
 }
 

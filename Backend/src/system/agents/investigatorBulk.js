@@ -17,7 +17,7 @@ const { validate } = require('../aso/batchOperations');
 const { decodeArguments } = require('../aso/toolArguments');
 const { FILTER_OPS } = require('../aso/studyTools');
 const { fetchRows, fetchMatching, fetchAll } = require('../aso/fetchRows');
-const { tableCard, columnLine, resultLine, historyText, argsLine, section, count } = require('../aso/desk');
+const { tableCard, columnLine, namedColumns, resultLine, historyText, argsLine, section, count } = require('../aso/desk');
 const { AgentStop, createAgentControl, fingerprint } = require('../aso/agentControl');
 
 const S = { type: 'string' };
@@ -96,7 +96,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
     const columnValues = async (name, column) => {
       const o = await openTable(name);
       const found = o.entry.columns.find(c => c === column) || o.entry.columns.find(c => c.toLowerCase() === String(column).toLowerCase());
-      if (!found) throw new Error(`${o.entry.file} has no column ${JSON.stringify(column)}; its columns: ${o.entry.columns.join(', ')}`);
+      if (!found) throw new Error(`${o.entry.file} has no column ${JSON.stringify(column)}; its columns: ${namedColumns(o.entry.columns)}`);
       if (!o.profile) o.profile = await adapter.profile(o.entry);
       if (!o.asked.includes(found)) o.asked.push(found);
       const c = o.profile.columns.find(p => p.column === found);

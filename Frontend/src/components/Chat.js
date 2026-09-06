@@ -59,7 +59,7 @@ function HPA() {
   }, []);
   const [collapsedRuns, setCollapsedRuns] = useState({}); // Track collapsed state per runId
   const [provenanceRuns, setProvenanceRuns] = useState({}); // ASO runs whose provenance graph is open
-  const [searchResults, setSearchResults] = useState({}); // Map of searchUrl -> { rows, loading, error, currentPage }
+  const [searchResults, setSearchResults] = useState({}); // Map of searchUrl -> { rows, loading, error, totalCount, thumbnails }
   const [replyTo, setReplyTo] = useState(null); // { ensg, geneName } for reply context
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -491,7 +491,7 @@ function HPA() {
 
     setSearchResults(prev => ({
       ...prev,
-      [searchUrl]: { loading: true, rows: null, error: null, currentPage: 0, thumbnails: {} }
+      [searchUrl]: { loading: true, rows: null, error: null, thumbnails: {} }
     }));
 
     try {
@@ -503,13 +503,13 @@ function HPA() {
 
       setSearchResults(prev => ({
         ...prev,
-        [searchUrl]: { loading: false, rows: data.rows || [], totalCount: data.totalCount, currentPage: 0, error: null, thumbnails: {} }
+        [searchUrl]: { loading: false, rows: data.rows || [], totalCount: data.totalCount, error: null, thumbnails: {} }
       }));
     } catch (err) {
       console.error('[FE] Failed to fetch search results:', err);
       setSearchResults(prev => ({
         ...prev,
-        [searchUrl]: { loading: false, rows: null, error: err.message, currentPage: 0, thumbnails: {} }
+        [searchUrl]: { loading: false, rows: null, error: err.message, thumbnails: {} }
       }));
     }
   };
@@ -592,11 +592,10 @@ function HPA() {
     { key: 'structure', label: 'Structure', color: '#69008c' }
   ];
 
-  // Render search results table
+  // Render search results: the first rows with their thumbnails, and a link to the rest on HPA.
   const SearchResultsView = ({ searchUrl }) => {
     const data = searchResults[searchUrl];
-    const ITEMS_PER_PAGE = 5;
-    const [filterText, setFilterText] = useState('');
+    const SHOWN_ROWS = 5;
 
     // Trigger fetch on mount if not already loaded
     useEffect(() => {
@@ -606,33 +605,19 @@ function HPA() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [searchUrl]);
 
-    // Fetch thumbnails for visible rows when page changes (only fetches 5 at a time!)
+    // Fetch thumbnails for the shown rows only
     useEffect(() => {
       if (data?.rows && !data.loading) {
-        const startIdx = (data.currentPage || 0) * ITEMS_PER_PAGE;
-        const visibleRows = data.rows.slice(startIdx, startIdx + ITEMS_PER_PAGE);
-        const geneIds = visibleRows.map(r => r.Ensembl || r.Gene).filter(Boolean);
+        const geneIds = data.rows.slice(0, SHOWN_ROWS).map(r => r.Ensembl || r.Gene).filter(Boolean);
         fetchThumbnails(searchUrl, geneIds);
       }
-    }, [searchUrl, data?.currentPage, data?.loading, data?.rows]);
+    }, [searchUrl, data?.loading, data?.rows]);
 
     if (!data || data.loading) {
       return (
         <div className="HPAG-search-results HPAG-search-results-loading">
-          <div className="HPAG-search-results-header">
-            <input type="text" className="HPAG-search-filter" placeholder="Filter genes..." disabled />
-            <a href={searchUrl} target="_blank" rel="noopener noreferrer" className="HPAG-search-external" title="Open in HPA">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M11 7.5v4a1 1 0 01-1 1H2.5a1 1 0 01-1-1V4a1 1 0 011-1h4M8.5 1.5h4m0 0v4m0-4l-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </a>
-          </div>
           <div className="HPAG-search-results-table">
-            <div className="HPAG-search-results-thead">
-              <div className="HPAG-search-th HPAG-search-th-gene">Gene</div>
-              {THUMB_SECTIONS.map(s => (
-                <div key={s.key} className="HPAG-search-th HPAG-search-th-thumb">{s.label}</div>
-              ))}
-            </div>
-            {[...Array(5)].map((_, i) => (
+            {[...Array(SHOWN_ROWS)].map((_, i) => (
               <div key={i} className="HPAG-search-tr HPAG-shimmer-row">
                 <div className="HPAG-search-td HPAG-search-td-gene">
                   <div className="HPAG-shimmer-text" style={{ width: '140px' }} />
@@ -658,50 +643,12 @@ function HPA() {
       return <div className="HPAG-search-results-empty">No results found</div>;
     }
 
-    // Filter rows by search text
-    const filteredRows = filterText
-      ? data.rows.filter(r => {
-          const gene = (r['Gene name'] || r.Gene || '').toLowerCase();
-          const ensg = (r.Ensembl || '').toLowerCase();
-          const desc = (r['Gene description'] || '').toLowerCase();
-          const q = filterText.toLowerCase();
-          return gene.includes(q) || ensg.includes(q) || desc.includes(q);
-        })
-      : data.rows;
-
-    const totalPages = Math.ceil(filteredRows.length / ITEMS_PER_PAGE);
-    const currentPage = Math.min(data.currentPage || 0, Math.max(0, totalPages - 1));
-    const startIdx = currentPage * ITEMS_PER_PAGE;
-    const visibleRows = filteredRows.slice(startIdx, startIdx + ITEMS_PER_PAGE);
-
-    const goToPage = (page) => {
-      setSearchResults(prev => ({
-        ...prev,
-        [searchUrl]: { ...prev[searchUrl], currentPage: page }
-      }));
-    };
+    const visibleRows = data.rows.slice(0, SHOWN_ROWS);
+    const moreCount = data.rows.length - visibleRows.length;
 
     return (
       <div className="HPAG-search-results">
-        <div className="HPAG-search-results-header">
-          <input
-            type="text"
-            className="HPAG-search-filter"
-            placeholder={`Filter ${data.rows.length} genes...`}
-            value={filterText}
-            onChange={(e) => { setFilterText(e.target.value); goToPage(0); }}
-          />
-          <a href={searchUrl} target="_blank" rel="noopener noreferrer" className="HPAG-search-external" title="Open in HPA">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M11 7.5v4a1 1 0 01-1 1H2.5a1 1 0 01-1-1V4a1 1 0 011-1h4M8.5 1.5h4m0 0v4m0-4l-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          </a>
-        </div>
         <div className="HPAG-search-results-table">
-          <div className="HPAG-search-results-thead">
-            <div className="HPAG-search-th HPAG-search-th-gene">Gene</div>
-            {THUMB_SECTIONS.map(s => (
-              <div key={s.key} className="HPAG-search-th HPAG-search-th-thumb" style={{ borderBottomColor: s.color }}>{s.label}</div>
-            ))}
-          </div>
           {visibleRows.map((row, idx) => {
             const ensg = row.Ensembl || row.Gene || '';
             const geneName = row['Gene name'] || row.Gene || '—';
@@ -755,12 +702,10 @@ function HPA() {
             );
           })}
         </div>
-        {totalPages > 1 && (
-          <div className="HPAG-search-results-footer">
-            <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 0} className="HPAG-pagination-btn">Prev</button>
-            <span className="HPAG-pagination-info">{currentPage + 1} / {totalPages}</span>
-            <button onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= totalPages - 1} className="HPAG-pagination-btn">Next</button>
-          </div>
+        {moreCount > 0 && (
+          <a href={searchUrl} target="_blank" rel="noopener noreferrer" className="HPAG-search-results-more">
+            View {moreCount} more
+          </a>
         )}
       </div>
     );

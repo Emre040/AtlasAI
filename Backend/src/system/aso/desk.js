@@ -28,16 +28,20 @@ function shown(v) {
   return v;
 }
 
-function cell(v) {
+// A cell is cut at CELL characters on a line of many columns; a view of named columns shows
+// each cell up to FULL_CELL, so a list or a long text can be read whole.
+const FULL_CELL = 400;
+
+function cell(v, max = CELL) {
   const t = shown(v);
   const s = t === null || t === undefined ? '' : typeof t === 'object' ? JSON.stringify(t) : String(t);
-  return s.length > CELL ? `${s.slice(0, CELL - 1)}…` : s;
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
 const ROW_COLUMNS = 8;    // columns a sample row shows
 const WIDE_COLUMNS = 24;  // a header names every column up to this many; wider tables name the first ones
 
-function rowLine(row, columns) { return columns.map(c => cell(row[c])).join(' | '); }
+function rowLine(row, columns, max = CELL) { return columns.map(c => cell(row[c], max)).join(' | '); }
 
 // Sample rows show the first columns (keys and fresh columns come first); the rest are counted.
 function sampleLines(rows, columns, n = SAMPLE_ROWS) {
@@ -127,7 +131,7 @@ function resultLine({ id, title = '', description = '', origin, rows = [], colum
   }
   if (figure) return `${head} figure ${figure.type} ← ${origin}${images?.length ? ' (rendered)' : ' (not rendered)'}${figure.omitted_rows ? `; ${figure.omitted_rows} rows omitted for missing values` : ''}${labelsFit(figure)}`;
   if (matrix) {
-    const head2 = `${head} matrix ${matrix.row_labels.length} × ${matrix.col_labels.length} (rows: ${matrix.row_labels.slice(0, 6).map(cell).join(', ')}${matrix.row_labels.length > 6 ? ', …' : ''}; columns: ${matrix.col_labels.slice(0, 6).map(cell).join(', ')}${matrix.col_labels.length > 6 ? ', …' : ''}) ← ${origin}; a heatmap input`;
+    const head2 = `${head} matrix ${matrix.row_labels.length} × ${matrix.col_labels.length} (rows: ${matrix.row_labels.slice(0, 6).map(v => cell(v)).join(', ')}${matrix.row_labels.length > 6 ? ', …' : ''}; columns: ${matrix.col_labels.slice(0, 6).map(v => cell(v)).join(', ')}${matrix.col_labels.length > 6 ? ', …' : ''}) ← ${origin}; a heatmap input`;
     return description ? `${head2}\n  ${description}` : head2;
   }
   const lines = [`${head} (${count(rows.length)} rows${spread}: ${namedColumns(columns)}) ← ${origin}`];
@@ -148,4 +152,4 @@ function historyText(lines) {
 
 function section(title, body) { return `${title}\n${body}`; }
 
-module.exports = { cell, shown, rowLine, sampleLines, argsLine, tableCard, columnLine, namedColumns, resultLine, inline, labelsFit, historyText, section, count, WIDE_COLUMNS, ROW_COLUMNS };
+module.exports = { cell, shown, rowLine, sampleLines, argsLine, tableCard, columnLine, namedColumns, resultLine, inline, labelsFit, historyText, section, count, WIDE_COLUMNS, ROW_COLUMNS, CELL, FULL_CELL };

@@ -200,10 +200,11 @@ function suffixedNames(columns, taken) {
 }
 
 // What a join did, for the result's origin line: b's renamed columns, the shared columns kept
-// once, and the rows on each side that had no key value to match.
-function naming(rows, rightNames, shared, unkeyed = { a: 0, b: 0 }) {
+// once, the rows on each side that had no key value to match, and how many rows of each side
+// found a partner, so an empty result reads as an empty intersection and not as a mistake.
+function naming(rows, rightNames, shared, unkeyed = { a: 0, b: 0 }, matched = null) {
   const renamed = Object.fromEntries([...rightNames].filter(([column, name]) => column !== name));
-  Object.defineProperty(rows, 'naming', { value: { renamed, shared: [...shared], unkeyed }, configurable: true });
+  Object.defineProperty(rows, 'naming', { value: { renamed, shared: [...shared], unkeyed, matched }, configurable: true });
   return rows;
 }
 
@@ -245,12 +246,14 @@ function join(left, right, how = 'inner', on = null, onColumns) {
     groups.get(key).push({ row, index });
   }
   const pairs = [], matchedRight = new Set();
+  let matchedLeft = 0;
   for (const l of left) {
     let matches = [];
     for (const key of keys(l, leftKeys)) { matches = groups.get(key) || []; if (matches.length) break; }
-    if (!matches.length) pairs.push([l, null]);
+    if (!matches.length) pairs.push([l, null]); else matchedLeft++;
     for (const match of matches) { matchedRight.add(match.index); pairs.push([l, match.row]); }
   }
+  const matched = { a: matchedLeft, b: matchedRight.size, rows_a: left.length, rows_b: right.length };
   // A column both sides carry under one name, agreeing on every matched pair, is one column and
   // is kept once; a column of b that differs, or whose name is taken, comes with a numbered suffix.
   const same = (a, b) => (isMissing(a) && isMissing(b)) || String(a) === String(b);
@@ -275,7 +278,7 @@ function join(left, right, how = 'inner', on = null, onColumns) {
   const out = [];
   for (const [l, r] of pairs) if (r || ['left', 'full'].includes(how)) out.push(merge(l, r));
   if (['right', 'full'].includes(how)) for (const [index, row] of right.entries()) if (!matchedRight.has(index)) out.push(merge(null, row));
-  return naming(withColumns(out, outputColumns), rightNames, shared, unkeyed);
+  return naming(withColumns(out, outputColumns), rightNames, shared, unkeyed, matched);
 }
 
 const IDENTITY = ['gene', 'ensembl'];

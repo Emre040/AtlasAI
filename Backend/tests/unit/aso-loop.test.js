@@ -135,7 +135,7 @@ test('opening an artifact that is whole on the desk is answered from the desk, w
   const result = await run({});
   assert.equal(result.outcome, 'completed', result.summary);
   const desk3 = requests[2].messages[1].content;
-  assert.match(desk3, /turn 2: a1 is whole on the desk \(rows 0–3\)/);
+  assert.match(desk3, /turn 2: a1's 4 rows are on the desk under ARTIFACTS \(rows 0–3\), cells cut at 48 characters; open a1 with columns to read chosen columns in full/);
   assert.match(desk3, /turn 2: rank\(artifact=a1, by=nTPM\) failed: rank\.title is required/);
   assert.doesNotMatch(desk3, /\nVIEWS\n/);
 });
@@ -169,6 +169,21 @@ test('a join line says what b\'s clashing columns are now called; shared columns
   const desk4 = requests[3].messages[1].content;
   assert.match(desk4, /a4 "Liver beside lung" \(2 rows: [^\n]*nTPM_2[^\n]*\) ← join t4 of a2, a3 \(a3's Tissue as Tissue_2, nTPM as nTPM_2\)/);
   assert.doesNotMatch(desk4, /source_status_2/, 'shared columns that agree are kept once');
+});
+
+test('an empty join says that no row matched; an open that shows nothing new is not work', async t => {
+  const { run, requests } = await study(t, [
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR', 'ERBB2'], question: 'nTPM' }))),
+    response(call('filter', named('Liver', { artifact: 'a1', where: [{ column: 'Tissue', op: '=', value: 'liver' }] })), call('filter', named('Heart', { artifact: 'a1', where: [{ column: 'Tissue', op: '=', value: 'heart' }] }))),
+    response(call('join', named('Liver beside heart', { a: 'a2', b: 'a3', how: 'inner' }))),
+    response(call('open', { artifact: 'a1', columns: ['Tissue'] })),
+    response(call('open', { artifact: 'a1', columns: ['Tissue'] })),
+    response(call('finish', { tables: [{ artifact: 'a2' }], claims: [{ text: 'No gene has both a liver and a heart reading.', artifact: 'a4', rows: [] }] }))
+  ]);
+  const result = await run({});
+  assert.equal(result.outcome, 'completed', result.summary);
+  assert.match(requests[3].messages[1].content, /turn 3: join\(a=a2, b=a3, how=inner\) → a4 "Liver beside heart" \(0 rows\) \(no row of a2 matched a row of a3 on the entity keys\)/);
+  assert.match(requests[5].messages[1].content, /turn 5: a1 rows 0–3 of 4 is already on the desk under VIEWS\nturn 5: that turn did no work/);
 });
 
 test('an identical agent call is answered by the earlier job', async t => {

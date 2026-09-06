@@ -204,6 +204,12 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     const r = Object.entries(a.meta?.renamed || {});
     if (r.length) parts.push(`${a.inputs[1]}'s ${r.map(([from, to]) => `${from} as ${to}`).join(', ')}`);
     for (const [side, n] of Object.entries(a.meta?.unkeyed || {})) if (n) parts.push(`${desk.count(n)} rows of ${a.inputs[side === 'a' ? 0 : 1]} had no ${a.args?.on || 'key'} value to match`);
+    // How many rows of each side found a partner: an empty result is then an empty intersection, not a mistake.
+    const m = a.meta?.matched;
+    if (m) {
+      if (!m.a && !m.b) parts.push(`no row of ${a.inputs[0]} matched a row of ${a.inputs[1]}${a.args?.on ? ` on ${a.args.on}` : ' on the entity keys'}`);
+      else if (m.a < m.rows_a || m.b < m.rows_b) parts.push(`${desk.count(m.a)} of ${desk.count(m.rows_a)} rows of ${a.inputs[0]} matched, ${desk.count(m.b)} of ${desk.count(m.rows_b)} of ${a.inputs[1]}`);
+    }
     return parts.length ? ` (${parts.join('; ')})` : '';
   };
   const origin = a => `${a.tool}${a.toolId ? ` ${a.toolId}` : ''}${a.tool === 'chart' ? `(${desk.argsLine(bare(a.args), 120)})` : agentNames.has(a.tool) ? ` "${String(a.args.question || a.args.goal || a.args.topic || '').slice(0, 90)}"` : a.inputs?.length ? ` of ${a.inputs.join(', ')}${renames(a)}` : ''}`;
@@ -396,7 +402,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
       if (out.rows) out.rows = tools.freshFirst(out.rows, [...inputColumns]);
       const a = await addArtifact({ kind: out.figure ? 'figure' : 'data', label: title, description, rows: out.rows, matrix: out.matrix, figure: out.figure, meta: out.figure ? { omitted_rows: out.figure.omitted_rows || 0 } : out.meta, tool: toolName, args, inputs, toolId: id });
       made.set(key, a.id);
-      remember(`${toolName}(${desk.argsLine(bare(args), 140)}) → ${a.id} "${title}" (${a.size}${a.kind === 'figure' && !a.images.length ? ', not rendered' : ''})`);
+      remember(`${toolName}(${desk.argsLine(bare(args), 140)}) → ${a.id} "${title}" (${a.size}${a.kind === 'figure' && !a.images.length ? ', not rendered' : ''})${renames(a)}`);
       await log('tool.done', { id, tool: toolName, kind: out.figure ? 'chart' : 'tool', artifact: artifactEvent(a), ms: Date.now() - t0 }, id);
       return { ok: true, artifact: a };
     } catch (err) {
@@ -421,11 +427,12 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     const what = String(args.artifact ?? args.what ?? args.id ?? '').trim();
     if (!what) throw new Error('open needs artifact: an artifact id');
     const a = get(what);
-    if (a.figure) { view(a.id, `${a.id} figure: ${JSON.stringify(a.figure).slice(0, 1200)}`, `${a.id} figure spec (opened at turn ${state.turn})`); remember(`opened ${a.id} (figure spec on the desk)`); return; }
-    if (a.matrix) { view(a.id, `${a.id} matrix rows ${a.matrix.row_labels.join(', ')}; columns ${a.matrix.col_labels.join(', ')}\n${a.matrix.matrix.slice(0, 40).map((row, i) => `  ${desk.cell(a.matrix.row_labels[i])}: ${row.map(v => v === null ? '—' : v).join(' | ')}`).join('\n')}${a.matrix.matrix.length > 40 ? '\n  …' : ''}`, `${a.id} matrix (opened at turn ${state.turn})`); remember(`opened ${a.id} (matrix on the desk)`); return; }
-    if (a.text) { view(a.id, `${a.id}: ${a.text.slice(0, 1500)}`, `${a.id} text (opened at turn ${state.turn})`); remember(`opened ${a.id}`); return; }
+    if (a.figure) { view(a.id, `${a.id} figure: ${JSON.stringify(a.figure).slice(0, 1200)}`, `${a.id} figure spec (opened at turn ${state.turn})`); remember(`opened ${a.id} (figure spec on the desk)`); return true; }
+    if (a.matrix) { view(a.id, `${a.id} matrix rows ${a.matrix.row_labels.join(', ')}; columns ${a.matrix.col_labels.join(', ')}\n${a.matrix.matrix.slice(0, 40).map((row, i) => `  ${desk.cell(a.matrix.row_labels[i])}: ${row.map(v => v === null ? '—' : v).join(' | ')}`).join('\n')}${a.matrix.matrix.length > 40 ? '\n  …' : ''}`, `${a.id} matrix (opened at turn ${state.turn})`); remember(`opened ${a.id} (matrix on the desk)`); return true; }
+    if (a.text) { view(a.id, `${a.id}: ${a.text.slice(0, 1500)}`, `${a.id} text (opened at turn ${state.turn})`); remember(`opened ${a.id}`); return true; }
     const named = Array.isArray(args.columns) && args.columns.length > 0;
-    if (!named && state.wholeOnDesk?.has(a.id)) { remember(`${a.id} is whole on the desk (rows 0–${a.rows.length - 1})`); return; }
+    // Rows already on the desk are not opened again; a cell cut short there is read in full by naming its column.
+    if (!named && state.wholeOnDesk?.has(a.id)) { remember(`${a.id}'s ${a.rows.length} rows are on the desk under ARTIFACTS (rows 0–${a.rows.length - 1}), cells cut at ${desk.CELL} characters; open ${a.id} with columns to read chosen columns in full`); return false; }
     const rows = Number.isSafeInteger(args.rows) && args.rows > 0 ? args.rows : VIEW_ROWS;
     const offset = Number.isSafeInteger(args.offset) && args.offset >= 0 ? args.offset : 0;
     const columns = named ? args.columns.map(c => { const found = a.columns.find(x => x === c) || a.columns.find(x => x.toLowerCase() === String(c).toLowerCase()); if (!found) throw new Error(`${a.id} has no column ${JSON.stringify(c)}; its columns: ${desk.namedColumns(a.columns)}`); return found; }) : a.columns;
@@ -435,10 +442,16 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     const shownColumns = columns.length > desk.WIDE_COLUMNS ? [...lead, ...columns.filter(c => !lead.includes(c))].slice(0, desk.WIDE_COLUMNS / 2) : columns;
     const hidden = columns.length - shownColumns.length;
     const page = a.rows.slice(offset, offset + rows);
-    const lines = page.map((row, i) => `  ${offset + i}: ${desk.rowLine(row, shownColumns)}`);
+    const lines = page.map((row, i) => `  ${offset + i}: ${desk.rowLine(row, shownColumns, named ? desk.FULL_CELL : desk.CELL)}`);
     const range = `rows ${offset}–${offset + page.length - 1} of ${a.rows.length}`;
-    view(`${a.id}|${offset}`, `${a.id} ${range} (${shownColumns.join(' | ')}${hidden ? ` | … +${hidden} columns; name columns to see them` : ''})\n${lines.join('\n') || '  (no rows)'}${offset + page.length < a.rows.length ? `\n  … open ${a.id} offset=${offset + page.length} for more` : ''}`, `${a.id} ${range} (opened at turn ${state.turn}; open again to see them)`);
+    const text = `${a.id} ${range} (${shownColumns.join(' | ')}${hidden ? ` | … +${hidden} columns; name columns to see them` : ''})\n${lines.join('\n') || '  (no rows)'}${offset + page.length < a.rows.length ? `\n  … open ${a.id} offset=${offset + page.length} for more` : ''}`;
+    // The same page opened again while it is still whole on the desk shows nothing new.
+    const key = `${a.id}|${offset}`, existing = state.views.get(key);
+    const consumedAt = Math.max(-Infinity, ...state.artifacts.filter(x => (x.inputs || []).includes(a.id)).map(x => x.turn));
+    if (existing && existing.text === text && !(consumedAt > existing.turn)) { remember(`${a.id} ${range} is already on the desk under VIEWS`); return false; }
+    view(key, text, `${a.id} ${range} (opened at turn ${state.turn}; open again to see them)`);
     remember(`opened ${a.id} ${range} (view on the desk)`);
+    return true;
   }
 
   function deskText(turn) {
@@ -530,7 +543,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
           sync++; await log('note', { text, replace: at || undefined }); return;
         }
         if (call.name === 'skip') { waiting = true; remember(`waited: ${String(call.args.reason || '').slice(0, 100)}`); await log('skip', { reason: call.args.reason || '' }); return; }
-        if (call.name === 'open') { await openWhat(call.args); sync++; return; }
+        if (call.name === 'open') { if (await openWhat(call.args)) sync++; return; }
         if (call.name === 'run') {
           const specifications = new Map(toolSpecs.filter(t => TABLE_TOOLS.has(t.function.name)).map(t => [t.function.name, t.function]));
           const steps = call.args.steps || [];

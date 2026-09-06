@@ -43,7 +43,7 @@ test('a column b brings whose name is taken gets the first free numbered suffix,
   const out = tools.join(left, right, 'inner');
   assert.deepEqual(tools.columnsOf(out), ['gene', 'ensembl', 'nTPM', 'nTPM_2', 'nTPM_3', 'nTPM_2_2']);
   assert.deepEqual(out, [{ gene: 'TP53', ensembl: 'ENSG_TP53', nTPM: 1, nTPM_2: 2, nTPM_3: 3, nTPM_2_2: 4 }]);
-  assert.deepEqual(out.naming, { renamed: { nTPM: 'nTPM_3', nTPM_2: 'nTPM_2_2' }, shared: [], unkeyed: { a: 0, b: 0 } });
+  assert.deepEqual(out.naming, { renamed: { nTPM: 'nTPM_3', nTPM_2: 'nTPM_2_2' }, shared: [], unkeyed: { a: 0, b: 0 }, matched: { a: 1, b: 1, rows_a: 1, rows_b: 1 } });
 });
 
 test('a column both sides carry that agrees on every matched row is kept once; one that differs comes from b with a suffix', () => {
@@ -58,7 +58,8 @@ test('a column both sides carry that agrees on every matched row is kept once; o
   const out = tools.join(heart, skeletal, 'inner');
   assert.deepEqual(tools.columnsOf(out), ['gene', 'ensembl', 'Gene', 'Tissue', 'nTPM', 'source_status', 'Tissue_2', 'nTPM_2']);
   assert.deepEqual(out, [{ gene: 'TP53', ensembl: 'ENSG_TP53', Gene: 'TP53', Tissue: 'heart muscle', nTPM: '12.0', source_status: 'ok', Tissue_2: 'skeletal muscle', nTPM_2: '1.0' }]);
-  assert.deepEqual(out.naming, { renamed: { Tissue: 'Tissue_2', nTPM: 'nTPM_2' }, shared: ['Gene', 'source_status'], unkeyed: { a: 0, b: 0 } });
+  assert.deepEqual(out.naming, { renamed: { Tissue: 'Tissue_2', nTPM: 'nTPM_2' }, shared: ['Gene', 'source_status'], unkeyed: { a: 0, b: 0 }, matched: { a: 1, b: 1, rows_a: 2, rows_b: 2 } }, 'one gene of each side found a partner');
+  assert.deepEqual(tools.join(heart, tools.withColumns([{ gene: 'MDM2', ensembl: 'ENSG_MDM2', nTPM: '2.0' }], ['gene', 'ensembl', 'nTPM']), 'inner').naming.matched, { a: 0, b: 0, rows_a: 2, rows_b: 1 }, 'an empty intersection counts no matches on either side');
   // A full join keeps b's own rows, with the shared columns filled from b.
   const full = tools.join(heart, skeletal, 'full');
   assert.deepEqual(full.find(r => r.gene === 'MDM2'), { gene: 'MDM2', ensembl: 'ENSG_MDM2', Gene: 'MDM2', Tissue: null, nTPM: null, source_status: 'ok', Tissue_2: 'skeletal muscle', nTPM_2: '2.0' });

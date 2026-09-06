@@ -47,7 +47,7 @@ const tool = (name, description, properties = {}, required = []) => ({ name, des
 const STUDY_TOOLS = [
   tool('plan', 'Record the deliverables the study owes, one item per requested table, figure (its chart type) or interpretation; gene_set for a cohort to find. Replaces the current plan.', { items: { type: 'array', items: { type: 'object', properties: { step: { type: 'string', description: 'The deliverable in words' }, kind: { type: 'string', enum: studyPlan.KINDS } }, required: ['step', 'kind'] } } }, ['items']),
   tool('note', 'Keep a decision or an open question on the desk. replace overwrites note N; empty text with replace removes it.', { text: S, replace: N }, ['text']),
-  tool('open', 'Show rows of an artifact, or put a dataset on the desk (columns, the values each column takes, sample rows). For an artifact: rows and offset page through it, columns narrow the view. The view stays on the desk.', { what: S, rows: N, offset: N, columns: { type: 'array', items: S } }, ['what']),
+  tool('open', 'Show rows of a large artifact (small ones are already whole on the desk with their row indices), or put a dataset on the desk (columns, the values each column takes, sample rows). rows and offset page through an artifact, columns narrow the view. The view stays on the desk.', { what: { type: 'string', description: 'artifact id or dataset name' }, rows: N, offset: N, columns: { type: 'array', items: S } }),
   tool('run', 'Run dependent operations together: each step names a registered operation and its arguments; a later step refers to an earlier one with @id in an artifact argument. Returns the artifact of every step.', { steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
   tool('union', 'Rows in either table, one per entity.', { a: A, b: A, on: S }, ['a', 'b']),
   tool('intersect', 'Rows of a whose entity is in b.', { a: A, b: A, on: S }, ['a', 'b']),
@@ -78,7 +78,7 @@ function systemPrompt(db, datasets, agentNames) {
   const entity = db.entity;
   return `You run a study over the ${db.database} for a scientist. Agents and operations produce every value; you choose what to ask and combine the results. Deep Research finds the ${entity}s matching a description (a cohort). Investigator, given a list (genes=[names] or from=<artifact id>) and a complete question (fields, tissues or other row filters, units), finds the tables that hold the answer and fetches the raw records for the whole list at once; it returns tables. The operations compute over saved tables. Every result is an artifact you address by id (a1, a2, …).
 
-The desk in the message is your whole working set and stays in front of you every turn: the plan, tables you opened, every artifact with its columns and two rows, what is running, your history and notes. Rows live in the artifacts; open shows more of them when a decision needs values.
+The desk in the message is your whole working set and stays in front of you every turn: the plan, tables you opened, every artifact with its columns and its rows (whole, with row indices, up to ${desk.WHOLE_ROWS} rows; larger ones show two rows and what each column holds), what is running, your history and notes. open shows the rows of a large artifact when a decision needs them; do not open what the desk already shows.
 
 How to work:
 1. plan the deliverables first, one item per requested table, figure of a given type, cohort or interpretation and nothing that was not asked for, and start independent work in the same turn.
@@ -415,9 +415,17 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     return { out, inputColumns, inputs: [...inputRefs] };
   }
 
+  const made = new Map();   // fingerprint of an operation → the artifact it made
   async function runTableTool(toolName, args) {
     args = { ...args };
     if (['union', 'intersect', 'difference', 'concat', 'join', 'overlap'].includes(toolName) && args.a === undefined && args.artifact !== undefined) args = { ...args, a: args.artifact };
+    // The same operation on the same inputs is the same artifact; it is not made twice.
+    const key = JSON.stringify([toolName, args]);
+    if (made.has(key) && state.byId.has(made.get(key))) {
+      const a = get(made.get(key));
+      remember(`${toolName}(${desk.argsLine(args, 140)}) is ${a.id}, already made at turn ${a.turn}`);
+      return { ok: true, artifact: a, repeated: true };
+    }
     const id = `t${++state.ids.t}`;
     const t0 = Date.now();
     state.toolCalls++;
@@ -429,6 +437,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
       inputs = resolvedInputs;
       if (out.rows) out.rows = tools.freshFirst(out.rows, [...inputColumns]);
       const a = await addArtifact({ kind: out.figure ? 'figure' : 'data', label: toolName === 'chart' ? label : `${toolName} of ${inputs.join(', ')}`, rows: out.rows, matrix: out.matrix, figure: out.figure, meta: out.figure ? { omitted_rows: out.figure.omitted_rows || 0 } : out.meta, tool: toolName, args, inputs, toolId: id });
+      made.set(key, a.id);
       remember(`${toolName}(${desk.argsLine(args, 140)}) → ${a.id} (${a.size}${a.kind === 'figure' && !a.images.length ? ', not rendered' : ''})`);
       await log('tool.done', { id, tool: toolName, kind: out.figure ? 'chart' : 'tool', artifact: artifactEvent(a), ms: Date.now() - t0 }, id);
       return { ok: true, artifact: a };

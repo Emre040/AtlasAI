@@ -8,14 +8,15 @@
  * imply). A claim that cannot be bound is not accepted.
  */
 
-const escapeCell = value => String(value === null || value === undefined ? '—' : typeof value === 'object' ? JSON.stringify(value) : value).replaceAll('|', '\\|').replace(/\r?\n/g, '<br>');
+const { shown } = require('./desk');
+const escapeCell = value => String(value === null || value === undefined ? '—' : typeof value === 'object' ? JSON.stringify(value) : shown(value)).replaceAll('|', '\\|').replace(/\r?\n/g, '<br>');
 const S = { type: 'string' };
 const N = { type: 'integer' };
 
 const FINISH_SCHEMA = {
   tables: { type: 'array', description: 'Saved tables to print in full: artifact id, optional columns to show, optional title.', items: { type: 'object', properties: { artifact: S, columns: { type: 'array', items: S }, title: S, rows: { type: 'integer', description: 'Print only the first N rows (the full table stays saved)' } }, required: ['artifact'] } },
   figures: { type: 'array', items: S, description: 'Rendered figure artifact ids to include, in order. Omit for all figures; [] for none.' },
-  claims: { type: 'array', description: 'Findings, one per item, each bound to the saved rows it rests on. The report prints those cells beside the claim, and every number the claim states must be among them.', items: { type: 'object', properties: { text: S, artifact: S, rows: { type: 'array', items: N, description: 'Zero-based row indices in the artifact the claim rests on' }, columns: { type: 'array', items: S } }, required: ['text', 'artifact', 'rows'] } },
+  claims: { type: 'array', description: 'Findings, one per item, each bound to the saved rows it rests on. The report prints those cells beside the claim, and every number the claim states must be among them (a number may be written rounded).', items: { type: 'object', properties: { text: S, artifact: S, rows: { type: 'array', items: N, description: 'Zero-based row indices in the artifact, as numbered on the desk' }, columns: { type: 'array', items: S } }, required: ['text', 'artifact', 'rows'] } },
   limitations: { type: 'array', items: S, description: 'What the evidence cannot establish, without numbers.' },
   not_done: { type: 'array', description: 'Plan items not delivered, with the reason.', items: { type: 'object', properties: { item: N, why: S }, required: ['item', 'why'] } }
 };
@@ -71,7 +72,7 @@ function binding(claim, state) {
     return { artifact, cells: [], values, counts: [artifact.matrix.row_labels.length, artifact.matrix.col_labels.length] };
   }
   const rows = artifact.rows || [];
-  if (!Array.isArray(claim.rows) || !claim.rows.length) throw new Error(`claim on ${artifact.id} must name the rows it rests on (zero-based indices, as shown by open)`);
+  if (!Array.isArray(claim.rows) || !claim.rows.length) throw new Error(`claim on ${artifact.id} must name the rows it rests on (zero-based indices, as numbered on the desk)`);
   if (claim.rows.some(i => !Number.isSafeInteger(i) || i < 0 || i >= rows.length)) throw new Error(`claim rows for ${artifact.id} must be between 0 and ${rows.length - 1}`);
   const columns = resolveColumns(artifact, claim.columns);
   const cells = [...new Set(claim.rows)].map(i => ({ index: i, values: columns.map(c => [c, rows[i][c]]) }));

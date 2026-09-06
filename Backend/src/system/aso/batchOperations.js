@@ -71,7 +71,20 @@ async function executeBatch({ steps, outputs }, { specifications, execute, concu
     catch (error) { throw new Error(`${raw.id}: ${error.message}`); }
     byId.set(raw.id, { id: raw.id, tool: raw.tool, args, dependencies: [...references(args, spec.parameters)], spec, status: 'pending' });
   }
-  for (const step of byId.values()) step.dependencies = step.dependencies.filter(id => byId.has(id) || !external(id));
+  // A step named bare (without @) in an artifact argument means that step's output, unless an
+  // artifact of that name exists.
+  for (const step of byId.values()) {
+    step.args = mapArtifactReferences(step.args, step.spec.parameters, (id, original) => original);
+    const bare = (value, schema) => {
+      if (!schema || typeof schema !== 'object') return value;
+      if (schema['x-artifact-reference'] === true && typeof value === 'string' && byId.has(value) && value !== step.id && !external(value)) return `@${value}`;
+      if (schema.type === 'array' && Array.isArray(value)) return value.map(item => bare(item, schema.items));
+      if (schema.type === 'object' && value && typeof value === 'object' && !Array.isArray(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, bare(item, schema.properties?.[key] ?? (schema.additionalProperties && typeof schema.additionalProperties === 'object' ? schema.additionalProperties : undefined))]));
+      return value;
+    };
+    step.args = bare(step.args, step.spec.parameters);
+    step.dependencies = [...references(step.args, step.spec.parameters)].filter(id => byId.has(id) || !external(id));
+  }
   const placeholders = new Map([...byId.keys()].map(id => [id, 'artifact_pending']));
   for (const step of byId.values()) {
     for (const dependency of step.dependencies) if (!byId.has(dependency)) throw new Error(`${step.id} references unknown step ${dependency} (a step id in this run, or @<artifact id>)`);

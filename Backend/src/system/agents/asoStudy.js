@@ -47,7 +47,7 @@ const tool = (name, description, properties = {}, required = []) => ({ name, des
 const STUDY_TOOLS = [
   tool('plan', 'The deliverables the study owes: one item per requested table, figure (its chart type), cohort (gene_set) or interpretation. Replaces the plan.', { items: { type: 'array', items: { type: 'object', properties: { step: S, kind: { type: 'string', enum: studyPlan.KINDS } }, required: ['step', 'kind'] } } }, ['items']),
   tool('note', 'Keep a decision or open question on the desk; replace overwrites note N.', { text: S, replace: N }, ['text']),
-  tool('open', 'Show rows of a large artifact (rows and offset page it, columns narrow it), or put a dataset on the desk with its columns, values and sample rows.', { what: { type: 'string', description: 'artifact id or dataset name' }, rows: N, offset: N, columns: { type: 'array', items: S } }),
+  tool('open', 'Show rows of a large artifact (rows and offset page it, columns narrow it), or put a dataset on the desk with its columns, values and sample rows.', { artifact: A, rows: N, offset: N, columns: { type: 'array', items: S } }, ['artifact']),
   tool('run', 'Run dependent operations together; a step names an operation and its args, and refers to an earlier step as @id.', { steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
   tool('combine', 'Rows of a and b as one table: union (either, one row per entity), intersect (rows of a whose entity is in b), difference (rows of a whose entity is not in b) or concat (all rows of a, then all of b). on matches by a column instead of the entity.', { a: A, b: A, how: { type: 'string', enum: ['union', 'intersect', 'difference', 'concat'] }, on: S }, ['a', 'b', 'how']),
   TABLE_OPERATIONS.get('join'),
@@ -501,7 +501,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
   const view = (key, text, receipt) => { state.views.set(key, { text, receipt, turn: state.turn }); };
   async function openWhat(args) {
     const what = String(args.what ?? args.artifact ?? args.id ?? args.dataset ?? args.name ?? args.table ?? '').trim();
-    if (!what) throw new Error('open needs what: an artifact id or a dataset name');
+    if (!what) throw new Error('open needs artifact: an artifact id or a dataset name');
     if (state.byId.has(what)) {
       const a = get(what);
       if (a.figure) { view(a.id, `${a.id} figure: ${JSON.stringify(a.figure).slice(0, 1200)}`, `${a.id} figure spec (opened at turn ${state.turn})`); remember(`opened ${a.id} (figure spec on the desk)`); return; }
@@ -510,10 +510,15 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
       const rows = Number.isSafeInteger(args.rows) && args.rows > 0 ? args.rows : VIEW_ROWS;
       const offset = Number.isSafeInteger(args.offset) && args.offset >= 0 ? args.offset : 0;
       const columns = Array.isArray(args.columns) && args.columns.length ? args.columns.map(c => { const found = a.columns.find(x => x === c) || a.columns.find(x => x.toLowerCase() === String(c).toLowerCase()); if (!found) throw new Error(`${a.id} has no column ${JSON.stringify(c)}; its columns: ${a.columns.join(', ')}`); return found; }) : a.columns;
+      // A view of a wide artifact shows its keys, the columns its operation named and the first
+      // columns; naming columns shows any of them.
+      const lead = [...identity.keys, ...argColumns(a)].filter(c => columns.includes(c));
+      const shownColumns = columns.length > desk.WIDE_COLUMNS ? [...lead, ...columns.filter(c => !lead.includes(c))].slice(0, desk.WIDE_COLUMNS / 2) : columns;
+      const hidden = columns.length - shownColumns.length;
       const page = a.rows.slice(offset, offset + rows);
-      const lines = page.map((row, i) => `  ${offset + i}: ${desk.rowLine(row, columns)}`);
+      const lines = page.map((row, i) => `  ${offset + i}: ${desk.rowLine(row, shownColumns)}`);
       const range = `rows ${offset}–${offset + page.length - 1} of ${a.rows.length}`;
-      view(`${a.id}|${offset}|${columns.join(',')}`, `${a.id} ${range} (${columns.join(' | ')})\n${lines.join('\n') || '  (no rows)'}${offset + page.length < a.rows.length ? `\n  … open ${a.id} offset=${offset + page.length} for more` : ''}`, `${a.id} ${range} (opened at turn ${state.turn}; open again to see them)`);
+      view(`${a.id}|${offset}|${shownColumns.join(',')}`, `${a.id} ${range} (${shownColumns.join(' | ')}${hidden ? ` | … +${hidden} columns; name columns to see them` : ''})\n${lines.join('\n') || '  (no rows)'}${offset + page.length < a.rows.length ? `\n  … open ${a.id} offset=${offset + page.length} for more` : ''}`, `${a.id} ${range} (opened at turn ${state.turn}; open again to see them)`);
       remember(`opened ${a.id} ${range} (view on the desk)`);
       return;
     }

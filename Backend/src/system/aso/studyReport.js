@@ -125,7 +125,7 @@ function reportIssues(args, state) {
     if (!artifact) { issues.push(`tables[${i}] cites ${JSON.stringify(table?.artifact)}, which is not a saved artifact`); continue; }
     if (!Array.isArray(artifact.rows)) { issues.push(`tables[${i}]: ${artifact.id} is a ${artifact.figure ? 'figure' : 'matrix'}, not a row table`); continue; }
     try { resolveColumns(artifact, table.columns); } catch (error) { issues.push(`tables[${i}]: ${error.message}`); }
-    if (table.rows !== undefined && (!Number.isSafeInteger(table.rows) || table.rows < 1)) issues.push(`tables[${i}].rows must be a positive integer`);
+    if (table.rows !== undefined && !Number.isSafeInteger(table.rows)) issues.push(`tables[${i}].rows must be an integer`);
   }
   if (args.figures !== undefined) {
     if (!Array.isArray(args.figures)) issues.push('figures must be an array of figure artifact ids');
@@ -171,7 +171,7 @@ function renderReport(args, state, figures) {
   for (const table of args.tables || []) {
     const artifact = state.byId.get(String(table.artifact).trim());
     const columns = resolveColumns(artifact, table.columns);
-    const shown = artifact.rows.slice(0, table.rows === undefined ? artifact.rows.length : table.rows);
+    const shown = artifact.rows.slice(0, table.rows > 0 ? table.rows : artifact.rows.length);
     const body = shown.length ? [`| ${columns.map(escapeCell).join(' | ')} |`, `| ${columns.map(() => '---').join(' | ')} |`, ...shown.map(row => `| ${columns.map(c => escapeCell(row[c])).join(' | ')} |`)].join('\n') : `No rows (${artifact.id}).`;
     sections.push(`**${table.title || artifact.label || artifact.id}** (${artifact.id}, ${artifact.rows.length} rows)\n\n${body}${shown.length < artifact.rows.length ? `\n\nShowing ${shown.length} of ${artifact.rows.length} rows; the full table is saved as ${artifact.id}.` : ''}`);
   }

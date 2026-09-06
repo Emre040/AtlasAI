@@ -139,4 +139,4 @@ function historyText(lines) {
 
 function section(title, body) { return `${title}\n${body}`; }
 
-module.exports = { cell, shown, rowLine, sampleLines, argsLine, tableCard, resultCard, historyText, section, count, SAMPLE_ROWS, WHOLE_ROWS, SMALL_ROWS };
+module.exports = { cell, shown, rowLine, sampleLines, argsLine, tableCard, resultCard, historyText, section, count, SAMPLE_ROWS, WHOLE_ROWS, SMALL_ROWS, WIDE_COLUMNS };

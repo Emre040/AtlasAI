@@ -134,8 +134,8 @@ test('an identical agent call is answered by the earlier job, and one gene is in
 
 test('a dataset opened for columns is detailed for those; a filter pinning the entity key reads it by index', async t => {
   const { run, requests } = await study(t, [
-    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('open', { what: 'rna_tissue_consensus.tsv', columns: ['nTPM'] })),
-    response(call('open', { what: 'rna_tissue_consensus.tsv', columns: ['Tissue'] }), call('filter', { artifact: 'rna_tissue_consensus.tsv', where: [{ column: 'Gene name', op: '=', value: 'ERBB2' }, { column: 'Tissue', op: '=', value: 'lung' }] })),
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('open', { artifact: 'rna_tissue_consensus.tsv', columns: ['nTPM'] })),
+    response(call('open', { artifact: 'rna_tissue_consensus.tsv', columns: ['Tissue'] }), call('filter', { artifact: 'rna_tissue_consensus.tsv', where: [{ column: 'Gene name', op: '=', value: 'ERBB2' }, { column: 'Tissue', op: '=', value: 'lung' }] })),
     response(call('finish', { tables: [{ artifact: 'a1' }] }))
   ]);
   const result = await run({});

@@ -40,7 +40,7 @@ const VIEW_ROWS = 10;             // rows an open shows by default
 
 // ---- tools of the study itself ---------------------------------------------------------------------
 
-const A = { type: 'string', description: 'artifact id, or a dataset name', 'x-artifact-reference': true };
+const { A } = require('../aso/tableOperations');
 const S = { type: 'string' };
 const N = { type: 'integer' };
 const tool = (name, description, properties = {}, required = []) => ({ name, description, parameters: { type: 'object', properties, required } });
@@ -261,13 +261,16 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
   const agentSpecs = orchestrator.getToolSpecs().filter(t => !['aso_hpa', 'dictionary_expert_hpa', 'check_inclusion_hpa'].includes(t.function.name)).map(t => {
     const properties = { ...t.function.parameters.properties };
     delete properties.mode;
-    t = { ...t, function: { ...t.function, parameters: { ...t.function.parameters, properties } } };
-    if (t.function.name !== 'investigator_hpa') return t;
-    return { ...t, function: { ...t.function, description: `Raw records for a list of ${identity.entity}s: pass genes=[names] or from=<artifact id> and the complete question (which fields, which rows, units). It finds the tables and fetches every ${identity.entity} at once, returning tables; gene=<name> for a single ${identity.entity}.`, parameters: { ...t.function.parameters, required: [], properties: {
-      ...t.function.parameters.properties,
-      genes: { type: 'array', items: S, description: `Supplied ${identity.entity} names` },
-      from: { type: 'string', description: `Artifact id whose rows supply the ${identity.entity}s` }
+    const entity = identity.entity;
+    // In a study the agents are described by what they return, in the database's own terms.
+    if (t.function.name === 'deep_research_hpa') return { ...t, function: { ...t.function, description: `Finds the ${entity}s matching a description (a cohort) by running a ${identity.database} search; returns their table.`, parameters: { ...t.function.parameters, properties: { ...properties, goal: { type: 'string', description: 'the cohort described, with every stated requirement' } } } } };
+    if (t.function.name === 'investigator_hpa') return { ...t, function: { ...t.function, description: `Raw records for a list of ${entity}s: genes=[names], gene=<name> or from=<artifact id>, and the complete question (fields, rows, units). It finds the tables and fetches every ${entity} at once, returning tables.`, parameters: { ...t.function.parameters, required: [], properties: {
+      gene: { type: 'string', description: `one ${entity}` },
+      genes: { type: 'array', items: S, description: `${entity} names` },
+      from: { type: 'string', description: `artifact id whose rows supply the ${entity}s` },
+      question: { type: 'string', description: 'the complete question: fields, rows, units' }
     } } } };
+    return { ...t, function: { ...t.function, parameters: { ...t.function.parameters, properties } } };
   });
   const agentNames = new Set(agentSpecs.map(t => t.function.name));
   const toolSpecs = [...agentSpecs, ...STUDY_TOOLS.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }))];

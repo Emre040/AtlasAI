@@ -4,7 +4,7 @@
 // handles to rows; source streaming and durable-result storage remain caller concerns.
 const tools = require('./studyTools');
 const { SCALAR_SCHEMA } = require('./valueSchemas');
-const A = { type: 'string', description: 'artifact id, or a dataset name', 'x-artifact-reference': true };
+const A = { type: 'string', description: 'artifact id or dataset name', 'x-artifact-reference': true };
 const S = { type: 'string' };
 const N = { type: 'integer' };
 const THEN_BY = { type: 'array', description: 'Tie-break columns in order; missing values last', items: { type: 'object', properties: { column: S, order: { type: 'string', enum: ['asc', 'desc'] }, type: { type: 'string', enum: ['auto', 'number', 'text'] } }, required: ['column'] } };
@@ -42,4 +42,4 @@ function executeTableOperation(name, args, inputs) {
   }
 }
 
-module.exports = { TABLE_OPERATIONS, executeTableOperation, THEN_BY, WHERE };
+module.exports = { TABLE_OPERATIONS, executeTableOperation, A, THEN_BY, WHERE };

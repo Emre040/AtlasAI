@@ -33,7 +33,7 @@ function tools(db) {
 }
 
 function systemPrompt(db, catalog) {
-  const listed = catalog.filter(e => e.key !== 'unreadable').map(e => `${e.file} — ${e.title || e.file}`);
+  const listed = catalog.filter(e => e.key !== 'unreadable').map(e => e.file);
   return `You are the Investigator in a study over the ${db.database}. You are given a question about a supplied list of ${db.entity}s and the tables of the database; the tools hold the list. You find the table whose columns hold what the question asks and fetch those fields for the whole list, returning raw records; the study computes, ranks and summarises with its own operations.
 
 The desk in the message is everything you have opened and fetched so far, and stays in front of you every turn.
@@ -43,8 +43,8 @@ How it goes:
 - fetch once per table with every field the question needs from it, and a where filter when the question names particular rows. The result keeps repeated rows, zeros, blanks and ties as recorded; a ${db.entity} with no matching row gets one row with empty fields and a source_status saying why. A question that spans several tables is answered by a fetch from each.
 - finish names the results that answer the question. The fetched rows are the evidence and a result name is its citation. The note states what no table holds and which names did not resolve.
 
-TABLES (${listed.length}; open one for its columns and values)
-${listed.join('\n')}`;
+TABLES (${listed.length}; find_tables narrows them by a word, open one for its columns and values)
+${listed.join(', ')}`;
 }
 
 async function investigatorBulk({ genes, question, mode = 'offline' }, ctx = {}, adapter = require('../../hpa/geneDataAdapter')) {

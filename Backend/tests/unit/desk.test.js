@@ -22,8 +22,8 @@ test('a result is one line: id, title, size, columns, origin, then its descripti
   assert.equal(big, 'a5 "All" (70 rows: gene, nTPM) ← filter of a1\n  Every gene', 'a larger result shows no rows until opened');
   assert.match(desk.resultLine({ id: 'a2', title: 'T', origin: 'chart(x=gene)', rows: [], columns: [], figure: { type: 'bar', title: 'T' }, images: ['a2.png'] }), /^a2 "T" figure bar ← chart\(x=gene\) \(rendered\)$/);
   assert.match(desk.resultLine({ id: 'a3', title: 'Heat', origin: 'pivot of a1', rows: [], columns: [], matrix: { row_labels: ['EGFR'], col_labels: ['liver', 'lung'], matrix: [[1, null]] } }), /^a3 "Heat" matrix 1 × 2 \(rows: EGFR; columns: liver, lung\) ← pivot of a1; a heatmap input$/);
-  const wide = desk.resultLine({ id: 'a9', title: 'Wide', origin: 'x', rows: Array.from({ length: 9 }, () => ({})), columns: Array.from({ length: 30 }, (_, i) => `c${i}`) });
-  assert.match(wide, /^a9 "Wide" \(9 rows: c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, … \+18 more columns\) ← x$/);
+  const wide = desk.resultLine({ id: 'a9', title: 'Wide', origin: 'x', rows: Array.from({ length: 12 }, () => ({})), columns: Array.from({ length: 30 }, (_, i) => `c${i}`) });
+  assert.match(wide, /^a9 "Wide" \(12 rows: c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, … \+18 more columns\) ← x$/);
 });
 
 test('a table opened for particular columns details those and names the rest', () => {

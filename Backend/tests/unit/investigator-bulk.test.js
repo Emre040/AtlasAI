@@ -38,8 +38,7 @@ test('the investigator opens a table, asks for a column\'s values, fetches for t
   // The desk of the third turn: the result as one line, no rows.
   const desk3 = requests[2].messages[1].content;
   assert.match(desk3, /RESULTS\nLiver and lung nTPM \(6 rows: gene, ensembl, Tissue, nTPM, source_rows, source_status\) ← fetch table=rna_tissue_consensus\.tsv, fields=\["Tissue","nTPM"\]/);
-  assert.match(desk3, /\n  Consensus nTPM in liver and lung for the list\n/);
-  assert.doesNotMatch(desk3, /EGFR \| ENSG1 \| liver/);
+  assert.match(desk3, /\n  Consensus nTPM in liver and lung for the list\n  0: EGFR \| ENSG1 \| liver \| 32\.2 \| 2 \| ok\n/, 'a result of a few rows sits on the desk whole');
   assert.match(desk3, /HISTORY\nturn 1: opened rna_tissue_consensus\.tsv \(on the desk\)\nturn 1: values of rna_tissue_consensus\.tsv Tissue \(on its card\)\nturn 2: fetch → "Liver and lung nTPM" \(6 rows; 3 points with rows, 1 not in the release\)/);
   assert.match(requests[0].messages[0].content, /You are the Investigator in a study over the Test Atlas/);
   assert.match(requests[0].messages[0].content, /TABLES \(2; find_tables narrows them by a word, open one for its columns\)\nrna_tissue_consensus\.tsv, tissues\.tsv/);

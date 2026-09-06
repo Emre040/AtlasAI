@@ -106,7 +106,7 @@ function namedColumns(columns) {
 // A produced result as a line: id, title, size, columns, what made it; then its description.
 // A result of a few rows shows them whole, with indices; anything larger is opened on request.
 const NOTE_CHARS = 600;   // characters of a text result shown on its line
-const INLINE_ROWS = 5;    // a result this small is shown whole: cheaper than a turn spent opening it
+const INLINE_ROWS = 10;   // a result this small is shown whole (a top ten): cheaper than a turn spent opening it
 
 function resultLine({ id, title = '', description = '', origin, rows = [], columns = [], matrix, figure, images, text }) {
   const head = title ? `${id} "${title}"` : id;

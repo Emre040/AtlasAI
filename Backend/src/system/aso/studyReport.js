@@ -16,7 +16,7 @@ const N = { type: 'integer' };
 const FINISH_SCHEMA = {
   tables: { type: 'array', description: 'Saved tables to print in full: artifact id, optional columns to show, optional title.', items: { type: 'object', properties: { artifact: S, columns: { type: 'array', items: S }, title: S, rows: { type: 'integer', description: 'Print only the first N rows (the full table stays saved)' } }, required: ['artifact'] } },
   figures: { type: 'array', items: S, description: 'Rendered figure artifact ids to include, in order. Omit for all figures; [] for none.' },
-  claims: { type: 'array', description: 'Findings, one per item, each bound to the saved rows it rests on. The report prints those cells beside the claim, and every number the claim states must be among them (a number may be written rounded).', items: { type: 'object', properties: { text: S, artifact: S, rows: { type: 'array', items: N, description: 'Zero-based row indices in the artifact, as numbered on the desk' }, columns: { type: 'array', items: S } }, required: ['text', 'artifact', 'rows'] } },
+  claims: { type: 'array', description: 'Findings, one per item, each bound to the saved rows it rests on: artifact, rows and columns for one table, or evidence for cells from several tables. The report prints those cells beside the claim, and every number the claim states must be among them (a number may be written rounded).', items: { type: 'object', properties: { text: S, artifact: S, rows: { type: 'array', items: N, description: 'Zero-based row indices in the artifact, as numbered on the desk' }, columns: { type: 'array', items: S }, evidence: { type: 'array', description: 'Bindings to several tables: each names an artifact, its rows and optionally its columns.', items: { type: 'object', properties: { artifact: S, rows: { type: 'array', items: N }, columns: { type: 'array', items: S } }, required: ['artifact', 'rows'] } } }, required: ['text'] } },
   limitations: { type: 'array', items: S, description: 'What the evidence cannot establish, without numbers.' },
   not_done: { type: 'array', description: 'Plan items not delivered, with the reason.', items: { type: 'object', properties: { item: N, why: S }, required: ['item', 'why'] } }
 };
@@ -59,8 +59,21 @@ function resolveColumns(artifact, columns) {
   });
 }
 
-// What a claim rests on: the cells it names, as numbers and as text for the reader.
+// What a claim rests on: the cells it names, as numbers and as text for the reader. A claim binds
+// one table (artifact, rows, columns) or several (evidence: a list of such bindings).
 function binding(claim, state) {
+  if (Array.isArray(claim.evidence) || claim.artifact === undefined) {
+    const parts = Array.isArray(claim.evidence) ? claim.evidence : [];
+    if (claim.artifact !== undefined) parts.unshift({ artifact: claim.artifact, rows: claim.rows, columns: claim.columns });
+    if (!parts.length) throw new Error('a claim needs artifact and rows, or evidence with at least one binding');
+    const bound = parts.map(part => bindOne(part, state));
+    return { artifact: bound[0].artifact, parts: bound, cells: bound.flatMap(b => b.cells), columns: bound[0].columns, values: bound.flatMap(b => b.values), counts: bound.flatMap(b => b.counts) };
+  }
+  const one = bindOne(claim, state);
+  return { ...one, parts: [one] };
+}
+
+function bindOne(claim, state) {
   const artifact = state.byId.get(String(claim.artifact || '').trim());
   if (!artifact) throw new Error(`claim cites ${JSON.stringify(claim.artifact)}, which is not a saved artifact`);
   if (artifact.figure) {
@@ -106,12 +119,13 @@ function claimIssue(claim, state) {
   let bound;
   try { bound = binding(claim, state); }
   catch (error) { return error.message; }
-  // Numbers the bound artifact was made with (a threshold, a top n) are part of its evidence.
-  const argNumbers = numbersIn(bound.artifact.args || {});
+  // Numbers the bound artifacts were made with (a threshold, a top n) are part of their evidence.
+  const argNumbers = bound.parts.flatMap(b => numbersIn(b.artifact.args || {}));
   const unmatched = statedNumbers(claim.text).filter(({ value, tolerance }) => !near(bound.values, value, tolerance) && !near(argNumbers, value, tolerance) && !(Number.isInteger(value) && bound.counts.includes(value)));
   if (!unmatched.length) return null;
   const where = unmatched.map(u => { const hits = locate(state, u.value, u.tolerance); return `${u.raw}${hits.length ? ` is at ${hits.join(', ')}` : ' is in no saved artifact'}`; });
-  return `${JSON.stringify(claim.text.length > 160 ? `${claim.text.slice(0, 159)}…` : claim.text)} states ${unmatched.map(u => u.raw).join(', ')}, not among the cells it is bound to in ${bound.artifact.id} (rows ${[...new Set(claim.rows || [])].join(', ')}${bound.columns ? `; columns ${bound.columns.join(', ')}` : ''}): ${where.join('; ')}. Bind the rows that hold each number (one claim per artifact), or compute it with an operation and cite that result.`;
+  const boundTo = bound.parts.map(b => `${b.artifact.id} rows ${[...new Set(b.cells.map(c => c.index))].join(', ') || '(none)'}${b.columns ? ` columns ${b.columns.join(', ')}` : ''}`).join('; ');
+  return `${JSON.stringify(claim.text.length > 160 ? `${claim.text.slice(0, 159)}…` : claim.text)} states ${unmatched.map(u => u.raw).join(', ')}, not among the cells it is bound to (${boundTo}): ${where.join('; ')}. Add those rows to the claim's evidence, or compute the number with an operation and cite that result.`;
 }
 
 // Every problem with a finish call, in words the model can act on. Empty means accepted.
@@ -155,9 +169,11 @@ function figureLine(artifact) {
 }
 
 function evidenceText(bound) {
-  if (!bound.cells.length) return Array.isArray(bound.artifact.rows) && !bound.artifact.rows.length ? `${bound.artifact.id}: no rows` : `${bound.artifact.id}`;
-  const shown = bound.cells.slice(0, 12).map(c => `row ${c.index}: ${c.values.map(([k, v]) => `${k}=${escapeCell(v)}`).join(', ')}`);
-  return `${bound.artifact.id} ${shown.join('; ')}${bound.cells.length > 12 ? `; … ${bound.cells.length - 12} more rows` : ''}`;
+  return (bound.parts || [bound]).map(b => {
+    if (!b.cells.length) return Array.isArray(b.artifact.rows) && !b.artifact.rows.length ? `${b.artifact.id}: no rows` : `${b.artifact.id}`;
+    const shown = b.cells.slice(0, 12).map(c => `row ${c.index}: ${c.values.map(([k, v]) => `${k}=${escapeCell(v)}`).join(', ')}`);
+    return `${b.artifact.id} ${shown.join('; ')}${b.cells.length > 12 ? `; … ${b.cells.length - 12} more rows` : ''}`;
+  }).join(' | ');
 }
 
 // Markdown from the accepted finish arguments and the saved artifacts.

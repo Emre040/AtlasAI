@@ -13,7 +13,7 @@ test('a claim is accepted only when every number it states is among its bound ce
   assert.deepEqual(reportIssues({ claims: [{ text: 'EGFR liver is 32.2 nTPM against 14.1 in lung', artifact: 'a1', rows: [0, 1], columns: ['gene', 'Tissue', 'nTPM'] }] }, state), []);
   const wrong = reportIssues({ claims: [{ text: 'EGFR liver is 40.1 nTPM', artifact: 'a1', rows: [0], columns: ['nTPM'] }] }, state);
   assert.equal(wrong.length, 1);
-  assert.match(wrong[0], /states 40\.1, not among the cells it is bound to in a1 \(rows 0; columns nTPM\): 40\.1 is in no saved artifact/);
+  assert.match(wrong[0], /states 40\.1, not among the cells it is bound to \(a1 rows 0 columns nTPM\): 40\.1 is in no saved artifact/);
   const elsewhere = reportIssues({ claims: [{ text: 'EGFR lung is 14.1 nTPM', artifact: 'a1', rows: [0], columns: ['nTPM'] }] }, state);
   assert.match(elsewhere[0], /14\.1 is at a1 row 1 nTPM/, 'a refusal says where the number lives');
   const a4 = { id: 'a4', kind: 'data', label: 'top', rows: [{ gene: 'EGFR', rank: 1 }], columns: ['gene', 'rank'], tool: 'rank', args: { artifact: 'a1', by: 'nTPM', top: 5 }, inputs: ['a1'] };
@@ -48,4 +48,15 @@ test('the rendered report prints tables from the data and the bound cells beside
 
 test('stated numbers keep the precision they were written at', () => {
   assert.deepEqual(statedNumbers('32.2 nTPM, 1,234 rows and 1.6E11 pg/L').map(n => [n.value, n.tolerance]), [[32.2, 0.05], [1234, 0.5], [1.6e11, 5e9]]);
+});
+
+test('a claim may bind cells from several tables through evidence, and the report prints each binding', () => {
+  const a5 = { id: 'a5', kind: 'data', label: 'means', rows: [{ gene: 'EGFR', mean: 23.15 }], columns: ['gene', 'mean'], tool: 'aggregate', args: {}, inputs: ['a1'] };
+  const s = { artifacts: [...state.artifacts, a5], byId: new Map([...state.byId, ['a5', a5]]), plan: state.plan };
+  const claim = { text: 'EGFR is 32.2 in liver and averages 23.2 across tissues.', evidence: [{ artifact: 'a1', rows: [0], columns: ['Tissue', 'nTPM'] }, { artifact: 'a5', rows: [0], columns: ['mean'] }] };
+  assert.deepEqual(reportIssues({ claims: [claim] }, s), []);
+  assert.match(renderReport({ claims: [claim] }, s, []), /\(evidence: a1 row 0: Tissue=liver, nTPM=32\.2 \| a5 row 0: mean=23\.15\)/);
+  const refused = reportIssues({ claims: [{ text: 'EGFR is 32.2 in liver and averages 23.2', artifact: 'a1', rows: [0], columns: ['nTPM'] }] }, s);
+  assert.match(refused[0], /23\.2, not among the cells it is bound to \(a1 rows 0 columns nTPM\): 23\.2 is at a5 row 0 mean/);
+  assert.match(reportIssues({ claims: [{ text: 'no binding' }] }, s)[0], /needs artifact and rows, or evidence/);
 });

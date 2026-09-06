@@ -21,7 +21,7 @@ function planText(plan) {
 // interpretation needs a claim.
 function uncovered(plan, { tables = [], figures = [], claims = [], notDone = [] }, byId) {
   const figureTypes = figures.map(a => a.figure?.type);
-  const tableIds = new Set([...tables.map(t => String(t.artifact).trim()), ...claims.map(c => String(c.artifact).trim())]);
+  const tableIds = new Set([...tables.map(t => String(t.artifact).trim()), ...claims.flatMap(c => [c.artifact, ...(c.evidence || []).map(e => e.artifact)]).filter(Boolean).map(id => String(id).trim())]);
   const skipped = new Set(notDone.map(item => item.item));
   return plan.map((p, i) => ({ p, n: i + 1 })).filter(({ p, n }) => {
     if (skipped.has(n)) return false;

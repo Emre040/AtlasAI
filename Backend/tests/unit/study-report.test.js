@@ -28,12 +28,21 @@ test('a claim is accepted only when every number it states is among its bound ce
 
 test('tables, figures and limitations are checked structurally', () => {
   assert.deepEqual(reportIssues({ tables: [{ artifact: 'a1', columns: ['gene', 'nTPM'] }], figures: ['a2'] }, state), []);
-  assert.match(reportIssues({ tables: [{ artifact: 'a2' }] }, state)[0], /a2 is a figure, not a row table/);
+  assert.match(reportIssues({ tables: [{ artifact: 'a2' }] }, state)[0], /a2 is a figure, not a table/);
   assert.match(reportIssues({ figures: ['a3'] }, state)[0], /a3 was not rendered/);
   assert.match(reportIssues({ figures: ['a1'] }, state)[0], /"a1" is not a saved figure/);
   assert.match(reportIssues({ tables: [{ artifact: 'a1' }], limitations: ['3 genes had no record'] }, state)[0], /limitations\[0\] states 3; numbers belong in a claim/);
   assert.match(reportIssues({ tables: [{ artifact: 'a1' }], not_done: [{ item: 4, why: 'x' }] }, state)[0], /between 1 and 1/);
   assert.match(reportIssues({ figures: [] }, state)[0], /needs at least one table, figure or claim/);
+});
+
+test('a pivot matrix is a report table: row labels down the side, column labels across', () => {
+  const a5 = { id: 'a5', kind: 'data', label: 'heat matrix', matrix: { matrix: [[32.2, 14.1], [null, 3]], row_labels: ['EGFR', 'MET'], col_labels: ['liver', 'lung'] }, columns: [], tool: 'pivot', inputs: ['a1'] };
+  const withMatrix = { ...state, artifacts: [...state.artifacts, a5], byId: new Map([...state.byId, ['a5', a5]]) };
+  assert.deepEqual(reportIssues({ tables: [{ artifact: 'a5', columns: ['lung'] }] }, withMatrix), []);
+  assert.match(reportIssues({ tables: [{ artifact: 'a5', columns: ['lung', 'skin'] }] }, withMatrix)[0], /a5 has no column "skin"; its columns: liver, lung/);
+  const md = renderReport({ tables: [{ artifact: 'a5', title: 'Heat' }] }, withMatrix, []);
+  assert.match(md, /\*\*Heat\*\* \(a5, 2 × 2\)\n\n\|  \| liver \| lung \|\n\| --- \| --- \| --- \|\n\| EGFR \| 32\.2 \| 14\.1 \|\n\| MET \| — \| 3 \|/);
 });
 
 test('the rendered report prints tables from the data and the bound cells beside every claim', () => {

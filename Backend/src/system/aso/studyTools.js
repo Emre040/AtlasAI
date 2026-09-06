@@ -191,6 +191,14 @@ function suffixedNames(columns, taken) {
   return names;
 }
 
+// What a join did to b's column names, for the result's origin line: the renames and the shared
+// columns kept once.
+function naming(rows, rightNames, shared) {
+  const renamed = Object.fromEntries([...rightNames].filter(([column, name]) => column !== name));
+  Object.defineProperty(rows, 'naming', { value: { renamed, shared: [...shared] }, configurable: true });
+  return rows;
+}
+
 function join(left, right, how = 'inner', on = null, onColumns) {
   // A cross join pairs every row of a with every row of b: two single-row results side by side.
   if (how === 'cross') {
@@ -198,7 +206,7 @@ function join(left, right, how = 'inner', on = null, onColumns) {
     const rightNames = suffixedNames(rightCols, leftCols);
     const out = [];
     for (const l of left) for (const r of right) out.push({ ...Object.fromEntries(leftCols.map(c => [c, l[c] === undefined ? null : l[c]])), ...Object.fromEntries(rightCols.map(c => [rightNames.get(c), r[c] === undefined ? null : r[c]])) });
-    return withColumns(out, [...leftCols, ...rightNames.values()]);
+    return naming(withColumns(out, [...leftCols, ...rightNames.values()]), rightNames, []);
   }
   if (!['inner', 'left', 'right', 'full'].includes(how)) throw new Error('join: how must be inner, left, right, full or cross');
   if (on && onColumns !== undefined) throw new Error('join: use on or on_columns, not both');
@@ -223,7 +231,23 @@ function join(left, right, how = 'inner', on = null, onColumns) {
   };
   const leftCols = columnsOf(left), rightCols = columnsOf(right);
   const rightFields = rightCols.filter(column => !rightKeys.includes(column) && (composite || !['gene', 'ensembl'].includes(column)));
-  const rightNames = suffixedNames(rightFields, leftCols);
+  const groups = new Map();
+  for (const [index, row] of right.entries()) for (const key of keys(row, rightKeys)) {
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ row, index });
+  }
+  const pairs = [], matchedRight = new Set();
+  for (const l of left) {
+    let matches = [];
+    for (const key of keys(l, leftKeys)) { matches = groups.get(key) || []; if (matches.length) break; }
+    if (!matches.length) pairs.push([l, null]);
+    for (const match of matches) { matchedRight.add(match.index); pairs.push([l, match.row]); }
+  }
+  // A column both sides carry under one name, agreeing on every matched pair, is one column and
+  // is kept once; a column of b that differs, or whose name is taken, comes with a numbered suffix.
+  const same = (a, b) => (isMissing(a) && isMissing(b)) || String(a) === String(b);
+  const shared = rightFields.filter(column => leftCols.includes(column) && pairs.every(([l, r]) => !r || same(l[column], r[column])));
+  const rightNames = suffixedNames(rightFields.filter(column => !shared.includes(column)), leftCols);
   const projected = [...leftCols, ...rightNames.values()];
   const identityColumns = ['gene', 'ensembl'].filter(column => leftCols.includes(column) || rightCols.includes(column));
   const outputColumns = [...new Set([...projected, ...identityColumns])];
@@ -232,25 +256,18 @@ function join(left, right, how = 'inner', on = null, onColumns) {
     if (l) for (const column of leftCols) out[column] = l[column] === undefined ? null : l[column];
     if (r) {
       for (const [column, name] of rightNames) out[name] = r[column] === undefined ? null : r[column];
-      if (!l) for (const [index, column] of leftKeys.entries()) out[column] = r[rightKeys[index]] === undefined ? null : r[rightKeys[index]];
+      if (!l) {
+        for (const [index, column] of leftKeys.entries()) out[column] = r[rightKeys[index]] === undefined ? null : r[rightKeys[index]];
+        for (const column of shared) out[column] = r[column] === undefined ? null : r[column];
+      }
       for (const column of identityColumns) if (isMissing(out[column]) && !isMissing(r[column])) out[column] = r[column];
     }
     return out;
   };
-  const groups = new Map();
-  for (const [index, row] of right.entries()) for (const key of keys(row, rightKeys)) {
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push({ row, index });
-  }
-  const out = [], matchedRight = new Set();
-  for (const l of left) {
-    let matches = [];
-    for (const key of keys(l, leftKeys)) { matches = groups.get(key) || []; if (matches.length) break; }
-    if (!matches.length && ['left', 'full'].includes(how)) out.push(merge(l, null));
-    for (const match of matches) { matchedRight.add(match.index); out.push(merge(l, match.row)); }
-  }
+  const out = [];
+  for (const [l, r] of pairs) if (r || ['left', 'full'].includes(how)) out.push(merge(l, r));
   if (['right', 'full'].includes(how)) for (const [index, row] of right.entries()) if (!matchedRight.has(index)) out.push(merge(null, row));
-  return withColumns(out, outputColumns);
+  return naming(withColumns(out, outputColumns), rightNames, shared);
 }
 
 const IDENTITY = ['gene', 'ensembl'];

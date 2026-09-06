@@ -50,7 +50,7 @@ async function fetchRows({ adapter, entry, supplied, resolved, fields, where = [
   const firstRows = [...source.byGene.values()].find(rows => rows.length) || [];
   const firstGene = entities.find(e => e.gene && source.byGene.get(e.gene.ensembl)?.length)?.gene;
   const identity = identityColumns(entry, firstRows.slice(0, 1), firstGene ? [firstGene.gene, firstGene.ensembl] : []);
-  const wanted = Array.isArray(fields) && fields.length ? resolveColumns(entry, fields) : entry.columns.filter(c => !identity.includes(c));
+  const wanted = (Array.isArray(fields) && fields.length ? resolveColumns(entry, fields) : entry.columns).filter(c => !identity.includes(c));
   const [geneKey, idKey] = keys.columns;
   const columns = [geneKey, idKey, ...wanted.filter(c => c !== geneKey && c !== idKey), 'source_rows', 'source_status'];
   const out = [];
@@ -95,7 +95,7 @@ async function fetchMatching({ adapter, entry, points, fields, where = [], match
   const first = [...byPoint.values()].find(rows => rows.length)?.[0];
   const firstKeys = keyed && first ? adapter.keysOf(entry, first) : {};
   const identity = keyed && first ? identityColumns(entry, [first], [firstKeys[geneKey], firstKeys[idKey]]) : [];
-  const wanted = (Array.isArray(fields) && fields.length ? resolveColumns(entry, fields) : entry.columns.filter(c => !identity.includes(c))).filter(c => c !== column);
+  const wanted = (Array.isArray(fields) && fields.length ? resolveColumns(entry, fields) : entry.columns).filter(c => !identity.includes(c) && c !== column);
   const columns = [column, ...keyColumns, ...wanted.filter(c => !keyColumns.includes(c)), 'source_rows', 'source_status'];
   const out = [];
   const coverage = { supplied: points.length, entities: unique.length, with_rows: 0, no_rows: 0, no_match: 0, rows: 0 };
@@ -136,7 +136,7 @@ async function fetchAll({ adapter, entry, fields, where = [], keys }) {
   }
   const firstKeys = keyed && selected.length ? adapter.keysOf(entry, selected[0]) : {};
   const identity = keyed && selected.length ? identityColumns(entry, [selected[0]], keyColumns.map(c => firstKeys[c])) : [];
-  const wanted = Array.isArray(fields) && fields.length ? resolveColumns(entry, fields) : entry.columns.filter(c => !identity.includes(c));
+  const wanted = (Array.isArray(fields) && fields.length ? resolveColumns(entry, fields) : entry.columns).filter(c => !identity.includes(c));
   const columns = [...keyColumns, ...wanted.filter(c => !keyColumns.includes(c))];
   const out = selected.map(row => ({ ...(keyed ? adapter.keysOf(entry, row) : {}), ...pick(row, wanted) }));
   return { rows: withColumns(out, columns), columns, coverage: { rows: out.length, scanned }, fields: wanted };

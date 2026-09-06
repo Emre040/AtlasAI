@@ -123,7 +123,14 @@ function reportIssues(args, state) {
   for (const [i, table] of (args.tables || []).entries()) {
     const artifact = state.byId.get(String(table?.artifact || '').trim());
     if (!artifact) { issues.push(`tables[${i}] cites ${JSON.stringify(table?.artifact)}, which is not a saved artifact`); continue; }
-    if (!Array.isArray(artifact.rows)) { issues.push(`tables[${i}]: ${artifact.id} is a ${artifact.figure ? 'figure' : 'matrix'}, not a row table`); continue; }
+    if (artifact.figure) { issues.push(`tables[${i}]: ${artifact.id} is a figure, not a table`); continue; }
+    // A matrix is a table too: its rows are its row labels, its columns its column labels.
+    if (artifact.matrix) {
+      const missing = (table.columns || []).filter(c => !artifact.matrix.col_labels.includes(c));
+      if (missing.length) issues.push(`tables[${i}]: ${artifact.id} has no column ${missing.map(c => JSON.stringify(c)).join(', ')}; its columns: ${artifact.matrix.col_labels.join(', ')}`);
+      continue;
+    }
+    if (!Array.isArray(artifact.rows)) { issues.push(`tables[${i}]: ${artifact.id} is not a table`); continue; }
     try { resolveColumns(artifact, table.columns); } catch (error) { issues.push(`tables[${i}]: ${error.message}`); }
     if (table.rows !== undefined && !Number.isSafeInteger(table.rows)) issues.push(`tables[${i}].rows must be an integer`);
   }
@@ -172,6 +179,14 @@ function renderReport(args, state, figures) {
   const sections = [];
   for (const table of args.tables || []) {
     const artifact = state.byId.get(String(table.artifact).trim());
+    if (artifact.matrix) {
+      const m = artifact.matrix;
+      const columns = (table.columns || []).length ? table.columns : m.col_labels;
+      const shown = m.row_labels.slice(0, table.rows > 0 ? table.rows : m.row_labels.length);
+      const body = [`|  | ${columns.map(escapeCell).join(' | ')} |`, `| --- | ${columns.map(() => '---').join(' | ')} |`, ...shown.map((label, i) => `| ${escapeCell(label)} | ${columns.map(c => escapeCell(m.matrix[i][m.col_labels.indexOf(c)])).join(' | ')} |`)].join('\n');
+      sections.push(`**${table.title || artifact.label || artifact.id}** (${artifact.id}, ${m.row_labels.length} × ${m.col_labels.length})\n\n${body}${shown.length < m.row_labels.length ? `\n\nShowing ${shown.length} of ${m.row_labels.length} rows; the full matrix is saved as ${artifact.id}.` : ''}`);
+      continue;
+    }
     const columns = resolveColumns(artifact, table.columns);
     const shown = artifact.rows.slice(0, table.rows > 0 ? table.rows : artifact.rows.length);
     const body = shown.length ? [`| ${columns.map(escapeCell).join(' | ')} |`, `| ${columns.map(() => '---').join(' | ')} |`, ...shown.map(row => `| ${columns.map(c => escapeCell(row[c])).join(' | ')} |`)].join('\n') : `No rows (${artifact.id}).`;

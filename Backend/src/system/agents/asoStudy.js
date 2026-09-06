@@ -92,13 +92,9 @@ Values are reported as recorded: units, zeros, blanks, repeated rows and ties. A
 
 // ---- what agents return -----------------------------------------------------------------------------
 
+// A found set is its members, by identity. What else holds of them is a question for the Investigator.
 function normalizeSearchRow(r) {
-  const out = { gene: r.Gene ?? r.gene ?? null, ensembl: r.Ensembl ?? r.ensembl ?? null };
-  for (const [k, v] of Object.entries(r)) {
-    if (['Gene', 'Ensembl', 'gene', 'ensembl'].includes(k)) continue;
-    out[k] = v === null || v === undefined || v === 'NA' || String(v).trim() === '' ? null : v;
-  }
-  return out;
+  return { gene: r.Gene ?? r.gene ?? null, ensembl: r.Ensembl ?? r.ensembl ?? null };
 }
 
 function scalarRow(obj) {
@@ -201,7 +197,9 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     if (!a) throw new Error(`no artifact "${id}" (have ${state.artifacts.map(x => x.id).join(', ') || 'none'})`);
     return a;
   };
-  const origin = a => `${a.tool}${a.toolId ? ` ${a.toolId}` : ''}${a.tool === 'chart' ? `(${desk.argsLine(bare(a.args), 120)})` : agentNames.has(a.tool) ? ` "${String(a.args.question || a.args.goal || a.args.topic || '').slice(0, 90)}"` : a.inputs?.length ? ` of ${a.inputs.join(', ')}` : ''}`;
+  // A join's line says what b's clashing columns are now called, so nothing is guessed from a suffix.
+  const renames = a => { const r = Object.entries(a.meta?.renamed || {}); return r.length ? ` (${a.inputs[1]}'s ${r.map(([from, to]) => `${from} as ${to}`).join(', ')})` : ''; };
+  const origin = a => `${a.tool}${a.toolId ? ` ${a.toolId}` : ''}${a.tool === 'chart' ? `(${desk.argsLine(bare(a.args), 120)})` : agentNames.has(a.tool) ? ` "${String(a.args.question || a.args.goal || a.args.topic || '').slice(0, 90)}"` : a.inputs?.length ? ` of ${a.inputs.join(', ')}${renames(a)}` : ''}`;
 
   // Stores a tool's output as an artifact, linked to the artifacts it read.
   async function addArtifact({ kind, label, description = '', rows, matrix, text, tool: toolName, args, inputs, meta, figure, toolId, columns: suppliedColumns }) {

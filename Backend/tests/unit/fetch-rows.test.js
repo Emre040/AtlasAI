@@ -20,6 +20,8 @@ test('fetch returns one row per matching source row, keeps blanks, and explains 
   assert.equal(nope.ensembl, null);
   assert.deepEqual(result.coverage, { supplied: 5, entities: 4, resolved: 3, with_rows: 3, no_rows: 0, no_match: 0, not_in_release: 1, rows: 6 });
   assert.deepEqual(result.fields, ['Tissue', 'nTPM'], 'field names resolve case-insensitively to the exact column');
+  const echoed = await fetchRows({ adapter, entry: CONSENSUS, supplied, resolved, fields: ['Gene', 'Tissue', 'ntpm'], where: [], keys });
+  assert.deepEqual(echoed.columns, ['gene', 'ensembl', 'Tissue', 'nTPM', 'source_rows', 'source_status'], 'a named column that only repeats the entity keys is not echoed');
 });
 
 test('a filter selects source rows; an entity with no matching row keeps one empty row saying so', async () => {

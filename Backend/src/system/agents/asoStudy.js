@@ -507,6 +507,8 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
       if (a.figure) { view(a.id, `${a.id} figure: ${JSON.stringify(a.figure).slice(0, 1200)}`, `${a.id} figure spec (opened at turn ${state.turn})`); remember(`opened ${a.id} (figure spec on the desk)`); return; }
       if (a.matrix) { view(a.id, `${a.id} matrix rows ${a.matrix.row_labels.join(', ')}; columns ${a.matrix.col_labels.join(', ')}\n${a.matrix.matrix.slice(0, 40).map((row, i) => `  ${desk.cell(a.matrix.row_labels[i])}: ${row.map(v => v === null ? '—' : v).join(' | ')}`).join('\n')}${a.matrix.matrix.length > 40 ? '\n  …' : ''}`, `${a.id} matrix (opened at turn ${state.turn})`); remember(`opened ${a.id} (matrix on the desk)`); return; }
       if (a.text) { view(a.id, `${a.id}: ${a.text.slice(0, 1500)}`, `${a.id} text (opened at turn ${state.turn})`); remember(`opened ${a.id}`); return; }
+      const named = Array.isArray(args.columns) && args.columns.length > 0;
+      if (!named && state.wholeOnDesk?.has(a.id)) { remember(`${a.id} is whole on the desk (rows 0–${a.rows.length - 1})`); return; }
       const rows = Number.isSafeInteger(args.rows) && args.rows > 0 ? args.rows : VIEW_ROWS;
       const offset = Number.isSafeInteger(args.offset) && args.offset >= 0 ? args.offset : 0;
       const columns = Array.isArray(args.columns) && args.columns.length ? args.columns.map(c => { const found = a.columns.find(x => x === c) || a.columns.find(x => x.toLowerCase() === String(c).toLowerCase()); if (!found) throw new Error(`${a.id} has no column ${JSON.stringify(c)}; its columns: ${a.columns.join(', ')}`); return found; }) : a.columns;
@@ -563,6 +565,8 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     for (const a of state.artifacts) for (const input of a.inputs || []) { if (!usedBy.has(input)) usedBy.set(input, []); usedBy.get(input).push(a.id); }
     const near = new Set(state.artifacts.filter(a => !usedBy.has(a.id)).flatMap(a => a.inputs || []));
     const filed = state.artifacts.filter(a => usedBy.has(a.id) && !near.has(a.id) && (a.rows ? a.rows.length : 0) > desk.SMALL_ROWS);
+    // The artifacts whose every row is on the desk this turn; open answers for them from the desk.
+    state.wholeOnDesk = new Set(state.artifacts.filter(a => Array.isArray(a.rows) && a.rows.length <= desk.WHOLE_ROWS && !filed.includes(a) && !(usedBy.has(a.id) && a.rows.length > desk.SMALL_ROWS)).map(a => a.id));
     const cards = state.artifacts.filter(a => !filed.includes(a)).map(a => desk.resultCard({ id: a.id, label: a.kind === 'answer' || a.kind === 'note' ? a.label : '', origin: origin(a), rows: a.rows || [], columns: a.columns, matrix: a.matrix, figure: a.figure, images: a.images, text: a.text, folded: usedBy.has(a.id) && (a.rows ? a.rows.length : 0) > desk.SMALL_ROWS ? usedBy.get(a.id) : null, profile: usedBy.has(a.id) ? null : profileOf(a), first: [...identity.keys, ...argColumns(a)] }));
     if (filed.length) cards.push(`filed (read by later operations; open by id): ${filed.map(a => `${a.id} (${desk.count(a.rows.length)} rows) ← ${a.tool}`).join('; ')}`);
     // A view is something the model asked to see; it stays on the desk for the whole study.

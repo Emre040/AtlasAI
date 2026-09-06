@@ -118,6 +118,19 @@ test('finish while an agent runs is refused and the loop waits for the agent; a 
   assert.equal(result.failed, 1, 'the failed filter; a refused finish is feedback, not a failure');
 });
 
+test('opening an artifact that is whole on the desk is answered from the desk, without a view', async t => {
+  const { run, requests } = await study(t, [
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', { genes: ['EGFR'], question: 'nTPM' })),
+    response(call('open', { artifact: 'a1' })),
+    response(call('finish', { tables: [{ artifact: 'a1' }] }))
+  ]);
+  const result = await run({});
+  assert.equal(result.outcome, 'completed', result.summary);
+  const desk3 = requests[2].messages[1].content;
+  assert.match(desk3, /turn 2: a1 is whole on the desk \(rows 0–3\)/);
+  assert.doesNotMatch(desk3, /\nVIEWS\n/);
+});
+
 test('an identical agent call is answered by the earlier job, and one gene is investigated as a list of one', async t => {
   const { run, requests, agentCalls } = await study(t, [
     response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', { gene: 'EGFR', question: 'nTPM' })),

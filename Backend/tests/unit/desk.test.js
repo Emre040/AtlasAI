@@ -33,6 +33,17 @@ test('a table opened for particular columns details those and names the rest', (
   assert.doesNotMatch(card, /Note: 6 values/, 'a column not asked for is named, not detailed');
 });
 
+test('a wide table opened whole shows a few values per column, and every value for the columns asked for', () => {
+  const columns = Array.from({ length: 30 }, (_, i) => `c${i}`);
+  const values = Array.from({ length: 20 }, (_, i) => `v${i}`);
+  const profile = columns.map(c => ({ column: c, kind: 'text', distinct: '20', observed_values: values, examples: values.slice(0, 6), full_examples: values.slice(0, 6) }));
+  const whole = desk.tableCard({ name: 'w.tsv', title: 'Wide', columns, profile, sample: [], focus: ['c7'], whole: true });
+  assert.match(whole, /30 columns \(wide: a few values per column; open it with columns for every value of a column\)\n  c0: text, 20 distinct \(e\.g\. v0 \| v1 \| v2\)\n/);
+  assert.match(whole, /\n  c7: 20 values: v0 \| v1 \| v2 \| v3 \| v4 \| v5 \| v6 \| v7 \| v8 \| v9 \| v10 \| v11 \| v12 \| v13 \| v14 \| v15 \| v16 \| v17 \| v18 \| v19\n  c8: text, 20 distinct/);
+  const narrow = desk.tableCard({ name: 'n.tsv', title: 'Narrow', columns: columns.slice(0, 3), profile: profile.slice(0, 3), sample: [], whole: true });
+  assert.match(narrow, /\n  c0: 20 values: v0 \| v1/, 'a narrow table lists every value of every column');
+});
+
 test('a result card shows the entity keys and the columns its operation named first', () => {
   const rows = Array.from({ length: 70 }, (_, i) => ({ gene: `G${i}`, ensembl: `E${i}`, a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, Score: i, Tissue: 'liver' }));
   const columns = ['gene', 'ensembl', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'Score', 'Tissue'];

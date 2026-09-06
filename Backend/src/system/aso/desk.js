@@ -77,16 +77,19 @@ function columnLine(c, vocab = VOCAB_MAX) {
 }
 
 // A source table as a card: what it is, what its columns hold, how a few rows look. Opened
-// for particular columns, the card details those and names the rest, so a wide table costs
-// what was asked of it.
-function tableCard({ name, title, description, access, columns, profile, sample, scanned, capped, focus = null }) {
-  const head = `${name} — ${title || name}${description ? `. ${description}` : ''}${access ? ` [${access}]` : ''}; ${columns.length} columns${scanned ? ` (values from ${capped ? 'the first ' : ''}${count(scanned)} rows)` : ''}`;
+// for particular columns (focus), the card details those in full and names the rest; opened
+// whole, it details every column, a wide table with a few values per column and every value
+// for the columns that were asked for. A table costs what was asked of it.
+function tableCard({ name, title, description, access, columns, profile, sample, scanned, capped, focus = null, whole = focus === null }) {
+  const wide = columns.length > WIDE_COLUMNS;
+  const head = `${name} — ${title || name}${description ? `. ${description}` : ''}${access ? ` [${access}]` : ''}; ${columns.length} columns${scanned ? ` (values from ${capped ? 'the first ' : ''}${count(scanned)} rows)` : ''}${whole && wide ? ' (wide: a few values per column; open it with columns for every value of a column)' : ''}`;
   const lines = [head];
   const profiled = new Map((profile || []).map(c => [c.column, c]));
-  const detailed = focus ? columns.filter(c => focus.includes(c)) : columns;
-  if (focus) lines.push(`  columns: ${columns.join(' | ')}`);
-  for (const column of detailed) lines.push(`  ${profiled.has(column) ? columnLine(profiled.get(column)) : column}`);
-  if (sample?.length) lines.push(`  rows${focus ? ` (${detailed.join(' | ')})` : ''}: ${sample.map(r => rowLine(r, detailed)).join(' ; ')}`);
+  const asked = new Set(focus || []);
+  const detailed = whole ? columns : columns.filter(c => asked.has(c));
+  if (!whole) lines.push(`  columns: ${columns.join(' | ')}`);
+  for (const column of detailed) lines.push(`  ${profiled.has(column) ? columnLine(profiled.get(column), asked.has(column) || !wide ? VOCAB_MAX : CARD_VOCAB) : column}`);
+  if (sample?.length) lines.push(`  rows${whole ? '' : ` (${detailed.join(' | ')})`}: ${sample.map(r => rowLine(r, detailed)).join(' ; ')}`);
   return lines.join('\n');
 }
 

@@ -121,7 +121,9 @@ function classify(rows, args = {}) {
   if (findColumn(rows, name)) throw new Error(`classify: column ${JSON.stringify(name)} already exists`);
   const scalar = value => value === null || typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value));
   if (!Object.hasOwn(args, 'otherwise') || !scalar(args.otherwise)) throw new Error('classify: otherwise must be an explicit scalar value (text, finite number, boolean or null)');
+  requireLabel('classify: otherwise', args.otherwise);
   if (!Array.isArray(args.rules)) throw new Error('classify: rules must be an ordered array');
+  for (const [index, rule] of args.rules.entries()) if (rule && Object.hasOwn(rule, 'value')) requireLabel(`classify: rule ${index + 1} value`, rule.value);
   const predicates = args.rules.map((rule, index) => {
     if (!rule || typeof rule !== 'object' || Array.isArray(rule) || !Array.isArray(rule.where)) throw new Error(`classify: rule ${index + 1} needs a where array`);
     if (!Object.hasOwn(rule, 'value') || !scalar(rule.value)) throw new Error(`classify: rule ${index + 1} value must be an explicit scalar`);
@@ -252,6 +254,14 @@ function join(left, right, how = 'inner', on = null, onColumns) {
   return withColumns(out, outputColumns);
 }
 
+const IDENTITY = ['gene', 'ensembl'];
+
+// A label typed by the model is words. A number in it would become a cell that looks like
+// evidence; numbers come from the data, from operations over it, or from an argument.
+function requireLabel(what, value) {
+  if (typeof value === 'number' || (typeof value === 'string' && /\d/.test(value))) throw new Error(`${what}=${JSON.stringify(value)} holds a number; a label is words. Counts come from aggregate, ratios from compute, thresholds from filter or classify arguments, and are cited from those artifacts`);
+}
+
 function select(rows, columns = [], rename = {}, add = {}) {
   for (const [name, value] of [['rename', rename], ['add', add]]) if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(`select: ${name} must be an object`);
   const wanted = Array.isArray(columns) && columns.length ? columns : columnsOf(rows);
@@ -261,13 +271,15 @@ function select(rows, columns = [], rename = {}, add = {}) {
     if (typeof target !== 'string') throw new Error(`select: rename target for ${JSON.stringify(source)} must be a string`);
   }
   const constants = Object.entries(add);
-  // A constant column is a label. A number typed here would become a cell that looks like
-  // evidence; numbers come from operations over the data, never from the model.
-  for (const [key, value] of constants) if (typeof value === 'number' || (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value.replace(/,/g, ''))))) throw new Error(`select: add.${key}=${JSON.stringify(value)} is a number; constant columns are labels only. Counts and totals come from aggregate, ratios from compute, and are cited from those artifacts`);
+  for (const [key, value] of constants) requireLabel(`select: add.${key}`, value);
   const renamed = keep.map(c => Object.hasOwn(rename, c) ? rename[c] : c);
-  const identifiers = ['gene', 'ensembl'].filter(c => columnsOf(rows).includes(c));
+  // Renaming a column onto an entity key re-keys the table by that column (a partner, a target):
+  // the old keys belong to the old entity and go, unless selected under other names.
+  const newKeys = renamed.filter((target, i) => IDENTITY.includes(target) && target !== keep[i]);
+  const stale = newKeys.length ? keep.filter((c, i) => IDENTITY.includes(c) && renamed[i] === c) : [];
+  if (stale.length) throw new Error(`select: renaming onto ${newKeys.join(', ')} re-keys the table, so ${stale.join(', ')} would name a different entity; leave it out or rename it`);
+  const identifiers = newKeys.length ? [] : IDENTITY.filter(c => columnsOf(rows).includes(c));
   if (new Set(renamed).size !== renamed.length || constants.some(([k]) => renamed.includes(k) || identifiers.includes(k))) throw new Error('select: output column names must be distinct');
-  if (keep.some((c, i) => ['gene', 'ensembl'].includes(renamed[i]) && renamed[i] !== c && columnsOf(rows).includes(renamed[i]))) throw new Error('select: a renamed column cannot replace retained gene identifiers');
   const outputColumns = [...new Set([...renamed, ...identifiers, ...constants.map(([k]) => k)])];
   return withColumns(rows.map(r => Object.fromEntries([
     ...keep.map((c, i) => [renamed[i], r[c] === undefined ? null : r[c]]),

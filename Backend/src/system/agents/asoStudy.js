@@ -349,7 +349,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
       executionArgs.genes = genes;
     }
     if (toolName === 'investigator_hpa' && args.gene === undefined && args.genes === undefined && args.from === undefined) throw new Error('investigator_hpa needs gene, genes or from');
-    const fingerprint = JSON.stringify([toolName, executionArgs]);
+    const fingerprint = JSON.stringify([toolName, executionArgs]).toLowerCase();
     const earlier = agentJobs.get(fingerprint);
     if (earlier) {
       remember(earlier.made ? `${toolName}(${desk.argsLine(args, 140)}) was already asked as ${earlier.id}: its result is ${earlier.made.join(', ')}` : `${toolName}(${desk.argsLine(args, 140)}) is already running as ${earlier.id}`);
@@ -516,18 +516,18 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     const wanted = Array.isArray(args.columns) && args.columns.length ? args.columns.map(c => { const found = entry.columns.find(x => x === c) || entry.columns.find(x => x.toLowerCase() === String(c).toLowerCase()); if (!found) throw new Error(`${entry.file} has no column ${JSON.stringify(c)}; its columns: ${entry.columns.join(', ')}`); return found; }) : null;
     const opened = state.opened.get(entry.file);
     if (opened) {
-      if (!opened.focus) { remember(`${entry.file} is already on the desk whole`); return; }
-      const added = (wanted || entry.columns).filter(c => !opened.focus.includes(c));
-      if (!added.length) { remember(`${entry.file} is already on the desk with those columns`); return; }
-      opened.focus = wanted ? [...opened.focus, ...added] : null;
+      const added = (wanted || []).filter(c => !opened.focus.includes(c));
+      if (!added.length && (wanted || opened.whole)) { remember(`${entry.file} is already on the desk${wanted ? ' with those columns' : ' whole'}`); return; }
+      opened.focus.push(...added);
+      if (!wanted) opened.whole = true;
       remember(wanted ? `${entry.file}: added ${added.join(', ')} to its card` : `${entry.file}: its card now details every column`);
       return;
     }
     const [profiled, sample] = await Promise.all([geneData.profile(entry), geneData.sample(entry, 3)]);
-    state.opened.set(entry.file, { entry, profile: profiled.columns, sample, scanned: profiled.rows, capped: profiled.capped, focus: wanted });
+    state.opened.set(entry.file, { entry, profile: profiled.columns, sample, scanned: profiled.rows, capped: profiled.capped, focus: wanted || [], whole: !wanted });
     remember(`opened ${entry.file} (on the desk${wanted ? `: ${wanted.join(', ')}` : ''})`);
   }
-  const openedCards = () => [...state.opened.values()].map(o => desk.tableCard({ name: o.entry.file, title: o.entry.title, description: o.entry.description, access: geneData.access(o.entry), columns: o.entry.columns, profile: o.profile, sample: o.sample, scanned: o.scanned, capped: o.capped, focus: o.focus }));
+  const openedCards = () => [...state.opened.values()].map(o => desk.tableCard({ name: o.entry.file, title: o.entry.title, description: o.entry.description, access: geneData.access(o.entry), columns: o.entry.columns, profile: o.profile, sample: o.sample, scanned: o.scanned, capped: o.capped, focus: o.focus, whole: o.whole }));
   // Column names an operation's arguments mention, shown first on its card.
   const argColumns = a => {
     const names = new Set(a.columns || []), found = [];

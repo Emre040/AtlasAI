@@ -146,5 +146,6 @@ test('a dataset opened for columns is detailed for those; a filter pinning the e
   const desk3 = requests[2].messages[1].content;
   assert.match(desk3, /  columns: Gene \| Gene name \| Tissue \| nTPM\n  Tissue: 3 values: liver \| lung \| heart\n  nTPM: number/, 'a later open adds columns to the card');
   assert.match(desk3, /turn 2: rna_tissue_consensus\.tsv: added Tissue to its card/);
+  assert.doesNotMatch(desk3, /\n  Gene name\n/, 'a column never asked for stays a name');
   assert.match(desk3, /a1 \(1 rows\) ← filter t\d+ of rna_tissue_consensus\.tsv: [^\n]*\n  0: ERBB2 \| ENSG2 \| ERBB2 \| lung \| ENSG2 \| 34\.1/, 'the stream stub holds only EGFR rows, so ERBB2 came through the index; keys and the filtered columns lead the row');
 });

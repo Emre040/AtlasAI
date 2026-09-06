@@ -96,6 +96,7 @@ test('compute chooses per row with if(condition, then, else); a condition that c
   assert.deepEqual(tools.compute(ranked, 'label', 'if(rank > 0, gene, "")').map(r => r.label), ['TP53', '', 'EP300']);
   assert.deepEqual(tools.compute(ranked, 'liver', 'if(Tissue = "liver", nTPM, 0)').map(r => r.liver), [12, 0, 'x'], 'the chosen branch is evaluated as usual, text passing through');
   assert.deepEqual(tools.compute(ranked, 'high', 'if(nTPM >= 1, "high", "low")').map(r => r.high), ['high', 'low', 'low']);
+  assert.deepEqual(tools.compute(ranked, 'x', 'if(gene == "TP53", 1, 0)').map(r => r.x), [1, 0, 0], '== reads as =');
   assert.throws(() => tools.compute(ranked, 'flag', 'rank > 0'), /a comparison goes inside if\(condition, then, else\)/);
   assert.throws(() => tools.compute(ranked, 'flag', 'if(rank > 0, gene)'), /if takes a condition, a then value and an else value/);
 });

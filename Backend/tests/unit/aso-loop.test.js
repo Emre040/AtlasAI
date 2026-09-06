@@ -186,6 +186,20 @@ test('an empty join says that no row matched; an open that shows nothing new is 
   assert.match(requests[5].messages[1].content, /turn 5: a1 rows 0–3 of 4 is already on the desk under VIEWS\nturn 5: that turn did no work/);
 });
 
+test('a summon whose tables repeat earlier artifacts registers nothing and says what combines them', async t => {
+  const { run, requests, agentCalls } = await study(t, [
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR', 'ERBB2'], question: 'nTPM' }))),
+    response(call('investigator_hpa', named('Values, consolidated', { points: ['EGFR', 'ERBB2'], question: 'one consolidated row per gene with liver and lung nTPM' }))),
+    response(call('finish', { tables: [{ artifact: 'a1' }] }))
+  ]);
+  const result = await run({});
+  assert.equal(result.outcome, 'completed', result.summary);
+  assert.equal(agentCalls.length, 2, 'a differently worded question is asked');
+  const desk3 = requests[2].messages[1].content;
+  assert.match(desk3, /turn 2: t2 investigator_hpa "Values, consolidated" done → a1 again \(the same rows\): nothing new; the Investigator answers per source table, one artifact each, and join combines them/);
+  assert.doesNotMatch(desk3, /\na2 /, 'no second artifact for the same rows');
+});
+
 test('an identical agent call is answered by the earlier job', async t => {
   const { run, requests, agentCalls } = await study(t, [
     response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' }))),

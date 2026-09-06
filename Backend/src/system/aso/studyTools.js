@@ -851,7 +851,7 @@ const COMPARISONS = ['<', '<=', '>', '>=', '=', '!='];
 function parseExpression(text) {
   const tokens = [];
   // Column names with spaces or symbols go in double, single or back quotes.
-  const re = /\s*(?:(\d+\.?\d*(?:[eE][-+]?\d+)?)|("[^"]*"|'[^']*'|`[^`]*`)|([A-Za-z_][\w.]*)|(<=|>=|!=|[-+*/(),<>=]))/y;
+  const re = /\s*(?:(\d+\.?\d*(?:[eE][-+]?\d+)?)|("[^"]*"|'[^']*'|`[^`]*`)|([A-Za-z_][\w.]*)|(<=|>=|!=|==|[-+*/(),<>=]))/y;
   let i = 0;
   while (i < text.length) {
     re.lastIndex = i;
@@ -860,7 +860,7 @@ function parseExpression(text) {
     if (m[1] !== undefined) tokens.push({ t: 'num', v: Number(m[1]) });
     else if (m[2] !== undefined) tokens.push({ t: 'id', v: m[2].slice(1, -1), quoted: true });
     else if (m[3] !== undefined) tokens.push({ t: 'id', v: m[3] });
-    else tokens.push({ t: 'op', v: m[4] });
+    else tokens.push({ t: 'op', v: m[4] === '==' ? '=' : m[4] });
     i = re.lastIndex;
     if (/^\s*$/.test(text.slice(i))) break;
   }

@@ -78,7 +78,7 @@ const bare = args => { const { title, description, ...rest } = args || {}; retur
 function systemPrompt(db, agentNames) {
   const entity = db.entity;
   const search = agentNames.includes('deep_research_hpa') ? 'deep_research_hpa' : 'the search agent';
-  return `You run a study over the ${db.database} for a scientist. Two agents and the operations produce every value; you choose what to ask and how to combine the results, and you never read a file. ${search} finds the ${entity}s matching a description in words, the way the ${db.database} search would, and returns them as a table. investigator_hpa answers a question with rows: for a list of points (points=[…], one or hundreds, ${entity}s or any values such as tissues; or from=<artifact id> and column) it returns every point with the fields asked for, and without a list every row the question selects. The operations compute over artifacts. Every result is an artifact with an id (a1, a2, …), a title and a description; the artifacts are the evidence of the study, and the report cites them by id.
+  return `You run a study over the ${db.database} for a scientist. Two agents and the operations produce every value; you choose what to ask and how to combine the results, and you never read a file. ${search} finds the ${entity}s matching a description in words, the way the ${db.database} search would, and returns them as a table. investigator_hpa answers a question with rows: for a list of points (points=[…], one or hundreds, ${entity}s or any values such as tissues; or from=<artifact id> and column) it returns every point with the fields asked for, and without a list every row the question selects; fields that live in different source tables come back as one artifact each, and join combines them. The operations compute over artifacts. Every result is an artifact with an id (a1, a2, …), a title and a description; the artifacts are the evidence of the study, and the report cites them by id.
 
 The desk in the message is your whole working set and stays in front of you every turn: the plan, every artifact as one line (id, title, columns, rows, what made it; a result of a few rows whole, with row indices), the rows you asked to see, what is running, your history and your notes. open shows rows of an artifact when a decision or a claim needs them; select narrows columns.
 
@@ -177,7 +177,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     delete properties.mode;
     const entity = identity.entity;
     if (t.function.name === 'deep_research_hpa') return { ...t, function: { ...t.function, description: `Finds the ${entity}s matching a description in words, the way the ${identity.database} search would; returns them as a table.`, parameters: { ...t.function.parameters, required: ['goal', 'title', 'description'], properties: { ...properties, goal: { type: 'string', description: 'the set described, with every stated requirement' }, title: S, description: S } } } };
-    if (t.function.name === 'investigator_hpa') return { ...t, function: { ...t.function, description: `Rows that answer a question: for a list of points (points=[...], or from=<artifact id> and column) every point with the fields asked for; without a list every row the question selects. The question says which fields, rows and units.`, parameters: { ...t.function.parameters, required: ['question', 'title', 'description'], properties: {
+    if (t.function.name === 'investigator_hpa') return { ...t, function: { ...t.function, description: `Rows that answer a question: for a list of points (points=[...], or from=<artifact id> and column) every point with the fields asked for; without a list every row the question selects. Fields from different source tables come back as one artifact each; join combines them. The question says which fields, rows and units.`, parameters: { ...t.function.parameters, required: ['question', 'title', 'description'], properties: {
       points: { type: 'array', items: S, description: `${entity}s, or any values (tissues, cell lines, categories)` },
       from: { type: 'string', description: 'artifact id whose rows supply the points' },
       column: { type: 'string', description: `column of from that holds the points; its ${entity} keys by default` },
@@ -313,16 +313,22 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     job.promise = orchestrator.execute(toolName, executionArgs, { db, visitorId: ctx.visitorId, rawQuery: '', includeRows: true, onStep: forward, reasoningEffort: effort, runControl: ctx.runControl, signal: ctx.signal, cacheKey: workspace.uuid, maxTurns })
       .then(async ({ result }) => {
         addSpecialistUsage(toolName, result?.tokens, result?.calls);
-        const made = [];
+        const made = [], repeats = [];
         if (result?.bulk) {
           if (!result.tables?.length) throw new Error(result.error || result.note || 'Investigator returned no table');
+          // A table that reads the same source table, fields, filter and points as an earlier artifact
+          // is that artifact: it is not registered twice, and the earlier id stands for it.
+          const twinOf = table => state.artifacts.find(x => x.tool === toolName && x.rows?.length === table.rows.length && JSON.stringify(x.meta?.lookups) === JSON.stringify([table.args]) && JSON.stringify(x.meta?.points) === JSON.stringify(executionArgs.points));
+          const lines = [];
           for (const table of result.tables) {
+            const twin = twinOf(table);
+            if (twin) { repeats.push(twin); lines.push(`${twin.id} again (the same rows)`); continue; }
             const a = await addArtifact({ kind: 'data', label: table.title || title, description: table.description || description, rows: table.rows, columns: table.columns, tool: toolName, args, inputs, toolId: id, meta: { lookups: [table.args], points: executionArgs.points, coverage: table.coverage, source_file: table.source_file, source_files: [table.source_file], status: result.status, hpa_version: result.hpa_version } });
             made.push(a);
+            lines.push(`${a.id} "${a.label}" (${a.size})`);
           }
-          // A fetch that read the same table, fields, filter and points as an earlier artifact says so.
-          const sameAs = a => { const twin = state.artifacts.find(x => x !== a && x.tool === toolName && x.rows?.length === a.rows.length && JSON.stringify(x.meta?.lookups) === JSON.stringify(a.meta.lookups) && JSON.stringify(x.meta?.points) === JSON.stringify(a.meta.points)); return twin ? ` (the same rows as ${twin.id})` : ''; };
-          remember(`${id} ${toolName} "${title}" done → ${made.map(a => `${a.id} "${a.label}" (${a.size})${sameAs(a)}`).join(', ')}${result.note ? `. Investigator note: ${result.note}` : ''}${result.unresolved?.length ? `. Not in the release: ${result.unresolved.slice(0, 10).join(', ')}` : ''}`);
+          const nothingNew = made.length ? '' : ': nothing new; the Investigator answers per source table, one artifact each, and join combines them';
+          remember(`${id} ${toolName} "${title}" done → ${lines.join(', ')}${nothingNew}${result.note ? `. Investigator note: ${result.note}` : ''}${result.unresolved?.length ? `. Not in the release: ${result.unresolved.slice(0, 10).join(', ')}` : ''}`);
         } else {
           const a = await addArtifact({ ...agentArtifact(toolName, args, result), label: title, description, tool: toolName, args, inputs, toolId: id });
           made.push(a);
@@ -333,7 +339,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
           const next = toolName === 'deep_research_hpa' && a.rows.length && agentNames.has('investigator_hpa') ? `; its rows: investigator_hpa from=${a.id} with the question` : '';
           remember(`${id} ${toolName} "${title}" done → ${a.id} (${a.size})${extra}${next}`);
         }
-        job.made = made.map(a => a.id);
+        job.made = [...made, ...repeats].map(a => a.id);
         for (const a of made) await log('tool.done', { id, tool: toolName, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);
       })
       .catch(async err => {

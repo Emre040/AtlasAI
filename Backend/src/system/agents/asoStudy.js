@@ -125,7 +125,7 @@ function agentArtifact(toolName, args, result) {
 
 // ---- the loop --------------------------------------------------------------------------------------
 
-async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort }, ctx = {}) {
+async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
   const effort = reasoning_effort || ctx.reasoning_effort || null;
   const db = ctx.db;
   if (!db) throw new Error('The study requires db in context.');
@@ -135,7 +135,8 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
   const maxTurns = max_turns === undefined ? config.asoMaxSteps : max_turns;
   if (!Number.isSafeInteger(maxTurns) || maxTurns < 1) throw new Error('The caller or platform must provide a positive integer study turn allowance');
   const parallel = config.asoParallelLimit || 3;
-  const agentMode = await resolveAgentMode(requestedMode ?? 'offline', [FILES.master]);
+  // A study runs on the local release: the Investigator reads its files, and no caller's mode changes that.
+  const agentMode = await resolveAgentMode('offline', [FILES.master]);
   const mode = agentMode.mode;
   const identity = geneData.identity();
   const startedAt = Date.now();

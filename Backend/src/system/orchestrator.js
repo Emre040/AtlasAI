@@ -37,8 +37,7 @@ const defs = [
           type: 'boolean',
           description: 'Whether the study may search for gene sets. Set false only when the user supplies the genes.',
           default: true
-        },
-        mode: MODE_PARAMETER
+        }
       },
       required: ['goal'],
       additionalProperties: false

@@ -46,8 +46,16 @@ function keysOf(row, on = null) {
   if (on) { const k = keyOf(row, on); return k === null ? [] : [k]; }
   return [row.ensembl || row.Ensembl, row.gene || row.Gene].filter(v => v !== undefined && v !== null && String(v).trim() !== '').map(v => lower(v));
 }
+// A side of a match needs a key column with at least one value; a row without a value simply
+// matches nothing. Returns how many rows that was, for the caller to say.
 function requireKeys(rows, on, opName) {
-  if (rows.some(r => !keysOf(r, on).length)) throw new Error(`${opName}: every row needs a ${on ? `"${on}"` : 'gene or ensembl'} column to match on (use concat to stack tables that share no key)`);
+  const columns = columnsOf(rows);
+  const what = on ? `"${on}"` : 'gene or ensembl';
+  const has = on ? columns.some(c => lower(c) === lower(on)) : columns.some(c => ['gene', 'ensembl'].includes(lower(c)));
+  if (!has) throw new Error(`${opName}: no ${what} column to match on (columns: ${columns.slice(0, 20).join(', ')}; use concat to stack tables that share no key)`);
+  const unkeyed = rows.filter(r => !keysOf(r, on).length).length;
+  if (rows.length && unkeyed === rows.length) throw new Error(`${opName}: no row has a ${what} value to match on`);
+  return unkeyed;
 }
 function columnsOf(rows) { const set = new Set(rows.columns || []); for (const r of rows) for (const k of Object.keys(r)) set.add(k); return [...set]; }
 // A table's schema survives an empty selection. Array metadata is deliberately not serialized
@@ -191,11 +199,11 @@ function suffixedNames(columns, taken) {
   return names;
 }
 
-// What a join did to b's column names, for the result's origin line: the renames and the shared
-// columns kept once.
-function naming(rows, rightNames, shared) {
+// What a join did, for the result's origin line: b's renamed columns, the shared columns kept
+// once, and the rows on each side that had no key value to match.
+function naming(rows, rightNames, shared, unkeyed = { a: 0, b: 0 }) {
   const renamed = Object.fromEntries([...rightNames].filter(([column, name]) => column !== name));
-  Object.defineProperty(rows, 'naming', { value: { renamed, shared: [...shared] }, configurable: true });
+  Object.defineProperty(rows, 'naming', { value: { renamed, shared: [...shared], unkeyed }, configurable: true });
   return rows;
 }
 
@@ -220,7 +228,7 @@ function join(left, right, how = 'inner', on = null, onColumns) {
   });
   const leftKeys = resolve(left, 'left'), rightKeys = resolve(right, 'right');
   if (new Set(leftKeys).size !== leftKeys.length || new Set(rightKeys).size !== rightKeys.length) throw new Error('join: on_columns must name distinct columns');
-  if (!composite) { requireKeys(left, leftKeys[0] || null, 'join'); requireKeys(right, rightKeys[0] || null, 'join'); }
+  const unkeyed = composite ? { a: 0, b: 0 } : { a: requireKeys(left, leftKeys[0] || null, 'join'), b: requireKeys(right, rightKeys[0] || null, 'join') };
   const keys = (row, columns) => {
     if (!composite) return keysOf(row, columns[0] || null);
     const values = columns.map(column => row[column]);
@@ -267,7 +275,7 @@ function join(left, right, how = 'inner', on = null, onColumns) {
   const out = [];
   for (const [l, r] of pairs) if (r || ['left', 'full'].includes(how)) out.push(merge(l, r));
   if (['right', 'full'].includes(how)) for (const [index, row] of right.entries()) if (!matchedRight.has(index)) out.push(merge(null, row));
-  return naming(withColumns(out, outputColumns), rightNames, shared);
+  return naming(withColumns(out, outputColumns), rightNames, shared, unkeyed);
 }
 
 const IDENTITY = ['gene', 'ensembl'];

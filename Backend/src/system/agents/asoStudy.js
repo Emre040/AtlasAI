@@ -197,8 +197,15 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     if (!a) throw new Error(`no artifact "${id}" (have ${state.artifacts.map(x => x.id).join(', ') || 'none'})`);
     return a;
   };
-  // A join's line says what b's clashing columns are now called, so nothing is guessed from a suffix.
-  const renames = a => { const r = Object.entries(a.meta?.renamed || {}); return r.length ? ` (${a.inputs[1]}'s ${r.map(([from, to]) => `${from} as ${to}`).join(', ')})` : ''; };
+  // A join's line says what b's clashing columns are now called, so nothing is guessed from a
+  // suffix, and how many rows on a side had no key value to match.
+  const renames = a => {
+    const parts = [];
+    const r = Object.entries(a.meta?.renamed || {});
+    if (r.length) parts.push(`${a.inputs[1]}'s ${r.map(([from, to]) => `${from} as ${to}`).join(', ')}`);
+    for (const [side, n] of Object.entries(a.meta?.unkeyed || {})) if (n) parts.push(`${desk.count(n)} rows of ${a.inputs[side === 'a' ? 0 : 1]} had no ${a.args?.on || 'key'} value to match`);
+    return parts.length ? ` (${parts.join('; ')})` : '';
+  };
   const origin = a => `${a.tool}${a.toolId ? ` ${a.toolId}` : ''}${a.tool === 'chart' ? `(${desk.argsLine(bare(a.args), 120)})` : agentNames.has(a.tool) ? ` "${String(a.args.question || a.args.goal || a.args.topic || '').slice(0, 90)}"` : a.inputs?.length ? ` of ${a.inputs.join(', ')}${renames(a)}` : ''}`;
 
   // Stores a tool's output as an artifact, linked to the artifacts it read.

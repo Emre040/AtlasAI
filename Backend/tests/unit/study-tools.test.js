@@ -43,7 +43,7 @@ test('a column b brings whose name is taken gets the first free numbered suffix,
   const out = tools.join(left, right, 'inner');
   assert.deepEqual(tools.columnsOf(out), ['gene', 'ensembl', 'nTPM', 'nTPM_2', 'nTPM_3', 'nTPM_2_2']);
   assert.deepEqual(out, [{ gene: 'TP53', ensembl: 'ENSG_TP53', nTPM: 1, nTPM_2: 2, nTPM_3: 3, nTPM_2_2: 4 }]);
-  assert.deepEqual(out.naming, { renamed: { nTPM: 'nTPM_3', nTPM_2: 'nTPM_2_2' }, shared: [] });
+  assert.deepEqual(out.naming, { renamed: { nTPM: 'nTPM_3', nTPM_2: 'nTPM_2_2' }, shared: [], unkeyed: { a: 0, b: 0 } });
 });
 
 test('a column both sides carry that agrees on every matched row is kept once; one that differs comes from b with a suffix', () => {
@@ -58,10 +58,21 @@ test('a column both sides carry that agrees on every matched row is kept once; o
   const out = tools.join(heart, skeletal, 'inner');
   assert.deepEqual(tools.columnsOf(out), ['gene', 'ensembl', 'Gene', 'Tissue', 'nTPM', 'source_status', 'Tissue_2', 'nTPM_2']);
   assert.deepEqual(out, [{ gene: 'TP53', ensembl: 'ENSG_TP53', Gene: 'TP53', Tissue: 'heart muscle', nTPM: '12.0', source_status: 'ok', Tissue_2: 'skeletal muscle', nTPM_2: '1.0' }]);
-  assert.deepEqual(out.naming, { renamed: { Tissue: 'Tissue_2', nTPM: 'nTPM_2' }, shared: ['Gene', 'source_status'] });
+  assert.deepEqual(out.naming, { renamed: { Tissue: 'Tissue_2', nTPM: 'nTPM_2' }, shared: ['Gene', 'source_status'], unkeyed: { a: 0, b: 0 } });
   // A full join keeps b's own rows, with the shared columns filled from b.
   const full = tools.join(heart, skeletal, 'full');
   assert.deepEqual(full.find(r => r.gene === 'MDM2'), { gene: 'MDM2', ensembl: 'ENSG_MDM2', Gene: 'MDM2', Tissue: null, nTPM: null, source_status: 'ok', Tissue_2: 'skeletal muscle', nTPM_2: '2.0' });
+});
+
+test('a row without a key value matches nothing and is counted; a side without the key column is refused', () => {
+  const left = tools.withColumns([{ gene: 'TP53', ensembl: 'ENSG_TP53', score: 1 }], ['gene', 'ensembl', 'score']);
+  const right = tools.withColumns([{ gene: 'TP53', ensembl: 'ENSG_TP53', location: 'Nucleus' }, { gene: null, ensembl: 'ENSG_NOVEL', location: 'Cytosol' }], ['gene', 'ensembl', 'location']);
+  const out = tools.join(left, right, 'inner', 'gene');
+  assert.equal(out.length, 1);
+  assert.deepEqual(out.naming.unkeyed, { a: 0, b: 1 });
+  assert.throws(() => tools.join(left, tools.withColumns([{ location: 'x' }], ['location']), 'inner', 'gene'), /join: no column "gene" on right \(columns: location\)/);
+  assert.throws(() => tools.join(left, tools.withColumns([{ location: 'x' }], ['location']), 'inner'), /join: no gene or ensembl column to match on \(columns: location; use concat/);
+  assert.throws(() => tools.join(left, tools.withColumns([{ gene: null, location: 'x' }], ['gene', 'location']), 'inner', 'gene'), /join: no row has a "gene" value to match on/);
 });
 
 test('a profile lists the keys or labels inside structured cells', () => {

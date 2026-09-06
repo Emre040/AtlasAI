@@ -396,7 +396,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
   }
 
   // A view is something the model asked to see; it stays on the desk for the whole study, one
-  // per artifact, the latest opening replacing the earlier.
+  // per page of an artifact, a later opening of the same page replacing the earlier.
   const view = (key, text, receipt) => { state.views.set(key, { text, receipt, turn: state.turn }); };
   // Column names an operation's arguments mention, shown first in a view.
   const argColumns = a => {
@@ -425,7 +425,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     const page = a.rows.slice(offset, offset + rows);
     const lines = page.map((row, i) => `  ${offset + i}: ${desk.rowLine(row, shownColumns)}`);
     const range = `rows ${offset}–${offset + page.length - 1} of ${a.rows.length}`;
-    view(a.id, `${a.id} ${range} (${shownColumns.join(' | ')}${hidden ? ` | … +${hidden} columns; name columns to see them` : ''})\n${lines.join('\n') || '  (no rows)'}${offset + page.length < a.rows.length ? `\n  … open ${a.id} offset=${offset + page.length} for more` : ''}`, `${a.id} ${range} (opened at turn ${state.turn}; open again to see them)`);
+    view(`${a.id}|${offset}`, `${a.id} ${range} (${shownColumns.join(' | ')}${hidden ? ` | … +${hidden} columns; name columns to see them` : ''})\n${lines.join('\n') || '  (no rows)'}${offset + page.length < a.rows.length ? `\n  … open ${a.id} offset=${offset + page.length} for more` : ''}`, `${a.id} ${range} (opened at turn ${state.turn}; open again to see them)`);
     remember(`opened ${a.id} ${range} (view on the desk)`);
   }
 

@@ -35,6 +35,18 @@ test('pivot preserves missing cells and refuses ambiguous repeated measurements'
   assert.throws(() => pivot([...rows, { ...rows[0], n: 3 }], { row: 'id', column: 'group', value: 'n' }), /duplicate cell/);
 });
 
+test('a grouped bar takes several value columns as series, one series per column', () => {
+  const rows = [{ Cancer: 'KIRC', favorable: 1638, unfavorable: 264 }, { Cancer: 'LIHC', favorable: 113, unfavorable: 939 }];
+  const spec = chartSpec({ type: 'grouped_bar', x: 'Cancer', series: ['favorable', 'unfavorable'] }, rows);
+  assert.deepEqual(spec.data, [
+    { label: 'KIRC', value: 1638, group: 'favorable' }, { label: 'KIRC', value: 264, group: 'unfavorable' },
+    { label: 'LIHC', value: 113, group: 'favorable' }, { label: 'LIHC', value: 939, group: 'unfavorable' }
+  ]);
+  assert.throws(() => chartSpec({ type: 'grouped_bar', x: 'Cancer', y: 'favorable' }, rows), /needs group \(a column of series names\) or series \(value columns, one series each\)/);
+  assert.throws(() => chartSpec({ type: 'grouped_bar', x: 'Cancer', series: ['favorable', 'typo'] }, rows), /no series column typo/);
+  assert.throws(() => chartSpec({ type: 'scatter', x: 'favorable', series: ['unfavorable'] }, rows), /series lists value columns for the bar family; scatter takes y/);
+});
+
 test('a log scale follows the x and y columns of a chart, and colours the cells of a heatmap', () => {
   const rows = [{ gene: 'A', x: 1, y: 10 }, { gene: 'B', x: 100, y: 0 }];
   const scatter = chartSpec({ type: 'scatter', x: 'x', y: 'y', x_scale: 'log', y_scale: 'linear' }, rows);

@@ -1031,15 +1031,19 @@ function chartSpec(args, input) {
   let rows = Array.isArray(input) ? input : input?.rows || [];
   if (!rows.length) throw new Error('chart: no rows');
   const x = findColumn(rows, args.x);
-  const y = findColumn(rows, args.y);
-  if (!x || !y) throw new Error(`chart: columns not found (x ${args.x}, y ${args.y}); available: ${columnsOf(rows).join(', ')}`);
+  // The bar family may take several value columns as series; otherwise y is the one value column.
+  const series = Array.isArray(args.series) && args.series.length ? args.series.map(name => { const found = findColumn(rows, name); if (!found) throw new Error(`chart: no series column ${name}; available: ${columnsOf(rows).join(', ')}`); return found; }) : null;
+  if (series && ['scatter', 'bubble', 'volcano', 'line'].includes(args.type)) throw new Error(`chart: series lists value columns for the bar family; ${args.type} takes y`);
+  if (series && args.group) throw new Error('chart: series and group both make series; use one of them');
+  const y = series ? null : findColumn(rows, args.y);
+  if (!x || (!y && !series)) throw new Error(`chart: columns not found (x ${args.x}, y ${args.y}); available: ${columnsOf(rows).join(', ')}`);
   const group = args.group ? findColumn(rows, args.group) : null;
   const size = args.size ? findColumn(rows, args.size) : null;
   const label = args.label ? findColumn(rows, args.label) : null;
   if (args.group && !group) throw new Error(`chart: no group column ${args.group}`);
   if (args.size && !size) throw new Error(`chart: no size column ${args.size}`);
   if (args.label && !label) throw new Error(`chart: no label column ${args.label}`);
-  const numeric = [y, ...(['scatter', 'bubble', 'volcano'].includes(args.type) ? [x] : []), ...(size ? [size] : [])];
+  const numeric = [...(series || [y]), ...(['scatter', 'bubble', 'volcano'].includes(args.type) ? [x] : []), ...(size ? [size] : [])];
   const valid = rows.filter(r => numeric.every(c => num(r[c]) !== null));
   base.omitted_rows = rows.length - valid.length;
   if (base.omitted_rows && args.missing !== 'omit') throw new Error(`chart: ${base.omitted_rows} rows have missing numeric values; inspect them, then use missing=omit to exclude them explicitly`);
@@ -1053,8 +1057,10 @@ function chartSpec(args, input) {
     const numericX = xs.every(value => value !== null);
     return { ...base, ...chartDomains(args, { x: numericX ? xs : null, y: rows.map(r => num(r[y])) }), data: rows.map((r, i) => ({ x: args.x_domain === undefined ? r[x] : xs[i], y: num(r[y]), series: group ? String(r[group]) : undefined })) };
   }
-  const data = rows.map(r => ({ label: String(r[x] ?? ''), value: num(r[y]), ...(group ? { group: String(r[group] ?? '') } : {}) }));
-  if (['grouped_bar', 'radar', 'stacked_bar'].includes(args.type) && !group) throw new Error(`chart: ${args.type} needs a group column`);
+  const data = series
+    ? rows.flatMap(r => series.map(column => ({ label: String(r[x] ?? ''), value: num(r[column]), group: column })))
+    : rows.map(r => ({ label: String(r[x] ?? ''), value: num(r[y]), ...(group ? { group: String(r[group] ?? '') } : {}) }));
+  if (['grouped_bar', 'radar', 'stacked_bar'].includes(args.type) && !group && !series) throw new Error(`chart: ${args.type} needs group (a column of series names) or series (value columns, one series each)`);
   const horizontal = ['dot_plot', 'lollipop', 'diverging_bar'].includes(args.type);
   const baseline = ['bar', 'grouped_bar', 'lollipop', 'diverging_bar'].includes(args.type) ? [0] : [];
   const values = [...baseline, ...data.map(point => point.value)];

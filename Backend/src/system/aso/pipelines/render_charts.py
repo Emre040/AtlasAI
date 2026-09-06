@@ -71,15 +71,30 @@ def _apply_title(chart):
     plt.title(title, fontsize=fontsize, pad=10)
 
 
+def _category_layout(labels, base_width=8.0, base_height=4.0):
+    """Figure size and tick rotation for a category axis: room for every category, at most a
+    page wide; short labels stay level, longer ones turn so they never overlap, and the figure
+    grows by the room the turned labels take so the plot itself keeps its height."""
+    n = max(1, len(labels))
+    longest = max((len(str(label)) for label in labels), default=0)
+    width = min(24.0, max(base_width, n * 0.45 + 2.0))
+    if longest <= 8 and n <= 8:
+        return width, base_height, 0, 'center'
+    if longest <= 20:
+        return width, base_height + min(4.0, longest * 0.06), 45, 'right'
+    return width, base_height + min(6.0, longest * 0.085), 90, 'center'
+
+
 def render_bar(chart, out_path):
     data = chart.get('data', [])
     labels = [d.get('label', '') for d in data]
     values = [d.get('value', 0) for d in data]
-    plt.figure(figsize=(8, 4))
+    fig_w, fig_h, rotation, ha = _category_layout(labels)
+    plt.figure(figsize=(fig_w, fig_h))
     plt.bar(labels, values, color='#4C78A8')
     _apply_title(chart)
     _apply_labels(chart)
-    plt.xticks(rotation=20, ha='right')
+    plt.xticks(rotation=rotation, ha=ha)
     plt.tight_layout()
     _save_figure(plt.gcf(), out_path)
     plt.close()
@@ -219,6 +234,8 @@ def render_dot_plot(chart, out_path):
         plt.figure(figsize=(8, max(4, len(labels) * 0.3)))
         plt.scatter(values, range(len(labels)), alpha=0.8, s=40)
         plt.yticks(range(len(labels)), labels)
+    # The first row is drawn at the top, so a ranked table reads top down.
+    plt.gca().invert_yaxis()
     _apply_title(chart)
     _apply_labels(chart, swap=True)
     plt.tight_layout()
@@ -248,7 +265,8 @@ def render_stacked_bar(chart, out_path):
         for s in stacks:
             v = next((d.get('value', 0) for d in data if d.get('label') == c and d.get('stack') == s), 0)
             stack_map[s].append(v)
-    plt.figure(figsize=(8, 4))
+    fig_w, fig_h, rotation, ha = _category_layout(categories)
+    plt.figure(figsize=(fig_w, fig_h))
     bottoms = [0] * len(categories)
     for s in stacks:
         vals = stack_map[s]
@@ -258,7 +276,7 @@ def render_stacked_bar(chart, out_path):
     _apply_labels(chart)
     if len(stacks) > 1:
         plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0)
-    plt.xticks(rotation=20, ha='right')
+    plt.xticks(rotation=rotation, ha=ha)
     plt.tight_layout()
     _save_figure(plt.gcf(), out_path)
     plt.close()
@@ -318,10 +336,11 @@ def render_grouped_bar(chart, out_path):
     import numpy as np
     x = np.arange(len(categories))
     width = 0.8 / max(1, len(groups))
-    plt.figure(figsize=(8, 4))
+    fig_w, fig_h, rotation, ha = _category_layout(categories)
+    plt.figure(figsize=(fig_w, fig_h))
     for i, g in enumerate(groups):
         plt.bar(x + i*width, values[i], width, label=str(g))
-    plt.xticks(x + width*(len(groups)-1)/2, categories, rotation=20, ha='right')
+    plt.xticks(x + width*(len(groups)-1)/2, categories, rotation=rotation, ha=ha)
     _apply_title(chart)
     _apply_labels(chart)
     if len(groups) > 1:

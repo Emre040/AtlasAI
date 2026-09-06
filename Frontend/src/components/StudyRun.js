@@ -67,11 +67,15 @@ export function studyStateFromEvents(events) {
       if (d.id) { if (!state.trails.has(d.id)) state.trails.set(d.id, []); state.trails.get(d.id).push({ stage: stage.slice(6), label: d.label || '', message: d.message || '' }); }
     } else if (stage === 'finish') {
       state.finish = d;
-      add({ key: 'finish', type: 'finish', label: 'Finish', inputs: ['query'], status: 'done', summary: d.summary || '' });
-      state.phase = 'done';
+      const incomplete = d.outcome === 'incomplete' || d.budget_exhausted === true || d.unverified_numbers?.length > 0;
+      add({ key: 'finish', type: 'finish', label: incomplete ? 'Incomplete' : 'Finish', inputs: ['query'], status: 'done', summary: d.summary || '' });
+      state.phase = incomplete ? 'incomplete' : 'done';
     } else if (stage === 'error') { state.error = d.message || event.message || 'The study failed.'; state.failed = true; state.phase = 'failed'; }
   }
-  if (state.complete && state.phase !== 'failed') state.phase = state.failed ? 'failed' : 'done';
+  if (state.complete && state.phase !== 'failed') {
+    if (state.failed) state.phase = 'failed';
+    else if (state.phase !== 'incomplete') state.phase = 'done';
+  }
   return state;
 }
 
@@ -81,6 +85,7 @@ export function studyStatusLine(events) {
   const running = s.islands.filter(i => i.status === 'running');
   const artifacts = s.islands.filter(i => i.type === 'data' || i.type === 'figure').length;
   if (s.phase === 'failed') return 'Study failed';
+  if (s.phase === 'incomplete') return 'Study incomplete';
   if (s.phase === 'done') return 'Study complete';
   if (running.length) return `${running.map(i => i.label.toLowerCase()).slice(0, 3).join(', ')}${running.length > 3 ? ` +${running.length - 3}` : ''} running · ${artifacts} artifacts`;
   if (s.turns.length) return `turn ${s.turns.length} · ${artifacts} artifacts`;
@@ -221,7 +226,7 @@ export default function StudyRun({ events, isComplete }) {
   if (focus) { linked.add(focus); for (const i of state.islands) { if (i.inputs?.includes(focus)) linked.add(i.key); if (i.key === focus) for (const p of i.inputs || []) linked.add(p); } }
   const enter = key => { if (leaveTimer.current) { clearTimeout(leaveTimer.current); leaveTimer.current = null; } setHovered(key); };
   const leave = () => { leaveTimer.current = setTimeout(() => setHovered(null), 180); };
-  const live = !isComplete && state.phase !== 'done' && state.phase !== 'failed';
+  const live = !isComplete && !['done', 'failed', 'incomplete'].includes(state.phase);
   const counts = { artifacts: state.islands.filter(i => i.type === 'data' || i.type === 'figure').length, running: state.islands.filter(i => i.status === 'running').length, failed: state.islands.filter(i => i.status === 'failed').length };
   const panelLeft = focusPos ? (focusPos.x > layout.width * 0.55 ? focusPos.x - ICON / 2 - 12 - 320 : focusPos.x + ICON / 2 + 12) : 0;
   const panelTop = focusPos ? Math.max(6, focusPos.y - 20) : 0;
@@ -229,7 +234,7 @@ export default function StudyRun({ events, isComplete }) {
   return (
     <div className="HPAG-study">
       <div className="HPAG-study-head">
-        <span className={`HPAG-study-phase HPAG-study-phase-${state.phase}`}>{live ? 'Running' : state.phase === 'failed' ? 'Failed' : 'Complete'}</span>
+        <span className={`HPAG-study-phase HPAG-study-phase-${state.phase}`}>{live ? 'Running' : state.phase === 'failed' ? 'Failed' : state.phase === 'incomplete' ? 'Incomplete' : 'Complete'}</span>
         <span className="HPAG-study-counts">{state.turns.filter(t => t.turn).length} turns · {counts.artifacts} artifacts{counts.running ? ` · ${counts.running} running` : ''}{counts.failed ? ` · ${counts.failed} failed` : ''}</span>
         <span className="HPAG-study-meta">{state.finish?.seconds ? `${Number(state.finish.seconds).toFixed(0)}s · ` : ''}{state.finish?.tokens?.total ? `${Number(state.finish.tokens.total).toLocaleString()} tokens · ` : ''}{state.model || ''}{state.mode ? ` · ${state.mode} data` : ''}</span>
       </div>

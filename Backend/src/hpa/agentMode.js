@@ -1,8 +1,7 @@
 'use strict';
 
-// Decides whether an agent runs against the local HPA release or proteinatlas.org. A request
-// for offline mode is honoured only when the platform allows it and every file the agent needs
-// is ready; otherwise the agent runs online and says why.
+// The requested data source is a constraint. An unavailable local release is an error;
+// it must never turn an offline request into network access.
 
 const { platformConfig } = require('../policy/config');
 const { localData } = require('./localData');
@@ -17,11 +16,11 @@ async function resolveAgentMode(requested, requiredFiles) {
   if (normalizeMode(requested) !== 'offline') return { mode: 'online', note: null, hpaVersion: null };
   const config = platformConfig();
   if (!config.offlineAgentsEnabled) {
-    return { mode: 'online', note: 'Offline mode is disabled in the platform configuration; using proteinatlas.org.', hpaVersion: null };
+    throw Object.assign(new Error('Offline mode is disabled in the platform configuration. No online request was made.'), { reason: 'offline_unavailable' });
   }
   const missing = await localData.missing(requiredFiles);
   if (missing.length > 0) {
-    return { mode: 'online', note: `Local HPA data is not ready (${missing.join(', ')}); using proteinatlas.org.`, hpaVersion: null };
+    throw Object.assign(new Error(`Local HPA data is not ready (${missing.join(', ')}). No online request was made.`), { reason: 'offline_unavailable', missing_files: missing });
   }
   return { mode: 'offline', note: null, hpaVersion: config.activeHpaVersion };
 }

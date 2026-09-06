@@ -3,7 +3,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs/promises');
-const Module = require('node:module');
 const { withColumns, fillMissing } = require('../../src/system/aso/studyTools');
 const { TABLE_OPERATIONS } = require('../../src/system/aso/tableOperations');
 const { SAVED_TOOLS, createSavedOperations } = require('../../src/system/agents/investigatorResults');
@@ -120,53 +119,12 @@ test('native ASO loads the shared fill schema and preserves fill provenance thro
   assert.deepEqual(output.provenance.fills.map(fill => fill.affected_cells.value), [1, 1]);
 });
 
-async function nativeBulk(decide) {
-  const filename = require.resolve('../../src/system/agents/investigatorBulk');
-  const loaded = new Module(filename, module); loaded.filename = filename; loaded.paths = Module._nodeModulePaths(path.dirname(filename));
-  const realRequire = loaded.require.bind(loaded), requests = []; let reads = 0;
-  loaded.require = name => name === '../../hpa/agentMode' ? { async resolveAgentMode() { return { mode: 'offline', hpaVersion: 'synthetic' }; } } : name === '../../inference/gateway' ? { inference: { chat: { completions: { async create(request) { requests.push(structuredClone(request)); return decide(request, requests.length); } } } } } : realRequire(name);
-  loaded._compile(await fs.readFile(filename, 'utf8'), filename);
-  const entries = [{ file: 'first.tsv', key: 'ensembl', columns: ['Gene', 'site', 'x'] }, { file: 'second.tsv', key: 'ensembl', columns: ['Gene', 'site', 'y'] }];
-  const adapter = { async resolveGenes() { return [{ gene: 'A', ensembl: 'id' }]; }, async catalog() { return entries; }, async entry(file) { return entries.find(entry => entry.file === file); }, async readMany(genes, file) {
-    reads++; const first = file === 'first.tsv';
-    return { entry: entries[first ? 0 : 1], byGene: new Map([['id', [0, 1, 2].map(i => ({ Gene: 'id', site: `s${i}`, [first ? 'x' : 'y']: String(first ? i : 2 - i) }))]]) };
-  } };
-  const result = await loaded.exports({ genes: ['A'], question: 'Return the raw source rows, exact source union and ranked grouped Spearman result.' }, { reasoningEffort: 'low' }, adapter);
-  return { result, requests, reads };
-}
-test('actual Investigator loads advanced schemas lazily and completes raw→join→correlate→rank in one saved batch', async () => {
-  const { result, requests, reads } = await nativeBulk((request, turn) => {
-    if (turn === 1) {
-      assert.ok(!request.tools.some(tool => tool.function.name === 'join'));
-      assert.match(request.messages[0].content, /join:/); assert.match(request.messages[0].content, /correlate:/);
-      return response(call('load_tools', { names: ['join', 'correlate', 'rank', 'run'] }),
-        call('apply_bulk', { name: 'first', lookups: [{ table: 'first.tsv', match_column: 'Gene', mode: 'rows', columns: ['site', 'x'] }] }),
-        call('apply_bulk', { name: 'second', lookups: [{ table: 'second.tsv', match_column: 'Gene', mode: 'rows', columns: ['site', 'y'] }] }));
-    }
-    if (turn === 2) {
-      assert.ok(request.tools.some(tool => tool.function.name === 'join'));
-      return response(call('run', { steps: [
-        { id: 'combined', tool: 'join', args: { a: 'first', b: 'second', on_columns: ['gene', 'site'], how: 'full', result: 'combined' } },
-        { id: 'correlations', tool: 'correlate', args: { artifact: '@combined', x: 'x', y: 'y', group_by: 'gene', method: 'spearman', result: 'correlations' } },
-        { id: 'ranked', tool: 'rank', args: { artifact: '@correlations', by: 'r', order: 'asc', then_by: [{ column: 'gene', type: 'text' }], result: 'ranked' } }
-      ], outputs: ['combined', 'ranked'] }));
-    }
-    assert.equal(turn, 3);
-    const receipt = JSON.parse(request.messages.at(-1).content); assert.equal(receipt.status, 'completed'); assert.equal(receipt.outputs[1].rows, 1);
-    return response(call('finish', { results: ['first', 'second', 'combined', 'ranked'] }));
-  });
-  assert.equal(result.status, 'ok', result.error); assert.equal(reads, 2); assert.equal(requests.length, 3);
-  const ranked = result.tables.find(table => table.name === 'ranked'); assert.equal(ranked.rows[0].n, 3); assert.equal(ranked.rows[0].r, -1);
-  assert.equal(ranked.operations.at(-1).tool, 'rank'); assert.equal(result.tables[0].rows[0].x, '0');
-  assert.equal(result.tokens.total.total, 36); assert.ok(requests.every(request => request.reasoning_effort === 'low'));
-});
-
 test('native ASO preserves source masks through select/fill/rank and requires explicit aggregate scope', async t => {
   const raw = table('raw', [{ gene: 'A', ensembl: 'a', value: 2 }, { gene: 'B', ensembl: 'b', value: null }], ['gene', 'ensembl', 'value'], [true, false]);
   const f = await fixture(t, ({ request, turn }) => {
     if (turn === 1) return response(call('set_plan', { items: [{ step: 'Count source records and retained cohort rows separately', kind: 'table' }] }), call('investigator_hpa', { genes: ['A', 'B'], question: 'Return the raw rows with source absence preserved', node: 1 }));
     if (turn === 2) {
-      assert.match(transcript(request), /row coverage: 2 all, 1 records, 1 placeholders/);
+      assert.match(request.messages.at(-1).content, /"id":"a1".*"rows":2.*"record_rows":1/);
       return response(call('load_tools', { names: ['select', 'fill_missing', 'rank', 'aggregate'] }));
     }
     if (turn === 3) return response(call('run', { steps: [
@@ -198,51 +156,13 @@ test('native ASO aggregate records retains actual raw streaming behavior in one 
     : response(call('finish', { tables: [{ artifact: 'a1', columns: ['gene', 'count', 'numeric_count'] }] })), null,
   { entry: { file: 'stream.tsv', key: 'stream', columns: ['gene', 'value'] }, rows: [{ gene: 'A', value: 0 }, { gene: 'A', value: null }], onRead: () => reads++ });
   const result = await f.run(); assert.equal(result.outcome, 'completed', JSON.stringify(result)); assert.equal(reads, 1);
-  const saved = JSON.parse(await fs.readFile(result.artifacts[0].storage_uri, 'utf8'));
+  const saved = JSON.parse(await fs.readFile(result.artifacts.find(artifact => artifact.summary.id === 'a1').storage_uri, 'utf8'));
   assert.equal(saved.rows[0].count, 2); assert.equal(saved.rows[0].numeric_count, 1);
   assert.equal(saved.provenance.aggregation_rows.record_rows, 2); assert.equal(saved.provenance.aggregation_rows.placeholder_rows, 0);
 });
 
 
-test('saved correlation schemas remain discoverable after a compact rank receipt and derived row kinds remain truthful', async () => {
-  const { result, reads } = await nativeBulk((request, turn) => {
-    if (turn === 1) return response(call('load_tools', { names: ['join', 'correlate', 'rank', 'run'] }),
-      call('apply_bulk', { name: 'first', lookups: [{ table: 'first.tsv', match_column: 'Gene', mode: 'rows', columns: ['site', 'x'] }] }),
-      call('apply_bulk', { name: 'second', lookups: [{ table: 'second.tsv', match_column: 'Gene', mode: 'rows', columns: ['site', 'y'] }] }));
-    if (turn === 2) {
-      for (const name of ['join', 'correlate', 'rank']) assert.doesNotMatch(request.tools.find(tool => tool.function.name === name).function.description, /stream|Use Deep Research/);
-      return response(call('run', { steps: [
-        { id: 'union', tool: 'join', args: { a: 'first', b: 'second', on_columns: ['gene', 'site'], how: 'full', result: 'union' } },
-        { id: 'association', tool: 'correlate', args: { artifact: '@union', x: 'x', y: 'y', group_by: 'gene', method: 'spearman', result: 'association' } },
-        { id: 'ordered', tool: 'rank', args: { artifact: '@association', by: 'r', result: 'ordered' } }
-      ], outputs: ['ordered'] }));
-    }
-    if (turn === 3) {
-      const receipt = JSON.parse(request.messages.at(-1).content).outputs[0];
-      assert.deepEqual(receipt.columns, ['gene', 'r', 'rank']);
-      assert.equal(receipt.inherited_columns.count, 0); assert.ok(receipt.omitted_columns.count > 0);
-      assert.equal(receipt.row_kind, 'correlation_group'); assert.equal(receipt.row_coverage, undefined);
-      const { tool, ...args } = receipt.omitted_columns.inspect;
-      assert.equal(tool, 'open_result'); assert.deepEqual(args, { name: 'ordered', schema: true });
-      return response(call(tool, args));
-    }
-    if (turn === 4) {
-      const schema = JSON.parse(request.messages.at(-1).content);
-      assert.ok(schema.columns.includes('n')); assert.ok(schema.columns.includes('p_value'));
-      assert.equal(schema.rows, 1); assert.equal(schema.row_kind, 'correlation_group');
-      return response(call('open_result', { name: 'ordered', columns: ['gene', 'n', 'r', 'p_value'] }));
-    }
-    assert.equal(turn, 5);
-    const view = JSON.parse(request.messages.at(-1).content);
-    assert.deepEqual(view.columns, ['gene', 'n', 'r', 'p_value']); assert.deepEqual(view.rows[0].slice(0, 3), ['A', 3, -1]);
-    return response(call('finish', { results: ['ordered'] }));
-  });
-  assert.equal(result.status, 'ok', result.error); assert.equal(reads, 2);
-  assert.equal(result.tables[0].row_kind, 'correlation_group'); assert.equal(result.tables[0].record_rows, undefined);
-});
-
-
-test('ASO receives compact saved-operation receipts and retains complete metadata for provenance inspection', async t => {
+test('ASO receives artifact cards without operation recipes and retains complete provenance in storage', async t => {
   const literal = 'exact-fill-literal-' + '界'.repeat(1200);
   const output = table('derived', [{ gene: 'A', value: 2 }], ['gene', 'value']);
   output.operations = [{ tool: 'fill_missing', args: { artifact: 'prior', columns: ['description'], value: literal }, inputs: { artifact: 'prior' }, input_rows: { artifact: 1 }, output_rows: 1, result_kind: 'table' }];
@@ -250,10 +170,11 @@ test('ASO receives compact saved-operation receipts and retains complete metadat
   const f = await fixture(t, ({ request, turn }) => {
     if (turn === 1) return response(call('set_plan', { items: [{ step: 'Return the saved measurement', kind: 'table' }] }), call('investigator_hpa', { genes: ['A'], question: 'Return the saved measurement', node: 1 }));
     assert.equal(turn, 2); assert.doesNotMatch(transcript(request), /exact-fill-literal/);
-    assert.match(transcript(request), /affected_cells/); assert.match(transcript(request), /fill_missing/);
+    assert.doesNotMatch(transcript(request), /affected_cells/);
+    assert.match(request.messages.at(-1).content, /"id":"a1","label":"derived".*"inputs":\["a2"\]/);
     return response(call('finish', { tables: [{ artifact: 'a1', columns: ['gene', 'value'] }] }));
-  }, async () => ({ result: { bulk: true, status: 'ok', found: true, tables: [output], not_in_release: [], remaining_for_aso: [], input_count: 1, unresolved_inputs: 0 } }), { nativeDiscovery: true });
+  }, async () => ({ result: { bulk: true, status: 'ok', found: true, tables: [output], retained_tables: [table('prior', [{ gene: 'A', value: 2 }], ['gene', 'value'])], not_in_release: [], remaining_for_aso: [], input_count: 1, unresolved_inputs: 0 } }), { nativeDiscovery: true });
   const result = await f.run(); assert.equal(result.outcome, 'completed', JSON.stringify(result));
-  const saved = JSON.parse(await fs.readFile(result.artifacts[0].storage_uri, 'utf8'));
+  const saved = JSON.parse(await fs.readFile(result.artifacts.find(artifact => artifact.summary.id === 'a1').storage_uri, 'utf8'));
   assert.equal(saved.provenance.operations[0].args.value, literal); assert.equal(saved.provenance.fills[0].value, literal);
 });

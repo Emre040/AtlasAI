@@ -4,6 +4,7 @@ const path = require('path');
 const express = require('express');
 const crypto = require('crypto');
 const orchestrator = require('../../system/orchestrator');
+const { reportFigureArtifacts } = require('../../system/aso/reportFigures');
 const { inference, getActiveModel } = require('../../inference/gateway');
 const { platformConfig } = require('../../policy/config');
 
@@ -168,7 +169,7 @@ CRITICAL RULES:
 
     // ASO charts
     if (toolName === 'aso_hpa' && toolResult?.result?.artifacts) {
-      const chartArtifacts = (toolResult.result.artifacts || []).filter(a => a.kind === 'figure');
+      const chartArtifacts = reportFigureArtifacts(toolResult.result);
       const wsUuid = toolResult.result.workspace_uuid;
       if (chartArtifacts.length > 0 && wsUuid) {
         metadata.aso_charts = chartArtifacts.map(a => ({

@@ -180,7 +180,9 @@ test('native ASO discovers and executes classify in a registered batch without r
       assert.deepEqual(schema.properties.rules, CLASSIFY_SCHEMA.properties.rules);
       return response(call('run', { steps: [{ id: 'classified', tool: 'classify', args: { artifact: 'mapping.tsv', name: 'label', rules: [rule([{ column: 'value', op: 'is_numeric' }], '@data')], otherwise: '@missing', node: 1 } }], outputs: ['classified'] }));
     }
-    assert.match(transcript(request), /@data/); assert.match(transcript(request), /@missing/);
+    assert.doesNotMatch(transcript(request), /@data|@missing/);
+    assert.match(JSON.stringify(request.messages), /@data/); assert.match(JSON.stringify(request.messages), /@missing/);
+    assert.match(request.messages.at(-1).content, /"id":"a1".*"columns":\[[^\]]*"label"/);
     return response(call('finish', { completed: [{ item: 1, artifacts: ['a1'] }], tables: [{ artifact: 'a1', columns: ['gene', 'value', 'label'] }] }));
   }, null, { nativeDiscovery: true, rows, entry });
   const result = await f.run(); assert.equal(result.outcome, 'completed');

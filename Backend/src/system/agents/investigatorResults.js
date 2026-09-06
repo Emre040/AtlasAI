@@ -4,6 +4,9 @@ const { TABLE_OPERATIONS, executeTableOperation, withRowMask } = require('../aso
 const { columnsOf, withColumns } = require('../aso/studyTools');
 const { executeBatch, validate, ARGUMENTS_SCHEMA } = require('../aso/batchOperations');
 const { decodeArguments } = require('../aso/toolArguments');
+const { APPLY_BULK } = require('./investigatorBulkTools');
+const { REDUCE_RESULT } = require('./investigatorReduce');
+const { OperationLedger } = require('./operationSupersession');
 
 const RESULT = { type: 'string', description: 'New saved result name. Existing results cannot be overwritten; names beginning @ are reserved for batch references.' };
 const SAVED_TOOLS = [...TABLE_OPERATIONS.values()].map(operation => ({ type: 'function', function: {
@@ -13,7 +16,7 @@ const SAVED_TOOLS = [...TABLE_OPERATIONS.values()].map(operation => ({ type: 'fu
 } }));
 const RUN_RESULTS = { type: 'function', function: {
   name: 'run',
-  description: 'Execute dependent registered saved-result operations in one request. Use @step_id only in artifact/a/b handles. Give each step a new result name. Return the requested step receipts; raw and all completed intermediates remain saved. No source lookup, agent call or custom code.',
+  description: 'Execute registered apply_bulk retrievals, reduce_result stages and saved-table operations as one dependency graph. Use @step_id in artifact/a/b or reduce_result.from; it means the named output of that step, or the final declared reduction stage. Every output needs a new name. To consume a nonfinal reduction stage in this graph, use a separate reduction step for that stage. Return requested receipts; all completed intermediates remain saved. No agent calls or custom code.',
   parameters: { type: 'object', properties: {
     steps: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, tool: { type: 'string' }, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } },
     outputs: { type: 'array', items: { type: 'string' }, description: 'Step IDs whose resulting receipts should be returned.' }
@@ -29,8 +32,11 @@ function sourceMask(table) {
   return table.record_rows;
 }
 
-function createSavedOperations({ results, release, inputColumns = [], checkpoint = async () => {} }) {
-  const pending = new Map();
+function createSavedOperations({ results, release, inputColumns = [], checkpoint = async () => {}, bulkTools, reducer }) {
+  const workflowSpecs = new Map(SPECS);
+  if (bulkTools) workflowSpecs.set('apply_bulk', APPLY_BULK.function);
+  if (reducer) workflowSpecs.set('reduce_result', { ...REDUCE_RESULT.function, parameters: { ...REDUCE_RESULT.function.parameters, properties: { ...REDUCE_RESULT.function.parameters.properties, from: { ...REDUCE_RESULT.function.parameters.properties.from, 'x-artifact-reference': true } } } });
+  const pending = new OperationLedger({ fulfilled: output => results.has(output) });
   function newName(name) {
     if (typeof name !== 'string' || !name.trim() || name.startsWith('@')) throw new Error('Saved operation result needs a nonempty name that does not start with @');
     if (results.has(name)) throw new Error(`Result ${name} already exists; choose a new result name`);
@@ -83,34 +89,62 @@ function createSavedOperations({ results, release, inputColumns = [], checkpoint
     await checkpoint(`Saved operation ${name}`);
     try { return transform(name, args); }
     catch (error) {
-      pending.set(args.result, { requirement: `Complete saved operation output ${args.result}`, why: `${name} failed: ${error.message}; repair using the same result name` });
+      pending.set(args.result, { requirement: `Complete saved operation output ${args.result}`, why: `${name} failed: ${error.message}; repair the same output or explicitly supersede it in finish with complete replacement results` }, { tool: name, arguments: args, status: 'failed', error: error.message });
       throw error;
     }
   }
   return {
-    unfinished: () => [...pending.values()],
+    operationLedger: pending,
+    unfinished: () => [...pending].filter(([name]) => !results.has(name)).map(([, issue]) => issue),
     execute,
     async run(raw) {
       const args = decodeArguments(raw, RUN_RESULTS.function.parameters, 'run');
       validate(args, RUN_RESULTS.function.parameters, 'run');
-      const targets = new Map();
+      const targets = new Map(), claimed = new Set(), decoded = new Map();
       for (const step of args.steps) {
-        const spec = SPECS.get(step.tool);
-        if (!spec) throw new Error(`${step.tool} is not a registered saved-result operation`);
+        const spec = workflowSpecs.get(step.tool);
+        if (!spec) throw new Error(`${step.tool} is not a registered Investigator workflow operation`);
         const value = decodeArguments(step.args, spec.parameters, step.tool);
-        newName(value.result);
-        if ([...targets.values()].includes(value.result)) throw new Error(`Duplicate batch result name ${value.result}`);
-        targets.set(step.id, value.result);
+        validate(value, spec.parameters, step.tool);
+        const names = step.tool === 'apply_bulk' ? [value.name] : step.tool === 'reduce_result' ? value.stages.map(stage => stage.name) : [value.result];
+        if (!names.length) throw new Error('reduce_result requires at least one stage');
+        for (const name of names) {
+          newName(name);
+          if (claimed.has(name)) throw new Error(`Duplicate batch result name ${name}`);
+          claimed.add(name);
+        }
+        targets.set(step.id, names); decoded.set(step.id, value);
       }
-      const result = await executeBatch(args, { specifications: SPECS, concurrency: Math.max(1, args.steps.length), execute: async (name, operationArgs) => {
+      // Literal names of outputs made by this same graph have no dependency edge.
+      // Require an explicit step reference instead of allowing scheduling races.
+      for (const step of args.steps) for (const [key, schema] of Object.entries(workflowSpecs.get(step.tool).parameters.properties)) {
+        const value = decoded.get(step.id)[key];
+        if (schema['x-artifact-reference'] && claimed.has(value)) throw new Error(`${step.id}.${key} names a result produced in this graph; use @step_id (final stage for reduce_result) or split reduction stages into separate steps`);
+      }
+      const result = await executeBatch(args, { specifications: workflowSpecs, concurrency: Math.max(1, args.steps.length), execute: async (name, operationArgs) => {
+        if (name === 'apply_bulk') {
+          await checkpoint('Workflow source lookup');
+          const value = await bulkTools.applyBulk(operationArgs);
+          if (!value || value.name !== operationArgs.name || !Array.isArray(value.rows)) throw new Error('apply_bulk did not return its declared table');
+          results.set(value.name, value); pending.delete(value.name);
+          return { ok: true, artifact: { id: value.name }, table: value };
+        }
+        if (name === 'reduce_result') {
+          await checkpoint('Workflow grouped reduction');
+          const reduction = reducer.reduce(operationArgs);
+          const value = reduction.completed.at(-1);
+          return { ok: reduction.status === 'completed', ...(value ? { artifact: { id: value.name }, table: value } : {}),
+            completed_results: reduction.completed.map(table => table.name), ...(reduction.error ? { error: reduction.error } : {}) };
+        }
         const value = await execute(name, operationArgs);
         return { ok: true, artifact: { id: value.name }, table: value };
       } });
       for (const step of result.steps) if (['failed', 'blocked'].includes(step.status)) {
-        const target = targets.get(step.id);
-        pending.set(target, { requirement: `Complete saved operation output ${target}`, why: `${step.tool} ${step.status}: ${step.error}; retain completed results and repair using the same result name` });
+        for (const target of targets.get(step.id)) if (!results.has(target)) pending.set(target, {
+          requirement: `Complete workflow output ${target}`, why: `${step.tool} ${step.status}: ${step.error}; repair the same output or explicitly supersede it in finish with complete replacement results`
+        }, { tool: step.tool, arguments: decoded.get(step.id), workflow_step: step.id, status: step.status, error: step.error });
       }
-      return { ...result, unfinished_requirements: [...pending.values()] };
+      return { ...result, unfinished_requirements: [...pending].filter(([name]) => !results.has(name)).map(([, issue]) => issue) };
     }
   };
 }

@@ -182,14 +182,17 @@ function toAxis(filter) {
   return { field: filter.field, class: cls ?? 'Any', subclass: sub ?? 'Any', levels: levels ?? undefined, operator: filter.operator };
 }
 
-// Runs the query: on the local release when it can evaluate every filter, else on the atlas.
+// Execute against the requested source. Unsupported local filters must not invoke HTTP.
 async function execute(filters, url, requestedMode) {
   const include = filters.filter(f => f.operator !== 'NOT').map(toAxis);
   const exclude = filters.filter(f => f.operator === 'NOT').map(toAxis);
   const agentMode = await resolveAgentMode(requestedMode, [FILES.master]);
   if (agentMode.mode === 'offline') {
     const local = await offlineSearch.evaluate(include, exclude);
-    if (!local.unsupported.length) return { rows: local.rows, mode: 'offline', version: agentMode.hpaVersion };
+    if (local.unsupported.length) {
+      throw Object.assign(new Error(`The local HPA search cannot evaluate these filters: ${JSON.stringify(local.unsupported)}. No online request was made.`), { reason: 'offline_filter_unsupported', unsupported_filters: local.unsupported });
+    }
+    return { rows: local.rows, mode: 'offline', version: agentMode.hpaVersion, source_files: local.source_files };
   }
   const rows = await httpGetJson(`${url}?format=json&download=yes`);
   return { rows: Array.isArray(rows) ? rows : [], mode: 'online', version: null };

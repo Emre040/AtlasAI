@@ -127,7 +127,7 @@ for (const unavailable of [undefined, []]) test(`requested zero, blank and no-re
     assert.ok(Object.hasOwn(finish.properties, 'unavailable_requirements'));
     assert.ok(!Object.hasOwn(finish.properties, 'not_in_release'));
     assert.match(finish.properties.unavailable_requirements.description, /no-record coverage.*answered evidence/);
-    assert.match(request.messages[0].content, /An interpretation of that observed absence can state its exact source scope/);
+    assert.match(request.messages[0].content, /Missing records and missing values are valid answers about source coverage/);
     if (turn === 1) return [retrieve()];
     assert.equal(turn, 2);
     return [call('finish', { results: ['observations'], answer: interpretation, ...(unavailable === undefined ? {} : { unavailable_requirements: unavailable }) })];
@@ -146,7 +146,7 @@ for (const unavailable of [undefined, []]) test(`requested zero, blank and no-re
   assertObservations(specialist.tables[0]);
   assert.equal(result.outcome, 'completed'); assert.equal(result.plan[0].status, 'done');
   assert.equal(bulk.requests.length, 2); assert.equal(f.requests.length, 2); assert.equal(bulk.reads.length, 1);
-  const saved = JSON.parse(await fs.readFile(result.artifacts[0].storage_uri, 'utf8'));
+  const saved = JSON.parse(await fs.readFile(result.artifacts.find(artifact => artifact.summary.id === 'a1').storage_uri, 'utf8'));
   assert.deepEqual(saved.rows, specialist.tables[0].rows);
   assert.deepEqual(saved.provenance.not_in_release, []);
 });
@@ -157,8 +157,8 @@ for (const kind of ['source-dependent conclusion', 'unsupported assigned operati
   const field = kind === 'source-dependent conclusion' ? 'unavailable_requirements' : 'unfinished_requirements';
   const obligation = { requirement, why };
   const bulk = await bulkFixture(({ request, turn }) => {
-    assert.match(request.messages[0].content, /operation absent from that catalog/);
-    assert.match(request.messages[0].content, /repeated row inspection cannot replace the unavailable operation/);
+    assert.match(request.messages[0].content, /ASO owns study planning, calculations across saved tables/);
+    assert.match(request.messages[0].content, /return its underlying measurements and name the unfinished calculation once/);
     return turn === 1 ? [retrieve()] : [call('finish', { results: ['observations'], [field]: [obligation] })];
   });
   let specialist;

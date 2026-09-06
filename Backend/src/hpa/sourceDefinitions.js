@@ -108,7 +108,7 @@ function sourceDefinitions(entry, rows = [], terms = [], columns = entry.columns
   }
   return {
     definitions,
-    ...(Object.keys(definitions).length ? { definition_provenance: { evidence_role: 'General category criteria. A category does not identify which specific validation method was performed for this gene; method-specific claims require separate recorded source evidence.', table: entry.file, ...(entry.hpaVersion ? { hpa_version: entry.hpaVersion } : {}), ...(entry.sourcePageUrl ? { release_source: entry.sourcePageUrl } : {}), scope_basis: 'Release catalog title/description/resource and exact column semantics; no filename or row-value modality inference.', column_scopes: scopes, documentation: sources } } : {}),
+    ...(Object.keys(definitions).length ? { definition_provenance: { evidence_role: 'General category criteria. A category does not identify which specific validation method was performed for this gene; method-specific claims require separate recorded source evidence.', table: entry.file, ...(entry.sourcePageUrl ? { release_source: entry.sourcePageUrl } : {}), scope_basis: 'Source catalog title/description/resource and exact column semantics; no filename or row-value modality inference.', column_scopes: scopes, documentation: sources } } : {}),
     ...(unavailable.length ? { unavailable_definitions: { sample_term_pairs: unavailable.length, reason: 'No applicable documented source/column scope; raw terms remain unchanged. Request terms with about to inspect a particular column.', ...(unavailable.some(item => requested.has(item.term)) ? { requested: unavailable.filter(item => requested.has(item.term)) } : {}) } } : {}),
     ...(terms.length ? { undefined_terms: [...requested].filter(term => !defined.has(term)) } : {})
   };

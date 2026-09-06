@@ -131,7 +131,7 @@ test('single-source adapter uses the shared operators and renders no fake compar
   assert.equal(adapter.applyWhere({ entry, rows: [] }, [{ column: 'value', op: 'is_missing' }]).reading.rows.length, 0);
 });
 
-test('ASO exposes unary predicates and shows late predicate columns in successful and empty filter receipts', async t => {
+test('ASO exposes unary predicates and lists late columns for successful and empty filter artifacts', async t => {
   const columns = ['name', ...Array.from({ length: 18 }, (_, i) => `carried_${i}`), 'late_measurement'];
   const sourceRows = [null, 0, -2, '1-2'].map((value, i) => ({ name: `row_${i}`, ...Object.fromEntries(columns.filter(c => c.startsWith('carried_')).map(c => [c, 'context'])), late_measurement: value }));
   const f = await fixture(t, ({ request, turn }) => {
@@ -141,10 +141,10 @@ test('ASO exposes unary predicates and shows late predicate columns in successfu
       return response(call('set_plan', { items: [{ step: 'Retain numeric source measurements', kind: 'table' }] }), call('filter', { artifact: 'mapping.tsv', where: [{ column: 'late_measurement', op: 'is_numeric' }], node: 1 }));
     }
     if (turn === 2) {
-      assert.match(transcript(request), /showing 3\/22 columns: gene, ensembl, late_measurement/);
+      assert.match(request.messages.at(-1).content, /"id":"a1".*"rows":2,"columns":\[[^\]]*"late_measurement"/);
       return response(call('filter', { artifact: 'a1', where: [{ column: 'late_measurement', op: '>', value: 10 }] }));
     }
-    assert.match(transcript(request), /0 rows; predicate columns: gene, ensembl, late_measurement/);
+    assert.match(request.messages.at(-1).content, /"id":"a2".*"rows":0,"columns":\[[^\]]*"late_measurement"/);
     return response(call('finish', { summary: 'Numeric source measurements are retained in the saved result (a1).' }));
   }, undefined, { entry: { file: 'mapping.tsv', key: 'stream', columns }, rows: sourceRows });
   const result = await f.run();
@@ -153,22 +153,22 @@ test('ASO exposes unary predicates and shows late predicate columns in successfu
   assert.deepEqual(saved.rows.map(row => row.late_measurement), [0, -2]);
 });
 
-test('filter receipts expose both late columns in a same-row comparison', async t => {
+test('filter artifact cards expose both late columns in a same-row comparison', async t => {
   const columns = ['name', ...Array.from({ length: 12 }, (_, i) => `carried_${i}`), 'late_left', 'late_right'];
   const f = await fixture(t, ({ request, turn }) => {
     if (turn === 1) return response(call('set_plan', { items: [{ step: 'Compare source measurements', kind: 'table' }] }), call('filter', { artifact: 'mapping.tsv', where: [{ column: 'late_left', op: '>', column_b: 'late_right' }], node: 1 }));
-    assert.match(transcript(request), /columns: gene, ensembl, late_left, late_right/);
+    assert.match(request.messages.at(-1).content, /"id":"a1".*"columns":\[[^\]]*"late_left","late_right"/);
     return response(call('finish', { summary: 'The matching source row is retained (a1).' }));
   }, undefined, { entry: { file: 'mapping.tsv', key: 'stream', columns }, rows: [{ name: 'A', late_left: 0, late_right: -2 }] });
   const result = await f.run();
   assert.equal(result.outcome, 'completed', result.error);
 });
 
-test('iterated filter receipts expose resolved predicate columns rather than unresolved item placeholders', async t => {
+test('iterated filter artifacts expose resolved predicate columns rather than unresolved item placeholders', async t => {
   const columns = ['name', 'left_value', 'right_value'];
   const f = await fixture(t, ({ request, turn }) => {
     if (turn === 1) return response(call('set_plan', { items: [{ step: 'Filter each requested numeric column', kind: 'table' }] }), call('filter', { artifact: 'mapping.tsv', where: [{ column: '$item', op: 'is_numeric' }], for_each: { values: ['left_value', 'right_value'], as: 'filtered_column' }, node: 1 }));
-    assert.match(transcript(request), /columns: gene, ensembl, left_value, right_value/);
+    assert.match(request.messages.at(-1).content, /"id":"a1".*"columns":\[[^\]]*"left_value","right_value"/);
     assert.doesNotMatch(transcript(request), /No column.*\$item/);
     return response(call('finish', { summary: 'The source rows matching each requested numeric filter are retained (a1).' }));
   }, undefined, { entry: { file: 'mapping.tsv', key: 'stream', columns }, rows: [{ name: 'A', left_value: 0, right_value: null }, { name: 'B', left_value: null, right_value: -2 }] });

@@ -3,6 +3,7 @@
 const path = require('path');
 const express = require('express');
 const orchestrator = require('../../system/orchestrator');
+const { reportFigureArtifacts } = require('../../system/aso/reportFigures');
 const { inference, getActiveModel } = require('../../inference/gateway');
 const { requireBoolean } = require('../../config/runtime');
 const { buildModelHistory } = require('../timeline');
@@ -483,7 +484,7 @@ CRITICAL RULES:
         // Send ASO chart artifacts BEFORE synthesis (so images appear above text)
         if (toolName === 'aso_hpa' && toolResult?.result?.artifacts) {
           // Chart specifications only; the rendered PNGs sit next to them in the workspace.
-          const chartArtifacts = (toolResult.result.artifacts || []).filter(a => a.kind === 'figure' && /\.json$/.test(String(a.storage_uri || '')));
+          const chartArtifacts = reportFigureArtifacts(toolResult.result).filter(a => /\.json$/.test(String(a.storage_uri || '')));
           const wsUuid = toolResult.result.workspace_uuid;
           if (chartArtifacts.length > 0 && wsUuid) {
             const charts = chartArtifacts.map(a => ({

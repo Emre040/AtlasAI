@@ -2,8 +2,7 @@
 
 // Evaluates a deep-research search plan (include and exclude axes over HPA search fields)
 // against the local HPA release, reproducing the proteinatlas.org/search semantics the bulk
-// files can answer. Axes the local files cannot answer are reported back so the caller can run
-// the same plan online instead of returning a wrong result.
+// files can answer. Unavailable filters are returned explicitly; an offline request stays offline.
 
 const { hpaSchema } = require('./hpaSchema');
 const { localData, FILES } = require('./localData');
@@ -301,9 +300,31 @@ class OfflineSearch {
       case 'predicted_location': {
         const wantedClasses = anyClass ? [] : classes.map(lower);
         const wantedSub = anySub ? [] : subclasses.map(lower);
-        // The master file lists top-level protein classes only; a subclass (Kinases under
-        // Enzymes, a disease group under Human disease related genes) is not in any local file.
-        if (wantedSub.length && !(await this.hasProteinClassTokens(wantedSub))) return null;
+        if (!(await this.hasProteinClassTokens([...wantedClasses, ...wantedSub]))) {
+          const index = await this.data.proteinClasses();
+          const names = new Set([...index.classes.values()].map(item => lower(item.name)));
+          if (![...wantedClasses, ...wantedSub].every(name => names.has(name))) return null;
+          const inHierarchy = (id, wanted) => {
+            if (!wanted.length) return true;
+            const seen = new Set();
+            while (id) {
+              if (seen.has(id)) throw new Error(`Cyclic HPA proteinClass hierarchy at ${id}`);
+              seen.add(id);
+              const item = index.classes.get(id);
+              if (!item) throw new Error(`Missing HPA proteinClass parent ${id}`);
+              if (wanted.includes(lower(item.name))) return true;
+              id = item.parent;
+            }
+            return false;
+          };
+          const test = row => {
+            const memberships = index.genes.get(row.Ensembl);
+            if (!memberships) throw new Error(`The imported HPA XML has no classification entry for ${row.Ensembl}`);
+            return [...memberships].some(id => inHierarchy(id, wantedClasses) && inHierarchy(id, wantedSub));
+          };
+          test.source_files = [FILES.xml];
+          return test;
+        }
         return row => {
           const listed = splitList(row['Protein class']).map(lower);
           return (wantedClasses.length === 0 || wantedClasses.some(c => listed.includes(c)))
@@ -422,7 +443,7 @@ class OfflineSearch {
     }
     if (unsupported.length > 0) return { rows: [], unsupported };
     const rows = master.rows.filter(row => includes.every(test => test(row)) && !excludes.some(test => test(row)));
-    return { rows, unsupported };
+    return { rows, unsupported, source_files: [...new Set([FILES.master, ...includes.flatMap(test => test.source_files || []), ...excludes.flatMap(test => test.source_files || [])])] };
   }
 }
 

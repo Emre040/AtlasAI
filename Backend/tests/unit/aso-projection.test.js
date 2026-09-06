@@ -116,13 +116,18 @@ for (const target of ['a1', 'mapping.tsv']) {
   }
 }
 
-for (const tool of ['rank', 'top_per_group']) test(`${tool} receipt shows the real decisive keys beyond column seven`, async t => {
+for (const tool of ['rank', 'top_per_group']) test(`${tool} saves decisive keys beyond column seven for explicit inspection`, async t => {
   const args = { artifact: 'mapping.tsv', by: 'observed strength', then_by: [{ column: 'exact label', order: 'asc', type: 'text' }], ...(tool === 'top_per_group' ? { group_by: 'batch label', n: 1 } : {}), node: 1 };
+  const expected = ['gene', 'ensembl', 'Observed strength', ...(tool === 'top_per_group' ? ['Batch label'] : []), 'Exact label', 'rank'];
   const f = await fixture(t, ({ request, turn }) => {
     if (turn === 1) return response(plan(), call(tool, args));
-    assert.equal(turn, 2);
+    if (turn === 2) {
+      assert.doesNotMatch(transcript(request), /sample B/);
+      assert.match(request.messages.at(-1).content, /"id":"a1".*"columns":\[[^\]]*"Observed strength"/);
+      return response(call('open', { what: 'a1', columns: expected }));
+    }
+    assert.equal(turn, 3);
     const table = tableFromObservation(latestObservation(request));
-    const expected = ['gene', 'ensembl', 'Observed strength', ...(tool === 'top_per_group' ? ['Batch label'] : []), 'Exact label', 'rank'];
     assert.deepEqual(table.columns, expected);
     assert.equal(table.rows[0][table.columns.indexOf('Observed strength')], 4);
     assert.equal(table.rows[0][table.columns.indexOf('Exact label')], 'sample B');
@@ -130,30 +135,36 @@ for (const tool of ['rank', 'top_per_group']) test(`${tool} receipt shows the re
     assert.ok(!table.columns.some(column => column.startsWith('context_')));
     return response(call('finish', { tables: [{ artifact: 'a1', columns: expected }] }));
   }, undefined, { entry, rows: sourceRows });
-  const result = await f.run(); assert.equal(result.outcome, 'completed'); assert.equal(result.turns, 2);
+  const result = await f.run(); assert.equal(result.outcome, 'completed', result.error); assert.equal(result.turns, 3);
 });
 
-test('rank receipt includes associated extrema labels only when producer metadata establishes the relation', async t => {
+test('rank retains associated labels while provenance distinguishes declared extrema relations', async t => {
   for (const declared of [true, false]) {
     const bulkRows = sourceRows.map(row => ({ ...row, 'Observed strength_labels': [{ entity: row['Exact label'] }] }));
     const bulkColumns = Object.keys(bulkRows[0]);
     const f = await fixture(t, ({ request, turn }) => {
       if (turn === 1) return response(plan(), call('investigator_hpa', { genes: ['ONE', 'TWO', 'THREE'], question: 'Retrieve exact maxima and labels', node: 1 }));
       if (turn === 2) return response(call('rank', { artifact: 'a1', by: 'Observed strength', node: 1 }));
-      assert.equal(turn, 3);
+      if (turn === 3) {
+        assert.doesNotMatch(transcript(request), /sample B/);
+        return response(call('open', { what: 'a2', columns: ['gene', 'Observed strength', 'Observed strength_labels', 'rank'] }));
+      }
+      assert.equal(turn, 4);
       const table = tableFromObservation(latestObservation(request));
-      assert.equal(table.columns.includes('Observed strength_labels'), declared);
-      if (declared) assert.deepEqual(table.rows[0][table.columns.indexOf('Observed strength_labels')], [{ entity: 'sample B' }]);
+      assert.deepEqual(table.rows[0][table.columns.indexOf('Observed strength_labels')], [{ entity: 'sample B' }]);
       return response(call('finish', { tables: [{ artifact: 'a2', columns: ['gene', 'Observed strength', 'rank'] }] }));
     }, async () => ({ result: { bulk: true, found: true, status: 'ok', tables: [{ name: 'source_results', rows: bulkRows, columns: bulkColumns, created_columns: bulkColumns.slice(2), provenance: declared ? [{ table: 'arbitrary-source.tsv', as: 'Observed strength', aggregate: 'max', labels: ['entity'] }] : [], coverage: [] }], input_count: 3, not_in_release: [], remaining_for_aso: [] }, steps: [] }), { entry, rows: sourceRows });
-    const result = await f.run(); assert.equal(result.outcome, 'completed'); assert.equal(result.failed, 0);
+    const result = await f.run(); assert.equal(result.outcome, 'completed', result.error); assert.equal(result.failed, 0);
+    const saved = JSON.parse(await fs.readFile(result.artifacts.find(artifact => artifact.summary.id === 'a2').storage_uri, 'utf8'));
+    assert.equal(saved.provenance.ordering_columns.includes('Observed strength_labels'), declared);
   }
 });
 
-test('for_each rank receipts carry actual substituted keys and the iteration label', async t => {
+test('for_each rank saves actual substituted keys and the iteration label for explicit inspection', async t => {
   const f = await fixture(t, ({ request, turn }) => {
     if (turn === 1) return response(plan(), call('rank', { artifact: 'mapping.tsv', by: '$item', for_each: { values: ['Observed strength', 'Other strength'], as: 'metric' }, node: 1 }));
-    assert.equal(turn, 2);
+    if (turn === 2) return response(call('open', { what: 'a1', columns: ['gene', 'ensembl', 'metric', 'Observed strength', 'rank', 'Other strength'] }));
+    assert.equal(turn, 3);
     const table = tableFromObservation(latestObservation(request));
     assert.deepEqual(table.columns, ['gene', 'ensembl', 'metric', 'Observed strength', 'rank', 'Other strength']);
     assert.ok(table.rows.some(row => row[table.columns.indexOf('metric')] === 'Other strength'));
@@ -171,10 +182,11 @@ test('open rejects an explicit empty projection before reading the source', asyn
   assert.match(f.events.filter(event => event.stage === 'call.failed').map(event => event.message).join('\n'), /open.columns must be a nonempty selection/);
 });
 
-test('streamed top_per_group receipt retains exact group and secondary keys', async t => {
+test('streamed top_per_group retains exact group and secondary keys for explicit inspection', async t => {
   const f = await fixture(t, ({ request, turn }) => {
     if (turn === 1) return response(plan(), call('top_per_group', { artifact: 'mapping.tsv', group_by: 'batch label', by: 'observed strength', then_by: [{ column: 'exact label', type: 'text' }], n: 1, node: 1 }));
-    assert.equal(turn, 2);
+    if (turn === 2) return response(call('open', { what: 'a1', columns: ['gene', 'ensembl', 'Observed strength', 'Batch label', 'Exact label', 'rank'] }));
+    assert.equal(turn, 3);
     const table = tableFromObservation(latestObservation(request));
     assert.deepEqual(table.columns, ['gene', 'ensembl', 'Observed strength', 'Batch label', 'Exact label', 'rank']);
     assert.equal(table.rows[0][table.columns.indexOf('Batch label')], 'batch A');

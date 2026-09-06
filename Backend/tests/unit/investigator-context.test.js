@@ -65,6 +65,8 @@ test('bulk context discovers arbitrary sources and inherited data without repeat
       assert.equal(receipt.inherited_columns.count, 104);
       assert.doesNotMatch(JSON.stringify(receipt), /inherited_field_|retained_value_/);
       assert.deepEqual(receipt.sources, [entry.file]);
+      assert.equal(receipt.preview, undefined);
+      assert.equal(receipt.coverage[0].matched_source_rows, 600);
       assert.equal(request.messages[2].tool_calls[0].thought_signature, 'original-signature');
       return response('inspect_input', {}, 'input-schema');
     }
@@ -82,7 +84,7 @@ test('bulk context discovers arbitrary sources and inherited data without repeat
   const result = await run({ genes: supplied, question: 'Retrieve the source readings.' }, { inputRows, reasoningEffort: 'low' }, adapter);
   assert.equal(result.status, 'ok');
   assert.equal(calls, 5); assert.equal(sourceReads, 1);
-  assert.equal(result.tables[0].rows[599].observed_units, 599);
+  assert.equal(result.tables[0].rows[599].observed_units, '599');
   assert.equal(result.tables[0].rows[599].inherited_field_103, 'retained_value_103');
   assert.equal(result.source_evidence.length, 1);
   assert.equal(result.source_evidence[0].description, entry.description);

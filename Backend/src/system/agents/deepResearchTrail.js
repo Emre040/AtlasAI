@@ -191,7 +191,7 @@ async function deepResearchTrail({ goal, mode: requestedMode = 'online' }, ctx =
       summary_md: `**Research Complete for "${goal}"**\n\nFound **${summary.count}** genes matching the criteria.\n\n**Query:** ${adapter.describe(filters)}\n\n**Search URLs:**\n- ${url}`,
       result: {
         rows_found: summary.count, preview: summary.top, search_urls: [url], validation_passed: true, validation_details: null, attempts: 1, query_attempted: queryAttempted, query_executed: queryExecuted,
-        mode: run.mode, hpa_version: run.version, plan: adapter.describe(filters), understanding: plan.understanding,
+        mode: run.mode, hpa_version: run.version, source_files: run.source_files, plan: adapter.describe(filters), understanding: plan.understanding,
         trail: filters.map(f => ({ requirement_id: f.requirement_id, requirement: f.requirement, field: f.field, path: f.path, operator: f.operator, why: f.why })),
         requirements, unresolved_requirements: [], not_expressible: [],
         ...(includeRows ? { rows: run.rows } : {})

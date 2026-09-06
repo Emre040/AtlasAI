@@ -13,9 +13,8 @@ const MODE_PARAMETER = {
   type: 'string',
   enum: ['online', 'offline'],
   description:
-    'Data source. "offline" (the default) evaluates against the local copy of the HPA release: fast, free of ' +
-    'network access, and the same data as the website for every bulk-exported field. "online" queries ' +
-    'proteinatlas.org live; searches fall back to it by themselves for fields the local data cannot express.'
+    'Data source. "offline" evaluates against the imported HPA release and prohibits online HPA access. ' +
+    'Unavailable files or unsupported filters produce an explicit error. "online" queries proteinatlas.org live.'
 };
 
 const defs = [

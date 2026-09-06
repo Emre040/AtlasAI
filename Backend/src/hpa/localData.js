@@ -48,6 +48,7 @@ function parseLine(header, line) {
 // with the compression suffix removed (the sync script extracts them under those names).
 const FILES = Object.freeze({
   master: 'proteinatlas.tsv',
+  xml: 'proteinatlas.xml',
   tissueConsensus: 'rna_tissue_consensus.tsv',
   tissueIhc: 'normal_ihc_data.tsv',
   brainRegion: 'rna_brain_region_hpa.tsv',
@@ -72,6 +73,8 @@ class LocalData {
     this.tables = new Map();
     this.indexes = new Map();
     this.indexLoads = new Map();
+    this.classificationTables = new Map();
+    this.classificationLoads = new Map();
     this.unreachable = new Set();
   }
 
@@ -94,7 +97,7 @@ class LocalData {
       const ready = await this.datasets.listReady(version);
       const next = new Map();
       // A row is only usable when its file is actually reachable from this process (the data
-      // directory is shared between releases through a link); otherwise the agents stay online.
+      // directory is shared between releases through a link); an offline request fails if needed data is missing.
       for (const dataset of ready) {
         try {
           await fsp.access(this.filePath(dataset.localPath));
@@ -277,6 +280,31 @@ class LocalData {
       Object.defineProperty(table, 'byName', { value: byName });
     }
     return table;
+  }
+
+  // Hierarchical classifications are exported in XML, beyond the TSV's broad classes.
+  // Cache decoded metadata by raw-file identity and active release, just like TSV tables.
+  async proteinClasses() {
+    const fileName = FILES.xml;
+    const dataset = await this.describe(fileName);
+    if (!dataset) throw new Error(`HPA dataset '${fileName}' is not available offline.`);
+    const filePath = this.filePath(fileName);
+    const stat = await fsp.stat(filePath);
+    const identity = `${dataset.hpaVersion}:${filePath}:${stat.size}:${stat.mtimeMs}`;
+    const cached = this.classificationTables.get(fileName);
+    if (cached?.identity === identity) return cached.table;
+    if (this.classificationLoads.has(identity)) return this.classificationLoads.get(identity);
+    const pending = (async () => {
+      const { readProteinClasses } = require('./proteinClasses');
+      const table = { ...await readProteinClasses(filePath), fileName, dataset };
+      const after = await fsp.stat(filePath);
+      if (after.size !== stat.size || after.mtimeMs !== stat.mtimeMs) throw new Error(`HPA dataset '${fileName}' changed while reading its classifications`);
+      this.classificationTables.set(fileName, { identity, table });
+      return table;
+    })();
+    this.classificationLoads.set(identity, pending);
+    try { return await pending; }
+    finally { this.classificationLoads.delete(identity); }
   }
 
   // Resolves a symbol, synonym, or Ensembl id to the master row, like the online search does.

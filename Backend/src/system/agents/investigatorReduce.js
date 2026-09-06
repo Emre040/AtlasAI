@@ -1,13 +1,14 @@
 'use strict';
 
-const { aggregate, join, select, columnsOf, withColumns, isMissing, AGGREGATE_METRICS } = require('../aso/studyTools');
+const { aggregateMany, join, select, columnsOf, withColumns, isMissing, findColumn, wherePredicate, CLASSIFY_SCHEMA, AGGREGATE_METRICS } = require('../aso/studyTools');
 const { decodeArguments } = require('../aso/toolArguments');
 const { validate } = require('../aso/batchOperations');
+const { OperationLedger } = require('./operationSupersession');
 
 const S = { type: 'string' };
 const REDUCE_RESULT = { type: 'function', function: {
   name: 'reduce_result',
-  description: 'Reduce a saved rows-mode result through ordered grouped stages without rereading sources. Every stage retains gene/ensembl identity and is saved by name. count counts eligible input rows at that stage, numeric_count counts numeric values; counts from earlier stages must be propagated explicitly with sum. Raw source coverage stays separate. Missing grouping identifiers remain visible unknown groups, not verified independent samples. Raw and intermediate tables remain available to open_result and finish.',
+  description: 'Reduce a saved rows-mode result through ordered grouped stages without rereading sources. Every stage retains gene/ensembl identity and is saved by name. Each measure may select rows with where; every pre-filter group remains, with zero counts or undefined statistics when no rows match. count counts eligible input rows at that stage, numeric_count counts numeric values; counts from earlier stages must be propagated explicitly with sum. Raw source coverage stays separate. Missing grouping identifiers remain visible unknown groups, not verified independent samples. Raw and intermediate tables remain available to open_result and finish.',
   parameters: { type: 'object', properties: {
     from: { type: 'string', description: 'Existing apply_bulk rows-mode result or a previous reduce_result stage.' },
     stages: { type: 'array', items: { type: 'object', properties: {
@@ -16,7 +17,8 @@ const REDUCE_RESULT = { type: 'function', function: {
       measures: { type: 'array', items: { type: 'object', properties: {
         column: { type: 'string', description: 'Exact predecessor column to summarize; may be omitted only for count.' },
         metrics: { type: 'array', items: { type: 'string', enum: AGGREGATE_METRICS } },
-        as: { type: 'object', additionalProperties: S, description: 'Optional exact metric-to-output-column map. Use unique aliases when multiple measures would collide.' }
+        where: { ...CLASSIFY_SCHEMA.properties.rules.items.properties.where, description: 'Optional per-measure predicates using existing columns, including column_b comparisons. All clauses must hold. Groups are established before this selection; zero matching rows gives count/distinct 0 and undefined numeric statistics null.' },
+        as: { type: 'object', additionalProperties: S, description: 'Optional exact metric-to-output-column map, for example {"count":"observations"}. Use unique aliases when multiple measures would collide.' }
       }, required: ['metrics'] } }
     }, required: ['name', 'group_by_columns', 'measures'] } }
   }, required: ['from', 'stages'] }
@@ -50,6 +52,7 @@ function reduceStage(input, stage, release) {
   const aliases = new Set(groups), measures = [];
   const previousOutputs = new Map((input.reductions?.at(-1)?.outputs || []).map(output => [output.column, output]));
   for (const measure of stage.measures) {
+    wherePredicate(columns, measure.where || []); // Validate all predicates before producing any group output.
     if (!measure.metrics.length || new Set(measure.metrics).size !== measure.metrics.length) throw new Error('reduce_result metrics must be a nonempty distinct selection');
     if (measure.column !== undefined) exactColumn(columns, measure.column, 'measurement');
     if (measure.column === undefined && measure.metrics.some(metric => metric !== 'count')) throw new Error('reduce_result requires column for every metric except count');
@@ -78,10 +81,18 @@ function reduceStage(input, stage, release) {
   const groupRename = Object.fromEntries([...groupNames].filter(([name, internal]) => name !== internal));
   const groupedSource = Object.keys(groupRename).length ? select(source, columns, groupRename) : source;
   const internalGroups = groups.map(name => groupNames.get(name));
-  let combined;
-  for (const measure of measures) {
+  const summaries = aggregateMany(groupedSource, measures.map(measure => {
     const column = groupNames.get(measure.column) || measure.column;
-    const rows = aggregate(groupedSource, { group_by_columns: internalGroups, ...(column === undefined ? {} : { column }), metrics: measure.metrics });
+    const where = (measure.where || []).map(clause => Object.fromEntries(Object.entries(clause).map(([key, value]) => {
+      if (key !== 'column' && key !== 'column_b') return [key, value];
+      const original = findColumn(source, value);
+      return [key, groupNames.has(original) ? groupNames.get(original) : original];
+    })));
+    return { group_by_columns: internalGroups, ...(column === undefined ? {} : { column }), metrics: measure.metrics, where };
+  }));
+  let combined;
+  for (const [index, measure] of measures.entries()) {
+    const rows = summaries[index];
     const renamed = select(rows, [...internalGroups, ...measure.metrics], Object.fromEntries([
       ...groups.map(name => [groupNames.get(name), name]),
       ...measure.metrics.map((metric, i) => [metric, measure.names[i]])
@@ -132,8 +143,9 @@ function reduceStage(input, stage, release) {
 }
 
 function createResultReducer({ results, release }) {
-  const pending = new Map();
+  const pending = new OperationLedger({ fulfilled: output => results.has(output) });
   return {
+    operationLedger: pending,
     unfinished: () => [...pending.values()],
     reduce(raw) {
       const args = decodeArguments(raw, REDUCE_RESULT.function.parameters, 'reduce_result');
@@ -152,8 +164,8 @@ function createResultReducer({ results, release }) {
         } catch (error) {
           for (const remaining of args.stages.slice(index)) pending.set(remaining.name, {
             requirement: `Complete saved reduction output ${remaining.name}`,
-            why: `${stage.name} failed: ${error.message}; resume from ${input.name} and keep the unproduced stage names; those named outputs remain pending`
-          });
+            why: `${stage.name} failed: ${error.message}; repair the same output or explicitly supersede it in finish with complete replacement results`
+          }, { tool: 'reduce_result', arguments: args, stage: remaining, status: remaining.name === stage.name ? 'failed' : 'blocked', error: error.message, resume_from: input.name });
           return { status: 'partial', completed, failed_stage: stage.name, error: error.message, resume_from: input.name, unfinished_requirements: [...pending.values()] };
         }
       }

@@ -421,7 +421,8 @@ function distinctCellKey(value, ancestors = new Set()) {
 
 // Summarises a column per group as rows arrive; values are kept per group for the order
 // statistics, nothing else is held.
-function aggregator({ group_by, group_by_columns, group_domains, column, metrics = ['count'] } = {}, columns) {
+function aggregator({ group_by, group_by_columns, group_domains, column, metrics = ['count'], where = [] } = {}, columns) {
+  const predicate = wherePredicate(columns, where);
   const col = column ? resolveIn(columns, column) : null;
   if (column && !col) throw new Error(`aggregate: no column named "${column}" (columns: ${columns.slice(0, 30).join(', ')})`);
   const groupCol = group_by ? resolveIn(columns, group_by) : null;
@@ -484,6 +485,9 @@ function aggregator({ group_by, group_by_columns, group_domains, column, metrics
       const g = labels.length ? JSON.stringify(labels) : 'all';
       let st = groups.get(g);
       if (!st) { st = empty(labels); groups.set(g, st); }
+      // Group membership precedes per-measure filtering: no matches means an empty
+      // statistic for this existing group, not loss of its source identity.
+      if (!predicate(r)) return;
       st.count++;
       if (col) {
         const raw = r[col];
@@ -526,6 +530,14 @@ function aggregate(rows, args = {}) {
   const acc = aggregator(args, columnsOf(rows));
   for (const r of rows) acc.add(r);
   return acc.result();
+}
+
+// Registered reduction stages share the metric engine and one accumulation traversal.
+function aggregateMany(rows, specifications) {
+  const columns = columnsOf(rows);
+  const accumulators = specifications.map(args => aggregator(args, columns));
+  for (const row of rows) for (const accumulator of accumulators) accumulator.add(row);
+  return accumulators.map(accumulator => accumulator.result());
 }
 
 async function aggregateStream(iterable, args, columns) {
@@ -1040,4 +1052,4 @@ async function measure(rows, { table, value_column, entity_column, entity, as, a
   return out;
 }
 
-module.exports = { fillMissing, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, withColumns, findColumn, keyOf, num, isMissing };
+module.exports = { aggregateMany, fillMissing, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, applyWhere, wherePredicate, freshFirst, aggregateStream, topPerGroupStream, correlate, overlap, standardize, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, measure, columnsOf, withColumns, findColumn, keyOf, num, isMissing };

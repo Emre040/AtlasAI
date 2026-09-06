@@ -1,9 +1,6 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs/promises');
-const path = require('node:path');
-const Module = require('node:module');
 const { createResultReducer, REDUCE_RESULT } = require('../../src/system/agents/investigatorReduce');
 const { withColumns, aggregate, AGGREGATE_METRICS } = require('../../src/system/aso/studyTools');
 
@@ -125,55 +122,4 @@ for (const size of [1, 7, 600, 1023]) test(`three declared stages preserve ${siz
   const out = f.reducer.reduce({ from: 'raw', stages: chain }); assert.equal(out.status, 'completed');
   const result = f.results.get('per_input'); assert.equal(result.rows.length, size); assert.ok(result.rows.every(row => row.final_reading === 10));
   assert.equal(f.results.size, 4);
-});
-
-async function runBulk(decide) {
-  const filename = require.resolve('../../src/system/agents/investigatorBulk'), loaded = new Module(filename, module);
-  loaded.filename = filename; loaded.paths = Module._nodeModulePaths(path.dirname(filename));
-  const originalRequire = loaded.require.bind(loaded), requests = []; let reads = 0;
-  const stubs = {
-    '../../hpa/agentMode': { async resolveAgentMode() { return { mode: 'offline', hpaVersion: 'fixture' }; } },
-    '../../inference/gateway': { inference: { chat: { completions: { async create(request) {
-      requests.push(JSON.parse(JSON.stringify(request))); const actions = decide({ request, turn: requests.length });
-      return { choices: [{ message: { role: 'assistant', tool_calls: actions.map(([name, args], i) => ({ id: `${requests.length}_${i}`, type: 'function', thought_signature: 'native-thought', function: { name, arguments: JSON.stringify(args) } })) } }], usage: { prompt_tokens: 4, completion_tokens: 1 } };
-    } } } } }
-  };
-  loaded.require = name => Object.hasOwn(stubs, name) ? stubs[name] : originalRequire(name);
-  loaded._compile(await fs.readFile(filename, 'utf8'), filename);
-  const entry = { file: 'unseen-source.tsv', key: 'ensembl', columns: ['Gene', 'location', 'observation', 'reading'] };
-  const raw = records().map(row => ({ Gene: 'ID1', location: row.location, observation: row.observation, reading: row.reading }));
-  const adapter = { async resolveGenes() { return [{ gene: 'ONE', ensembl: 'ID1' }]; }, async catalog() { return [entry]; }, async entry() { return entry; }, async readMany() { reads++; return { entry, byGene: new Map([['ID1', raw]]) }; } };
-  const result = await loaded.exports({ genes: ['ONE'], question: 'Return raw records, per-observation medians and per-location median of those medians with record and observation counts' }, {}, adapter);
-  return { result, requests, reads };
-}
-const rawCall = ['apply_bulk', { name: 'raw', lookups: [{ table: 'unseen-source.tsv', match_column: 'Gene', mode: 'rows', columns: ['location', 'observation', 'reading'] }] }];
-
-test('the actual native bulk loop returns raw and nested results without source rereads', async () => {
-  const { result, requests, reads } = await runBulk(({ request, turn }) => {
-    assert.ok(request.tools.some(tool => tool.function.name === 'reduce_result'));
-    if (turn === 1) return [rawCall];
-    if (turn === 2) { const chain = stages(); chain[0].measures[0].as = JSON.stringify(chain[0].measures[0].as); return [['reduce_result', { from: 'raw', stages: chain }]]; }
-    if (turn === 3) {
-      const receipt = JSON.parse(request.messages.at(-1).content); assert.equal(receipt.status, 'completed'); assert.equal(receipt.completed[1].reduction.input_rows, 3);
-      return [['open_result', { name: 'entities', columns: ['gene', 'entity_value', 'record_count', 'observation_count'] }]];
-    }
-    assert.equal(turn, 4); assert.deepEqual(JSON.parse(request.messages.at(-1).content).rows, [['ONE', 10, 5, 3]]);
-    return [['finish', { results: ['raw', 'observations', 'entities'], unavailable_requirements: [] }]];
-  });
-  assert.equal(result.status, 'ok', result.error); assert.equal(result.tables.length, 3); assert.equal(reads, 1); assert.equal(requests.length, 4);
-  assert.deepEqual(result.tables.map(table => table.rows.length), [5, 3, 1]); assert.equal(result.tokens.total.total, 20);
-});
-
-for (const repair of [false, true]) test(`the actual loop ${repair ? 'repairs' : 'retains'} a failed reduction obligation at finish`, async () => {
-  const { result, reads } = await runBulk(({ request, turn }) => {
-    if (turn === 1) return [rawCall];
-    if (turn === 2) { const chain = stages(); chain[1].measures[0].column = 'wrong'; return [['reduce_result', { from: 'raw', stages: chain }]]; }
-    if (turn === 3) {
-      const receipt = JSON.parse(request.messages.at(-1).content); assert.equal(receipt.status, 'partial'); assert.equal(receipt.resume_from, 'observations');
-      if (repair) return [['reduce_result', { from: 'observations', stages: [stages()[1]] }]];
-    }
-    return [['finish', { results: repair ? ['raw', 'observations', 'entities'] : ['raw', 'observations'], unavailable_requirements: [] }]];
-  });
-  assert.equal(reads, 1); assert.equal(result.status, repair ? 'ok' : 'partial', result.error);
-  assert.equal(result.remaining_for_aso.length, repair ? 0 : 1); assert.equal(result.tables.length, repair ? 3 : 2);
 });

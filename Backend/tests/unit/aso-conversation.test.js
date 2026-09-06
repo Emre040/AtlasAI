@@ -3,7 +3,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { StudyContext, bytes } = require('../../src/system/aso/studyContext');
-const { StudyConversation } = require('../../src/system/aso/studyConversation');
+const { StudyConversation, artifactCard } = require('../../src/system/aso/studyConversation');
+const { buildRequest } = require('../../src/inference/adapters/geminiGenerateContent');
 const { executeBatch } = require('../../src/system/aso/batchOperations');
 const { signature } = require('../../src/system/aso/toolHelp');
 
@@ -11,14 +12,14 @@ function state(turn = 1) {
   return { turn, goal: 'An unrelated research goal', plan: [{ text: 'Analyze observations', status: 'doing', artifacts: [], kind: 'table' }], notes: ['Use the original units (o1)'], artifacts: [], running: new Map() };
 }
 
-test('all native exchanges, provider signatures and original evidence survive without compaction', () => {
+test('native call pairs and signatures survive while delivered read payloads move out of active history', () => {
   const archive = new StudyContext({ budgetBytes: 4096 });
   const conversation = new StudyConversation({ goal: 'Keep the exact scientific question', budgetBytes: 4096, archive });
   const current = state();
   for (let turn = 1; turn <= 15; turn++) {
     current.turn = turn;
     const snapshot = conversation.prepare(current, 20);
-    if (turn > 1) assert.match(JSON.stringify(snapshot.messages), /evidence from turn 1:/);
+    if (turn > 2) assert.doesNotMatch(JSON.stringify(snapshot.messages), /evidence from turn 1:/);
     assert.equal(snapshot.messages[0].content, 'GOAL\nKeep the exact scientific question');
     const calls = new Set();
     for (const message of snapshot.messages) {
@@ -30,11 +31,14 @@ test('all native exchanges, provider signatures and original evidence survive wi
     conversation.acknowledge(snapshot);
     const id = archive.add(`evidence from turn ${turn}: ${'測定🧬'.repeat(40)}`);
     const view = conversation.result([id], 1000);
-    conversation.append({ role: 'assistant', tool_calls: [{ id: `c${turn}`, type: 'function', thought_signature: 'opaque-provider-state', function: { name: 'open', arguments: '{}' } }] }, [{ message: { role: 'tool', tool_call_id: `c${turn}`, content: view.text }, deliveries: view.deliveries }]);
+    conversation.append({ role: 'assistant', tool_calls: [{ id: `c${turn}`, type: 'function', thought_signature: 'opaque-provider-state', function: { name: 'open', arguments: '{}' } }] }, [{ message: { role: 'tool', tool_call_id: `c${turn}`, content: JSON.stringify({ observations: view.text }) }, deliveries: view.deliveries }]);
   }
   assert.equal(conversation.compactions, 0);
   assert.ok(bytes(JSON.stringify(conversation.prepare(current, 20).messages)) > 4096);
   assert.equal(archive.records.size, 15);
+  assert.match(archive.records.get('o1').record.text, /evidence from turn 1:/);
+  const id = archive.recall({ id: 'o1' });
+  assert.match(conversation.result([id]).text, /evidence from turn 1:/);
 });
 
 test('a waiting first item does not hide other unfinished work from the current turn', () => {
@@ -54,12 +58,14 @@ test('a waiting first item does not hide other unfinished work from the current 
   assert.match(update, /t1 deep_research_hpa/);
 });
 
-test('current bookkeeping is replaced while asynchronous source evidence stays in history', () => {
+test('current bookkeeping and artifact directory replace the previous snapshot without sending stored values', () => {
   const archive = new StudyContext();
   const conversation = new StudyConversation({ goal: 'Retain evidence', archive });
-  archive.add('Source measurement: 37.5 mg', { source: 'artifact a1' });
+  archive.add('Source measurement: 37.5 mg', { source: 'artifact a1', announce: false });
   const current = state(1);
+  current.artifacts.push({ id: 'a1', label: 'Source measurements', kind: 'data', tool: 'investigator_hpa', rows: [{ measurement: '37.5 mg' }], columns: ['measurement'], inputs: [], meta: { source_file: 'arbitrary.tsv' } });
   const first = conversation.prepare(current, 10);
+  assert.match(first.messages.at(-1).content, /"columns":\["measurement"\]/);
   conversation.acknowledge(first);
   current.turn = 2;
   current.plan[0].status = 'done';
@@ -68,8 +74,71 @@ test('current bookkeeping is replaced while asynchronous source evidence stays i
   assert.equal(second.messages.filter(m => m.content?.startsWith('TURN ')).length, 1);
   assert.doesNotMatch(all, /TURN 1\/10/);
   assert.match(all, /TURN 2\/10/);
-  assert.equal(all.match(/Source measurement: 37.5 mg/g).length, 1);
+  assert.doesNotMatch(all, /37\.5 mg/);
+  assert.match(second.messages.at(-1).content, /"id":"a1".*"rows":1,"column_count":1.*"files":\["arbitrary.tsv"\]/);
+  assert.doesNotMatch(second.messages.at(-1).content, /"columns":/);
+  assert.deepEqual(second.manifest.included, []);
+  assert.deepEqual(second.manifest.omitted, ['o1']);
   assert.equal(conversation.compactions, 0);
+});
+
+test('artifact cards expose origin and shape without copying any payload or execution recipe', () => {
+  const artifact = { id: 'a23', label: 'Projected records', kind: 'data', tool: 'investigator_hpa', inputs: ['a7'],
+    rows: [{ id: 'PAYLOAD_ID', nested: { zero: 0, missing: null, detail: 'PAYLOAD_DETAIL' } }], columns: ['id', 'nested'],
+    args: { question: 'PRIVATE_ASSIGNMENT' }, text: 'PAYLOAD_TEXT',
+    meta: { source_file: 'original.tsv', record_rows: [true], execution: { status: 'partial', failed: ['EXECUTION_DETAIL'] },
+      lookups: [{ table: 'original.tsv', filters: [{ value: 'LOOKUP_VALUE' }] }, { table: 'labels.tsv' }], answer: 'SPECIALIST_NARRATIVE' } };
+  assert.deepEqual(artifactCard(artifact), { id: 'a23', label: 'Projected records', kind: 'data', rows: 1, column_count: 2,
+    source: { tool: 'investigator_hpa', inputs: ['a7'], files: ['original.tsv', 'labels.tsv'] }, status: 'partial', record_rows: 1 });
+  assert.deepEqual(artifactCard(artifact, { schema: true }).columns, ['id', 'nested']);
+  assert.equal(artifact.rows[0].nested.zero, 0);
+  assert.equal(artifact.rows[0].nested.missing, null);
+  assert.deepEqual(artifactCard({ id: 'a24', label: 'Empty', kind: 'data', tool: 'filter', inputs: ['a23'], rows: [], columns: ['id', 'nested'] }).rows, 0);
+  assert.equal(artifactCard({ id: 'a25', label: 'Available measurements', kind: 'figure', tool: 'chart', inputs: ['a23'], images: ['a25.png'], meta: { omitted_rows: 1 } }).omitted_rows, 1);
+});
+
+test('schemas are acknowledged only for artifacts present in the actual request snapshot', () => {
+  const archive = new StudyContext();
+  const conversation = new StudyConversation({ goal: 'Handle asynchronous results', archive });
+  const current = state();
+  const artifact = id => ({ id, label: 'Results', kind: 'data', tool: 'investigator_hpa', inputs: [], columns: ['category', 'reading'], rows: [{ category: 'not in context', reading: 0 }] });
+  current.artifacts.push(artifact('a1'));
+  const snapshot = conversation.prepare(current, 10);
+  current.artifacts.push(artifact('a2'));
+  conversation.acknowledge(snapshot);
+  const next = conversation.prepare(current, 10);
+  assert.deepEqual(next.manifest.schemas, ['a2']);
+  assert.match(next.messages.at(-1).content, /"id":"a1".*"column_count":2/);
+  assert.match(next.messages.at(-1).content, /"id":"a2".*"columns":\["category","reading"\]/);
+  assert.doesNotMatch(next.messages.at(-1).content, /not in context/);
+});
+
+test('recall pin and unpin preserve exact native exchanges and truthful observation manifests', () => {
+  const archive = new StudyContext();
+  const conversation = new StudyConversation({ goal: 'Inspect exact observations', archive });
+  const first = archive.add('Exact value: 0; missing: null; unicode: 測定🧬');
+  const second = archive.add('A second requested observation');
+  const view = conversation.result([first, second]);
+  const original = JSON.stringify({ status: 'ok', observations: view.text });
+  conversation.append({ role: 'assistant', content: null, tool_calls: [{ id: 'read1', type: 'function', thought_signature: 'original-signature', function: { name: 'open', arguments: '{"what":"a1"}' } }] },
+    [{ message: { role: 'tool', tool_call_id: 'read1', content: original }, deliveries: view.deliveries }]);
+  const sent = conversation.prepare(state(), 10);
+  conversation.acknowledge(sent);
+  archive.pinned.add(first);
+  const pinned = conversation.prepare(state(2), 10);
+  assert.equal(pinned.messages.find(m => m.role === 'tool').content, original);
+  assert.deepEqual(pinned.manifest.included, [first, second]);
+  archive.pinned.delete(first);
+  const removed = conversation.prepare(state(3), 10);
+  assert.deepEqual(JSON.parse(removed.messages.find(m => m.role === 'tool').content), { status: 'ok', archived_observations: [first, second] });
+  assert.deepEqual(removed.manifest.included, []);
+  assert.deepEqual(removed.manifest.omitted, [first, second]);
+  const wire = buildRequest({ messages: removed.messages }, 'gemini-3.8-flash');
+  const parts = wire.contents.flatMap(content => content.parts);
+  assert.equal(parts.find(part => part.functionCall).thoughtSignature, 'original-signature');
+  assert.equal(parts.find(part => part.functionResponse).functionResponse.name, 'open');
+  assert.deepEqual(parts.find(part => part.functionResponse).functionResponse.response.result, { status: 'ok', archived_observations: [first, second] });
+  assert.equal(conversation.blocks[0].messages[1].content, original);
 });
 
 test('compact help retains required fields, optional fields, enums and arbitrary key types', () => {
@@ -94,7 +163,7 @@ test('late asynchronous evidence is neither acknowledged early nor duplicated al
   const conversation = new StudyConversation({ goal: 'question', budgetBytes: 8192, archive });
   const id = archive.add('native evidence');
   const view = conversation.result([id], 2048);
-  conversation.append({ role: 'assistant', tool_calls: [{ id: 'c', function: { name: 'open', arguments: '{}' } }] }, [{ message: { role: 'tool', tool_call_id: 'c', content: view.text }, deliveries: view.deliveries }]);
+  conversation.append({ role: 'assistant', tool_calls: [{ id: 'c', function: { name: 'open', arguments: '{}' } }] }, [{ message: { role: 'tool', tool_call_id: 'c', content: JSON.stringify({ observations: view.text }) }, deliveries: view.deliveries }]);
   const sent = conversation.prepare(state(), 5);
   const late = archive.add('asynchronous completion');
   conversation.acknowledge(sent);

@@ -13,6 +13,14 @@ from matplotlib.patches import FancyBboxPatch
 import matplotlib.colors as mcolors
 
 
+def _save_figure(figure, out_path):
+    """Include the full measured extent of visible labels in the exported image."""
+    from matplotlib.text import Text
+    labels = [artist for artist in figure.findobj(Text)
+              if artist.get_visible() and artist.get_text()]
+    figure.savefig(out_path, dpi=150, bbox_inches='tight', bbox_extra_artists=labels)
+
+
 def _apply_labels(chart, swap=False):
     xl = chart.get('x_label')
     yl = chart.get('y_label')
@@ -46,7 +54,7 @@ def render_bar(chart, out_path):
     _apply_labels(chart)
     plt.xticks(rotation=20, ha='right')
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    _save_figure(plt.gcf(), out_path)
     plt.close()
 
 
@@ -67,7 +75,7 @@ def render_line(chart, out_path):
     if len(series_map) > 1:
         plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0)
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    _save_figure(plt.gcf(), out_path)
     plt.close()
 
 
@@ -150,7 +158,7 @@ def render_scatter(chart, out_path):
     _apply_labels(chart)
     fig.tight_layout()
     _place_scatter_labels(ax, data)
-    fig.savefig(out_path, dpi=150)
+    _save_figure(fig, out_path)
     plt.close(fig)
 
 def render_dot_plot(chart, out_path):
@@ -163,7 +171,7 @@ def render_dot_plot(chart, out_path):
     _apply_title(chart)
     _apply_labels(chart, swap=True)
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    _save_figure(plt.gcf(), out_path)
     plt.close()
 
 def render_box(chart, out_path):
@@ -177,7 +185,7 @@ def render_box(chart, out_path):
     _apply_title(chart)
     _apply_labels(chart)
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    _save_figure(plt.gcf(), out_path)
     plt.close()
 
 def render_stacked_bar(chart, out_path):
@@ -201,7 +209,7 @@ def render_stacked_bar(chart, out_path):
         plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0)
     plt.xticks(rotation=20, ha='right')
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    _save_figure(plt.gcf(), out_path)
     plt.close()
 
 def render_heatmap(chart, out_path):
@@ -231,7 +239,7 @@ def render_heatmap(chart, out_path):
         plt.yticks(range(0, len(row_labels), rstep), row_labels[::rstep], fontsize=max(4, min(9, 400 / max(1, n_rows))))
     plt.colorbar(shrink=0.8)
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    _save_figure(plt.gcf(), out_path)
     plt.close()
 
 
@@ -260,7 +268,7 @@ def render_grouped_bar(chart, out_path):
     if len(groups) > 1:
         plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0)
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    _save_figure(plt.gcf(), out_path)
     plt.close()
 
 
@@ -286,7 +294,7 @@ def render_lollipop(chart, out_path):
     _apply_labels(chart, swap=True)
     plt.grid(axis='x', alpha=0.3, linestyle='--')
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    _save_figure(plt.gcf(), out_path)
     plt.close()
 
 
@@ -313,7 +321,7 @@ def render_diverging_bar(chart, out_path):
     _apply_labels(chart, swap=True)
     plt.grid(axis='x', alpha=0.3, linestyle='--')
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    _save_figure(plt.gcf(), out_path)
     plt.close()
 
 
@@ -349,7 +357,7 @@ def render_radar(chart, out_path):
     if len(series_list) > 1:
         ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1), fontsize=8)
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    _save_figure(plt.gcf(), out_path)
     plt.close()
 
 
@@ -393,7 +401,7 @@ def render_waterfall(chart, out_path):
     _apply_labels(chart)
     plt.grid(axis='y', alpha=0.3, linestyle='--')
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    _save_figure(plt.gcf(), out_path)
     plt.close()
 
 
@@ -425,7 +433,7 @@ def render_volcano(chart, out_path):
     _apply_title(chart)
     _apply_labels(chart)
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    _save_figure(plt.gcf(), out_path)
     plt.close()
 
 
@@ -459,7 +467,7 @@ def render_bubble(chart, out_path):
     _apply_title(chart)
     _apply_labels(chart)
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    _save_figure(plt.gcf(), out_path)
     plt.close()
 
 
@@ -492,7 +500,7 @@ def render_ridge(chart, out_path):
     _apply_title(chart)
     _apply_labels(chart)
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
+    _save_figure(plt.gcf(), out_path)
     plt.close()
 
 
@@ -522,7 +530,7 @@ def render_chart(chart, out_path):
         plt.figure(figsize=(6, 3))
         plt.title(f'Unsupported chart type: {chart_type}')
         plt.tight_layout()
-        plt.savefig(out_path, dpi=150)
+        _save_figure(plt.gcf(), out_path)
         plt.close()
 
 

@@ -117,9 +117,8 @@ for (const requirements of [undefined, []]) test(`completed narrow assignment re
     assert.ok(Object.hasOwn(native.parameters.properties, 'unfinished_requirements'));
     assert.ok(!Object.hasOwn(native.parameters.properties, 'remaining_for_aso'));
     const user = request.messages.find(message => message.role === 'user').content;
-    const context = `Original study context (constraints only; not additional assigned deliverables):\n${original}\nEnd of original study context.\n\nASSIGNMENT\nQuestion: ${assigned}\nAssigned plan result: ${assigned}`;
-    assert.ok(user.endsWith(context), 'exact original context precedes the final authoritative assignment');
-    assert.equal(user.split(original).length - 1, 1);
+    assert.ok(user.endsWith(`ASSIGNMENT\nQuestion: ${assigned}`), 'the source question is the authoritative assignment');
+    assert.ok(!user.includes(original), 'the parent study is not delegated implicitly');
     if (turn === 1) return retrieve();
     assert.equal(turn, 2); assert.equal(request.messages[2].tool_calls[0].thought_signature, 'opaque-signature');
     return [finished(requirements === undefined ? {} : { unfinished_requirements: requirements })];
@@ -137,7 +136,8 @@ for (const requirements of [undefined, []]) test(`completed narrow assignment re
   assert.equal(invocations, 1); assert.equal(f.requests.length, 2); assert.equal(bulk.requests.length, 2);
   assert.deepEqual(bulk.reads, ['first.tsv', 'second.tsv']); assert.equal(result.token_breakdown.investigator_hpa.total, 10);
   assert.equal(result.tokens.total, 34);
-  for (const artifact of result.artifacts) {
+  assert.equal(result.artifacts.length, 5, 'Two selected results, two original sources, and one archive index');
+  for (const artifact of result.artifacts.filter(artifact => ['a1', 'a2'].includes(artifact.summary.id))) {
     const saved = JSON.parse(await fs.readFile(artifact.storage_uri, 'utf8'));
     assert.equal(saved.rows.length, 3); assert.equal(Number(saved.rows[0].Value), 0);
     assert.ok(saved.rows[1].Value === null || saved.rows[1].Value === '');
@@ -163,7 +163,7 @@ for (const field of ['unfinished_requirements', 'unavailable_requirements']) tes
   assert.equal(bulkResult.status, 'partial');
   assert.deepEqual(field === 'unfinished_requirements' ? bulkResult.remaining_for_aso : bulkResult.not_in_release, [obligation]);
   assert.equal(result.outcome, 'incomplete', JSON.stringify(result)); assert.notEqual(result.plan[0].status, 'done');
-  assert.equal(result.artifacts.length, 2); assert.equal(bulk.requests.length, 2);
+  assert.equal(result.artifacts.length, 5); assert.equal(bulk.requests.length, 2);
   assert.equal(f.requests.length, 4);
 });
 

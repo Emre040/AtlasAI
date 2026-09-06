@@ -46,8 +46,8 @@ test('600 supplied genes share one source read, with exact values and zero/missi
   assert.equal(f.reads(), 1);
   for (let i = 0; i < 600; i++) {
     assert.equal(result.rows[i].gene, f.supplied[i]);
-    assert.equal(result.rows[i].a_units, i * 2);
-    assert.equal(result.rows[i].b_units, i === 1 ? null : i);
+    assert.equal(result.rows[i].a_units, String(i * 2));
+    assert.equal(result.rows[i].b_units, i === 1 ? null : String(i));
     assert.equal(result.rows[i].ratio, i < 2 ? null : 2);
     assert.equal(result.rows[i].prior, 17);
   }
@@ -161,7 +161,7 @@ test('Investigator can inspect an unshown saved result page without repeating th
       if (calls === 2) assert.doesNotMatch(JSON.stringify(request), /SPECIMEN_GENE_599/);
       if (calls === 3) {
         const page = JSON.parse(request.messages.at(-1).content);
-        assert.deepEqual(page.rows, [[f.supplied[598], 1196], [f.supplied[599], 1198]]);
+        assert.deepEqual(page.rows, [[f.supplied[598], '1196'], [f.supplied[599], '1198']]);
         assert.equal(page.total, 600); assert.equal(page.more, false);
       }
       const [name, args] = actions[calls - 1];
@@ -188,7 +188,7 @@ test('a repeated completed view stops with an explicit partial result and unfini
   assert.equal(calls, 4); assert.equal(result.status, 'partial');
   assert.equal(result.stop_reason, 'no_progress_cycle'); assert.equal(result.incomplete, true);
   assert.match(result.error, /repeated a completed operation/);
-  assert.equal(result.tables[0].rows.length, 600); assert.equal(result.tables[0].rows[599].a_units, 1198);
+  assert.equal(result.tables[0].rows.length, 600); assert.equal(result.tables[0].rows[599].a_units, '1198');
   assert.equal(result.remaining_for_aso[0].requirement, 'Compare the cohorts');
   assert.equal(f.reads(), 1);
 });
@@ -202,10 +202,10 @@ test('bulk Investigator uses two model turns for 600 genes and never sends the f
       requests.push(JSON.parse(JSON.stringify(request)));
       assert.equal(request.reasoning_effort, 'low');
       assert.doesNotMatch(JSON.stringify(request), /SPECIMEN_GENE_599/);
-      assert.match(request.messages[1].content, /Assigned plan result: Compare measurements with the earlier result/);
+      assert.match(request.messages[1].content, /Question: Read both organs and assess mechanism\./);
       assert.match(request.messages[1].content, /gene and ensembl identifiers plus 1 inherited columns retained/);
       assert.doesNotMatch(request.messages[1].content, /"prior"/);
-      assert.match(request.messages[1].content, /Original study context \(constraints only; not additional assigned deliverables\):\nUNRELATED_STUDY_TASK/);
+      assert.doesNotMatch(request.messages[1].content, /UNRELATED_STUDY_TASK|Assigned plan result/);
       const tool = requests.length === 1
         ? functionCall('apply_bulk', { name: 'values', lookups: [f.lookup('organ A', 'a_units'), f.lookup('organ B', 'b_units')] }, 'read')
         : functionCall('finish', { results: ['values'], answer: 'Source measurements returned. Mechanistic interpretation is unavailable.', unavailable_requirements: [{ requirement: 'mechanism', why: 'No mechanism evidence in these source tables' }] }, 'done');

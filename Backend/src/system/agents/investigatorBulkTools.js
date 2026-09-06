@@ -9,7 +9,7 @@ const REDUCERS = ['min', 'max', 'mean', 'median', 'sum', 'count', 'numeric_count
 const APPLY_BULK = {
   type: 'function', function: {
     name: 'apply_bulk',
-    description: 'Apply source lookups to the entire supplied list without reading or copying that list into your prompt. Scalar lookups combine into one row per input, retaining earlier input measurements. Explicit aggregates handle repeated rows. A single rows-mode lookup returns all matching source rows (or the top rows per gene), with missing inputs retained. Values are read by code; the model never supplies result values.',
+    description: 'Apply source lookups to the entire supplied list without reading or copying that list into your prompt. Scalar lookups combine into one row per input, retaining earlier input measurements. Without aggregate, present source values retain their exact type and spelling; missing values become null. Explicit numeric aggregates and derived calculations return numbers. Explicit aggregates handle repeated rows. A single rows-mode lookup returns all matching source rows (or the top rows per gene), with missing inputs retained. Values are read by code; the model never supplies result values.',
     parameters: { type: 'object', properties: {
       name: { type: 'string', description: 'Short name for this result.' },
       lookups: { type: 'array', items: { type: 'object', properties: {
@@ -57,7 +57,7 @@ function reduce(rows, key, reducer, distinctColumns) {
   if (!reducer) {
     if (rows.length > 1) throw new Error(`${rows.length} matching source rows; choose an explicit aggregate or rows mode`);
     const value = rows[0]?.[key];
-    return isMissing(value) ? null : num(value) === null ? value : num(value);
+    return isMissing(value) ? null : value;
   }
   if (!values.length) return null;
   if (reducer === 'min') return values[0];
@@ -68,14 +68,32 @@ function reduce(rows, key, reducer, distinctColumns) {
 }
 
 function createBulkTools({ supplied, resolved, inputRows, adapter }) {
-  const sourceReads = new Map();
+  const sourceReads = new Map(), completedReads = new Map();
   const base = withColumns(resolved.map((gene, i) => ({ ...inputRows?.[i], gene: gene ? gene.gene : supplied[i], ensembl: gene ? gene.ensembl : null })), ['gene', 'ensembl', ...(inputRows ? columnsOf(inputRows) : [])]);
   const baseColumns = columnsOf(base);
   const read = table => {
-    if (!sourceReads.has(table)) sourceReads.set(table, adapter.readMany(resolved.filter(Boolean), table));
+    if (!sourceReads.has(table)) sourceReads.set(table, adapter.readMany(resolved.filter(Boolean), table).then(source => {
+      completedReads.set(table, structuredClone(source)); return source;
+    }));
     return sourceReads.get(table);
   };
-  return { async applyBulk(args) {
+  return { completedSourceReads() {
+    return [...completedReads].map(([file, source]) => {
+      const identities = new Map();
+      for (const gene of resolved.filter(Boolean)) identities.set(gene.ensembl, gene);
+      const rows = [], cohort = [], readKeys = new Set();
+      for (const [ensembl, gene] of identities) {
+        const records = source.byGene.get(ensembl) || [];
+        const sourceKey = source.entry.key === 'name' ? gene.gene : ensembl;
+        cohort.push({ gene: gene.gene, ensembl, source_key: sourceKey, source_rows: records.length });
+        if (!readKeys.has(sourceKey)) for (const row of records) rows.push(structuredClone(row));
+        readKeys.add(sourceKey);
+      }
+      return { source_file: file, rows, columns: [...source.entry.columns], row_kind: 'source_record', record_rows: rows.map(() => true),
+        provenance: [], coverage: [{ table: file, supplied_inputs: supplied.length, resolved_identities: identities.size, source_records: rows.length, genes_without_source_rows: cohort.filter(gene => !gene.source_rows).length }],
+        source_scope: { key_kind: source.entry.key, supplied: supplied.map((input, index) => ({ input, gene: resolved[index]?.gene || null, ensembl: resolved[index]?.ensembl || null })), cohort, unresolved_inputs: supplied.filter((_, index) => !resolved[index]), predicates_applied: false, projection_applied: false }, execution: { status: 'completed' } };
+    });
+  }, async applyBulk(args) {
     if (!args.name?.trim() || !Array.isArray(args.lookups) || !args.lookups.length) throw new Error('apply_bulk needs a name and at least one lookup');
     const rowMode = args.lookups.some(lookup => lookup.mode === 'rows');
     if (rowMode && args.lookups.length !== 1) throw new Error('A rows-mode result takes one lookup; return other results in another apply_bulk call');
@@ -142,7 +160,7 @@ function createBulkTools({ supplied, resolved, inputRows, adapter }) {
         }
       }
       provenance.push({ ...lookup, table: entry.file, source_description: entry.description || '', input_count: supplied.length });
-      coverage.push({ table: entry.file, output: lookup.as || args.name, inputs: supplied.length, genes_without_matching_rows: missingGenes, matched_source_rows: matchedRows, ...(rowsMode ? {} : { nonnumeric_source_values: nonnumeric, missing_output_values: resultRows.filter(row => row[lookup.as] === null).length, zero_output_values: resultRows.filter(row => row[lookup.as] === 0).length }) });
+      coverage.push({ table: entry.file, output: lookup.as || args.name, inputs: supplied.length, genes_without_matching_rows: missingGenes, matched_source_rows: matchedRows, ...(rowsMode ? {} : { nonnumeric_source_values: nonnumeric, missing_output_values: resultRows.filter(row => row[lookup.as] === null).length, zero_output_values: resultRows.filter(row => num(row[lookup.as]) === 0).length }) });
     }
     for (const step of args.derive || []) {
       if (columnsOf(resultRows).includes(step.name)) throw new Error(`Derived column ${step.name} already exists`);

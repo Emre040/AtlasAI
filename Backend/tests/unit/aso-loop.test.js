@@ -209,10 +209,13 @@ test('ASO passes a saved list to bulk Investigator without copying it into promp
     calls++;
     if (name === 'deep_research_hpa') return { result: { status: 'ok', result: { rows: cohort } } };
     assert.equal(args.genes.length, 600); assert.equal(args.genes[599], cohort[599].Ensembl);
-    assert.equal(args.from, undefined); assert.equal(ctx.inputRows.length, 600);
+    assert.equal(args.from, undefined); assert.equal(ctx.inputRows, undefined);
+    assert.deepEqual(ctx.inputTable.rows, cohort.map(row => ({ gene: row.Gene, ensembl: row.Ensembl })));
+    assert.deepEqual(ctx.inputTable.columns, ['gene', 'ensembl']);
+    assert.equal(ctx.inputTable.source.id, 'a1'); assert.equal(ctx.inputTable.source.uuid, 'artifact-1');
     assert.equal(ctx.studyGoal, 'Inspect the available evidence');
     assert.equal(ctx.studyTask, 'Measure both sources');
-    return { result: { bulk: true, found: true, tables: ['first_measurements', 'second_measurements'].map(name => ({ name, rows: ctx.inputRows.map(row => ({ gene: row.gene, ensembl: row.ensembl, measurement: 12 })), columns: ['gene', 'ensembl', 'measurement'], provenance: [{ table: 'raw.tsv' }], coverage: [{ inputs: 600 }], calculations: [] })), not_in_release: [], input_count: 600, answer: 'Measurements returned' } };
+    return { result: { bulk: true, found: true, tables: ['first_measurements', 'second_measurements'].map(name => ({ name, rows: ctx.inputTable.rows.map(row => ({ gene: row.gene, ensembl: row.ensembl, measurement: 12 })), columns: ['gene', 'ensembl', 'measurement'], provenance: [{ table: 'raw.tsv' }], coverage: [{ inputs: 600 }], calculations: [] })), not_in_release: [], input_count: 600, answer: 'Measurements returned' } };
   });
   const result = await f.run();
   assert.equal(result.outcome, 'completed', result.error); assert.equal(calls, 2); assert.equal(result.artifacts.length, 3);
@@ -320,11 +323,14 @@ test('a chart specification without a rendered image cannot complete its plan st
     if (turn === 1) return response(call('set_plan', { items: [{ step: 'Get evidence', kind: 'gene_set' }, { step: 'Draw evidence', kind: 'bar' }] }));
     if (turn === 2) return response(call('deep_research_hpa', { goal: 'TEST', node: 1 }));
     if (turn === 3) return response(call('chart', { artifact: 'a1', type: 'bar', x: 'gene', y: 'value', node: 2 }));
+    assert.equal(turn, 4);
     assert.match(transcript(request), /2\. \[doing\] Draw evidence/);
     assert.match(transcript(request), /requires chart output.*rendered figure/);
-    return response(call('update_plan', { item: 2, status: 'dropped', note: 'Renderer did not produce an image' }), call('finish', { summary: 'Figure rendering failed.' }));
+    assert.match(request.messages.at(-1).content, /"id":"a2".*"rendered_images":0/);
+    return response(call('update_plan', { item: 2, status: 'dropped', note: 'Renderer did not produce an image' }), call('finish', { summary: 'Figure rendering failed.', figures: [] }));
   }, async () => ({ result: { status: 'ok', result: { rows: [{ Gene: 'TEST', value: 42 }] } } }), { renderCharts: async () => ({ images: [] }) });
-  assert.equal((await f.run()).outcome, 'incomplete');
+  const result = await f.run();
+  assert.equal(result.outcome, 'incomplete', result.error);
 });
 
 test('an invalid context budget fails before creating a study', async t => {
@@ -343,7 +349,8 @@ test('native tools retain raw master columns, correct arguments and matched prov
     if (turn === 2) return response(call('schema', { what: 'example.tsv' }));
     if (turn === 3) return response(call('filter', { artifact: 'example.tsv', where: [{ column: 'Gene', op: '=', value: 'EXAMPLE' }] }));
     if (turn === 4) return response(call('compute', { artifact: 'a1', expr: 'score * 7', name: 'scaled', node: 1 }));
-    assert.match(transcript(request), /scaled.*EXAMPLE/s);
+    assert.match(transcript(request), /"id":"a2".*"columns":\[[^\]]*"scaled"/);
+    assert.doesNotMatch(transcript(request), /"rows":\[\[/);
     assert.match(JSON.stringify(request.messages), /score \* 7/);
     assert.doesNotMatch(transcript(request), /score \* 7/);
     const replayed = request.messages.filter(m => m.role === 'assistant').flatMap(m => m.tool_calls || []);
@@ -375,7 +382,7 @@ test('an inference failure settles already running jobs before closing the works
   assert.equal(f.updates.at(-1).status, 'failed');
 });
 
-test('earlier evidence and full native tool descriptions survive a long conversation', async t => {
+test('earlier evidence is retrievable after leaving active history and native tool descriptions remain available', async t => {
   const f = await fixture(t, ({ request, turn }) => {
     if (turn === 1) return response(call('set_plan', { items: [{ step: 'Inspect evidence', kind: 'summary' }] }));
     const compute = request.tools.find(t => t.function.name === 'compute').function;
@@ -384,11 +391,15 @@ test('earlier evidence and full native tool descriptions survive a long conversa
     assert.ok(!request.messages.some(m => m.content?.startsWith('STUDY CHECKPOINT:')));
     if (turn === 2) return response(call('open', { what: 'mapping.tsv', rows: 10 }));
     if (turn < 12) return response(call('note', { text: 'Decision content '.repeat(400) }));
-    assert.ok(Buffer.byteLength(JSON.stringify(request.messages)) > 32768);
+    if (turn === 12) {
+      assert.doesNotMatch(transcript(request), /label 0/);
+      return response(call('recall', { id: 'o1' }));
+    }
+    assert.equal(turn, 13);
     assert.match(transcript(request), /label 0/);
     return response(call('finish', { summary: 'The inspected evidence is preserved.' }));
   });
-  const result = await f.run({ max_turns: 12 });
+  const result = await f.run({ max_turns: 13 });
   assert.equal(result.outcome, 'completed', result.error);
   assert.equal(result.compactions, 0);
 });
@@ -509,9 +520,8 @@ test('skip alongside an inspection waits for the agent instead of polling the mo
       call('skip', { reason: 'The source schema is known; the next work needs the agent result' })
     );
     assert.equal(turn, 3);
-    assert.match(transcript(request), /TEST/);
-    assert.match(transcript(request), /returned a1/);
-    return response(call('finish', { summary: 'TEST is in the returned set (a1).' }));
+    assert.match(transcript(request), /"id":"a1".*"tool":"deep_research_hpa"/);
+    return response(call('finish', { tables: [{ artifact: 'a1', columns: ['gene'] }] }));
   }, async () => {
     await new Promise(resolve => setTimeout(resolve, 50));
     return { result: { status: 'ok', result: { rows: [{ Gene: 'TEST' }] } } };
@@ -535,8 +545,8 @@ test('dependent registered operations execute together and expose only requested
     const result = JSON.parse(request.messages.findLast(m => m.role === 'tool').content);
     assert.equal(result.status, 'completed');
     assert.deepEqual(result.outputs.map(output => output.artifact), ['a2', 'a3']);
-    assert.match(result.observations, /artifact a2/);
-    assert.doesNotMatch(result.observations, /artifact a1/);
+    assert.equal(result.observations, undefined);
+    assert.match(transcript(request), /"id":"a2".*"columns":\[[^\]]*"scaled"/);
     return response(call('finish', { summary: 'The group measurements are saved in a2 and plotted in a3.', tables: [{ artifact: 'a2', columns: ['name', 'scaled'] }] }));
   }, null, { nativeDiscovery: true, entry: { file: 'mapping.tsv', key: 'stream', columns: ['name', 'value'] }, rows: [{ name: 'first', value: 2 }, { name: 'first', value: 4 }, { name: 'second', value: 9 }] });
   const result = await f.run();
@@ -566,7 +576,7 @@ test('row inspection does not repeat specialist narrative and full provenance re
     if (turn === 2) {
       const receipt = transcript(request);
       assert.match(receipt, /"columns":\["gene","value"\]/);
-      assert.match(receipt, /EXAMPLE/);
+      assert.doesNotMatch(receipt, /EXAMPLE/);
       assert.doesNotMatch(receipt, /SPECIALIST_NARRATIVE/);
       return response(call('open', { what: 'a1', columns: ['gene', 'value'] }));
     }
@@ -728,7 +738,7 @@ test('retrieved source context survives specialist handoff as separately citable
   const f = await fixture(t, ({ request, turn }) => {
     if (turn === 1) return response(call('set_plan', { items: [{ step: 'Retrieve source readings', kind: 'table' }] }), call('investigator_hpa', { gene: 'SYNTHETIC', question: 'Read source values', node: 1 }));
     if (turn === 2) {
-      assert.match(transcript(request), /a2: saved 1 exact source reads/);
+      assert.match(request.messages.at(-1).content, /"id":"a2","label":"Retrieved source descriptions and schema samples".*"rows":1/);
       assert.doesNotMatch(transcript(request), /Observed specimens were independently processed/);
       return response(call('open', { what: 'a2', columns: ['table', 'description', 'sample'] }));
     }
@@ -737,7 +747,7 @@ test('retrieved source context survives specialist handoff as separately citable
     return response(call('finish', { summary: 'The source describes independently processed specimens (a2).', tables: [{ artifact: 'a1', columns: ['gene', 'value'] }] }));
   }, async () => ({ result: { bulk: true, status: 'ok', tables: [{ name: 'observations', columns: ['gene', 'value'], rows: [{ gene: 'SYNTHETIC', value: 7 }], provenance: [], coverage: [] }], source_evidence: sourceEvidence, not_in_release: [], remaining_for_aso: [], hpa_version: 'test' } }));
   const result = await f.run();
-  assert.equal(result.outcome, 'completed');
+  assert.equal(result.outcome, 'completed', result.error);
   assert.deepEqual(result.plan[0].artifacts, ['a1']);
   const source = result.artifacts.find(a => a.summary.id === 'a2');
   const saved = JSON.parse(await fs.readFile(source.storage_uri, 'utf8'));

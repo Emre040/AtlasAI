@@ -17,6 +17,7 @@ const INTERPRETATIONS_SCHEMA = { type: 'array', description: 'Requested discussi
 
 function renderReport({ summary, tables = [], observations = [], interpretations = [] }, state) {
   const sections = [String(summary || '').trim()];
+  const displayed = new Map();
   for (const table of tables) {
     const id = table.artifact;
     const artifact = state.byId.get(id);
@@ -26,6 +27,8 @@ function renderReport({ summary, tables = [], observations = [], interpretations
     const limit = table.rows === undefined ? artifact.rows.length : table.rows;
     if (!Number.isSafeInteger(limit) || limit < 0) throw new Error('Report table rows must be a nonnegative integer');
     const shown = artifact.rows.slice(0, limit);
+    if (!displayed.has(id)) displayed.set(id, []);
+    displayed.get(id).push({ rows: shown.length, columns: new Set(columns) });
     const heading = `${table.title || artifact.label} (${id}):`;
     const body = shown.length ? [
       `| ${columns.map(escapeCell).join(' | ')} |`,
@@ -41,6 +44,7 @@ function renderReport({ summary, tables = [], observations = [], interpretations
     if (!artifact || !Array.isArray(artifact.rows) || artifact.kind === 'figure') throw new Error(`${path}.artifact must name a saved row artifact`);
     if (!Array.isArray(observation.row_indices) || !observation.row_indices.length || observation.row_indices.some(i => !Number.isSafeInteger(i) || i < 0 || i >= artifact.rows.length)) throw new Error(`${path}.row_indices must select existing zero-based rows in ${artifact.id}`);
     if (!Array.isArray(observation.columns) || !observation.columns.length || observation.columns.some(c => !artifact.columns.includes(c))) throw new Error(`${path}.columns must select exact fields from ${artifact.id}`);
+    if ((displayed.get(observation.artifact) || []).some(table => observation.row_indices.every(index => index < table.rows) && observation.columns.every(column => table.columns.has(column)))) continue;
     const columns = observation.columns;
     const body = [`| ${columns.map(escapeCell).join(' | ')} |`, `| ${columns.map(() => '---').join(' | ')} |`, ...observation.row_indices.map(i => `| ${columns.map(c => escapeCell(artifact.rows[i][c])).join(' | ')} |`)].join('\n');
     sections.push(`Observed records (${artifact.id}):\n\n${body}`);

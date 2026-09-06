@@ -80,13 +80,32 @@ function binding(claim, state) {
   return { artifact, cells, columns, values, counts: [cells.length, rows.length, ...distinct] };
 }
 
+// Where a number lives among all saved artifacts, so a refusal says where to bind instead.
+function locate(state, value, tolerance, limit = 3) {
+  const hits = [];
+  for (const a of state.artifacts) {
+    if (!Array.isArray(a.rows)) continue;
+    for (const [i, row] of a.rows.entries()) {
+      for (const c of a.columns) {
+        const cell = row[c];
+        const n = typeof cell === 'number' ? cell : typeof cell === 'string' && /\d/.test(cell) ? Number(cell.replace(/,/g, '')) : NaN;
+        if (Number.isFinite(n) && Math.abs(n - value) <= tolerance + 1e-9 * Math.abs(value)) { hits.push(`${a.id} row ${i} ${c}`); if (hits.length >= limit) return hits; }
+      }
+    }
+  }
+  return hits;
+}
+
 function claimIssue(claim, state) {
   let bound;
   try { bound = binding(claim, state); }
   catch (error) { return error.message; }
-  const unmatched = statedNumbers(claim.text).filter(({ value, tolerance }) => !near(bound.values, value, tolerance) && !(Number.isInteger(value) && bound.counts.includes(value)));
-  if (unmatched.length) return `${JSON.stringify(claim.text)} states ${unmatched.map(u => u.raw).join(', ')}, which ${unmatched.length === 1 ? 'is' : 'are'} not among the cells it is bound to in ${bound.artifact.id} (rows ${[...new Set(claim.rows || [])].join(', ')}${bound.columns ? `; columns ${bound.columns.join(', ')}` : ''}). Bind the rows and columns that hold the number, or compute it with an operation and cite that result.`;
-  return null;
+  // Numbers the bound artifact was made with (a threshold, a top n) are part of its evidence.
+  const argNumbers = numbersIn(bound.artifact.args || {});
+  const unmatched = statedNumbers(claim.text).filter(({ value, tolerance }) => !near(bound.values, value, tolerance) && !near(argNumbers, value, tolerance) && !(Number.isInteger(value) && bound.counts.includes(value)));
+  if (!unmatched.length) return null;
+  const where = unmatched.map(u => { const hits = locate(state, u.value, u.tolerance); return `${u.raw}${hits.length ? ` is at ${hits.join(', ')}` : ' is in no saved artifact'}`; });
+  return `${JSON.stringify(claim.text.length > 160 ? `${claim.text.slice(0, 159)}…` : claim.text)} states ${unmatched.map(u => u.raw).join(', ')}, not among the cells it is bound to in ${bound.artifact.id} (rows ${[...new Set(claim.rows || [])].join(', ')}${bound.columns ? `; columns ${bound.columns.join(', ')}` : ''}): ${where.join('; ')}. Bind the rows that hold each number (one claim per artifact), or compute it with an operation and cite that result.`;
 }
 
 // Every problem with a finish call, in words the model can act on. Empty means accepted.

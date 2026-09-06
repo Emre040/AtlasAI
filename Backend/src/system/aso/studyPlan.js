@@ -22,21 +22,13 @@ function planText(plan) {
 function uncovered(plan, { tables = [], figures = [], claims = [], notDone = [] }, byId) {
   const figureTypes = figures.map(a => a.figure?.type);
   const tableIds = new Set([...tables.map(t => String(t.artifact).trim()), ...claims.map(c => String(c.artifact).trim())]);
-  // A cohort is delivered when a cited table descends from a search.
-  const fromSearch = (id, seen = new Set()) => {
-    const a = byId.get(id);
-    if (!a || seen.has(id)) return false;
-    seen.add(id);
-    return a.tool === 'deep_research_hpa' || (a.inputs || []).some(input => fromSearch(input, seen));
-  };
-  const searched = [...tableIds].some(id => fromSearch(id));
   const skipped = new Set(notDone.map(item => item.item));
   return plan.map((p, i) => ({ p, n: i + 1 })).filter(({ p, n }) => {
     if (skipped.has(n)) return false;
     if (CHART_KINDS.includes(p.kind)) return !figureTypes.includes(p.kind);
-    if (p.kind === 'gene_set') return !searched;
     if (p.kind === 'interpretation') return !claims.length;
-    return !tableIds.size;
+    // A cohort or a table is delivered by any cited table; a supplied list is a cohort too.
+    return ![...tableIds].some(id => byId.has(id));
   }).map(({ p, n }) => `${n}. ${p.text} (${p.kind})`);
 }
 

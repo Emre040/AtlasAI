@@ -65,7 +65,13 @@ function tableCard({ name, title, description, access, columns, profile, sample,
 }
 
 // A produced result as a card: id, what made it, its size, its columns and two rows.
-function resultCard({ id, label, origin, rows, columns, matrix, figure, images, error }) {
+const NOTE_CHARS = 600;   // characters of a text result shown on its card
+
+function resultCard({ id, label, origin, rows, columns, matrix, figure, images, error, text, folded = null, profile = null }) {
+  if (text && !rows?.length && !matrix && !figure) {
+    const body = String(text).replace(/\s+/g, ' ').trim();
+    return `${id} note${label ? ` "${label}"` : ''} ← ${origin}\n  ${body.length > NOTE_CHARS ? `${body.slice(0, NOTE_CHARS - 1)}… (open ${id} for the rest)` : body}`;
+  }
   if (figure) return `${id} figure ${figure.type}${figure.title ? ` "${figure.title}"` : ''} ← ${origin}${images?.length ? ' (rendered)' : ' (not rendered)'}${figure.omitted_rows ? `; ${figure.omitted_rows} rows omitted for missing values` : ''}`;
   if (matrix) {
     const head = `${id} matrix ${matrix.row_labels.length} × ${matrix.col_labels.length} ← ${origin} (a heatmap input; not a row table)`;
@@ -73,8 +79,13 @@ function resultCard({ id, label, origin, rows, columns, matrix, figure, images, 
     return `${head}; rows: ${matrix.row_labels.slice(0, 8).map(cell).join(', ')}${matrix.row_labels.length > 8 ? ', …' : ''}; columns: ${matrix.col_labels.slice(0, 8).map(cell).join(', ')}${matrix.col_labels.length > 8 ? ', …' : ''}`;
   }
   const head = `${id}${label ? ` ${label}` : ''} (${count(rows.length)} rows) ← ${origin}: ${columns.join(', ')}${error ? ` [${error}]` : ''}`;
+  // An artifact that later operations have already consumed is filed: one line, reopenable.
+  if (folded) return `${head} [used by ${folded.join(', ')}; open ${id} for its rows]`;
   const whole = rows.length <= WHOLE_ROWS;
-  const lines = [head, ...sampleLines(rows, columns, whole ? rows.length : SAMPLE_ROWS).map((l, i) => `  ${whole ? `${i}: ` : ''}${l}`)];
+  const lines = [head];
+  // A large table shows what its columns hold, so the model need not page through it to learn the shape.
+  if (!whole && profile) for (const c of profile) if (c.kind !== 'empty' && (c.kind === 'number' || c.observed_values || c.blank_pct)) lines.push(`  ${columnLine(c)}`);
+  lines.push(...sampleLines(rows, columns, whole ? rows.length : SAMPLE_ROWS).map((l, i) => `  ${whole ? `${i}: ` : ''}${l}`));
   if (!whole) lines.push(`  … ${count(rows.length - SAMPLE_ROWS)} more rows (open ${id} to see them)`);
   return lines.join('\n');
 }
@@ -89,4 +100,4 @@ function historyText(lines) {
 
 function section(title, body) { return `${title}\n${body}`; }
 
-module.exports = { cell, rowLine, sampleLines, argsLine, tableCard, resultCard, historyText, section, count, SAMPLE_ROWS };
+module.exports = { cell, rowLine, sampleLines, argsLine, tableCard, resultCard, historyText, section, count, SAMPLE_ROWS, WHOLE_ROWS };

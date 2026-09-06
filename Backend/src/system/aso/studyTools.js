@@ -927,7 +927,9 @@ function compute(rows, name, expr) {
     if (node.quoted) { node.str = node.col; delete node.col; continue; }
     throw new Error(`compute: no column "${node.col}" (columns: ${columnsOf(rows).slice(0, 20).join(', ')})`);
   }
-  return withColumns(rows.map(r => { const v = evaluate(tree, r, resolved); return { ...r, [name]: typeof v === 'string' ? v : (v === null || !Number.isFinite(v) ? null : v) }; }), [...columnsOf(rows), name]);
+  // Binary floating point noise (13.299999999999997) is not a measurement; keep 12 significant digits.
+  const clean = v => Number(v.toPrecision(12));
+  return withColumns(rows.map(r => { const v = evaluate(tree, r, resolved); return { ...r, [name]: typeof v === 'string' ? v : (v === null || !Number.isFinite(v) ? null : clean(v)) }; }), [...columnsOf(rows), name]);
 }
 
 function pivot(rows, { row = 'gene', column, value, top = 0, top_columns = 0 } = {}) {

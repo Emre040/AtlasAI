@@ -13,7 +13,12 @@ test('a claim is accepted only when every number it states is among its bound ce
   assert.deepEqual(reportIssues({ claims: [{ text: 'EGFR liver is 32.2 nTPM against 14.1 in lung', artifact: 'a1', rows: [0, 1], columns: ['gene', 'Tissue', 'nTPM'] }] }, state), []);
   const wrong = reportIssues({ claims: [{ text: 'EGFR liver is 40.1 nTPM', artifact: 'a1', rows: [0], columns: ['nTPM'] }] }, state);
   assert.equal(wrong.length, 1);
-  assert.match(wrong[0], /states 40\.1, which is not among the cells it is bound to in a1 \(rows 0; columns nTPM\)/);
+  assert.match(wrong[0], /states 40\.1, not among the cells it is bound to in a1 \(rows 0; columns nTPM\): 40\.1 is in no saved artifact/);
+  const elsewhere = reportIssues({ claims: [{ text: 'EGFR lung is 14.1 nTPM', artifact: 'a1', rows: [0], columns: ['nTPM'] }] }, state);
+  assert.match(elsewhere[0], /14\.1 is at a1 row 1 nTPM/, 'a refusal says where the number lives');
+  const a4 = { id: 'a4', kind: 'data', label: 'top', rows: [{ gene: 'EGFR', rank: 1 }], columns: ['gene', 'rank'], tool: 'rank', args: { artifact: 'a1', by: 'nTPM', top: 5 }, inputs: ['a1'] };
+  state.byId.set('a4', a4); state.artifacts.push(a4);
+  assert.deepEqual(reportIssues({ claims: [{ text: 'EGFR is among the top 5', artifact: 'a4', rows: [0] }] }, state), [], 'a number the artifact was made with counts as bound');
   assert.deepEqual(reportIssues({ claims: [{ text: '2 of the 3 rows have a value', artifact: 'a1', rows: [0, 1], columns: ['nTPM'] }] }, state), [], 'whole numbers may be counts of bound rows or of the artifact');
   assert.match(reportIssues({ claims: [{ text: 'liver is higher', artifact: 'a1', rows: [] }] }, state)[0], /must name the rows it rests on/);
   assert.match(reportIssues({ claims: [{ text: 'x', artifact: 'a9', rows: [0] }] }, state)[0], /a9.*not a saved artifact/);

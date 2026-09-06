@@ -44,16 +44,19 @@ function references(value, schema) {
   return found;
 }
 
-function resolve(value, bindings, schema) {
+function resolve(value, bindings, schema, external = () => null) {
   return mapArtifactReferences(value, schema, id => {
-    if (!bindings.has(id)) throw new Error(`No completed output for ${id}`);
-    return bindings.get(id);
+    if (bindings.has(id)) return bindings.get(id);
+    const known = external(id);
+    if (known) return known;
+    throw new Error(`No completed output for ${id}`);
   });
 }
 
 // This is a data-flow executor over registered operations, not an eval/JavaScript sandbox.
-// The complete graph and argument shapes are checked before the first operation runs.
-async function executeBatch({ steps, outputs }, { specifications, execute, concurrency }) {
+// The complete graph and argument shapes are checked before the first operation runs. An @id
+// that is not a step may name an existing artifact (external), which is then used as is.
+async function executeBatch({ steps, outputs }, { specifications, execute, concurrency, external = () => null }) {
   if (!Array.isArray(steps) || !steps.length) throw new Error('run requires a nonempty array of registered operations');
   if (!Array.isArray(outputs) || !outputs.length || outputs.some(id => typeof id !== 'string')) throw new Error('outputs must name the step outputs to inspect');
   if (!Number.isSafeInteger(concurrency) || concurrency < 1) throw new Error('Batch concurrency must be a positive integer');
@@ -68,10 +71,11 @@ async function executeBatch({ steps, outputs }, { specifications, execute, concu
     catch (error) { throw new Error(`${raw.id}: ${error.message}`); }
     byId.set(raw.id, { id: raw.id, tool: raw.tool, args, dependencies: [...references(args, spec.parameters)], spec, status: 'pending' });
   }
+  for (const step of byId.values()) step.dependencies = step.dependencies.filter(id => byId.has(id) || !external(id));
   const placeholders = new Map([...byId.keys()].map(id => [id, 'artifact_pending']));
   for (const step of byId.values()) {
-    for (const dependency of step.dependencies) if (!byId.has(dependency)) throw new Error(`${step.id} references unknown step ${dependency}`);
-    validate(resolve(step.args, placeholders, step.spec.parameters), step.spec.parameters, step.tool);
+    for (const dependency of step.dependencies) if (!byId.has(dependency)) throw new Error(`${step.id} references unknown step ${dependency} (a step id in this run, or @<artifact id>)`);
+    validate(resolve(step.args, placeholders, step.spec.parameters, external), step.spec.parameters, step.tool);
   }
   for (const id of outputs) if (!byId.has(id)) throw new Error(`Unknown requested output ${id}`);
   const visiting = new Set(), visited = new Set();
@@ -95,7 +99,7 @@ async function executeBatch({ steps, outputs }, { specifications, execute, concu
     if (!ready.length) continue;
     await Promise.all(ready.map(async step => {
       try {
-        const result = await execute(step.tool, resolve(step.args, bindings, step.spec.parameters));
+        const result = await execute(step.tool, resolve(step.args, bindings, step.spec.parameters, external));
         if (typeof result?.artifact?.id === 'string') {
           step.artifact = result.artifact.id;
           results.set(step.id, result);

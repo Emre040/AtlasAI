@@ -81,11 +81,11 @@ function systemPrompt(db, datasets, agentNames) {
 The desk in the message is your whole working set and stays in front of you every turn: the plan, tables you opened, every artifact with its columns and two rows, what is running, your history and notes. Rows live in the artifacts; open shows more of them when a decision needs values.
 
 How to work:
-1. plan the deliverables first (one item per requested table, figure of a given type, cohort or interpretation) and start independent work in the same turn.
+1. plan the deliverables first, one item per requested table, figure of a given type, cohort or interpretation and nothing that was not asked for, and start independent work in the same turn.
 2. Delegate cohorts to ${agentNames.includes('deep_research_hpa') ? 'deep_research_hpa' : 'the search agent'} and measurements to investigator_hpa with genes or from. Use its tables directly; do not reread them to copy values.
 3. Compute with the operations on artifact ids. Chain dependent steps in one run call with @id references (pivot then heatmap; filter, rank, chart). Independent calls go in the same turn. A dataset name can stand in for an artifact in an operation.
 4. finish binds the report to the data: tables and figures by id, findings as claims each bound to the rows and columns they rest on. The report prints those cells beside each claim. A claim stating a number its cells do not hold is refused; put such numbers in a computed artifact and cite it.
-Keep units, zeros, blanks, repeated rows and ties as recorded; a missing record is absence from this source, not biological absence; transform only when asked. When a deliverable cannot be made, list it in not_done with the reason instead of approximating.
+The saved artifacts are the evidence of this study and the report cites them by id: a request to cite sources or evidence is met by finish itself, not by looking for references elsewhere. Keep units, zeros, blanks, repeated rows and ties as recorded. A missing record is absence from this source, not biological absence; a recorded zero is a measurement. Limitations state what the evidence cannot establish; they do not explain how a source measured or what a value means beyond what its column says. Transform only when asked. When a deliverable cannot be made, list it in not_done with the reason instead of approximating.
 
 DATASETS ON DISK (open one for its columns and values; investigator_hpa reads them for a supplied list)
 ${datasets.join(', ')}`;
@@ -184,7 +184,7 @@ function agentArtifact(toolName, args, result) {
     return { kind: 'answer', label: `${result.gene || args.gene}: ${String(args.question || '').slice(0, 60)}`, rows: [{ gene: result.gene || args.gene, ensembl: result.ensembl || null, question: args.question || '', found: result.found === true, answer: result.answer || '', value: result.extracted_value ?? null, entity: result.exact_label ?? null, table: result.source_section || null, cited_row: result.cited_row || null }], meta: { not_in_release: result.not_in_release || [], notes: result.notes || [], citations: result.citations || [], grounded: result.grounded, evidence_status: result.evidence_status } };
   }
   if (toolName === 'check_inclusion_hpa') return { kind: 'answer', label: `${args.gene} in search result?`, rows: [scalarRow(result)], meta: {} };
-  const text = [result?.summary, result?.answer, result?.content, result?.text].find(v => typeof v === 'string') || JSON.stringify(scalarRow(result));
+  const text = [result?.summary_md, result?.summary, result?.answer, result?.message, result?.content, result?.text].find(v => typeof v === 'string' && v.trim()) || JSON.stringify(scalarRow(result));
   return { kind: 'note', label: String(args.topic || args.question || toolName).slice(0, 80), rows: [], text: String(text), meta: { images: Array.isArray(result?.images) ? result.images.length : 0 } };
 }
 
@@ -440,20 +440,24 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     }
   }
 
+  // A view stays on the desk whole for two turns, then folds to its receipt (reopenable).
+  const view = (key, text, receipt) => { state.views.set(key, { text, receipt, turn: state.turn }); };
   async function openWhat(args) {
-    const what = String(args.what || '').trim();
+    const what = String(args.what ?? args.artifact ?? args.id ?? args.dataset ?? args.name ?? args.table ?? '').trim();
+    if (!what) throw new Error('open needs what: an artifact id or a dataset name');
     if (state.byId.has(what)) {
       const a = get(what);
-      if (a.figure) { state.views.set(a.id, `${a.id} figure: ${JSON.stringify(a.figure).slice(0, 1200)}`); remember(`opened ${a.id} (figure spec on the desk)`); return; }
-      if (a.matrix) { state.views.set(a.id, `${a.id} matrix rows ${a.matrix.row_labels.join(', ')}; columns ${a.matrix.col_labels.join(', ')}\n${a.matrix.matrix.slice(0, 40).map((row, i) => `  ${desk.cell(a.matrix.row_labels[i])}: ${row.map(v => v === null ? '—' : v).join(' | ')}`).join('\n')}${a.matrix.matrix.length > 40 ? '\n  …' : ''}`); remember(`opened ${a.id} (matrix on the desk)`); return; }
-      if (a.text) { state.views.set(a.id, `${a.id}: ${a.text.slice(0, 1500)}`); remember(`opened ${a.id}`); return; }
+      if (a.figure) { view(a.id, `${a.id} figure: ${JSON.stringify(a.figure).slice(0, 1200)}`, `${a.id} figure spec (opened at turn ${state.turn})`); remember(`opened ${a.id} (figure spec on the desk)`); return; }
+      if (a.matrix) { view(a.id, `${a.id} matrix rows ${a.matrix.row_labels.join(', ')}; columns ${a.matrix.col_labels.join(', ')}\n${a.matrix.matrix.slice(0, 40).map((row, i) => `  ${desk.cell(a.matrix.row_labels[i])}: ${row.map(v => v === null ? '—' : v).join(' | ')}`).join('\n')}${a.matrix.matrix.length > 40 ? '\n  …' : ''}`, `${a.id} matrix (opened at turn ${state.turn})`); remember(`opened ${a.id} (matrix on the desk)`); return; }
+      if (a.text) { view(a.id, `${a.id}: ${a.text.slice(0, 1500)}`, `${a.id} text (opened at turn ${state.turn})`); remember(`opened ${a.id}`); return; }
       const rows = Number.isSafeInteger(args.rows) && args.rows > 0 ? args.rows : VIEW_ROWS;
       const offset = Number.isSafeInteger(args.offset) && args.offset >= 0 ? args.offset : 0;
       const columns = Array.isArray(args.columns) && args.columns.length ? args.columns.map(c => { const found = a.columns.find(x => x === c) || a.columns.find(x => x.toLowerCase() === String(c).toLowerCase()); if (!found) throw new Error(`${a.id} has no column ${JSON.stringify(c)}; its columns: ${a.columns.join(', ')}`); return found; }) : a.columns;
       const page = a.rows.slice(offset, offset + rows);
       const lines = page.map((row, i) => `  ${offset + i}: ${desk.rowLine(row, columns)}`);
-      state.views.set(a.id, `${a.id} rows ${offset}–${offset + page.length - 1} of ${a.rows.length} (${columns.join(' | ')})\n${lines.join('\n') || '  (no rows)'}${offset + page.length < a.rows.length ? `\n  … open ${a.id} offset=${offset + page.length} for more` : ''}`);
-      remember(`opened ${a.id} rows ${offset}–${offset + page.length - 1} (view on the desk)`);
+      const range = `rows ${offset}–${offset + page.length - 1} of ${a.rows.length}`;
+      view(`${a.id}|${offset}|${columns.join(',')}`, `${a.id} ${range} (${columns.join(' | ')})\n${lines.join('\n') || '  (no rows)'}${offset + page.length < a.rows.length ? `\n  … open ${a.id} offset=${offset + page.length} for more` : ''}`, `${a.id} ${range} (opened at turn ${state.turn}; open again to see them)`);
+      remember(`opened ${a.id} ${range} (view on the desk)`);
       return;
     }
     const entry = await geneData.entry(what);
@@ -464,15 +468,24 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
     remember(`opened ${entry.file} (on the desk)`);
   }
 
+  // What a large table's columns hold, computed once per artifact.
+  const profileOf = a => {
+    if (a.profile === undefined) a.profile = Array.isArray(a.rows) && a.rows.length > desk.WHOLE_ROWS ? tools.profile(a.rows, a.columns) : null;
+    return a.profile;
+  };
   function deskText(turn) {
     const running = [...state.running.values()].map(j => `${j.id} ${j.tool} "${String(j.args.goal || j.args.question || j.args.gene || '').slice(0, 100)}" ${Math.round((Date.now() - j.startedAt) / 1000)} s`).join('\n') || '(nothing running)';
-    const cards = state.artifacts.map(a => desk.resultCard({ id: a.id, label: a.kind === 'answer' || a.kind === 'note' ? a.label : '', origin: origin(a), rows: a.rows || [], columns: a.columns, matrix: a.matrix, figure: a.figure, images: a.images }));
+    // An artifact that a later operation read is filed under the operation that read it.
+    const usedBy = new Map();
+    for (const a of state.artifacts) for (const input of a.inputs || []) { if (!usedBy.has(input)) usedBy.set(input, []); usedBy.get(input).push(a.id); }
+    const cards = state.artifacts.map(a => desk.resultCard({ id: a.id, label: a.kind === 'answer' || a.kind === 'note' ? a.label : '', origin: origin(a), rows: a.rows || [], columns: a.columns, matrix: a.matrix, figure: a.figure, images: a.images, text: a.text, folded: usedBy.get(a.id) || null, profile: usedBy.has(a.id) ? null : profileOf(a) }));
+    const views = [...state.views.values()].map(v => v.turn >= turn - 2 ? v.text : v.receipt);
     const sections = [
       desk.section('STUDY', goal),
       desk.section('PLAN', studyPlan.planText(state.plan)),
       ...(state.opened.size ? [desk.section('TABLES OPENED', [...state.opened.values()].join('\n'))] : []),
       desk.section('ARTIFACTS', cards.join('\n') || '(none yet)'),
-      ...(state.views.size ? [desk.section('VIEWS', [...state.views.values()].join('\n'))] : []),
+      ...(views.length ? [desk.section('VIEWS', views.join('\n'))] : []),
       desk.section('RUNNING', running),
       desk.section('HISTORY', desk.historyText(state.history)),
       ...(state.notes.length ? [desk.section('NOTES', state.notes.map((n, i) => `${i + 1}. ${n}`).join('\n'))] : []),
@@ -537,7 +550,7 @@ async function asoStudy({ goal, mode: requestedMode, max_turns, reasoning_effort
         if (call.name === 'run') {
           const specifications = new Map(toolSpecs.filter(t => TABLE_TOOLS.has(t.function.name)).map(t => [t.function.name, t.function]));
           const steps = call.args.steps || [];
-          const batch = await executeBatch({ steps, outputs: steps.map(s => s?.id).filter(id => typeof id === 'string') }, { specifications, concurrency: parallel, execute: runTableTool });
+          const batch = await executeBatch({ steps, outputs: steps.map(s => s?.id).filter(id => typeof id === 'string') }, { specifications, concurrency: parallel, execute: runTableTool, external: id => (state.byId.has(id) ? id : null) });
           if (batch.status !== 'completed') remember(`run: ${batch.steps.filter(s => s.status !== 'done').map(s => `${s.id} ${s.status}${s.error ? `: ${s.error}` : ''}`).join('; ')}`);
           sync++; return;
         }

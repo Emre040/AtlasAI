@@ -440,7 +440,7 @@ function quantile(sorted, q) {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
 }
 
-const METRICS = ['count', 'numeric_count', 'zero', 'sum', 'mean', 'median', 'sd', 'q1', 'q3', 'min', 'max', 'missing', 'distinct'];
+const METRICS = ['count', 'recorded', 'numeric_count', 'zero', 'sum', 'mean', 'median', 'sd', 'q1', 'q3', 'min', 'max', 'missing', 'distinct'];
 
 // Distinct cells use exact JSON value semantics: scalar types differ, object key order does
 // not matter, and array order does. Missing top-level cells are excluded by the caller.
@@ -554,6 +554,7 @@ function aggregator({ group_by, group_by_columns, group_domains, column, metrics
         const o = groupCols.length ? Object.fromEntries(groupCols.map((name, index) => [name, st.labels[index]])) : groupCol ? { [groupCol]: st.labels[0] } : {};
         for (const m of wanted) {
           if (m === 'count') o.count = st.count;
+          else if (m === 'recorded') o.recorded = st.count - st.missing;   // rows whose cell holds a value: a left join's matches, zero where none
           else if (m === 'numeric_count') o.numeric_count = vals.length;
           else if (m === 'zero') o.zero = vals.filter(v => v === 0).length;
           else if (m === 'sum') o.sum = vals.length ? sum : null;

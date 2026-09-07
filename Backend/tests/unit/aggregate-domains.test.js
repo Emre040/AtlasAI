@@ -19,7 +19,7 @@ test('full uneven 2x3 domains retain all observations and add zero-count combina
   const before = JSON.stringify(rows);
   const result = tools.aggregate(rows, args);
   assert.deepEqual(result.map(r => [r.cohort, r.phase, r.count]), [['A', 'first', 3], ['A', 'second', 1], ['A', 'third', 0], ['B', 'first', 0], ['B', 'second', 0], ['B', 'third', 2]]);
-  assert.deepEqual(result[0], { cohort: 'A', phase: 'first', count: 3, numeric_count: 2, zero: 1, sum: 10, mean: 5, median: 5, sd: Math.sqrt(50), q1: 2.5, q3: 7.5, min: 0, max: 10, missing: 1, distinct: 2 });
+  assert.deepEqual(result[0], { cohort: 'A', phase: 'first', count: 3, recorded: 2, numeric_count: 2, zero: 1, sum: 10, mean: 5, median: 5, sd: Math.sqrt(50), q1: 2.5, q3: 7.5, min: 0, max: 10, missing: 1, distinct: 2 });
   assert.equal(result[1].count, 1); assert.equal(result[1].missing, 1); assert.equal(result[1].numeric_count, 0); assert.equal(result[1].sum, null);
   assert.equal(result[5].median, 4); assert.equal(result[5].count, 2);
   const observed = tools.aggregate(rows, { ...args, group_domains: undefined });
@@ -34,7 +34,7 @@ test('empty groups use the existing empty aggregate statistics and preserve sche
   assert.equal(result.length, 6); assert.deepEqual(result.columns, ['cohort', 'phase', ...metrics]);
   const emptyStats = tools.aggregate(tools.withColumns([], ['value']), { column: 'value', metrics })[0];
   for (const { cohort, phase, ...stats } of result) assert.deepEqual(stats, emptyStats);
-  for (const metric of ['count', 'numeric_count', 'zero', 'missing', 'distinct']) assert.equal(emptyStats[metric], 0);
+  for (const metric of ['count', 'recorded', 'numeric_count', 'zero', 'missing', 'distinct']) assert.equal(emptyStats[metric], 0);
   for (const metric of ['sum', 'mean', 'median', 'sd', 'q1', 'q3', 'min', 'max']) assert.equal(emptyStats[metric], null);
   assert.deepEqual(tools.aggregate(source, { ...args, group_domains: undefined }), []);
   const noCombinations = { ...args, group_domains: [{ column: 'cohort', values: [] }, domains[0]] };

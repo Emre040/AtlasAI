@@ -141,3 +141,9 @@ test('a profile lists the items of a list column as a vocabulary, but not free t
   assert.deepEqual(cls.parts, { kind: 'items', values: ['Enzymes', 'Transcription factors', 'Transporters'] });
   assert.equal(syn.parts, null, 'three hundred distinct synonyms are not a vocabulary');
 });
+
+test('aggregate recorded counts the rows whose cell holds a value, so a left join counts matches and zeros', () => {
+  const rows = tools.withColumns([{ seed: 'ALB', partner: null }, { seed: 'HP', partner: 'ENSG2' }, { seed: 'APOA1', partner: 'ENSG3' }, { seed: 'APOA1', partner: 'ENSG4' }], ['seed', 'partner']);
+  const out = tools.aggregate(rows, { column: 'partner', metrics: ['count', 'recorded', 'missing'], group_by: 'seed' });
+  assert.deepEqual(out.map(r => [r.seed, r.count, r.recorded, r.missing]), [['ALB', 1, 0, 1], ['HP', 1, 1, 0], ['APOA1', 2, 2, 0]]);
+});

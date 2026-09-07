@@ -81,7 +81,10 @@ async function fetchRows({ adapter, entry, supplied, resolved, fields, where = [
 async function fetchMatching({ adapter, entry, points, fields, where = [], match, keys }) {
   if (!entry) throw new Error('fetch needs a table');
   if (entry.key === 'unreadable') throw new Error(`${entry.file} is in the release but not readable here`);
-  const column = resolveColumn(entry, match);
+  // One column, or several when a point may sit in any of them (the two sides of a pair table);
+  // with several, the result names the point in a column of its own and keeps every side.
+  const matchColumns = (Array.isArray(match) ? match : [match]).map(name => resolveColumn(entry, name));
+  const column = matchColumns.length === 1 ? matchColumns[0] : 'point';
   const predicate = wherePredicate(entry.columns, where || []);
   const keyed = !['lookup', 'stream'].includes(entry.key);
   const [geneKey, idKey] = keys.columns;
@@ -89,8 +92,14 @@ async function fetchMatching({ adapter, entry, points, fields, where = [], match
   const unique = [...new Map(points.map(p => [String(p).trim().toLowerCase(), String(p).trim()])).entries()];
   const byPoint = new Map(unique.map(([key]) => [key, []]));
   for await (const row of adapter.rows(entry)) {
-    const hit = byPoint.get(String(row[column] ?? '').trim().toLowerCase());
-    if (hit) hit.push(row);
+    const seen = new Set();
+    for (const c of matchColumns) {
+      const key = String(row[c] ?? '').trim().toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const hit = byPoint.get(key);
+      if (hit) hit.push(row);
+    }
   }
   const first = [...byPoint.values()].find(rows => rows.length)?.[0];
   const firstKeys = keyed && first ? adapter.keysOf(entry, first) : {};
@@ -102,7 +111,7 @@ async function fetchMatching({ adapter, entry, points, fields, where = [], match
   for (const [key, point] of unique) {
     const all = byPoint.get(key);
     const rows = all.filter(predicate);
-    const base = { [column]: all.length ? all[0][column] : point };
+    const base = { [column]: matchColumns.length === 1 && all.length ? all[0][column] : point };
     if (!rows.length) {
       if (all.length) coverage.no_match++; else coverage.no_rows++;
       out.push({ ...base, ...Object.fromEntries(keyColumns.map(c => [c, null])), ...nullFields(wanted), source_rows: 0, source_status: all.length ? STATUS.noMatch : STATUS.noRows });

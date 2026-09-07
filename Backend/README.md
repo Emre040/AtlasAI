@@ -29,13 +29,16 @@ Backend/
 │       ├── aso/                 # study workspaces, artifacts, operations, provenance, chart rendering
 │       ├── deployment/          # authenticated release queue
 │       └── orchestrator.js      # application tool dispatch
-├── data/                        # local HPM source data
+├── data/                        # bundled reference data (hpm_summaries.json)
 ├── deploy/
 │   ├── cloudflare/              # optional enriched-metadata Worker
 │   ├── pm2/                     # removable single-process PM2 definition
 │   └── production/              # exact-SHA canary and rollback script
 ├── runtime/                     # generated workspaces; ignored by Git
-├── scripts/manual/              # explicit manual agent runners
+├── scripts/
+│   ├── sync-hpa-data.js         # downloads the active HPA release
+│   ├── sql/                     # operator SQL
+│   └── manual/                  # explicit manual agent runners
 └── tests/
     ├── fixtures/
     └── unit/
@@ -194,12 +197,23 @@ code or prompts. `deep_research_hpa` (`src/system/agents/deepResearchTrail.js`) 
 search fields answer the goal from the schema the search adapter exposes
 (`src/hpa/searchAdapter.js` over `hpaSchema.js`, `searchOptions.js` and the atlas's own
 definitions in `searchDocs.js`), fills each field from its option tree, composes the URL and
-executes it. `investigator_hpa` (`investigatorTrail.js`) reads the gene's rows from the per-gene
-tables the gene data adapter catalogs (`src/hpa/geneDataAdapter.js`) and answers with the row it
-cites. `aso_hpa` (`asoStudy.js`) plans a graph of operations (`src/system/aso/studyTools.js`:
-search, lookup, measure, set operations, join, filter, rank, aggregate, compute, pivot, chart),
-runs independent nodes in parallel, stores every node as an artifact linked to its inputs, may
-add nodes after reviewing the results, and writes a report that cites nodes.
+executes it. `investigator_hpa` answers a question with rows from the release: for one gene
+(`investigatorTrail.js`) it reads the gene's rows from the per-gene tables the gene data adapter
+catalogs (`src/hpa/geneDataAdapter.js`) and answers with the row it cites; for a list of points
+(`investigatorBulk.js`, one gene or hundreds, or any values such as tissues) it finds the table
+whose columns hold the answer, fetches those fields for every point, and returns the rows as one
+artifact per source table.
+
+`aso_hpa` (`asoStudy.js`) runs a study in turns over a desk (`src/system/aso/desk.js`) rebuilt
+from state every turn: the plan, every artifact as one line (id, title, description, columns,
+rows, what made it), the rows it asked to see, what is running, its history and its notes. It
+never reads a file. It summons the search and the Investigator, whose results become artifacts,
+and computes over artifact ids with the registered operations (`tableOperations.js`,
+`studyTools.js`: join, filter, select, rank, aggregate, classify, compute, correlate, plus combine,
+pivot, chart, overlap, explode). `finish` delivers the report (`studyReport.js`): tables and
+figures by id, findings as claims bound to the rows and columns they rest on; a stated number that
+is not among the bound cells refuses the report and says where the number lives. Figures are chart
+specifications rendered by `pipelines/render_charts.py`.
 
 `deep_research_hpa` and `investigator_hpa` accept `mode: "online" | "offline"`; a study
 (`aso_hpa`) always runs offline and its agents inherit that. Offline evaluates the composed
@@ -218,9 +232,10 @@ artifacts (kind, operation that produced them, purpose, size, and whitelisted fa
 found, tissue, join keys or chart type), edges are `derived_from` links from inputs to outputs,
 `layers` is the longest-path depth used for drawing, and `outputs` lists the final figures,
 analyses and report. The frontend renders it as an SVG next to the workspace download. While a
-study runs, the frontend draws the planned graph from the run events themselves (`plan.graph`,
-`node.start`, `node.done`, `node.failed`, `reflect`, `report.written`) and lights nodes up as they
-finish; the provenance graph is the stored, audited view of the same study.
+study runs, the frontend draws the map of steps from the run events themselves (`start`, `turn`,
+`plan`, `note`, `tool.start`, `tool.done`, `tool.failed`, `call.failed`, `skip`,
+`finish.refused`, `finish`) and fills steps in as they complete; the provenance graph is the
+stored, audited view of the same study.
 
 ## Cloudflare metadata
 

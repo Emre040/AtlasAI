@@ -358,8 +358,13 @@ function rank(rows, by, order = 'desc', top = 0, ties = 'include', thenBy = []) 
   if (!['include', 'truncate'].includes(ties)) throw new Error('rank: ties must be include or truncate');
   if (!Number.isSafeInteger(top) || top < 0) throw new Error('rank: top must be a nonnegative integer');
   const secondary = secondaryOrder(columnsOf(rows), thenBy);
-  const sortable = rows.map(r => ({ r, v: num(r[column]), keys: secondary.keys(r) }));
-  const sorted = sortable.filter(x => x.v !== null).sort((a, b) => (order === 'asc' ? a.v - b.v : b.v - a.v) || secondary.compare(a.keys, b.keys));
+  // A column holding numbers sorts by value, rows without a number last; a column holding no
+  // number at all sorts alphabetically, case-insensitive, so a list of names can be ranked too.
+  const numeric = rows.some(r => num(r[column]) !== null);
+  const key = numeric ? r => num(r[column]) : r => (isMissing(r[column]) ? null : String(r[column]).toLowerCase());
+  const cmp = numeric ? (a, b) => a - b : (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  const sortable = rows.map(r => ({ r, v: key(r), keys: secondary.keys(r) }));
+  const sorted = sortable.filter(x => x.v !== null).sort((a, b) => (order === 'asc' ? cmp(a.v, b.v) : cmp(b.v, a.v)) || secondary.compare(a.keys, b.keys));
   let cutoff = top > 0 ? Math.min(top, sorted.length) : sorted.length;
   if (top > 0 && ties === 'include') while (cutoff < sorted.length && sorted[cutoff].v === sorted[cutoff - 1].v) cutoff++;
   let previous, position = 0;

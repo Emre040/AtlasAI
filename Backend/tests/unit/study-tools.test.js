@@ -101,6 +101,15 @@ test('compute chooses per row with if(condition, then, else); a condition that c
   assert.throws(() => tools.compute(ranked, 'flag', 'if(rank > 0, gene)'), /if takes a condition, a then value and an else value/);
 });
 
+test('rank sorts a text column alphabetically and a numeric column by value', () => {
+  const genes = tools.withColumns([
+    { gene: 'ABCB11', ensembl: 'E1', nTPM: '75.3' }, { gene: 'A1CF', ensembl: 'E2', nTPM: '12' }, { gene: 'a1bg', ensembl: 'E3', nTPM: null }, { gene: 'ACOX2', ensembl: 'E4', nTPM: '165.8' }
+  ], ['gene', 'ensembl', 'nTPM']);
+  assert.deepEqual(tools.rank(genes, 'gene', 'asc', 3).map(r => [r.gene, r.rank]), [['a1bg', 1], ['A1CF', 2], ['ABCB11', 3]], 'digits sort before letters, case does not matter');
+  assert.deepEqual(tools.rank(genes, 'gene', 'desc').map(r => r.gene), ['ACOX2', 'ABCB11', 'A1CF', 'a1bg']);
+  assert.deepEqual(tools.rank(genes, 'nTPM', 'desc').map(r => [r.gene, r.rank]), [['ACOX2', 1], ['ABCB11', 2], ['A1CF', 3], ['a1bg', null]], 'a numeric column still sorts by value, the row without a number last');
+});
+
 test('an in list may be an array, a JSON list, or values separated by | or commas', () => {
   assert.deepEqual(tools.inList(['a', 'b']), ['a', 'b']);
   assert.deepEqual(tools.inList('["a", "b"]'), ['a', 'b']);

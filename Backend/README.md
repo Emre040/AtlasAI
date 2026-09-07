@@ -201,13 +201,14 @@ search, lookup, measure, set operations, join, filter, rank, aggregate, compute,
 runs independent nodes in parallel, stores every node as an artifact linked to its inputs, may
 add nodes after reviewing the results, and writes a report that cites nodes.
 
-`deep_research_hpa`, `investigator_hpa` and `aso_hpa` accept `mode: "online" | "offline"`.
-Offline evaluates the composed search against the local release (`src/hpa/offlineSearch.js`
-reproduces the proteinatlas.org search semantics for category, class, location, evidence,
-cluster, prognostic, IHC and interaction fields) and is the default; a search field the bulk
-files cannot express falls back to proteinatlas.org and says so in the run events. The
-investigator and the study read the local release only; `offline_agents_enabled` turns the mode
-off. The dictionary expert is always online.
+`deep_research_hpa` and `investigator_hpa` accept `mode: "online" | "offline"`; a study
+(`aso_hpa`) always runs offline and its agents inherit that. Offline evaluates the composed
+search against the local release (`src/hpa/offlineSearch.js` reproduces the proteinatlas.org
+search semantics for category, class, location, evidence, cluster, prognostic, IHC and
+interaction fields) and is the default; a search field the bulk files cannot express stops the
+search with the unexpressible requirement named, and no online request is made. The
+investigator reads the local release only; `offline_agents_enabled` turns the mode off. The
+dictionary expert is always online.
 
 ## ASO provenance
 

@@ -43,7 +43,7 @@ class IsolatedStudyDb {
 }
 
 async function main() {
-  const { values } = parseArgs({ options: { case: { type: 'string' }, out: { type: 'string' }, baseline: { type: 'string' }, turns: { type: 'string', default: '40' }, 'goal-file': { type: 'string' }, 'context-bytes': { type: 'string' }, effort: { type: 'string' }, 'genes-file': { type: 'string' } } });
+  const { values } = parseArgs({ options: { case: { type: 'string' }, out: { type: 'string' }, baseline: { type: 'string' }, turns: { type: 'string', default: '40' }, 'goal-file': { type: 'string' }, 'context-bytes': { type: 'string' }, effort: { type: 'string' }, 'genes-file': { type: 'string' }, model: { type: 'string' } } });
   if (!values.out || !path.isAbsolute(values.out)) throw new Error('--out must be an absolute, new local directory');
   const bulkGenes = values['genes-file'] ? JSON.parse(await fs.readFile(values['genes-file'], 'utf8')) : null;
   const maxTurns = Number(values.turns);
@@ -95,8 +95,13 @@ async function main() {
     require('../../src/system/aso/workspaceStore').configureWorkspaceRoot(values.out);
     require('../../src/hpa/localData').localData.configure({ root: runtime.dataLocalRoot, db });
     const orchestrator = require('../../src/system/orchestrator');
-    const { model } = await gateway.resolveActiveModel();
-    if (model.configKey !== 'gemini-3.8-flash' || (values.effort || model.reasoningEffort) !== 'low') throw new Error('This evaluation protocol requires gemini-3.8-flash with low reasoning effort');
+    // The run binds one catalog model for this process only: the active model, or --model <config_key>
+    // (any catalog row with a platform credential); the database's active row is never changed.
+    const model = values.model ? await gateway.loadModel(values.model) : (await gateway.resolveActiveModel()).model;
+    if (!model) throw new Error(`No catalog model with config_key ${JSON.stringify(values.model)}`);
+    const requiredKey = values.model || 'gemini-3.8-flash';
+    const requiredEffort = values.model ? (values.effort || null) : 'low';
+    if (model.configKey !== requiredKey || (requiredEffort && (values.effort || model.reasoningEffort) !== requiredEffort)) throw new Error(`This evaluation protocol requires ${requiredKey}${requiredEffort ? ` with ${requiredEffort} reasoning effort` : ''}`);
     const events = [];
     const requests = [];
     const original = gateway.createChatCompletion.bind(gateway);
@@ -104,7 +109,7 @@ async function main() {
       const requestIndex = requests.length;
       const selected = gateway.getActiveModel();
       const effectiveEffort = request.reasoning_effort || selected.reasoningEffort;
-      if (selected.configKey !== 'gemini-3.8-flash' || effectiveEffort !== 'low') throw new Error('Every evaluation inference must use gemini-3.8-flash with low reasoning effort');
+      if (selected.configKey !== requiredKey || (requiredEffort && effectiveEffort !== requiredEffort)) throw new Error(`Every evaluation inference must use ${requiredKey}${requiredEffort ? ` with ${requiredEffort} reasoning effort` : ''}`);
       const item = { request, started_at: Date.now(), model: {
         id: selected.id, config_key: selected.configKey, model_id: selected.modelId,
         provider_key: selected.providerKey, adapter_key: selected.adapterKey,

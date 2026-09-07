@@ -82,9 +82,20 @@ function validateProviderRow(row) {
   } catch {
     throw new Error(`Provider '${row.provider_key}' has an invalid API base URL.`);
   }
-  if (apiUrl.protocol !== 'https:') {
+  // A model server on a private network (this machine, a LAN, the tailnet) may speak plain HTTP;
+  // anything reached over the internet must use HTTPS.
+  if (apiUrl.protocol !== 'https:' && !isPrivateHost(apiUrl.hostname)) {
     throw new Error(`Provider '${row.provider_key}' API base URL must use HTTPS.`);
   }
+}
+
+// Loopback, RFC 1918 and the Tailscale CGNAT range (100.64.0.0/10).
+function isPrivateHost(hostname) {
+  if (hostname === 'localhost' || hostname === '::1' || hostname === '[::1]') return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname);
+  if (!m) return false;
+  const a = Number(m[1]), b = Number(m[2]);
+  return a === 10 || a === 127 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 100 && b >= 64 && b <= 127);
 }
 
 // The platform's own key for a model's provider, from the environment.
@@ -593,6 +604,8 @@ function resolveActiveModel() {
 module.exports = {
   InferenceGateway,
   costMicroUsd,
+  isPrivateHost,
+  validateProviderRow,
   getActiveModel,
   getInferenceGateway,
   inference,

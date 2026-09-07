@@ -53,7 +53,7 @@ const STUDY_TOOLS = [
   tool('note', 'Keep a decision or open question on the desk; replace overwrites note N.', { text: S, replace: N }, ['text']),
   tool('open', 'Show rows of an artifact: rows and offset page it, columns narrow it.', { artifact: A, rows: N, offset: N, columns: { type: 'array', items: S } }, ['artifact']),
   tool('run', 'Run dependent operations together; a step names an operation and its args, and refers to an earlier step of the same call as @id (an existing artifact by its own id).',{ steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
-  op('combine', 'Rows of a and b as one table: union (either, one row per entity), intersect (rows of a whose entity is in b), difference (rows of a whose entity is not in b) or concat (all rows of a, then all of b). on matches by a column instead of the entity.', { a: A, b: A, how: { type: 'string', enum: ['union', 'intersect', 'difference', 'concat'] }, on: S }, ['a', 'b', 'how']),
+  op('combine', 'Rows of a and b as one table: union (either, one row per entity), intersect (rows of a whose entity is in b), difference (rows of a whose entity is not in b) or concat (all rows of a, then all of b; label names a column that says which input each row came from, by its title, so stacked cohorts stay told apart). on matches by a column instead of the entity.', { a: A, b: A, how: { type: 'string', enum: ['union', 'intersect', 'difference', 'concat'] }, on: S, label: S }, ['a', 'b', 'how']),
   TABLE_OPERATIONS.get('join'),
   TABLE_OPERATIONS.get('filter'),
   TABLE_OPERATIONS.get('select'),
@@ -368,7 +368,11 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     switch (toolName) {
       case 'combine': {
         if (!['union', 'intersect', 'difference', 'concat'].includes(args.how)) throw new Error('combine: how is union, intersect, difference or concat');
-        out = { rows: tools.setOp(args.how, rowsOf('a'), rowsOf('b'), args.on || null) }; break;
+        const label = typeof args.label === 'string' && args.label.trim() ? args.label.trim() : null;
+        if (label && args.how !== 'concat') throw new Error('combine: label goes with concat, which keeps every row of both inputs');
+        // With a label, each row says which input it came from, by that input's title.
+        const tagged = (rows, id) => label ? tools.withColumns(rows.map(r => ({ [label]: state.byId.get(id)?.label || id, ...r })), [label, ...tools.columnsOf(rows).filter(c => c !== label)]) : rows;
+        out = { rows: tools.setOp(args.how, tagged(rowsOf('a'), args.a), tagged(rowsOf('b'), args.b), args.on || null) }; break;
       }
       case 'join': out = executeTableOperation(toolName, args, { a: rowsOf('a'), b: rowsOf('b') }); break;
       case 'filter': case 'select': case 'classify': case 'compute': case 'correlate': case 'rank': case 'aggregate': out = executeTableOperation(toolName, args, { artifact: rowsOf('artifact') }); break;

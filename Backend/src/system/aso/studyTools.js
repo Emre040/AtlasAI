@@ -222,12 +222,15 @@ function join(left, right, how = 'inner', on = null, onColumns) {
   if (onColumns !== undefined && (!Array.isArray(onColumns) || !onColumns.length || onColumns.some(name => typeof name !== 'string' || !name.trim()))) throw new Error('join: on_columns must be a nonempty array of column names');
   const composite = onColumns !== undefined;
   const names = composite ? onColumns : on ? [on] : [];
-  const resolve = (rows, side) => names.map(name => {
+  // "left=right" names a key the two sides call differently (ensembl=ensembl_gene_id_2).
+  const sides = names.map(name => { const i = name.indexOf('='); return i > 0 ? [name.slice(0, i).trim(), name.slice(i + 1).trim()] : [name, name]; });
+  const resolve = (rows, side, index) => sides.map(pair => {
+    const name = pair[index];
     const column = findColumn(rows, name);
-    if (!column) throw new Error(`join: no column "${name}" on ${side} (columns: ${columnsOf(rows).join(', ')})`);
+    if (!column) throw new Error(`join: no column "${name}" on ${side} (columns: ${columnsOf(rows).join(', ')}); name a key the sides call differently as left=right`);
     return column;
   });
-  const leftKeys = resolve(left, 'left'), rightKeys = resolve(right, 'right');
+  const leftKeys = resolve(left, 'left', 0), rightKeys = resolve(right, 'right', 1);
   if (new Set(leftKeys).size !== leftKeys.length || new Set(rightKeys).size !== rightKeys.length) throw new Error('join: on_columns must name distinct columns');
   const unkeyed = composite ? { a: 0, b: 0 } : { a: requireKeys(left, leftKeys[0] || null, 'join'), b: requireKeys(right, rightKeys[0] || null, 'join') };
   const keys = (row, columns) => {
@@ -629,6 +632,8 @@ function explode(rows, column, as) {
   return out;
 }
 
+const ITEM_VOCAB = 200;   // distinct items a list column may hold and still be listed as a vocabulary
+
 // A column card per column as rows arrive: kind, blanks, distinct values, examples, range, grammar.
 function profiler(columns) {
   const st = new Map(columns.map(c => [c, { n: 0, blank: 0, nums: 0, min: Infinity, max: -Infinity, distinct: new Map(), samples: [] }]));
@@ -667,6 +672,12 @@ function profiler(columns) {
             }
           }
           parts = { kind: grammar.shape === 'key: number' ? 'keys' : 'labels', values: [...found] };
+        } else if (grammar && grammar.sep) {
+          // A list of plain items (protein classes, locations) has a vocabulary too: the distinct
+          // items, when there are few enough to be one; a list of free text (synonyms) has none.
+          const found = new Set();
+          for (const cellValue of s.distinct.keys()) for (const item of cellValue.split(grammar.sep).map(x => x.trim()).filter(Boolean)) { found.add(item); if (found.size > ITEM_VOCAB) break; }
+          if (found.size <= ITEM_VOCAB) parts = { kind: 'items', values: [...found].sort() };
         }
         return {
           column: c, kind, rows: s.n, blank_pct: s.n ? Math.round(100 * s.blank / s.n) : 0,
@@ -885,12 +896,13 @@ function parseExpression(text) {
     if (tok.t === 'op' && tok.v === '(') { const node = parseComparison(); expect(')'); return node; }
     if (tok.t === 'id') {
       const name = tok.v.toLowerCase();
-      if (peek() && peek().v === '(' && (FUNCTIONS[name] || name === 'if')) {
+      if (peek() && peek().v === '(' && (FUNCTIONS[name] || name === 'if' || name === 'contains')) {
         take();
         const args = [parseComparison()];
         while (peek() && peek().v === ',') { take(); args.push(parseComparison()); }
         expect(')');
         if (name === 'if' && args.length !== 3) throw new Error(`compute: if takes a condition, a then value and an else value in "${text}"`);
+        if (name === 'contains' && args.length !== 2) throw new Error(`compute: contains takes a column and a text in "${text}"`);
         return { fn: name, args };
       }
       return { col: tok.v, quoted: !!tok.quoted };
@@ -898,7 +910,7 @@ function parseExpression(text) {
     throw new Error(`compute: unexpected "${tok.v}" in "${text}"`);
   };
   const tree = parseComparison();
-  if (tree.cmp) throw new Error(`compute: a comparison goes inside if(condition, then, else) in "${text}"; classify makes category columns`);
+  if (tree.cmp || tree.fn === 'contains') throw new Error(`compute: a comparison goes inside if(condition, then, else) in "${text}"; classify makes category columns`);
   if (pos < tokens.length) throw new Error(`compute: unexpected "${tokens[pos].v}" in "${text}"`);
   return tree;
 }
@@ -932,6 +944,12 @@ function evaluate(tree, row, resolved) {
   }
   // if(condition, then, else): a condition that cannot be decided (a missing value) takes the else branch.
   if (tree.fn === 'if') return evaluate(tree.args[0], row, resolved) === true ? evaluate(tree.args[1], row, resolved) : evaluate(tree.args[2], row, resolved);
+  // contains(column, text): whether the cell's text holds the words, case aside; a list cell holds its items.
+  if (tree.fn === 'contains') {
+    const cell = evaluate(tree.args[0], row, resolved), needle = evaluate(tree.args[1], row, resolved);
+    if (cell === null || needle === null) return null;
+    return String(cell).toLowerCase().includes(String(needle).toLowerCase());
+  }
   if (tree.fn) { const vals = tree.args.map(a => evaluate(a, row, resolved)); return vals.some(v => typeof v !== 'number') ? null : FUNCTIONS[tree.fn](...vals); }
   const a = evaluate(tree.a, row, resolved);
   if (tree.op === 'neg') return typeof a === 'number' ? -a : null;

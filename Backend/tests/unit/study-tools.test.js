@@ -116,3 +116,28 @@ test('an in list may be an array, a JSON list, or values separated by | or comma
   assert.deepEqual(tools.inList('a | b, c'), ['a', 'b', 'c']);
   assert.equal(tools.applyWhere(rows, [{ column: 'partner', op: 'in', value: 'ENSG_MDM2, ENSG_X' }]).length, 1);
 });
+
+test('compute flags rows with contains(column, text) inside if, and a share comes from aggregate mean', () => {
+  const rows = [{ gene: 'A', 'Protein class': 'Enzymes, Transporters' }, { gene: 'B', 'Protein class': 'Transcription factors' }, { gene: 'C', 'Protein class': null }];
+  const flagged = tools.compute(rows, 'is_enzyme', 'if(contains("Protein class", "enzymes"), 1, 0)');
+  assert.deepEqual(flagged.map(r => r.is_enzyme), [1, 0, 0], 'case aside; a missing cell takes the else branch');
+  assert.throws(() => tools.compute(rows, 'x', 'contains("Protein class", "Enzymes")'), /a comparison goes inside if/);
+  assert.throws(() => tools.compute(rows, 'x', 'if(contains("Protein class"), 1, 0)'), /contains takes a column and a text/);
+});
+
+test('join takes a key the two sides name differently as left=right', () => {
+  const seeds = tools.withColumns([{ gene: 'ALB', ensembl: 'ENSG1', nTPM: 5 }, { gene: 'HP', ensembl: 'ENSG2', nTPM: 3 }], ['gene', 'ensembl', 'nTPM']);
+  const pairs = tools.withColumns([{ ensembl_gene_id_1: 'ENSG2', ensembl_gene_id_2: 'ENSG9', datasets: 'x' }, { ensembl_gene_id_1: 'ENSG7', ensembl_gene_id_2: 'ENSG1', datasets: 'y' }], ['ensembl_gene_id_1', 'ensembl_gene_id_2', 'datasets']);
+  const joined = tools.join(seeds, pairs, 'inner', 'ensembl=ensembl_gene_id_1');
+  assert.deepEqual(joined.map(r => [r.gene, r.ensembl_gene_id_2]), [['HP', 'ENSG9']]);
+  assert.throws(() => tools.join(seeds, pairs, 'inner', 'ensembl'), /no column "ensembl" on right .* left=right/);
+  const composite = tools.join(seeds, pairs, 'inner', null, ['ensembl=ensembl_gene_id_2']);
+  assert.deepEqual(composite.map(r => [r.gene, r.datasets]), [['ALB', 'y']]);
+});
+
+test('a profile lists the items of a list column as a vocabulary, but not free text', () => {
+  const cells = Array.from({ length: 30 }, (_, i) => ({ cls: ['Enzymes, Transporters', 'Transcription factors', 'Enzymes'][i % 3], syn: Array.from({ length: 10 }, (_, j) => `SYN${i}_${j}`).join(', ') }));
+  const [cls, syn] = tools.profile(cells, ['cls', 'syn']);
+  assert.deepEqual(cls.parts, { kind: 'items', values: ['Enzymes', 'Transcription factors', 'Transporters'] });
+  assert.equal(syn.parts, null, 'three hundred distinct synonyms are not a vocabulary');
+});

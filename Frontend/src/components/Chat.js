@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faCopy,
+  faBars,
   faThumbsUp,
   faThumbsDown,
   faDna,
@@ -48,6 +49,7 @@ const debugLog = (...args) => {
 function HPA() {
   const [conversations, setConversations] = useState([]);
   const [selectedConversation, setSelectedConversation] = useState(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showAccountModal, setShowAccountModal] = useState(false);
@@ -62,6 +64,8 @@ function HPA() {
   const [searchResults, setSearchResults] = useState({}); // Map of searchUrl -> { rows, loading, error, totalCount, thumbnails }
   const [replyTo, setReplyTo] = useState(null); // { ensg, geneName } for reply context
   const messagesEndRef = useRef(null);
+  const historyDialogRef = useRef(null);
+  const stickToBottomRef = useRef(true);
   const inputRef = useRef(null);
   const toolRunRefs = useRef({}); // Refs for auto-scroll within each run container
   const [artifactPreview, setArtifactPreview] = useState(null);
@@ -771,8 +775,21 @@ function HPA() {
   );
   const messageGroups = groupMessagesIntoRuns(currentMessages);
 
+  useEffect(() => { stickToBottomRef.current = true; }, [selectedConversation]);
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const dialog = historyDialogRef.current;
+    if (historyOpen) dialog.showModal();
+    else if (dialog.open) dialog.close();
+  }, [historyOpen]);
+  useEffect(() => {
+    const desktop = window.matchMedia('(min-width: 800px)');
+    const closeOnDesktop = event => { if (event.matches) setHistoryOpen(false); };
+    desktop.addEventListener('change', closeOnDesktop);
+    return () => desktop.removeEventListener('change', closeOnDesktop);
+  }, []);
+
+  useEffect(() => {
+    if (stickToBottomRef.current) messagesEndRef.current?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
   }, [currentMessages]);
 
   // Auto-scroll within tool run containers when expanded
@@ -1049,15 +1066,14 @@ function HPA() {
     }
   };
 
-  return (
-    <div className="HPAG-container">
-      <div className="HPAG-sidebar">
+  const historyContent = (
+    <>
         <div className="HPAG-sidebar-logo">
           <img src="https://www.proteinatlas.org/images_static/logo.svg" alt="Human Protein Atlas" />
         </div>
         <div className="HPAG-sidebar-header">
           <h2>Conversations</h2>
-          <button className="HPAG-new-chat-btn" onClick={handleNewChat}>
+          <button className="HPAG-new-chat-btn" onClick={() => { setHistoryOpen(false); handleNewChat(); }}>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M7 1V13M1 7H13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
             </svg>
@@ -1067,21 +1083,33 @@ function HPA() {
 
         <div className="HPAG-conversations-list">
           {conversations.map(conv => (
-            <div
+            <button type="button"
               key={conv.id}
               className={`HPAG-conversation-item ${selectedConversation === conv.id ? 'HPAG-active' : ''}`}
-              onClick={() => setSelectedConversation(conv.id)}
+              aria-current={selectedConversation === conv.id ? 'page' : undefined}
+              onClick={() => { setSelectedConversation(conv.id); setHistoryOpen(false); }}
             >
               <div className="HPAG-conversation-title">{buildConversationTitle(conv)}</div>
               <div className="HPAG-conversation-date">{formatRelativeTime(conv.created_at || conv.date)}</div>
-            </div>
+            </button>
           ))}
         </div>
-      </div>
+    </>
+  );
 
+  return (
+    <div className="HPAG-container">
+      <div className="HPAG-sidebar">{historyContent}</div>
+      <dialog ref={historyDialogRef} className="HPAG-mobile-history" id="HPAG-mobile-history" aria-label="Conversations" onCancel={event => { event.preventDefault(); setHistoryOpen(false); }} onClick={event => { if (event.target === event.currentTarget) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX > rect.right) setHistoryOpen(false); } }}>
+        <button type="button" className="HPAG-history-close" onClick={() => setHistoryOpen(false)} aria-label="Close conversations"><FontAwesomeIcon icon={faTimes} /></button>
+        {historyContent}
+      </dialog>
       <div className="HPAG-chat-area">
         <div className="HPAG-chat-header">
-          <ModelMenu selectedModel={selectedModel} onSelectModel={chooseModel} />
+          <div className="HPAG-header-model">
+            <button type="button" className="HPAG-history-toggle" aria-label="Open conversations" aria-expanded={historyOpen} aria-controls="HPAG-mobile-history" onClick={() => setHistoryOpen(true)}><FontAwesomeIcon icon={faBars} /></button>
+            <ModelMenu selectedModel={selectedModel} onSelectModel={chooseModel} />
+          </div>
           <div className="HPAG-header-actions">
             {isLocalEnv && (
               <div className="HPAG-env-indicator" title={`Connected to ${apiBaseUrl}`}>
@@ -1112,7 +1140,7 @@ function HPA() {
           </div>
         </div>
 
-        <div className="HPAG-messages-container">
+        <div className="HPAG-messages-container" onScroll={event => { const el = event.currentTarget; stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 96; }}>
           <div className="HPAG-messages-container-inner">
             {currentMessages.length === 0 ? (
               <div className="HPAG-empty-state">
@@ -1158,17 +1186,17 @@ function HPA() {
 
                   return (
                     <React.Fragment key={group.runId}>
-                    <div
-                      className={`HPAG-shimmer-bar ${group.isComplete ? 'HPAG-shimmer-done' : ''} ${isAsoRun ? 'HPAG-shimmer-static' : ''}`}
+                    {!isAsoRun && <div
+                      className={`HPAG-shimmer-bar ${group.isComplete ? 'HPAG-shimmer-done' : ''}`}
                       onClick={isAsoRun ? undefined : () => toggleRunCollapsed(group.runId)}
                     >
                       <span className="HPAG-shimmer-text">
                         {group.isComplete ? `${runTitle} complete` : <>Working<span className="HPAG-shimmer-dot">{'\u00B7'}</span>{lastStepMsg}</>}
                       </span>
                       {!isAsoRun && <FontAwesomeIcon icon={isExpanded ? faChevronDown : faChevronRight} className="HPAG-shimmer-chevron" />}
-                    </div>
+                    </div>}
                     {isExpanded && (
-                    <div className="HPAG-tool-run-container">
+                    <div className={`HPAG-tool-run-container ${isAsoRun ? 'HPAG-tool-run-container-study' : ''}`}>
                       <div
                         className={`HPAG-tool-run-content ${isAsoRun ? 'HPAG-tool-run-content-study' : ''}`}
                         ref={el => { toolRunRefs.current[group.runId] = el; }}

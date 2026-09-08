@@ -90,6 +90,7 @@ function messageFromItem(item) {
 }
 
 function toolLinesFromRun(run) {
+  if (run.tool === 'clarify_hpa') return [];   // a clarification shows as its card, not as tool lines
   const events = Array.isArray(run.events) ? run.events : [];
   return events.map(event => ({
     id: `${run.id}:${event.seq}`,

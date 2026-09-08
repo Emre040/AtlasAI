@@ -446,8 +446,8 @@ CRITICAL RULES:
         const toolCall = toolCalls[0];
         const toolName = toolCall.function.name;
 
-        // Pre-message (single sentence)
-        const preambleText = await inference.withContext(
+        // Pre-message (single sentence); a clarification takes seconds and speaks for itself.
+        const preambleText = toolName === 'clarify_hpa' ? '' : await inference.withContext(
           { ...callContext, purpose: 'preface' },
           () => streamPrefaceStrict({ baseMessages: base, res, toolName })
         );

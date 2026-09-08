@@ -966,7 +966,8 @@ function HPA() {
           if (payload.tool) {
             toolHasRun = true;
             // The backend names the run; live lines and reloaded lines share that id.
-            pushToolLine(liveToolEventFromSse(payload.tool), conversationId);
+            // A clarification shows as its card under the answer, not as tool lines.
+            if (payload.tool.name !== 'clarify_hpa') pushToolLine(liveToolEventFromSse(payload.tool), conversationId);
             continue;
           }
 

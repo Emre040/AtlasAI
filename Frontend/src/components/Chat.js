@@ -1427,6 +1427,23 @@ function HPA() {
                               ))}
                             </div>
                           )}
+                          {/* Clarification card, inside the bubble above the footer; the answers go back as the next user message */}
+                          {message.questionnaire && (
+                            <Questionnaire
+                              questionnaire={message.questionnaire}
+                              answered={message.questionnaireAnswered || null}
+                              disabled={isLoading}
+                              onSubmit={(text, picks) => {
+                                const answeredId = message.id;
+                                setConversations(convs => convs.map(conv =>
+                                  conv.id === selectedConversation
+                                    ? { ...conv, messages: conv.messages.map(m => m.id === answeredId ? { ...m, questionnaireAnswered: picks } : m) }
+                                    : conv
+                                ));
+                                handleSend(text);
+                              }}
+                            />
+                          )}
                           <div className="HPAG-message-footer">
                             {showActions && (
                               <div className="HPAG-message-actions">
@@ -1452,23 +1469,6 @@ function HPA() {
                       {/* Render dictionary tissue images carousel */}
                       {message.dictionaryImages && message.dictionaryImages.images?.length > 0 && (
                         <DictionaryCarousel dictionaryImages={message.dictionaryImages} />
-                      )}
-                      {/* Clarification cards: the answers go back as the next user message */}
-                      {message.questionnaire && (
-                        <Questionnaire
-                          questionnaire={message.questionnaire}
-                          answered={message.questionnaireAnswered || null}
-                          disabled={isLoading}
-                          onSubmit={(text, picks) => {
-                            const answeredId = message.id;
-                            setConversations(convs => convs.map(conv =>
-                              conv.id === selectedConversation
-                                ? { ...conv, messages: conv.messages.map(m => m.id === answeredId ? { ...m, questionnaireAnswered: picks } : m) }
-                                : conv
-                            ));
-                            handleSend(text);
-                          }}
-                        />
                       )}
                     </React.Fragment>
                   );

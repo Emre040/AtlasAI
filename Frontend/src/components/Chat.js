@@ -1355,6 +1355,10 @@ function HPA() {
                   const isLastMessage = index === currentMessages.length - 1;
                   const showActions = message.type === 'ai' && message.text !== '' && !(isLoading && isLastMessage);
                   const showLoadingDot = isLoading && isLastMessage && message.type === 'ai' && message.text === '';
+                  // An assistant bubble with nothing in it (no text, no attachment) is not rendered at all,
+                  // unless it is the placeholder that shows the loading dot while the answer streams.
+                  const hasAttachment = Boolean(message.questionnaire || message.searchUrl || message.resources?.length || message.dictionaryImages?.images?.length || message.asoCharts?.length);
+                  if (message.type === 'ai' && message.text === '' && !hasAttachment && !showLoadingDot) return null;
                   const hpaUrls = message.type === 'ai' ? extractHPAUrls(message.text) : [];
 
                   // Parse reply context from message - always extract from text to get clean display

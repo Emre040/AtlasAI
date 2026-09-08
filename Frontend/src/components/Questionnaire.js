@@ -1,27 +1,17 @@
 import React, { useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPencilAlt } from '@fortawesome/free-solid-svg-icons';
+import { faPencilAlt, faChevronLeft, faChevronRight } from '@fortawesome/free-solid-svg-icons';
+import { composeAnswers, SKIPPED } from '../api/questionnaire';
 
-// The clarification card under an assistant message: one question at a time, its three options as
-// numbered rows, a free-text row with a skip, and dots for the questions still to come. Choosing an
-// option moves to the next question; the last choice sends. The answers go back as the next user
-// message ("The user just answered a questionnaire: ...") through the chat's send path.
-export const ANSWERED_PREFIX = 'The user just answered a questionnaire';
-const SKIPPED = '(no preference)';
-
-export function composeAnswers(questionnaire, picks) {
-  const lines = [`${ANSWERED_PREFIX}:`];
-  questionnaire.questions.forEach((q, i) => {
-    lines.push(`Q${i + 1}: ${q.question}`);
-    lines.push(`A: ${picks[q.id] || SKIPPED}`);
-  });
-  return lines.join('\n');
-}
-
+// The clarification card inside an assistant message: one question at a time with "n / total" and
+// chevrons to move back and forth, its three options as numbered rows, and a free-text row with a
+// skip. A choice moves on; Send appears on the last question once every question has an answer.
+// The answers go back as the next user message ("The user just answered a questionnaire: ...")
+// through the chat's send path.
 export default function Questionnaire({ questionnaire, answered, disabled, onSubmit }) {
   const [picks, setPicks] = useState({});
+  const [drafts, setDrafts] = useState({});
   const [index, setIndex] = useState(0);
-  const [other, setOther] = useState('');
   const questions = Array.isArray(questionnaire?.questions) ? questionnaire.questions : [];
   if (!questions.length) return null;
 
@@ -29,7 +19,7 @@ export default function Questionnaire({ questionnaire, answered, disabled, onSub
     const given = typeof answered === 'object' ? answered : null;
     return (
       <div className="HPAG-clarify HPAG-clarify-answered">
-        {questions.map((q, i) => (
+        {questions.map(q => (
           <div className="HPAG-clarify-recap" key={q.id}>
             <span className="HPAG-clarify-recap-q">{q.question}</span>
             <span className="HPAG-clarify-recap-a">{given ? (given[q.id] || SKIPPED) : 'answered'}</span>
@@ -39,45 +29,68 @@ export default function Questionnaire({ questionnaire, answered, disabled, onSub
     );
   }
 
-  const current = questions[Math.min(index, questions.length - 1)];
-  const answer = (value) => {
+  const last = questions.length - 1;
+  const current = questions[Math.min(index, last)];
+  const pick = picks[current.id];
+  const custom = pick !== undefined && pick !== SKIPPED && !current.options.includes(pick);
+  const draft = drafts[current.id] ?? (custom ? pick : '');
+  const complete = questions.every(q => picks[q.id] !== undefined);
+
+  const choose = (value) => {
     if (disabled) return;
-    const next = { ...picks, [current.id]: value };
-    setPicks(next);
-    setOther('');
-    if (index + 1 < questions.length) setIndex(index + 1);
-    else onSubmit(composeAnswers(questionnaire, next), next);
+    setPicks(p => ({ ...p, [current.id]: value }));
+    if (index < last) setIndex(index + 1);
   };
+  const send = () => { if (!disabled && complete) onSubmit(composeAnswers(questionnaire, picks), picks); };
 
   return (
     <div className="HPAG-clarify">
       <div className="HPAG-clarify-head">
         <div className="HPAG-clarify-question">{current.question}</div>
-        <div className="HPAG-clarify-dots" aria-label={`question ${index + 1} of ${questions.length}`}>
-          {questions.map((q, i) => <span key={q.id} className={`HPAG-clarify-dot${i < index ? ' HPAG-clarify-dot-done' : ''}${i === index ? ' HPAG-clarify-dot-now' : ''}`} />)}
+        <div className="HPAG-clarify-nav">
+          <button type="button" className="HPAG-clarify-chevron" onClick={() => setIndex(index - 1)} disabled={index === 0} aria-label="previous question">
+            <FontAwesomeIcon icon={faChevronLeft} />
+          </button>
+          <span className="HPAG-clarify-step">{index + 1} / {questions.length}</span>
+          <button type="button" className="HPAG-clarify-chevron" onClick={() => setIndex(index + 1)} disabled={index === last} aria-label="next question">
+            <FontAwesomeIcon icon={faChevronRight} />
+          </button>
         </div>
       </div>
       {current.options.map((option, i) => (
-        <button type="button" key={option} className="HPAG-clarify-row" onClick={() => answer(option)} disabled={disabled}>
+        <button
+          type="button"
+          key={option}
+          className={`HPAG-clarify-row${pick === option ? ' HPAG-clarify-row-selected' : ''}`}
+          onClick={() => choose(option)}
+          disabled={disabled}
+        >
           <span className="HPAG-clarify-num">{i + 1}</span>
           <span className="HPAG-clarify-text">{option}</span>
         </button>
       ))}
-      <div className="HPAG-clarify-row HPAG-clarify-other">
+      <div className={`HPAG-clarify-row HPAG-clarify-other${custom ? ' HPAG-clarify-row-selected' : ''}`}>
         <span className="HPAG-clarify-num"><FontAwesomeIcon icon={faPencilAlt} /></span>
         <input
           type="text"
           className="HPAG-clarify-input"
-          placeholder="Something else"
-          value={other}
-          onChange={e => setOther(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && other.trim()) answer(other.trim()); }}
+          placeholder={pick === SKIPPED ? 'Skipped' : 'Something else'}
+          value={draft}
+          onChange={e => setDrafts(d => ({ ...d, [current.id]: e.target.value }))}
+          onKeyDown={e => { if (e.key === 'Enter' && draft.trim()) choose(draft.trim()); }}
           disabled={disabled}
         />
-        {other.trim()
-          ? <button type="button" className="HPAG-clarify-skip" onClick={() => answer(other.trim())} disabled={disabled}>{index + 1 < questions.length ? 'Next' : 'Send'}</button>
-          : <button type="button" className="HPAG-clarify-skip" onClick={() => answer(SKIPPED)} disabled={disabled}>Skip</button>}
+        {draft.trim() && draft.trim() !== pick
+          ? <button type="button" className="HPAG-clarify-skip" onClick={() => choose(draft.trim())} disabled={disabled}>{index < last ? 'Next' : 'Use this'}</button>
+          : index < last
+            ? <button type="button" className="HPAG-clarify-skip" onClick={() => choose(SKIPPED)} disabled={disabled}>Skip</button>
+            : <button type="button" className="HPAG-clarify-skip" onClick={() => { if (pick === undefined) setPicks(p => ({ ...p, [current.id]: SKIPPED })); }} disabled={disabled || pick !== undefined}>Skip</button>}
       </div>
+      {index === last && (
+        <div className="HPAG-clarify-actions">
+          <button type="button" className="HPAG-clarify-send" onClick={send} disabled={disabled || !complete}>Send answers</button>
+        </div>
+      )}
     </div>
   );
 }

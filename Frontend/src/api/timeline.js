@@ -1,6 +1,7 @@
 // Pure mapping from the backend's conversation timeline (GET /conversations/messages) and the
 // live query stream (POST /query/stream) to the message list the HPA view renders.
 // No React, no fetch: everything here is testable in isolation.
+import { parseAnswers } from './questionnaire';
 
 const INVESTIGATOR = 'investigator_hpa';
 const STUDY = 'aso_hpa';
@@ -85,7 +86,7 @@ function messageFromItem(item) {
   if (Array.isArray(item.resources) && item.resources.length > 0) message.resources = item.resources;
   if (item.dictionary_images?.images?.length > 0) message.dictionaryImages = item.dictionary_images;
   if (Array.isArray(item.aso_charts) && item.aso_charts.length > 0) message.asoCharts = item.aso_charts;
-  if (item.questionnaire?.questions?.length > 0) { message.questionnaire = item.questionnaire; message.questionnaireAnswered = 'reloaded'; }
+  if (item.questionnaire?.questions?.length > 0) message.questionnaire = item.questionnaire;
   return message;
 }
 
@@ -111,6 +112,13 @@ export function timelineToUiMessages(items) {
       messages.push(...toolLinesFromRun(item));
     }
   }
+  // A clarification card stays answerable until a later user message exists; when that message
+  // is the sent questionnaire, its answers become the recap.
+  messages.forEach((message, i) => {
+    if (!message.questionnaire) return;
+    const later = messages.slice(i + 1).find(m => m.type === 'user');
+    if (later) message.questionnaireAnswered = parseAnswers(message.questionnaire, later.text) || true;
+  });
   return messages;
 }
 

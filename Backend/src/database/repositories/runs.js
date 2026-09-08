@@ -13,7 +13,6 @@ const WORKSPACES = '`atlasai`.`aso_workspaces`';
 const TOOL_KEYS = new Set([
   'deep_research_hpa',
   'investigator_hpa',
-  'check_inclusion_hpa',
   'dictionary_expert_hpa',
   'aso_hpa'
 ]);

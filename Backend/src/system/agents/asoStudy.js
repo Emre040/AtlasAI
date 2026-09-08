@@ -118,7 +118,6 @@ function agentArtifact(toolName, args, result) {
     if (result?.error && result.found !== true) throw new Error(result.error);
     return { kind: 'answer', label: `${result.gene || args.gene}: ${String(args.question || '').slice(0, 60)}`, rows: [{ gene: result.gene || args.gene, ensembl: result.ensembl || null, question: args.question || '', found: result.found === true, answer: result.answer || '', value: result.extracted_value ?? null, entity: result.exact_label ?? null, table: result.source_section || null, cited_row: result.cited_row || null }], meta: { not_in_release: result.not_in_release || [], notes: result.notes || [], citations: result.citations || [], grounded: result.grounded, evidence_status: result.evidence_status } };
   }
-  if (toolName === 'check_inclusion_hpa') return { kind: 'answer', label: `${args.gene} in search result?`, rows: [scalarRow(result)], meta: {} };
   const text = [result?.summary_md, result?.summary, result?.answer, result?.message, result?.content, result?.text].find(v => typeof v === 'string' && v.trim()) || JSON.stringify(scalarRow(result));
   return { kind: 'note', label: String(args.topic || args.question || toolName).slice(0, 80), rows: [], text: String(text), meta: { images: Array.isArray(result?.images) ? result.images.length : 0 } };
 }
@@ -173,7 +172,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
   // The study's agents are the ones that return evidence: a set of entities or rows. Agents that
   // answer in prose about the database (definitions, membership) belong to the chat. In a study
   // each is described by what it returns, in the database's own terms, and names its result.
-  const agentSpecs = orchestrator.getToolSpecs().filter(t => !['aso_hpa', 'dictionary_expert_hpa', 'check_inclusion_hpa'].includes(t.function.name)).map(t => {
+  const agentSpecs = orchestrator.getToolSpecs().filter(t => !['aso_hpa', 'dictionary_expert_hpa'].includes(t.function.name)).map(t => {
     const properties = { ...t.function.parameters.properties };
     delete properties.mode;
     const entity = identity.entity;

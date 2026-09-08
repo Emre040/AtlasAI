@@ -1,7 +1,6 @@
 const AGENTS = {
   deep_research_hpa: "Deep research",
   investigator_hpa: "Investigator",
-  check_inclusion_hpa: "Inclusion check",
   dictionary_expert_hpa: "Dictionary",
 };
 export function agentName(tool) {

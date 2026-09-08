@@ -5,7 +5,6 @@
 const { inference } = require('../inference/gateway');
 const investigatorTrail = require('./agents/investigatorTrail');
 const deepResearchTrail = require('./agents/deepResearchTrail');
-const checkInclusion = require('./agents/checkInclusion');
 const dictionaryExpert = require('./agents/dictionaryExpert');
 const asoStudy = require('./agents/asoStudy');
 
@@ -96,31 +95,6 @@ const defs = [
       additionalProperties: false
     },
     handler: deepResearchTrail
-  },
-  {
-    name: 'check_inclusion_hpa',
-    description:
-      'Check if a specific gene is included in a PREVIOUS search result. ' +
-      'ONLY use this when: (1) a search was already completed (indicated by [SEARCH COMPLETED...] in history), AND (2) user asks if a specific gene is in those results. ' +
-      'Examples: "Is BRCA1 in that list?", "Does that search include TP53?", "Check if EGFR is in the liver-enriched results". ' +
-      'DO NOT use this for new searches - use deep_research_hpa instead. ' +
-      'Requires the search_url from a previous search and the gene to check.',
-    parameters: {
-      type: 'object',
-      properties: {
-        search_url: {
-          type: 'string',
-          description: 'The HPA search URL from a previous search (from [SEARCH COMPLETED...] in conversation history).'
-        },
-        gene: {
-          type: 'string',
-          description: 'The gene symbol (e.g., BRCA1, TP53) or ENSG ID to check for in the results.'
-        }
-      },
-      required: ['search_url', 'gene'],
-      additionalProperties: false
-    },
-    handler: checkInclusion
   },
   {
     name: 'dictionary_expert_hpa',

@@ -48,12 +48,11 @@ async function proposeTools(messages) {
       {
         role: 'system',
         content: `Choose the right tool:
-(1) check_inclusion_hpa - ONLY for checking if a SPECIFIC GENE NAME is in previous results
-(2) deep_research_hpa - for ANY search
-(3) investigator_hpa - for detailed info about one specific gene
-(4) dictionary_expert_hpa - for ANY definition, educational, histology, pathology, OR about-HPA question
+(1) deep_research_hpa - for ANY search, including whether a specific gene is in previous results
+(2) investigator_hpa - for detailed info about one specific gene
+(3) dictionary_expert_hpa - for ANY definition, educational, histology, pathology, OR about-HPA question
     USE "question" param (not "topic") for about-HPA questions. USE "topic" param for histology/pathology.
-(5) aso_hpa - Autonomous Scientific Orchestrator for MULTI-STEP analysis with charts/figures`
+(4) aso_hpa - Autonomous Scientific Orchestrator for MULTI-STEP analysis with charts/figures`
       }
     ],
     stream: true,
@@ -78,9 +77,6 @@ function getSynthesisPrompt(toolName, toolResult) {
   if (toolName === 'investigator_hpa') {
     return "Present the answer field from the result DIRECTLY and COMPLETELY to the user. Do NOT summarize or paraphrase.";
   }
-  if (toolName === 'check_inclusion_hpa') {
-    return "Give a clear, direct answer about whether the gene is in the results.";
-  }
   if (toolName === 'aso_hpa') {
     return "Summarize what was done and the key findings. Keep it concise (3-6 sentences). Highlight the most interesting findings.";
   }
@@ -93,12 +89,11 @@ async function runQuery(queryText, db, auth) {
   const systemContent = `You are AtlasAI, a helpful assistant for exploring The Human Protein Atlas.
 
 TOOL USAGE RULES:
-1. deep_research_hpa: Use for ANY search query
-2. check_inclusion_hpa: ONLY when asking if a SPECIFIC GENE NAME is in previous results
-3. investigator_hpa: For detailed info about a specific gene
-4. dictionary_expert_hpa: For ANY definition, histology, pathology, educational, OR about-HPA question
+1. deep_research_hpa: Use for ANY search query, including whether a specific gene is in previous results
+2. investigator_hpa: For detailed info about a specific gene
+3. dictionary_expert_hpa: For ANY definition, histology, pathology, educational, OR about-HPA question
    USE "question" param (not "topic") for about-HPA questions. USE "topic" param for histology/pathology.
-5. aso_hpa: Autonomous Scientific Orchestrator for multi-step analysis with charts/figures
+4. aso_hpa: Autonomous Scientific Orchestrator for multi-step analysis with charts/figures
 
 CRITICAL RULES:
 - NEVER make up numbers or statistics. ALWAYS use deep_research_hpa.

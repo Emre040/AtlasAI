@@ -162,20 +162,19 @@ async function proposeTools({ messages }) {
       {
         role: 'system',
 content: `Choose the right tool:
-(1) check_inclusion_hpa - ONLY for checking if a SPECIFIC GENE NAME is in previous results
-(2) deep_research_hpa - for ANY search including:
+(1) deep_research_hpa - for ANY search including:
     - New searches
-    - Filtering previous results ("how many of these are in brain", "which ones are kinases")
+    - Filtering previous results ("how many of these are in brain", "which ones are kinases", "is BRCA1 in that list")
     - Combining constraints ("liver enriched AND detected in brain")
-(3) investigator_hpa - for detailed info about one specific gene
-(4) dictionary_expert_hpa - for ANY definition, educational, histology, pathology, OR about-HPA question:
+(2) investigator_hpa - for detailed info about one specific gene
+(3) dictionary_expert_hpa - for ANY definition, educational, histology, pathology, OR about-HPA question:
     - "What is X?" questions (e.g., "what is apoptosis", "what are ribosomes")
     - Histology/tissue structure ("show me liver histology", "kidney tissue")
     - Cancer/pathology ("neuroendocrine tumors", "breast cancer histology")
     - Cell biology concepts ("mitochondria", "golgi", "cytoskeleton")
     - About HPA itself: "what is HPA?", "who runs HPA?", "how to download data?", "latest release?", "how to cite?"
     USE "question" param (not "topic") for about-HPA questions. USE "topic" param for histology/pathology.
-(5) aso_hpa - Autonomous Scientific Orchestrator for MULTI-STEP analysis with charts/figures:
+(4) aso_hpa - Autonomous Scientific Orchestrator for MULTI-STEP analysis with charts/figures:
     - Comparing gene expression across tissues ("compare liver vs kidney enzymes")
     - Generating charts: heatmaps, scatter plots, bar charts, lollipop charts
     - Multi-gene multi-tissue analysis ("expression of TP53, BRCA1, EGFR across 5 tissues")
@@ -391,16 +390,16 @@ TOOL USAGE RULES:
    - New searches ("find liver-enriched genes")
    - Filtering/refining previous results ("how many of these are in brain", "which ones are not detected in heart")
    - When filtering, COMBINE the original criteria with the new constraint
-2. check_inclusion_hpa: ONLY when asking if a SPECIFIC GENE NAME (like BRCA1) is in previous results
-3. investigator_hpa: For detailed info about a specific gene
-4. dictionary_expert_hpa: For ANY definition, histology, pathology, educational, OR about-HPA question:
+   - Whether a specific gene (like BRCA1) is in previous results
+2. investigator_hpa: For detailed info about a specific gene
+3. dictionary_expert_hpa: For ANY definition, histology, pathology, educational, OR about-HPA question:
    - "What is X?" questions about biological concepts, tissues, or cell structures
    - Histology requests ("show me liver histology", "what does kidney tissue look like")
    - Cancer/pathology topics ("neuroendocrine tumors", "lung cancer histology")
    - Cell biology terms ("mitochondria", "golgi apparatus", "endoplasmic reticulum")
    - About HPA itself: "what is HPA?", "who runs HPA?", "how to download data?", "latest release?", "how to cite?"
    USE "question" param (not "topic") for about-HPA questions. USE "topic" param for histology/pathology.
-5. aso_hpa: Autonomous Scientific Orchestrator for multi-step analysis with charts/figures:
+4. aso_hpa: Autonomous Scientific Orchestrator for multi-step analysis with charts/figures:
    - Comparing gene expression across tissues ("compare liver vs kidney enzymes")
    - Generating charts: heatmaps, scatter plots, bar charts, lollipop charts
    - Multi-gene multi-tissue analysis ("expression of TP53, BRCA1, EGFR across 5 tissues")
@@ -533,13 +532,6 @@ if (toolName === 'dictionary_expert_hpa') {
             "Do NOT summarize or paraphrase - output the full detailed answer as-is. " +
             "You may add a brief intro like 'Here's what I found about [gene]:' but then present ALL the data. " +
             "The user wants to see all the specific values, numbers, and details.";
-        } else if (toolName === 'check_inclusion_hpa') {
-          // For inclusion check: Clear yes/no answer with follow-up suggestion
-          styleSystemMessage =
-            "The tool checked if a gene is in a search result. Give a clear, direct answer: " +
-            "If included: 'Yes, [GENE] ([description]) is included in those results.' Then ask: 'Would you like a detailed summary of [GENE] or have a specific question about it?' " +
-            "If not included: 'No, [GENE] is not in those [count] results.' " +
-            "Keep the answer brief but always offer the follow-up when found.";
         } else if (toolName === 'aso_hpa') {
           // For ASO: Summarize the scientific analysis and reference charts
           styleSystemMessage =

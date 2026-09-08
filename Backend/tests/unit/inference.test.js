@@ -220,6 +220,30 @@ test('Anthropic and OpenAI adapters call their native clients with the selected 
   assert.equal(openAiParams.reasoning_effort, 'none');
 });
 
+test('OpenAI adapter asks again when the host rejects the model\'s own tool call, and gives up after three', async () => {
+  const rejection = () => Object.assign(new Error('400 Tool call validation failed: parameters for tool investigator_hpa did not match schema'), { status: 400 });
+  let calls = 0;
+  const flaky = new OpenAIChatCompletionsAdapter({
+    client: { chat: { completions: { async create() { calls += 1; if (calls < 3) throw rejection(); return { ok: true, calls }; } } } }
+  });
+  const response = await flaky.create({ messages: [] }, { modelId: 'openai/gpt-oss-120b', reasoningEffort: null });
+  assert.deepEqual(response, { ok: true, calls: 3 });
+
+  let stubborn = 0;
+  const hopeless = new OpenAIChatCompletionsAdapter({
+    client: { chat: { completions: { async create() { stubborn += 1; throw rejection(); } } } }
+  });
+  await assert.rejects(() => hopeless.create({ messages: [] }, { modelId: 'openai/gpt-oss-120b', reasoningEffort: null }), /Tool call validation failed/);
+  assert.equal(stubborn, 4);
+
+  let other = 0;
+  const badRequest = new OpenAIChatCompletionsAdapter({
+    client: { chat: { completions: { async create() { other += 1; throw Object.assign(new Error('400 messages: invalid role'), { status: 400 }); } } } }
+  });
+  await assert.rejects(() => badRequest.create({ messages: [] }, { modelId: 'openai/gpt-oss-120b', reasoningEffort: null }), /invalid role/);
+  assert.equal(other, 1);
+});
+
 test('gateway resolves and binds exactly one database model for a complete HTTP request', async () => {
   process.env.ATLAS_TEST_PROVIDER_KEY = 'test-only-key';
   const rows = [

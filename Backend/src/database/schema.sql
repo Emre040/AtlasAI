@@ -619,7 +619,7 @@ CREATE TABLE `atlasai`.`runs` (
   `response_message_id` BIGINT UNSIGNED NULL COMMENT 'The assistant message synthesized from the run',
   `request_event_id` BIGINT UNSIGNED NULL,
   `inference_model_id` BIGINT UNSIGNED NOT NULL,
-  `tool_key` ENUM('deep_research_hpa','investigator_hpa','check_inclusion_hpa','dictionary_expert_hpa','aso_hpa') NOT NULL,
+  `tool_key` ENUM('deep_research_hpa','investigator_hpa','check_inclusion_hpa','dictionary_expert_hpa','aso_hpa','clarify_hpa') NOT NULL,
   `tool_call_id` VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NULL COMMENT 'Provider tool call id',
   `arguments_json` JSON NULL COMMENT 'Tool arguments produced by the model; NULL only for runs migrated from the pre-runs schema',
   `preamble_text` TEXT NULL COMMENT 'Sentence the assistant streamed before running the tool',

@@ -39,6 +39,7 @@ import ProvenanceGraph from './ProvenanceGraph';
 import StudyRun, { studyStatusLine } from './StudyRun';
 import { liveToolEventFromSse, timelineToUiMessages } from '../api/timeline';
 import DictionaryCarousel from './DictionaryCarousel';
+import Questionnaire from './Questionnaire';
 
 const RUNTIME_CONFIG = getRuntimeConfig();
 const UI_CONFIG = getUiConfig();
@@ -841,12 +842,14 @@ function HPA() {
     setInputValue('');
   };
 
-  const handleSend = async () => {
-    if (inputValue.trim() === '' || isLoading) return;
+  // Sends the typed input, or a given text (the answers of a clarification questionnaire).
+  const handleSend = async (override) => {
+    const textToSend = typeof override === 'string' ? override : inputValue;
+    if (textToSend.trim() === '' || isLoading) return;
 
     const now = () => new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
     let conversationId = selectedConversation;
-    const draftTitle = buildTitleFromText(inputValue) || 'New Conversation';
+    const draftTitle = buildTitleFromText(textToSend) || 'New Conversation';
 
     // If no conversation exists, create one now
     if (!conversationId) {
@@ -880,8 +883,8 @@ function HPA() {
     }
 
     const userMessageText = replyTo
-      ? `⟪HPA▸GENE:${replyTo.ensg}:${replyTo.geneName}⟫ ${inputValue}`
-      : inputValue;
+      ? `⟪HPA▸GENE:${replyTo.ensg}:${replyTo.geneName}⟫ ${textToSend}`
+      : textToSend;
     const userMessage = {
       id: Date.now(),
       type: 'user',
@@ -913,6 +916,7 @@ function HPA() {
       let finalAnswerBubbleCreated = false;
       let toolHasRun = false;
       let pendingResources = null; // Store resources until final answer bubble is created
+      let pendingQuestionnaire = null; // Clarification questions, shown under the final answer bubble
 
       debugLog(`[FE] POST queryStream… Initial AI bubble ID: ${currentAiMessageId}`);
       const response = await authenticatedFetch(getApiEndpoint('queryStream'), {
@@ -976,6 +980,10 @@ function HPA() {
                 newMessage.resources = pendingResources;
                 debugLog('[FE] Attaching pending resources to final answer bubble');
                 pendingResources = null;
+              }
+              if (pendingQuestionnaire) {
+                newMessage.questionnaire = pendingQuestionnaire;
+                pendingQuestionnaire = null;
               }
 
               setConversations(convs => convs.map(conv =>
@@ -1045,7 +1053,31 @@ function HPA() {
             continue;
           }
 
-          if (payload.done) { isStreamFinished = true; }
+          // Clarification questions arrive before the answer text; they attach to the final bubble.
+          if (payload.questionnaire) {
+            debugLog('[FE] Received questionnaire:', payload.questionnaire);
+            if (toolHasRun && !finalAnswerBubbleCreated) {
+              pendingQuestionnaire = payload.questionnaire;
+            } else {
+              const targetAiMessageId = currentAiMessageId;
+              setConversations(convs => convs.map(conv => {
+                if (conv.id !== conversationId) return conv;
+                return { ...conv, messages: conv.messages.map(m => m.id === targetAiMessageId ? { ...m, questionnaire: payload.questionnaire } : m) };
+              }));
+            }
+            continue;
+          }
+
+          if (payload.done) {
+            isStreamFinished = true;
+            if (pendingQuestionnaire) {   // no answer text came; show the cards under the last bubble
+              const targetAiMessageId = currentAiMessageId; const questionnaire = pendingQuestionnaire; pendingQuestionnaire = null;
+              setConversations(convs => convs.map(conv => {
+                if (conv.id !== conversationId) return conv;
+                return { ...conv, messages: conv.messages.map(m => m.id === targetAiMessageId ? { ...m, questionnaire } : m) };
+              }));
+            }
+          }
         }
         
         if (isStreamFinished) { break; }
@@ -1419,6 +1451,23 @@ function HPA() {
                       {/* Render dictionary tissue images carousel */}
                       {message.dictionaryImages && message.dictionaryImages.images?.length > 0 && (
                         <DictionaryCarousel dictionaryImages={message.dictionaryImages} />
+                      )}
+                      {/* Clarification cards: the answers go back as the next user message */}
+                      {message.questionnaire && (
+                        <Questionnaire
+                          questionnaire={message.questionnaire}
+                          answered={message.questionnaireAnswered || null}
+                          disabled={isLoading}
+                          onSubmit={(text, picks) => {
+                            const answeredId = message.id;
+                            setConversations(convs => convs.map(conv =>
+                              conv.id === selectedConversation
+                                ? { ...conv, messages: conv.messages.map(m => m.id === answeredId ? { ...m, questionnaireAnswered: picks } : m) }
+                                : conv
+                            ));
+                            handleSend(text);
+                          }}
+                        />
                       )}
                     </React.Fragment>
                   );

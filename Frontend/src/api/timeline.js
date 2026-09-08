@@ -85,6 +85,7 @@ function messageFromItem(item) {
   if (Array.isArray(item.resources) && item.resources.length > 0) message.resources = item.resources;
   if (item.dictionary_images?.images?.length > 0) message.dictionaryImages = item.dictionary_images;
   if (Array.isArray(item.aso_charts) && item.aso_charts.length > 0) message.asoCharts = item.aso_charts;
+  if (item.questionnaire?.questions?.length > 0) { message.questionnaire = item.questionnaire; message.questionnaireAnswered = 'reloaded'; }
   return message;
 }
 

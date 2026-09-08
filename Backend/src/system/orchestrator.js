@@ -7,6 +7,7 @@ const investigatorTrail = require('./agents/investigatorTrail');
 const deepResearchTrail = require('./agents/deepResearchTrail');
 const dictionaryExpert = require('./agents/dictionaryExpert');
 const asoStudy = require('./agents/asoStudy');
+const clarify = require('./agents/clarify');
 
 const MODE_PARAMETER = {
   type: 'string',
@@ -120,6 +121,26 @@ const defs = [
       additionalProperties: false
     },
     handler: dictionaryExpert
+  },
+  {
+    name: 'clarify_hpa',
+    description:
+      'Ask the user what an ambiguous request means, with up to three multiple-choice questions shown as cards. ' +
+      'ONLY when the request can be read in ways that change what would be done (which tissue or cell type, RNA or protein, ' +
+      'tissue enriched vs enhanced vs detected, which cancer cohort, a list vs a count vs a figure) AND no reasonable default exists. ' +
+      'Never for a request that names its tissue, level and output, and never when the user is answering a questionnaire.',
+    parameters: {
+      type: 'object',
+      properties: {
+        ambiguity: {
+          type: 'string',
+          description: 'One sentence: what in the request is open and why it changes the work.'
+        }
+      },
+      required: ['ambiguity'],
+      additionalProperties: false
+    },
+    handler: clarify
   }
 ];
 
@@ -161,6 +182,7 @@ async function execute(name, args, ctx = {}) {
     if (!parsed.question && rawQuery) parsed.question = rawQuery;
   }
   if ((name === 'deep_research_hpa' || name === 'aso_hpa') && !parsed.goal && rawQuery) parsed.goal = rawQuery;
+  if (name === 'clarify_hpa') { parsed.query = rawQuery; parsed.context = ctx.history || null; }
 
   const result = await inference.withContext({ agentKey: name }, () => handler(parsed, { ...ctx, onStep }));
   return { result, steps };

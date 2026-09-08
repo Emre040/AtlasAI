@@ -244,6 +244,7 @@ async function runSingleToolAndStream({
   preambleText,
   callContext,
   rawUserQuery,
+  historyText,
   visitorId
 }) {
   const { name } = toolCall.function;
@@ -277,6 +278,7 @@ async function runSingleToolAndStream({
       { ...callContext, purpose: 'agent', runId: run.id, agentKey: name },
       () => orchestrator.execute(name, args, {
         rawQuery: rawUserQuery,
+        history: historyText || null,
         db,
         visitorId,
         onStep: async (payload) => {
@@ -404,6 +406,15 @@ TOOL USAGE RULES:
    - Generating charts: heatmaps, scatter plots, bar charts, lollipop charts
    - Multi-gene multi-tissue analysis ("expression of TP53, BRCA1, EGFR across 5 tissues")
    - Any request needing measurements, ranking, and visualization
+5. clarify_hpa: ONLY when the request can be read in ways that change what would be done AND no reasonable default exists:
+   - which tissue or cell type ("genes expressed in the gut": which tissue?)
+   - RNA or protein level; tissue enriched, enhanced or merely detected
+   - which cancer cohort; a list, a count or a figure
+   Never for a request that names its tissue, level and output. Never more than once for the same request.
+
+QUESTIONNAIRE ANSWERS: a user message that starts with "The user just answered a questionnaire" carries the answers to the
+questions clarify_hpa asked. Take the original request from the earlier user message, apply the answers, and call the right
+tool among 1-4 with the combined request. Never call clarify_hpa in reply to answers.
 
 CRITICAL RULES:
 - NEVER make up numbers or statistics. If the user asks "how many" or wants to filter results, you MUST use deep_research_hpa to get the actual count.
@@ -452,6 +463,7 @@ CRITICAL RULES:
           preambleText,
           callContext,
           rawUserQuery: query,
+          historyText: historyRows.slice(-6).map(row => `${row.role}: ${String(row.text || '').slice(0, 400)}`).join('\n'),
           visitorId: req.auth.visitorId
         });
         run = toolRun.run;
@@ -496,12 +508,22 @@ CRITICAL RULES:
           }
         }
 
+        // Send the clarification questions BEFORE synthesis (the chat shows them as cards under the text)
+        if (toolName === 'clarify_hpa' && Array.isArray(toolResult?.result?.questions) && toolResult.result.questions.length > 0) {
+          sse(res, { questionnaire: { reason: toolResult.result.reason ?? null, questions: toolResult.result.questions } });
+        }
+
         // Synthesize final answer from the tool's actual output
         debugLog('[SYNTH] after tool; streaming final answer');
 
         // Different synthesis styles based on tool type
         let styleSystemMessage;
-if (toolName === 'dictionary_expert_hpa') {
+if (toolName === 'clarify_hpa') {
+  styleSystemMessage =
+    "The request was ambiguous and the questions that settle it are displayed as cards under your text; the user picks an option or types an answer for each. " +
+    "In one or two sentences say what is unclear and ask the user to answer the questions below. " +
+    "Do not list the questions or the options yourself, and do not answer the request.";
+} else if (toolName === 'dictionary_expert_hpa') {
   const isAboutMode = toolResult?.result?.mode === 'about';
   if (isAboutMode) {
     // Receptionist mode: answer about HPA itself

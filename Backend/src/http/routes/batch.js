@@ -56,7 +56,7 @@ async function proposeTools(messages) {
       }
     ],
     stream: true,
-    tools: orchestrator.getToolSpecs(),
+    tools: orchestrator.getToolSpecs().filter(t => t.function?.name !== 'clarify_hpa'),   // nobody answers questions in a batch
     tool_choice: 'auto'
   });
   for await (const part of stream) {

@@ -2,6 +2,7 @@ const AGENTS = {
   deep_research_hpa: "Deep research",
   investigator_hpa: "Investigator",
   dictionary_expert_hpa: "Dictionary",
+  clarify_hpa: "Clarification",
 };
 export function agentName(tool) {
   return AGENTS[tool] || tool;

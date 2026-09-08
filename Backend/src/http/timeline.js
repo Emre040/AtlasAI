@@ -36,9 +36,14 @@ function runAttachments(run) {
     search_url: run?.searchUrl ?? null,
     resources: null,
     dictionary_images: null,
-    aso_charts: null
+    aso_charts: null,
+    questionnaire: null
   };
   if (!result) return attachments;
+
+  if (run.toolKey === 'clarify_hpa' && Array.isArray(result.questions) && result.questions.length > 0) {
+    attachments.questionnaire = { reason: result.reason ?? null, questions: result.questions };
+  }
 
   if (Array.isArray(result.resources) && result.resources.length > 0) {
     attachments.resources = result.resources;

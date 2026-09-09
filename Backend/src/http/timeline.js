@@ -37,12 +37,16 @@ function runAttachments(run) {
     resources: null,
     dictionary_images: null,
     aso_charts: null,
-    questionnaire: null
+    questionnaire: null,
+    reader: null
   };
   if (!result) return attachments;
 
   if (run.toolKey === 'clarify_hpa' && Array.isArray(result.questions) && result.questions.length > 0) {
     attachments.questionnaire = { reason: result.reason ?? null, questions: result.questions };
+  }
+  if (run.toolKey === 'dictionary_expert_hpa' && result.mode === 'reader') {
+    attachments.reader = { question: result.question ?? null, quotes: result.quotes || [], pages: result.pages || [], dropped: result.dropped || [], not_found: result.not_found || '' };
   }
 
   if (Array.isArray(result.resources) && result.resources.length > 0) {

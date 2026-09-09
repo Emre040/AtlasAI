@@ -249,6 +249,8 @@ async function runSingleToolAndStream({
 }) {
   const { name } = toolCall.function;
   const args = JSON.parse(toolCall.function.arguments || '{}');
+  // A dictionary question is read by the reader; the chat renders those runs as its own panel.
+  const mode = name === 'dictionary_expert_hpa' && args.question ? 'reader' : undefined;
 
   // The run row is the identity the frontend groups by, live and after reload.
   const run = await runs.create({
@@ -266,7 +268,7 @@ async function runSingleToolAndStream({
   const persistEvent = event => runs.addEvent(run.id, sequence++, event);
 
   debugLog('[TOOL] started:', name, 'run:', run.publicId);
-  sse(res, { tool: { name, status: 'started', run_id: run.publicId } });
+  sse(res, { tool: { name, mode, status: 'started', run_id: run.publicId } });
   await persistEvent({ eventKind: 'started', stage: 'start' });
 
   // Long tool phases (ASO investigator batches, chart rendering) can stay silent for minutes;
@@ -282,7 +284,7 @@ async function runSingleToolAndStream({
         db,
         visitorId,
         onStep: async (payload) => {
-          sse(res, { tool: { name, status: 'progress', run_id: run.publicId, step: payload } });
+          sse(res, { tool: { name, mode, status: 'progress', run_id: run.publicId, step: payload } });
           const s = payload || {};
           const message = s.message ?? s.stdout ?? null;
           await persistEvent({
@@ -303,7 +305,7 @@ async function runSingleToolAndStream({
     const errorMessage = String(error?.message || error).slice(0, 65535);
     await persistEvent({ eventKind: 'failed', stage: 'error', label: 'Error', message: errorMessage });
     await runs.complete(run.id, { status: 'failed', stepCount: Math.max(sequence - 2, 0), errorMessage });
-    sse(res, { tool: { name, status: 'failed', run_id: run.publicId, error: errorMessage } });
+    sse(res, { tool: { name, mode, status: 'failed', run_id: run.publicId, error: errorMessage } });
     throw error;
   }
   clearInterval(keepalive);
@@ -331,7 +333,7 @@ async function runSingleToolAndStream({
     summaryMd: toolResult.summary_md || null,
     errorMessage
   });
-  sse(res, { tool: { name, status: 'completed', run_id: run.publicId, result_meta: resultMeta } });
+  sse(res, { tool: { name, mode, status: 'completed', run_id: run.publicId, result_meta: resultMeta } });
 
   debugLog('[TOOL] completed:', name, 'run:', run.publicId);
   // CRITICAL: Return orchestration result so we can synthesize from actual tool output.
@@ -447,7 +449,8 @@ CRITICAL RULES:
         const toolName = toolCall.function.name;
 
         // Pre-message (single sentence); a clarification takes seconds and speaks for itself.
-        const preambleText = toolName === 'clarify_hpa' ? '' : await inference.withContext(
+        const readerRun = toolName === 'dictionary_expert_hpa' && Boolean((() => { try { return JSON.parse(toolCall.function.arguments || '{}').question; } catch { return false; } })());
+        const preambleText = (toolName === 'clarify_hpa' || readerRun) ? '' : await inference.withContext(
           { ...callContext, purpose: 'preface' },
           () => streamPrefaceStrict({ baseMessages: base, res, toolName })
         );
@@ -470,7 +473,7 @@ CRITICAL RULES:
         const toolResult = toolRun.execRes;
 
         // Send investigator resources BEFORE synthesis (so they appear above)
-        const resources = toolResult?.result?.resources || [];
+        const resources = toolResult?.result?.mode === 'reader' ? [] : (toolResult?.result?.resources || []);   // the reader panel shows its own pages
         if (resources.length > 0) {
           debugLog('[RESOURCES] sending before synthesis:', resources.length, 'resources');
           sse(res, { resources });
@@ -597,9 +600,11 @@ if (toolName === 'clarify_hpa') {
 
         let text;
         if (toolName === 'dictionary_expert_hpa' && toolResult?.result?.mode === 'reader') {
-          // The reader's answer is verified quotes from the atlas's pages; it reaches the user as it is, no model rewrite.
-          text = toolResult.result.summary_md || 'The atlas pages read did not answer this question.';
-          sse(res, { token: text });
+          // The reader's answer is verified quotes from the atlas's pages: the chat renders the structured
+          // result as quote cards, the text form is what the conversation stores. No model rewrite.
+          const r = toolResult.result;
+          sse(res, { reader: { question: r.question, quotes: r.quotes || [], pages: r.pages || [], dropped: r.dropped || [], not_found: r.not_found || '' } });
+          text = r.summary_md || 'The atlas pages read did not answer this question.';
         } else {
           ({ text } = await inference.withContext(
             { ...callContext, purpose: 'synthesis', runId: run.id },

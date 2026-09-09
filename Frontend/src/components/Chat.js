@@ -40,6 +40,7 @@ import StudyRun, { studyStatusLine } from './StudyRun';
 import { liveToolEventFromSse, timelineToUiMessages } from '../api/timeline';
 import DictionaryCarousel from './DictionaryCarousel';
 import Questionnaire from './Questionnaire';
+import ReaderPanel, { readerLiveNext } from './ReaderPanel';
 
 const RUNTIME_CONFIG = getRuntimeConfig();
 const UI_CONFIG = getUiConfig();
@@ -966,8 +967,26 @@ function HPA() {
           if (payload.tool) {
             toolHasRun = true;
             // The backend names the run; live lines and reloaded lines share that id.
-            // A clarification shows as its card under the answer, not as tool lines.
+            // A clarification shows as its card, a reader run as its own panel, not as tool lines.
+            if (payload.tool.mode === 'reader') {
+              const targetAiMessageId = currentAiMessageId; const t = payload.tool;
+              setConversations(convs => convs.map(conv => {
+                if (conv.id !== conversationId) return conv;
+                return { ...conv, messages: conv.messages.map(m => m.id === targetAiMessageId ? { ...m, readerLive: readerLiveNext(m.readerLive, t) } : m) };
+              }));
+              continue;
+            }
             if (payload.tool.name !== 'clarify_hpa') pushToolLine(liveToolEventFromSse(payload.tool), conversationId);
+            continue;
+          }
+
+          // The reader's verified quotes, rendered as cards on the bubble that showed the reading.
+          if (payload.reader) {
+            const targetAiMessageId = currentAiMessageId; const reader = payload.reader;
+            setConversations(convs => convs.map(conv => {
+              if (conv.id !== conversationId) return conv;
+              return { ...conv, messages: conv.messages.map(m => m.id === targetAiMessageId ? { ...m, reader } : m) };
+            }));
             continue;
           }
 
@@ -1357,7 +1376,7 @@ function HPA() {
                   const showLoadingDot = isLoading && isLastMessage && message.type === 'ai' && message.text === '';
                   // An assistant bubble with nothing in it (no text, no attachment) is not rendered at all,
                   // unless it is the placeholder that shows the loading dot while the answer streams.
-                  const hasAttachment = Boolean(message.questionnaire || message.searchUrl || message.resources?.length || message.dictionaryImages?.images?.length || message.asoCharts?.length);
+                  const hasAttachment = Boolean(message.questionnaire || message.reader || message.readerLive || message.searchUrl || message.resources?.length || message.dictionaryImages?.images?.length || message.asoCharts?.length);
                   if (message.type === 'ai' && message.text === '' && !hasAttachment && !showLoadingDot) return null;
                   const hpaUrls = message.type === 'ai' ? extractHPAUrls(message.text) : [];
 
@@ -1408,6 +1427,11 @@ function HPA() {
                               </div>
                             </div>
                           )}
+                          {/* A reader answer is its quote cards; the stored text is the same content for copying and reloads */}
+                          {(message.readerLive || message.reader) && (
+                            <ReaderPanel live={message.readerLive || null} result={message.reader || null} />
+                          )}
+                          {!(message.reader || message.readerLive) && (
                           <div className="HPAG-message-text">
                             {message.type === 'ai' ? (
                               <ReactMarkdown>{message.text}</ReactMarkdown>
@@ -1415,6 +1439,7 @@ function HPA() {
                               displayText
                             )}
                           </div>
+                          )}
                             {hpaUrls.length > 0 && (
                             <div className="HPAG-url-references">
                               {hpaUrls.map((urlData, idx) => (

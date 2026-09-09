@@ -87,11 +87,13 @@ function messageFromItem(item) {
   if (item.dictionary_images?.images?.length > 0) message.dictionaryImages = item.dictionary_images;
   if (Array.isArray(item.aso_charts) && item.aso_charts.length > 0) message.asoCharts = item.aso_charts;
   if (item.questionnaire?.questions?.length > 0) message.questionnaire = item.questionnaire;
+  if (item.reader && Array.isArray(item.reader.quotes)) message.reader = item.reader;
   return message;
 }
 
 function toolLinesFromRun(run) {
   if (run.tool === 'clarify_hpa') return [];   // a clarification shows as its card, not as tool lines
+  if (run.tool === 'dictionary_expert_hpa' && run.arguments?.question) return [];   // a reader run shows as its panel
   const events = Array.isArray(run.events) ? run.events : [];
   return events.map(event => ({
     id: `${run.id}:${event.seq}`,

@@ -597,7 +597,7 @@ if (toolName === 'clarify_hpa') {
 
         let text;
         if (toolName === 'dictionary_expert_hpa' && toolResult?.result?.mode === 'reader') {
-          // The reader's answer is claims with verified quotes; it reaches the user as it is, no model rewrite.
+          // The reader's answer is verified quotes from the atlas's pages; it reaches the user as it is, no model rewrite.
           text = toolResult.result.summary_md || 'The atlas pages read did not answer this question.';
           sse(res, { token: text });
         } else {

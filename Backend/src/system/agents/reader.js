@@ -1,13 +1,14 @@
 'use strict';
 
 // The reader answers a question about the Human Protein Atlas from the atlas's own information
-// pages (about, learn, help, releases, download, the atlas overviews, anything on the site that
-// is prose rather than data). It browses: a page is read as its sections and its links, the model
+// pages (about, learn, help, releases, download, the atlas overviews: anything on the site that is
+// prose rather than data). It browses: a page is read as its sections and its links, the model
 // opens sections and follows links by index, never by a URL it typed itself, within a fixed
-// budget. It answers as claims, and every claim points at exactly one quote: a verbatim span of
-// one page it read. The quote is checked by code against the stored page text; a claim whose
-// quote is not on the page is dropped. Every page read is kept with its URL, fetch time and the
-// SHA-256 of the raw HTML, so the answer carries its evidence and nothing the pages do not say.
+// budget. Its answer is quotes: verbatim spans of the pages it read, each with its page. Every
+// span is checked by code against the stored page text; a span that is not on the page is sent
+// back, and the model tries again until every span checks out or its retries are spent, in which
+// case the failing spans are dropped and named. Every page read is kept with URL, fetch time and
+// the SHA-256 of the raw HTML. Nothing the pages do not say reaches the user.
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -16,7 +17,8 @@ const { jsonCall } = require('../../inference/jsonCall');
 
 const SITE = 'https://www.proteinatlas.org';
 const MAX_PAGES = 6;          // fetches per question
-const MAX_TURNS = 8;          // model turns per question
+const MAX_TURNS = 8;          // browsing turns per question
+const MAX_RETRIES = 3;        // answers sent back for quotes that are not on the page
 const MAX_FOLLOW = 3;         // pages fetched from one turn
 const MAX_OPEN_CHARS = 6000;  // one opened section
 const MAX_LINKS = 60;         // links shown per page
@@ -40,7 +42,7 @@ function allowedUrl(href, base = SITE) {
 function normalize(text) {
   return String(text || '')
     .replace(/[‘’‚′]/g, "'").replace(/[“”„″]/g, '"')
-    .replace(/[‐-―−]/g, '-').replace(/ /g, ' ')
+    .replace(/[‐-―−]/g, '-').replace(/ /g, ' ')
     .replace(/\s+/g, ' ').trim();
 }
 
@@ -103,12 +105,12 @@ async function readPage(url, fetchPage, cache) {
   return page;
 }
 
-const SYSTEM = `You answer a question about the Human Protein Atlas by reading the atlas's own web pages, as a careful librarian would. You see each page you have opened as its sections (heading, size) and its links; you open sections to read them and follow links by their number to reach other pages. Answer only from what you have read.
+const SYSTEM = `You answer a question about the Human Protein Atlas by reading the atlas's own web pages, as a careful librarian would. You see each page you have opened as its sections (heading, size) and its links; you open sections to read them and follow links by their number to reach other pages.
 Reply with JSON, one of:
 {"open": [{"page": <page number>, "sections": [<section numbers>]}]} to read sections you have not read;
 {"follow": [{"page": <page number>, "link": <link number>}]} to fetch pages (at most ${MAX_FOLLOW});
-{"answer": {"claims": [{"claim": "<one statement that answers part of the question>", "page": <page number>, "quote": "<a verbatim span of that page, ${QUOTE_MIN}-${QUOTE_MAX} characters, copied exactly>"}], "not_found": "<what the pages did not say, or empty>"}}.
-Every claim rests on exactly one quote from one page you opened; a quote is copied character for character from a section you read, it is never paraphrased or assembled. A claim says no more than its quote says: what needs a second quote is a second claim. State numbers, names, dates and thresholds as the page gives them. If the pages you can reach do not answer the question, say so in not_found rather than guessing.`;
+{"answer": {"quotes": [{"page": <page number>, "quote": "<exact text>"}], "not_found": "<what the pages did not say, or empty>"}}.
+Your answer is made only of quotes. A quote is an exact span of a section you have read, copied character for character, ${QUOTE_MIN} to ${QUOTE_MAX} characters, one continuous passage: nothing paraphrased, shortened, joined from two places, or written by you. Choose the spans that answer the question, in the order that reads best. Every quote is checked against the page; a quote that is not on the page exactly as you wrote it is sent back to you. If the pages you can reach do not answer the question, say so in not_found rather than writing anything of your own.`;
 
 function describe(state, opened) {
   const lines = [];
@@ -130,6 +132,18 @@ function openedText(state, opened) {
   return parts.join('\n\n');
 }
 
+// The quotes of an answer, checked against the pages: what holds, and what was not on the page.
+function check(reply, state) {
+  const quotes = []; const rejected = [];
+  for (const item of Array.isArray(reply?.answer?.quotes) ? reply.answer.quotes : []) {
+    const page = state.pages[Number(item?.page)];
+    const quote = String(item?.quote ?? '');
+    if (page && quoteOnPage(quote, page.text)) quotes.push({ quote: normalize(quote), url: page.url, title: page.title, sha256: page.sha256 });
+    else rejected.push({ page: Number.isInteger(Number(item?.page)) ? Number(item.page) : null, quote: normalize(quote) });
+  }
+  return { quotes, rejected, not_found: normalize(reply?.answer?.not_found) };
+}
+
 // One question through the reader. `fetchPage` and `ask` are injectable for tests; a test's
 // fake pages are never written to the on-disk cache (cache is on only with the real fetch).
 async function readerAnswer(question, { onStep, fetchPage = fetchHtml, ask = jsonCall, entry = SITE, cache = fetchPage === fetchHtml } = {}) {
@@ -147,68 +161,54 @@ async function readerAnswer(question, { onStep, fetchPage = fetchHtml, ask = jso
   };
   await onStep?.({ stage: 'start', message: `Reading the atlas for: "${q.slice(0, 120)}"` });
   await visit(allowedUrl(entry) || entry);
-  let answer = null; let repaired = false;
-  for (let turn = 0; turn < MAX_TURNS; turn += 1) {
+  let answer = null;
+  let idle = 0;
+  for (let turn = 0; turn < MAX_TURNS && !answer; turn += 1) {
     const budget = `Pages fetched ${state.fetches} of ${MAX_PAGES}; turns left ${MAX_TURNS - turn}.`;
     const user = [`Question: ${q}`, budget, 'What you have:', describe(state, opened), openedText(state, opened) ? `What you have read:\n${openedText(state, opened)}` : ''].filter(Boolean).join('\n\n');
-    const reply = await ask(SYSTEM, user, onStep, `reader turn ${turn + 1}`, stats);
-    if (reply.answer && Array.isArray(reply.answer.claims)) {
-      const claims = []; const failed = [];
-      for (const c of reply.answer.claims) {
-        const page = state.pages[Number(c?.page)];
-        const claim = normalize(c?.claim); const quote = String(c?.quote ?? '');
-        if (page && claim && quoteOnPage(quote, page.text)) claims.push({ claim, quote: normalize(quote), url: page.url, title: page.title, sha256: page.sha256 });
-        else failed.push({ claim: claim || '(empty)', page: Number.isInteger(Number(c?.page)) ? Number(c.page) : null, quote });
+    let reply = await ask(SYSTEM, user, onStep, `reader turn ${turn + 1}`, stats);
+    if (reply?.answer) {
+      // An answer: every quote must be on its page; what is not goes back, up to MAX_RETRIES times.
+      let checked = check(reply, state);
+      for (let retry = 0; checked.rejected.length && retry < MAX_RETRIES; retry += 1) {
+        await onStep?.({ stage: 'planning_step', label: 'Sent back', message: `${checked.rejected.length} quote${checked.rejected.length === 1 ? '' : 's'} not found on the page as written` });
+        const complaint = checked.rejected.map(r => `- page ${r.page}: "${r.quote.slice(0, 200)}" is not on that page exactly as written`).join('\n');
+        reply = await ask(SYSTEM, `${user}\n\nThese quotes in your answer are not on the page exactly as written:\n${complaint}\nCopy each again character for character from a section you have read, one continuous passage, or leave it out. Answer again with the complete answer.`, onStep, `reader retry ${retry + 1}`, stats);
+        if (!reply?.answer) break;
+        checked = check(reply, state);
       }
-      answer = { claims, failed, not_found: normalize(reply.answer.not_found) };
-      if (!failed.length || repaired) break;
-      repaired = true;
-      // One repair: the failed quotes are named; a claim that still has no quote on its page is dropped.
-      const complaint = failed.map(f => `- "${f.claim}": the quote is not on page ${f.page} as written; copy an exact span from a section you read, or drop the claim`).join('\n');
-      const reply2 = await ask(SYSTEM, `${user}\n\nYour previous answer had claims whose quotes are not on the page:\n${complaint}\nAnswer again with only verifiable quotes.`, onStep, 'reader repair', stats);
-      if (reply2.answer && Array.isArray(reply2.answer.claims)) {
-        const again = []; const stillFailed = [];
-        for (const c of reply2.answer.claims) {
-          const page = state.pages[Number(c?.page)];
-          const claim = normalize(c?.claim); const quote = String(c?.quote ?? '');
-          if (page && claim && quoteOnPage(quote, page.text)) again.push({ claim, quote: normalize(quote), url: page.url, title: page.title, sha256: page.sha256 });
-          else stillFailed.push({ claim: claim || '(empty)', page: Number.isInteger(Number(c?.page)) ? Number(c.page) : null, quote });
-        }
-        answer = { claims: again, failed: stillFailed, not_found: normalize(reply2.answer.not_found) };
-      }
+      answer = checked;
       break;
     }
     let acted = false;
-    for (const o of Array.isArray(reply.open) ? reply.open : []) {
+    for (const o of Array.isArray(reply?.open) ? reply.open : []) {
       const page = state.pages[Number(o?.page)];
       for (const i of Array.isArray(o?.sections) ? o.sections : []) if (page?.sections[Number(i)]) { opened.add(`${Number(o.page)}:${Number(i)}`); acted = true; }
     }
-    for (const f of (Array.isArray(reply.follow) ? reply.follow : []).slice(0, MAX_FOLLOW)) {
+    for (const f of (Array.isArray(reply?.follow) ? reply.follow : []).slice(0, MAX_FOLLOW)) {
       const link = state.pages[Number(f?.page)]?.links[Number(f?.link)];
       if (link) { await visit(link.url); acted = true; }
     }
-    if (!acted) {
-      // Nothing usable came back; a second silent turn ends the reading with no answer.
-      if (turn > 0 && !reply.open && !reply.follow) break;
-    }
+    idle = acted ? 0 : idle + 1;
+    if (idle >= 2) break;   // two turns without a usable move end the reading
   }
-  const claims = answer?.claims || [];
-  const dropped = (answer?.failed || []).map(f => f.claim);
+  const quotes = answer?.quotes || [];
+  const dropped = (answer?.rejected || []).map(r => r.quote);
   const pages = state.pages.map(p => ({ url: p.url, title: p.title, sha256: p.sha256, fetched_unix_ms: p.fetched_unix_ms }));
   const summary = [
-    ...claims.map(c => `- ${c.claim}\n  > "${c.quote}" — ${c.title} (${c.url})`),
+    ...quotes.map(c => `> "${c.quote}"\n> — ${c.title} (${c.url})`),
     answer?.not_found ? `\nNot found on the pages read: ${answer.not_found}` : '',
-    dropped.length ? `\nDropped, no verbatim support on the page: ${dropped.join('; ')}` : '',
-    claims.length === 0 && !answer ? 'The reader could not reach an answer within its budget.' : '',
+    dropped.length ? `\nLeft out, not on the page as written: ${dropped.map(d => `"${d.slice(0, 120)}"`).join('; ')}` : '',
+    !answer ? 'The reader could not reach an answer within its budget.' : '',
     `\nPages read: ${pages.map(p => `${p.title} (${p.url}, sha256 ${p.sha256.slice(0, 12)})`).join('; ')}`
   ].filter(Boolean).join('\n');
-  await onStep?.({ stage: 'complete', label: 'Done', message: `${claims.length} claim${claims.length === 1 ? '' : 's'} with quotes from ${pages.length} page${pages.length === 1 ? '' : 's'}${dropped.length ? `, ${dropped.length} dropped` : ''}` });
+  await onStep?.({ stage: 'complete', label: 'Done', message: `${quotes.length} quote${quotes.length === 1 ? '' : 's'} from ${pages.length} page${pages.length === 1 ? '' : 's'}${dropped.length ? `, ${dropped.length} left out` : ''}` });
   return {
-    status: 'ok', mode: 'reader', question: q, claims, dropped, not_found: answer?.not_found || '', pages,
+    status: 'ok', mode: 'reader', question: q, quotes, dropped, not_found: answer?.not_found || '', pages,
     resources: pages.map(p => ({ label: p.title, url: p.url })),
     summary_md: summary,
     tokens: { prompt_tokens: stats.promptTokens, completion_tokens: stats.completionTokens, total_tokens: stats.totalTokens }
   };
 }
 
-module.exports = { readerAnswer, quoteOnPage, allowedUrl, parsePage, normalize, SITE, MAX_PAGES, MAX_TURNS };
+module.exports = { readerAnswer, quoteOnPage, allowedUrl, parsePage, normalize, SITE, MAX_PAGES, MAX_TURNS, MAX_RETRIES };

@@ -25,13 +25,16 @@ test('only information pages of the atlas are reading material', () => {
 
 test('a page is read as sections and same-site links', () => {
   const html = `<html><head><title>About - The Human Protein Atlas</title></head><body><nav><a href="/search/x">search</a></nav>
+    <div id="sidemenu" class="menu"><a href="/about/history">History</a><p>Menu text is not page text.</p></div>
     <h1>The Human Protein Atlas</h1><p>The project started in 2003.</p><h2>Releases</h2><p>Version 24.0 was released on 2024-10-22.</p>
     <a href="/about/releases">Release history</a><a href="/ENSG00000163631-ALB">ALB</a><a href="/about/download">Downloadable data</a></body></html>`;
   const page = parsePage(html, 'https://www.proteinatlas.org/about');
   assert.equal(page.title, 'About - The Human Protein Atlas');
   assert.deepEqual(page.sections.map(s => s.heading), ['The Human Protein Atlas', 'Releases']);
   assert.equal(page.sections[1].text, 'Version 24.0 was released on 2024-10-22.');
-  assert.deepEqual(page.links.map(l => l.url), ['https://www.proteinatlas.org/about/releases', 'https://www.proteinatlas.org/about/download']);
+  assert.doesNotMatch(page.text, /Menu text/);
+  // the section menu's links are kept (they are how the about pages reach each other), its text is not
+  assert.deepEqual(page.links.map(l => l.url), ['https://www.proteinatlas.org/about/history', 'https://www.proteinatlas.org/about/releases', 'https://www.proteinatlas.org/about/download']);
 });
 
 const site = {

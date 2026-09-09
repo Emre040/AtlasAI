@@ -21,7 +21,7 @@ const MAX_TURNS = 8;          // browsing turns per question
 const MAX_RETRIES = 3;        // answers sent back for quotes that are not on the page
 const MAX_FOLLOW = 3;         // pages fetched from one turn
 const MAX_OPEN_CHARS = 6000;  // one opened section
-const MAX_LINKS = 60;         // links shown per page
+const MAX_LINKS = 120;        // links shown per page (the section menus alone are a few dozen)
 const QUOTE_MIN = 15;
 const QUOTE_MAX = 600;
 const CACHE_TTL_MS = 7 * 24 * 3600 * 1000;
@@ -56,6 +56,16 @@ function quoteOnPage(quote, pageText) {
 // A page as the reader sees it: its sections (heading and text) and its same-site links.
 function parsePage(html, url) {
   const $ = cheerio.load(html);
+  // Links come from the whole document, menus included: the section menus are how the about,
+  // learn and help pages reach each other. The text sections come from the page body proper.
+  const seen = new Set(); const links = [];
+  $('a[href]').each((_, el) => {
+    const target = allowedUrl($(el).attr('href'), url);
+    const label = normalize($(el).text()).slice(0, 80);
+    if (!target || !label || target === url || seen.has(target)) return;
+    seen.add(target);
+    links.push({ label, url: target });
+  });
   $('script, style, noscript, nav, footer, header, .search-container, #search, .cookie-bar, .cookie_statement, .menu, .menufix, #sidemenu, .menu_dropdown, iframe').remove();
   const title = normalize($('title').first().text()) || url;
   const sections = [];
@@ -69,14 +79,6 @@ function parsePage(html, url) {
     else if ($(el).find('p, li, h1, h2, h3, h4').length === 0) current.text.push(text);
   });
   flush();
-  const seen = new Set(); const links = [];
-  $('a[href]').each((_, el) => {
-    const target = allowedUrl($(el).attr('href'), url);
-    const label = normalize($(el).text()).slice(0, 80);
-    if (!target || !label || target === url || seen.has(target)) return;
-    seen.add(target);
-    links.push({ label, url: target });
-  });
   return { url, title, sections, links: links.slice(0, MAX_LINKS), text: sections.map(s => `${s.heading} ${s.text}`).join(' ') };
 }
 
@@ -110,7 +112,7 @@ Reply with JSON, one of:
 {"open": [{"page": <page number>, "sections": [<section numbers>]}]} to read sections you have not read;
 {"follow": [{"page": <page number>, "link": <link number>}]} to fetch pages (at most ${MAX_FOLLOW});
 {"answer": {"quotes": [{"page": <page number>, "quote": "<exact text>"}], "not_found": "<what the pages did not say, or empty>"}}.
-Your answer is made only of quotes. A quote is an exact span of a section you have read, copied character for character, ${QUOTE_MIN} to ${QUOTE_MAX} characters, one continuous passage: nothing paraphrased, shortened, joined from two places, or written by you. Choose the spans that answer the question, in the order that reads best. Every quote is checked against the page; a quote that is not on the page exactly as you wrote it is sent back to you. If the pages you can reach do not answer the question, say so in not_found rather than writing anything of your own.`;
+Your answer is made only of quotes. A quote is an exact span of a section you have read, copied character for character, ${QUOTE_MIN} to ${QUOTE_MAX} characters, one continuous passage: nothing paraphrased, shortened, joined from two places, or written by you. Choose the spans that answer the question, in the order that reads best. Every quote is checked against the page; a quote that is not on the page exactly as you wrote it is sent back to you. not_found names, in a few words, the part of the question the pages did not answer (for example "the founders' names"); it states no facts, because nothing outside a quote is shown as fact.`;
 
 function describe(state, opened) {
   const lines = [];
@@ -141,7 +143,8 @@ function check(reply, state) {
     if (page && quoteOnPage(quote, page.text)) quotes.push({ quote: normalize(quote), url: page.url, title: page.title, sha256: page.sha256 });
     else rejected.push({ page: Number.isInteger(Number(item?.page)) ? Number(item.page) : null, quote: normalize(quote) });
   }
-  return { quotes, rejected, not_found: normalize(reply?.answer?.not_found) };
+  // not_found is the one field the model writes freely, so it is short and shown as what was not found, never as fact.
+  return { quotes, rejected, not_found: normalize(reply?.answer?.not_found).slice(0, 160) };
 }
 
 // One question through the reader. `fetchPage` and `ask` are injectable for tests; a test's
@@ -191,6 +194,12 @@ async function readerAnswer(question, { onStep, fetchPage = fetchHtml, ask = jso
     }
     idle = acted ? 0 : idle + 1;
     if (idle >= 2) break;   // two turns without a usable move end the reading
+  }
+  if (!answer) {
+    // The budget is spent without an answer: one last call must answer from what was read, or say not found.
+    const user = [`Question: ${q}`, 'The reading budget is spent. Answer now from what you have read, with quotes, or say in not_found what the pages did not say.', 'What you have:', describe(state, opened), openedText(state, opened) ? `What you have read:\n${openedText(state, opened)}` : ''].filter(Boolean).join('\n\n');
+    const reply = await ask(SYSTEM, user, onStep, 'reader final', stats);
+    if (reply?.answer) answer = check(reply, state);
   }
   const quotes = answer?.quotes || [];
   const dropped = (answer?.rejected || []).map(r => r.quote);

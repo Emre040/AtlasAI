@@ -28,7 +28,7 @@ export function readerLiveNext(prev, tool) {
   if (tool.status === 'completed') return { ...live, done: true, current: null };
   const step = tool.step || {};
   if (step.label === 'Reading' && step.message) { if (!live.pages.includes(step.message)) live.pages.push(step.message); live.current = step.message; }
-  else if (step.label === 'Sent back') live.sentBack += 1;
+  else if (step.label === 'Sent back') { live.sentBack += 1; live.sentBackLast = step.message || ''; }
   else if (step.label === 'Done') { live.done = true; live.current = null; }
   return live;
 }
@@ -56,7 +56,12 @@ function Scene({ live }) {
           ))}
           {!live?.done && !pages.length && <span className="HPAG-reader-chip HPAG-reader-chip-now"><span className="HPAG-reader-chip-dot" /><span className="HPAG-reader-chip-text">opening the atlas</span></span>}
         </div>
-        {live?.sentBack > 0 && <div className="HPAG-reader-sentback">{live.sentBack} citation{live.sentBack === 1 ? '' : 's'} sent back for an exact copy</div>}
+        {live?.sentBack > 0 && (
+          <div className="HPAG-reader-sentback" title={live.sentBackLast || ''}>
+            {live.sentBack} round{live.sentBack === 1 ? '' : 's'} of citations sent back for an exact copy
+            {live.sentBackLast && <div className="HPAG-reader-sentback-why">{live.sentBackLast}</div>}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -90,13 +95,18 @@ function Prose({ text, active, onCite, onHover }) {
 
 function QuoteCard({ citation, index, active, cardRef }) {
   const [copied, setCopied] = useState(false);
+  // one exact span, or several short ones when the sentence sums up a list or a table
+  const spans = Array.isArray(citation.quotes) && citation.quotes.length > 1 ? citation.quotes : [citation.quote];
   const copy = async () => {
-    try { await navigator.clipboard.writeText(`"${citation.quote}" — ${citation.title} (${citation.url})`); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {}
+    try { await navigator.clipboard.writeText(`${spans.map(s => `"${s}"`).join(' ')} — ${citation.title} (${citation.url})`); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {}
   };
   const when = citation.fetched_unix_ms ? new Date(citation.fetched_unix_ms).toLocaleString() : null;
   return (
     <div ref={cardRef} className={`HPAG-reader-quote${active ? ' HPAG-reader-quote-active' : ''}`} style={{ animationDelay: `${Math.min(index, 6) * 90}ms` }}>
-      <div className="HPAG-reader-quote-text"><span className="HPAG-reader-quote-n">{citation.n}</span>“{citation.quote}”</div>
+      <div className="HPAG-reader-quote-text">
+        <span className="HPAG-reader-quote-n">{citation.n}</span>
+        <span className="HPAG-reader-quote-spans">{spans.map((s, i) => <span key={i} className="HPAG-reader-quote-span">“{s}”</span>)}</span>
+      </div>
       <div className="HPAG-reader-quote-foot">
         <a href={citation.url} target="_blank" rel="noopener noreferrer" className="HPAG-reader-quote-source">
           {citation.title || pagePath(citation.url)} <FontAwesomeIcon icon={faExternalLinkAlt} className="HPAG-reader-quote-ext" />

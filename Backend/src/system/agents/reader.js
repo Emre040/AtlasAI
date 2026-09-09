@@ -5,11 +5,12 @@
 // prose rather than data). It browses: a page is read as its sections and its links, the model
 // opens sections and follows links by index, never by a URL it typed itself, within a fixed
 // budget. It answers in prose where every sentence cites an exact quote: a verbatim span of one
-// page it read. Every quote is checked by code against the stored page text; a quote that is not
-// on the page is sent back, and the model tries again until every quote checks out or its retries
-// are spent. A sentence whose citations do not check out is dropped. Every page read is kept with
-// URL, fetch time and the SHA-256 of the raw HTML. No sentence reaches the user without a quote
-// behind it.
+// page it read. Every quote is checked by code against the stored page text. A quote that is not
+// on the page goes back on its own, with the page's actual text around the spot it most likely
+// came from, and the model copies it again; the answer text and the citations that passed stay
+// as they are. A sentence whose citations never check out is dropped. Every page read is kept
+// with URL, fetch time and the SHA-256 of the raw HTML. No sentence reaches the user without a
+// quote behind it.
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -19,12 +20,13 @@ const { jsonCall } = require('../../inference/jsonCall');
 const SITE = 'https://www.proteinatlas.org';
 const MAX_PAGES = 6;          // fetches per question
 const MAX_TURNS = 8;          // browsing turns per question
-const MAX_RETRIES = 3;        // answers sent back for quotes that are not on the page
+const MAX_RETRIES = 3;        // rounds of citations sent back for an exact copy
 const MAX_FOLLOW = 3;         // pages fetched from one turn
 const MAX_OPEN_CHARS = 6000;  // one opened section
 const MAX_LINKS = 120;        // links shown per page (the section menus alone are a few dozen)
 const QUOTE_MIN = 15;
 const QUOTE_MAX = 600;
+const PASSAGE_RADIUS = 350;   // page text shown around the spot a failed quote came from
 const CACHE_TTL_MS = 7 * 24 * 3600 * 1000;
 const CACHE_DIR = path.join(__dirname, '../../../data_local/reader-cache');
 
@@ -47,11 +49,34 @@ function normalize(text) {
     .replace(/\s+/g, ' ').trim();
 }
 
+// Why a quote is not a verbatim span of the page: null when it is.
+function quoteProblem(quote, pageText) {
+  const q = normalize(quote);
+  if (q.length < QUOTE_MIN) return `too short (${q.length} characters, at least ${QUOTE_MIN})`;
+  if (q.length > QUOTE_MAX) return `too long (${q.length} characters, the limit is ${QUOTE_MAX})`;
+  return normalize(pageText).includes(q) ? null : 'not on the page as written';
+}
+
 // Whether the quote is a verbatim span of the page text, modulo whitespace and quote marks.
 function quoteOnPage(quote, pageText) {
-  const q = normalize(quote);
-  if (q.length < QUOTE_MIN || q.length > QUOTE_MAX) return false;
-  return normalize(pageText).includes(q);
+  return quoteProblem(quote, pageText) === null;
+}
+
+// Where on the page a failed quote most likely came from: the longest run of its words that
+// occurs on the page (its start, else its end, else any four words in a row), with the page's
+// own text around that spot. Plain text matching, nothing else.
+function nearestPassage(quote, pageText, radius = PASSAGE_RADIUS) {
+  const page = normalize(pageText);
+  const words = normalize(quote).split(' ').filter(Boolean);
+  const find = run => { const at = page.indexOf(run); return at < 0 ? null : { at, run }; };
+  let hit = null;
+  for (let n = words.length; n >= 3 && !hit; n -= 1) hit = find(words.slice(0, n).join(' '));
+  for (let n = words.length; n >= 3 && !hit; n -= 1) hit = find(words.slice(words.length - n).join(' '));
+  for (let i = 0; i + 4 <= words.length && !hit; i += 1) hit = find(words.slice(i, i + 4).join(' '));
+  if (!hit) return null;
+  const start = Math.max(0, hit.at - radius);
+  const end = Math.min(page.length, hit.at + hit.run.length + radius);
+  return `${start > 0 ? '… ' : ''}${page.slice(start, end)}${end < page.length ? ' …' : ''}`;
 }
 
 // A page as the reader sees it: its sections (heading and text) and its same-site links.
@@ -108,12 +133,19 @@ async function readPage(url, fetchPage, cache) {
   return page;
 }
 
+const COPY_RULE = `A citation is an exact span of page text: pick a start word and an end word on the page and copy everything between them character for character, the page's own spelling, capitalization, punctuation and mistakes included. Do not fix, shorten, join, reorder or translate anything; no ellipsis; one continuous passage of ${QUOTE_MIN} to ${QUOTE_MAX} characters. Shorter is safer: the one sentence or clause that carries the fact. A sentence that sums up a list or a table cites several short spans, given as a list: "quote": ["<span>", "<span>"], each one exact.`;
+
 const SYSTEM = `You answer a question about the Human Protein Atlas by reading the atlas's own web pages, as a careful librarian would. You see each page you have opened as its sections (heading, size) and its links; you open sections to read them and follow links by their number to reach other pages.
 Reply with JSON, one of:
 {"open": [{"page": <page number>, "sections": [<section numbers>]}]} to read sections you have not read;
 {"follow": [{"page": <page number>, "link": <link number>}]} to fetch pages (at most ${MAX_FOLLOW});
 {"answer": {"text": "<your answer in plain prose>", "citations": [{"n": 1, "page": <page number>, "quote": "<exact text>"}], "not_found": "<the part of the question the pages did not answer, in a few words, or empty>"}}.
-Write the answer as you would to a colleague: direct, in full sentences, the numbers, names, dates and thresholds as the pages give them. Every sentence ends with the citation it rests on, written as [n]; a sentence may cite several, [1][2]. Each citation is an exact span of a section you have read, copied character for character, ${QUOTE_MIN} to ${QUOTE_MAX} characters, one continuous passage: nothing paraphrased, shortened, joined from two places, or written by you. A sentence says no more than its citations say. Every citation is checked against the page; one that is not on the page exactly as you wrote it is sent back to you, and a sentence without a verified citation is not shown. not_found names only what the pages did not answer; it states no facts.`;
+Answer only when every part of the question is covered by sections you have read. If a link plainly leads to a part you still lack (a milestone page, a release note, a news post, a methods page), follow it first, within the budget; a page's own subpages usually hold the detail its overview only names.
+Write the answer as you would to a colleague: direct, in full sentences, with the numbers, names, dates and thresholds as the pages give them. Every sentence ends with the citation it rests on, written as [n]; a sentence may cite several, [1][2]. A sentence says no more than its citations say.
+${COPY_RULE} Quote from section text you opened, never from link labels or from memory. Every citation is checked against the page; one that is not on the page exactly as written, or longer than ${QUOTE_MAX} characters, is sent back to you with the page's text around it, and a sentence without a verified citation is not shown. not_found names only what the pages did not answer; it states no facts.`;
+
+const RETRY = `You are fixing citations in an answer about the Human Protein Atlas. The answer text stays as it is; only the citations named below change. ${COPY_RULE} Copy from the page text shown to you, not from memory.
+Reply with JSON only: {"citations": [{"n": <number>, "page": <page number>, "quote": "<exact span>" or ["<span>", "<span>"]}], "drop": [<numbers of citations that cannot be copied from the text shown>]}.`;
 
 function describe(state, opened) {
   const lines = [];
@@ -125,39 +157,51 @@ function describe(state, opened) {
   return lines.join('\n');
 }
 
+function sectionText(state, opened, p) {
+  const page = state.pages[p];
+  return page ? page.sections.map((s, i) => opened.has(`${p}:${i}`) ? `--- Page ${p}, section ${i}: ${s.heading}\n${s.text.slice(0, MAX_OPEN_CHARS)}` : null).filter(Boolean).join('\n\n') : '';
+}
+
 function openedText(state, opened) {
-  const parts = [];
-  for (const key of opened) {
-    const [p, i] = key.split(':').map(Number);
-    const s = state.pages[p]?.sections[i];
-    if (s) parts.push(`--- Page ${p}, section ${i}: ${s.heading}\n${s.text.slice(0, MAX_OPEN_CHARS)}`);
-  }
-  return parts.join('\n\n');
+  return state.pages.map((_, p) => sectionText(state, opened, p)).filter(Boolean).join('\n\n');
 }
 
 // The answer text as sentences, each with the citation numbers it carries. A sentence ends at
 // . ! or ? (with any citation markers around it) that is followed by the end of the text or by a
-// space and a capital, a digit or a bracket: "24.0", "2024-10-22" and "e.g. the" do not end one.
+// space and a capital, a digit or a bracket: "24.0", "2024-10-22" and "e.g. the" do not end one,
+// and nothing inside an open quotation does ("What makes a kidney a kidney? And a heart a heart?").
 const SENTENCE_END = /[.!?]+(?:\s*\[\d+\])*(?=\s+[\p{Lu}\p{N}"'(\[]|\s*$)/gu;
 function sentences(text) {
   const s = normalize(text);
   const out = []; let start = 0;
   const push = end => { const t = s.slice(start, end).trim(); if (t) out.push({ text: t, cites: [...t.matchAll(/\[(\d+)\]/g)].map(x => Number(x[1])) }); start = end; };
-  for (const m of s.matchAll(SENTENCE_END)) push(m.index + m[0].length);
+  for (const m of s.matchAll(SENTENCE_END)) {
+    const insideQuotation = (s.slice(start, m.index).match(/"/g) || []).length % 2 === 1;
+    if (!insideQuotation) push(m.index + m[0].length);
+  }
   push(s.length);
   return out;
 }
 
-// An answer checked against the pages: which citations are verbatim, which are not, and the
-// sentences that keep a verified citation. Line and paragraph breaks in the answer are kept, so
-// a list the model wrote stays a list; each line is checked sentence by sentence.
+// An answer checked against the pages: which citations are verbatim, which are not and why, and
+// the sentences that keep a verified citation. Line and paragraph breaks in the answer are kept,
+// so a list the model wrote stays a list; each line is checked sentence by sentence.
 function check(reply, state) {
   const a = reply?.answer || {};
   const verified = new Map(); const rejected = [];
   for (const c of Array.isArray(a.citations) ? a.citations : []) {
-    const n = Number(c?.n); const page = state.pages[Number(c?.page)]; const quote = String(c?.quote ?? '');
-    if (Number.isInteger(n) && page && quoteOnPage(quote, page.text)) verified.set(n, { n, quote: normalize(quote), url: page.url, title: page.title, sha256: page.sha256 });
-    else rejected.push({ n: Number.isInteger(n) ? n : null, page: Number.isInteger(Number(c?.page)) ? Number(c.page) : null, quote: normalize(quote) });
+    const n = Number(c?.n); const p = Number(c?.page); const page = state.pages[p];
+    // a citation is one span, or several short spans for a sentence that sums up a list or a table
+    const spans = (Array.isArray(c?.quote) ? c.quote : [c?.quote]).map(s => normalize(s)).filter(Boolean);
+    let problem = !Number.isInteger(n) ? 'no citation number' : !page ? 'no such page' : !spans.length ? 'empty' : null;
+    let span = spans[0] || '';
+    for (let i = 0; !problem && i < spans.length; i += 1) {
+      const why = quoteProblem(spans[i], page.text);
+      if (why) { problem = spans.length > 1 ? `span ${i + 1} of ${spans.length} ${why}` : why; span = spans[i]; }
+    }
+    const quote = spans.length === 1 ? spans[0] : spans.join(' […] ');
+    if (!problem) verified.set(n, { n, quote, quotes: spans, url: page.url, title: page.title, sha256: page.sha256 });
+    else rejected.push({ n: Number.isInteger(n) ? n : null, page: Number.isInteger(p) ? p : null, quote, span, problem });
   }
   const paragraphs = []; const droppedSentences = [];
   for (const para of String(a.text ?? '').split(/\n\s*\n/)) {
@@ -179,6 +223,32 @@ function check(reply, state) {
   return { text, citations, rejected, droppedSentences, not_found: normalize(a.not_found).slice(0, 160) };
 }
 
+// What goes back to the model for the citations that failed: each one with the page's actual
+// text around the spot it most likely came from, plus the sections it had opened on that page.
+function retryPrompt(question, answer, rejected, state, opened) {
+  const lines = [`Question: ${question}`, `The answer, which stays as it is:\n${normalize(answer.text)}`, '', 'These citations did not check out:'];
+  const show = new Set();
+  for (const r of rejected) {
+    lines.push(`[${r.n}] on page ${r.page}, ${r.problem}: "${r.quote.length > 700 ? `${r.quote.slice(0, 700)}…` : r.quote}"`);
+    if (/too long/.test(r.problem)) { lines.push('Give the shortest span that carries the fact, or several short spans as a list in quote.'); if (state.pages[r.page]) show.add(r.page); continue; }
+    if (/too short|empty/.test(r.problem)) { if (state.pages[r.page]) show.add(r.page); continue; }
+    let where = state.pages[r.page] ? nearestPassage(r.span, state.pages[r.page].text) : null; let onPage = r.page;
+    for (let p = 0; p < state.pages.length && !where; p += 1) { where = nearestPassage(r.span, state.pages[p].text); if (where) onPage = p; }
+    if (where) { lines.push(`${onPage === r.page ? 'The page' : `Nothing like it is on page ${r.page}; page ${onPage} (${state.pages[onPage].title})`} says: "${where}"`); show.add(onPage); }
+    else lines.push('Nothing like it is on any page you read: drop it, or copy a span that is there.');
+    if (state.pages[r.page]) show.add(r.page);
+  }
+  const shown = [...show].sort((a, b) => a - b).map(p => sectionText(state, opened, p) || `--- Page ${p}: ${state.pages[p].title} <${state.pages[p].url}> (no sections opened)`);
+  lines.push('', `The text you may copy from:\n${shown.join('\n\n')}`);
+  lines.push('', `Reply with a corrected exact span for each of ${rejected.map(r => `[${r.n}]`).join(', ')}, or its number in drop.`);
+  return lines.join('\n');
+}
+
+function sentBackMessage(rejected) {
+  const text = rejected.map(r => `[${r.n}] "${r.span.length > 90 ? `${r.span.slice(0, 90)}…` : r.span}" ${r.problem}${/not on the page/.test(r.problem) ? ` (page ${r.page})` : ''}`).join(' · ');
+  return text.length > 400 ? `${text.slice(0, 400)}…` : text;
+}
+
 // One question through the reader. `fetchPage` and `ask` are injectable for tests; a test's
 // fake pages are never written to the on-disk cache (cache is on only with the real fetch).
 async function readerAnswer(question, { onStep, fetchPage = fetchHtml, ask = jsonCall, entry = SITE, cache = fetchPage === fetchHtml } = {}) {
@@ -195,15 +265,21 @@ async function readerAnswer(question, { onStep, fetchPage = fetchHtml, ask = jso
     state.pages.push(await readPage(url, fetchPage, cache));
   };
   const context = () => [`Question: ${q}`, 'What you have:', describe(state, opened), openedText(state, opened) ? `What you have read:\n${openedText(state, opened)}` : ''].filter(Boolean).join('\n\n');
-  // An answer: every citation must be on its page; what is not goes back, up to MAX_RETRIES times.
-  const settle = async (reply, user) => {
-    let checked = check(reply, state);
-    for (let retry = 0; checked.rejected.length && retry < MAX_RETRIES; retry += 1) {
-      await onStep?.({ stage: 'planning_step', label: 'Sent back', message: `${checked.rejected.length} citation${checked.rejected.length === 1 ? '' : 's'} not found on the page as written` });
-      const complaint = checked.rejected.map(r => `- [${r.n}] on page ${r.page}: "${r.quote.slice(0, 200)}" is not on that page exactly as written`).join('\n');
-      const again = await ask(SYSTEM, `${user}\n\nThese citations in your answer are not on the page exactly as written:\n${complaint}\nCopy each again character for character from a section you have read, one continuous passage, or drop the sentence that needs it. Answer again with the complete answer.`, onStep, `reader retry ${retry + 1}`, stats);
-      if (!again?.answer) break;
-      checked = check(again, state);
+  // An answer: the text stays; citations that are not on their page go back on their own, with
+  // the page's text around the spot they came from, up to MAX_RETRIES rounds.
+  const settle = async reply => {
+    let answer = { text: String(reply?.answer?.text ?? ''), citations: Array.isArray(reply?.answer?.citations) ? reply.answer.citations : [], not_found: reply?.answer?.not_found };
+    let checked = check({ answer }, state);
+    for (let retry = 0; retry < MAX_RETRIES; retry += 1) {
+      const failing = checked.rejected.filter(r => Number.isInteger(r.n));
+      if (!failing.length) break;
+      await onStep?.({ stage: 'planning_step', label: 'Sent back', message: sentBackMessage(failing) });
+      const fix = await ask(RETRY, retryPrompt(q, answer, failing, state, opened), onStep, `reader retry ${retry + 1}`, stats);
+      const drop = new Set((Array.isArray(fix?.drop) ? fix.drop : []).map(Number));
+      const fixed = new Map((Array.isArray(fix?.citations) ? fix.citations : []).filter(c => failing.some(r => r.n === Number(c?.n))).map(c => [Number(c.n), c]));
+      if (!fixed.size && !drop.size) break;
+      answer = { ...answer, citations: answer.citations.filter(c => !drop.has(Number(c?.n))).map(c => fixed.get(Number(c?.n)) || c) };
+      checked = check({ answer }, state);
     }
     return checked;
   };
@@ -214,7 +290,7 @@ async function readerAnswer(question, { onStep, fetchPage = fetchHtml, ask = jso
   for (let turn = 0; turn < MAX_TURNS && !answer; turn += 1) {
     const user = `${context()}\n\nPages fetched ${state.fetches} of ${MAX_PAGES}; turns left ${MAX_TURNS - turn}.`;
     const reply = await ask(SYSTEM, user, onStep, `reader turn ${turn + 1}`, stats);
-    if (reply?.answer) { answer = await settle(reply, user); break; }
+    if (reply?.answer) { answer = await settle(reply); break; }
     let acted = false;
     for (const o of Array.isArray(reply?.open) ? reply.open : []) {
       const page = state.pages[Number(o?.page)];
@@ -231,7 +307,7 @@ async function readerAnswer(question, { onStep, fetchPage = fetchHtml, ask = jso
     // The budget is spent without an answer: one last call must answer from what was read, or say not found.
     const user = `${context()}\n\nThe reading budget is spent. Answer now from what you have read, with citations, or say in not_found what the pages did not answer.`;
     const reply = await ask(SYSTEM, user, onStep, 'reader final', stats);
-    if (reply?.answer) answer = await settle(reply, user);
+    if (reply?.answer) answer = await settle(reply);
   }
   const citations = answer?.citations || [];
   const dropped = (answer?.rejected || []).map(r => r.quote).filter(Boolean);
@@ -254,4 +330,4 @@ async function readerAnswer(question, { onStep, fetchPage = fetchHtml, ask = jso
   };
 }
 
-module.exports = { readerAnswer, quoteOnPage, allowedUrl, parsePage, normalize, sentences, check, SITE, MAX_PAGES, MAX_TURNS, MAX_RETRIES };
+module.exports = { readerAnswer, quoteOnPage, quoteProblem, nearestPassage, allowedUrl, parsePage, normalize, sentences, check, SITE, MAX_PAGES, MAX_TURNS, MAX_RETRIES };

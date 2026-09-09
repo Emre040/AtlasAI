@@ -46,7 +46,7 @@ function runAttachments(run) {
     attachments.questionnaire = { reason: result.reason ?? null, questions: result.questions };
   }
   if (run.toolKey === 'dictionary_expert_hpa' && result.mode === 'reader') {
-    attachments.reader = { question: result.question ?? null, quotes: result.quotes || [], pages: result.pages || [], dropped: result.dropped || [], not_found: result.not_found || '' };
+    attachments.reader = { question: result.question ?? null, text: result.text || '', citations: result.citations || [], pages: result.pages || [], dropped_sentences: result.dropped_sentences || [], not_found: result.not_found || '' };
   }
 
   if (Array.isArray(result.resources) && result.resources.length > 0) {

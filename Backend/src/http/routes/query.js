@@ -603,7 +603,7 @@ if (toolName === 'clarify_hpa') {
           // The reader's answer is verified quotes from the atlas's pages: the chat renders the structured
           // result as quote cards, the text form is what the conversation stores. No model rewrite.
           const r = toolResult.result;
-          sse(res, { reader: { question: r.question, quotes: r.quotes || [], pages: r.pages || [], dropped: r.dropped || [], not_found: r.not_found || '' } });
+          sse(res, { reader: { question: r.question, text: r.text || '', citations: r.citations || [], pages: r.pages || [], dropped_sentences: r.dropped_sentences || [], not_found: r.not_found || '' } });
           text = r.summary_md || 'The atlas pages read did not answer this question.';
         } else {
           ({ text } = await inference.withContext(

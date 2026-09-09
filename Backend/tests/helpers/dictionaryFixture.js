@@ -13,7 +13,7 @@ async function dictionaryFixture({ responses, scrapeError = false, readerTokens 
     '../../config/runtime': { requireBoolean: () => false },
     // The reader (a question about the atlas) is its own module with its own tests; here it is a stub
     // that answers with a fixed token count, so the dictionary's routing and accounting are what is tested.
-    './reader': { readerAnswer: async question => ({ status: 'ok', mode: 'reader', question, quotes: [], dropped: [], not_found: '', pages: [], resources: [], summary_md: '', tokens: readerTokens }) },
+    './reader': { readerAnswer: async question => ({ status: 'ok', mode: 'reader', question, text: '', citations: [], quotes: [], dropped: [], dropped_sentences: [], not_found: '', pages: [], resources: [], summary_md: '', tokens: readerTokens }) },
     '../../inference/gateway': { inference: { chat: { completions: { async create(request) {
       const response = responses[requests.length]; requests.push(request);
       if (!response) throw new Error('Unexpected dictionary inference');

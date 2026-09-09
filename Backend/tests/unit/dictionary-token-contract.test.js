@@ -28,10 +28,10 @@ test('dictionary source failure retains consumed inference accounting', async ()
   assert.deepEqual(result.tokens, { prompt: 17, completion: 3, total: 20 });
 });
 
-for (const aboutSections of [true, false]) test(`about-HPA routing returns consumed tokens with source sections=${aboutSections}`, async () => {
-  const f = await dictionaryFixture({ responses: [dictionaryResponse('{"pages":[0]}', 23, 7)], aboutSections });
+test('a question about the atlas goes to the reader, whose tokens come back in the canonical shape', async () => {
+  const f = await dictionaryFixture({ responses: [] });
   const result = await f.run({ question: 'About the source' });
-  assert.equal(result.status, aboutSections ? 'ok' : 'not_found'); assert.equal(result.mode, 'about');
+  assert.equal(result.status, 'ok'); assert.equal(result.mode, 'reader'); assert.equal(f.requests.length, 0);
   assert.deepEqual(result.tokens, { prompt: 23, completion: 7, total: 30 });
   assert.equal(result.tokenUsage.total.total_tokens, 30);
 });

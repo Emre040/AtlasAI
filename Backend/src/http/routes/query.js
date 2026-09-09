@@ -524,28 +524,17 @@ if (toolName === 'clarify_hpa') {
     "In one or two sentences say what is unclear and ask the user to answer the questions below. " +
     "Do not list the questions or the options yourself, and do not answer the request.";
 } else if (toolName === 'dictionary_expert_hpa') {
-  const isAboutMode = toolResult?.result?.mode === 'about';
-  if (isAboutMode) {
-    // Receptionist mode: answer about HPA itself
-    styleSystemMessage =
-      "The tool retrieved content from HPA about pages. " +
-      "Your job is to ANSWER THE USER'S QUESTION about the Human Protein Atlas using this content. " +
-      "Be informative and concise. Cite specific details (names, dates, versions, URLs) from the content. " +
-      "If the content includes download links or instructions, present them clearly. " +
-      "Do NOT make up information beyond what the content provides.";
-  } else {
-    // Dictionary mode: histology/pathology
-    styleSystemMessage =
-      "The tool retrieved educational content from the HPA Dictionary. " +
-      "Your job is to ANSWER THE USER'S ORIGINAL QUESTION using this content as your source. " +
-      "Do NOT just summarize the page - directly address what they asked. " +
-      "Examples: " +
-      "- If they asked 'what is glioma?' → Explain what glioma is using the content. " +
-      "- If they asked 'show me liver histology' → Describe the liver's histological features. " +
-      "- If they asked 'what cells are in the kidney?' → Answer about kidney cell types from the content. " +
-      "Mention that tissue images are displayed below for visual reference. " +
-      "Keep your answer focused and relevant to their question.";
-  }
+  // Dictionary mode: histology/pathology (a question about the atlas is answered by the reader below, verbatim)
+  styleSystemMessage =
+    "The tool retrieved educational content from the HPA Dictionary. " +
+    "Your job is to ANSWER THE USER'S ORIGINAL QUESTION using this content as your source. " +
+    "Do NOT just summarize the page - directly address what they asked. " +
+    "Examples: " +
+    "- If they asked 'what is glioma?' → Explain what glioma is using the content. " +
+    "- If they asked 'show me liver histology' → Describe the liver's histological features. " +
+    "- If they asked 'what cells are in the kidney?' → Answer about kidney cell types from the content. " +
+    "Mention that tissue images are displayed below for visual reference. " +
+    "Keep your answer focused and relevant to their question.";
 } else if (toolName === 'investigator_hpa') {
           // For investigator: Present the comprehensive answer directly
           styleSystemMessage =
@@ -606,13 +595,20 @@ if (toolName === 'clarify_hpa') {
           ];
         }
 
-        const { text } = await inference.withContext(
-          { ...callContext, purpose: 'synthesis', runId: run.id },
-          () => streamChatCompletion(
-            { messages: finalMessages },
-            { onToken: (delta) => sse(res, { token: delta }) }
-          )
-        );
+        let text;
+        if (toolName === 'dictionary_expert_hpa' && toolResult?.result?.mode === 'reader') {
+          // The reader's answer is claims with verified quotes; it reaches the user as it is, no model rewrite.
+          text = toolResult.result.summary_md || 'The atlas pages read did not answer this question.';
+          sse(res, { token: text });
+        } else {
+          ({ text } = await inference.withContext(
+            { ...callContext, purpose: 'synthesis', runId: run.id },
+            () => streamChatCompletion(
+              { messages: finalMessages },
+              { onToken: (delta) => sse(res, { token: delta }) }
+            )
+          ));
+        }
         finalText = (text || '').trim();
         finalCallId = callContext.callIds.at(-1) ?? null;
 

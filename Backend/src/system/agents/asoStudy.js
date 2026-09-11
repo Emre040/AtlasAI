@@ -114,8 +114,8 @@ function agentArtifact(toolName, args, result) {
     }
     const r = result.result || {};
     // The search's own account of its selection travels with the result: each requirement, the
-    // field and value it chose, and why. The controller and the review read it; a choice of assay
-    // or of a narrower category than asked is visible instead of buried in the agent's log.
+    // field and value it chose, and why. The controller and the review read it; a choice among
+    // fields, or of a narrower category than asked, is visible instead of buried in the agent's log.
     const trail = (r.trail || []).map(f => `${f.requirement} → ${f.field}${Array.isArray(f.path) && f.path.length ? `: ${f.path.join(' / ')}` : ''}${f.operator === 'NOT' ? ' (excluded)' : ''}${f.why ? ` — ${String(f.why).replace(/\s+/g, ' ').trim().slice(0, 200)}` : ''}`);
     return { kind: 'data', label: String(args.goal || 'search').slice(0, 80), rows: (r.rows || []).map(normalizeSearchRow), meta: { search_url: r.search_urls?.[0] || null, query: r.plan || null, trail, understanding: r.understanding || null, not_expressible: (r.not_expressible || []).map(c => c.requirement), mode: r.mode || null, hpa_version: r.hpa_version, source_files: r.source_files } };
   }
@@ -156,11 +156,11 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     sum.calls += Number(calls) || (usage.steps ? Object.keys(usage.steps).length : 0);
   };
   // What an agent brings back is judged against the call that summoned it, in the sense of the
-  // study, before the controller builds on it: the selection (the kind of entity, the assay, the
-  // filters, the table), never the numbers. A result that is not what was asked stays on the
+  // study, before the controller builds on it: the selection (the kind of entity, the measurement,
+  // the filters, the table), never the numbers. A result that is not what was asked stays on the
   // desk, flagged on its line and in the history, so the controller asks again with what the
   // study means instead of following it blind.
-  const REVIEW_SYSTEM = `You judge whether an agent's result is what a study asked it for. You see the study's goal, the call that summoned the agent (its goal or question), the agent's own account of how it selected the result (the search query it built, or the source table, fields and filters it read) and the result's shape. Judge the selection only: the right kind of entity, the assay the study means (RNA or protein) when it names one, the filters and categories the call states, the right source table; a search that could not express part of the call is not what was asked. Do not judge the numbers. Reply with JSON: {"accepted": true|false, "reason": "<one sentence: what was asked and what was selected instead, or what matches>"}.`;
+  const REVIEW_SYSTEM = `You judge whether an agent's result is what a study asked it for. You see the study's goal, the call that summoned the agent (its goal or question), the agent's own account of how it selected the result (the search query it built, or the source table, fields and filters it read) and the result's shape. Judge the selection only: the right kind of entity, the measurement and source the study means, the filters and categories the call states, the right source table; a search that could not express part of the call, or that served it only in part, is not what was asked. Do not judge the numbers. Reply with JSON: {"accepted": true|false, "reason": "<one sentence: what was asked and what was selected instead, or what matches>"}.`;
   const reviewStats = { promptTokens: 0, completionTokens: 0, totalTokens: 0, perStep: {} };
   async function reviewResult(toolName, args, a) {
     const account = toolName === 'deep_research_hpa'
@@ -214,7 +214,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     const properties = { ...t.function.parameters.properties };
     delete properties.mode;
     const entity = identity.entity;
-    if (t.function.name === 'deep_research_hpa') return { ...t, function: { ...t.function, description: `The ${identity.database} search: the ${entity}s selected by the atlas's own annotation categories (tissue specificity and enrichment, protein class, secretome and subcellular location, prognostic category, evidence level), as the search page would; returns them as a table. It reads no table: partners, samples, per-tissue values, p-values and measurements are rows, and rows are investigator_hpa's.`, parameters: { ...t.function.parameters, required: ['goal', 'title', 'description'], properties: { ...properties, goal: { type: 'string', description: 'the set described, with every stated requirement, and the assay it means (RNA or protein) when the study names one' }, title: S, description: S } } } };
+    if (t.function.name === 'deep_research_hpa') return { ...t, function: { ...t.function, description: `The ${identity.database} search: the ${entity}s selected by the atlas's own annotation categories (tissue specificity and enrichment, protein class, secretome and subcellular location, prognostic category, evidence level), as the search page would; returns them as a table. It reads no table: partners, samples, per-tissue values, p-values and measurements are rows, and rows are investigator_hpa's.`, parameters: { ...t.function.parameters, required: ['goal', 'title', 'description'], properties: { ...properties, goal: { type: 'string', description: 'the set described, with every stated requirement' }, title: S, description: S } } } };
     if (t.function.name === 'investigator_hpa') return { ...t, function: { ...t.function, description: `Rows from any source table of the ${identity.database} (interaction partners, per-sample or per-tissue expression, CPTAC, blood concentrations, prognostic p-values, annotations): for a list of points (points=[...], or from=<artifact id> and column) every point with the fields asked for; without a list, every row the question selects (the partners of one ${entity}, the samples of a cell type). Ask in plain language: it finds the table and the columns itself. Fields from different source tables come back as one artifact each; join combines them. The question says which fields, rows and units.`, parameters: { ...t.function.parameters, required: ['question', 'title', 'description'], properties: {
       points: { type: 'array', items: S, description: `${entity}s, or any values (tissues, cell lines, categories)` },
       from: { type: 'string', description: 'artifact id whose rows supply the points' },
@@ -310,8 +310,8 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     const title = String(args.title || '').trim(), description = String(args.description || '').trim();
     if (!title || !description) throw new Error(`${toolName} needs a title and a description for its result`);
     const executionArgs = { ...bare(args), mode };
-    // The search sees the whole study: a sub-goal that names a measurement without its assay
-    // means the assay the study names, not whichever field the words resemble.
+    // The search sees the whole study: a choice a sub-goal leaves open is settled by the study,
+    // not by whichever field the words resemble.
     if (toolName === 'deep_research_hpa') executionArgs.study = state.goal;
     const inputs = [];
     if (toolName === 'investigator_hpa') {

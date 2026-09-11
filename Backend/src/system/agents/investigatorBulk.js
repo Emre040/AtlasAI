@@ -89,7 +89,9 @@ function spelledOtherwise(points, spelled) {
 // columns; points that are not entities are placed in the columns that hold them, by vocabulary
 // or by the spellings recorded at the source. Returns the text and the tables of the first group.
 async function searchRelease(adapter, catalog, words, listed, found = new Set(), memo = new Map()) {
-  const needles = [...new Set(words.map(w => flat(w)).filter(w => w.length >= 2))];
+  // A word is searched by its parts: main_subcellular_location is main, subcellular, location.
+  const parts = w => String(w).split(/[^A-Za-z0-9]+/).filter(Boolean);
+  const needles = [...new Set(words.flatMap(parts).map(flat).filter(n => n.length >= 2))];
   const entities = (await adapter.resolveGenes(words).catch(() => [])).map((gene, i) => gene ? { word: words[i], gene } : null).filter(Boolean);
   const hits = new Map();
   const hit = e => { if (!hits.has(e.file)) hits.set(e.file, { e, words: new Set(), named: new Set(), titled: new Set(), columns: [], values: [], items: [] }); return hits.get(e.file); };
@@ -115,7 +117,7 @@ async function searchRelease(adapter, catalog, words, listed, found = new Set(),
   }
   const ranked = [...hits.values()].sort((a, b) => b.words.size - a.words.size || b.titled.size - a.titled.size || b.named.size - a.named.size || (b.columns.length + b.values.length + b.items.length) - (a.columns.length + a.values.length + a.items.length));
   const wordOf = new Map();
-  for (const w of words) { const n = flat(w); if (n.length >= 2 && !wordOf.has(n)) wordOf.set(n, w); }
+  for (const w of words) for (const part of parts(w)) { const n = flat(part); if (n.length >= 2 && !wordOf.has(n)) wordOf.set(n, part); }
   const groups = [];
   for (const h of ranked) {
     const key = needles.filter(n => h.words.has(n)).map(n => wordOf.get(n)).join(' + ');
@@ -523,6 +525,12 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             let fetched;
             if (!supplied.length) fetched = await fetchAll({ adapter, entry, fields: args.fields, where: args.where, keys });
             else if (match) fetched = await fetchMatching({ adapter, entry, points: supplied, fields: args.fields, where: args.where, match, keys, aliases });
+            else if (supplyIdentities.size && idCols.length > 1) {
+              // A pair table holds an entity on either side: its rows are read by both sides, the
+              // point named in point and the other side in other, so a row's entity is the other.
+              history.push(`turn ${turn}: ${entry.file} holds ${db.entity} ids on both sides (${idCols.join(', ')}): the points are matched against both; the other side is other`);
+              fetched = await fetchMatching({ adapter, entry, points: supplied, fields: args.fields, where: args.where, match: idCols, keys, aliases });
+            }
             else if (supplyIdentities.size) fetched = await fetchRows({ adapter, entry, supplied, resolved: supplyResolved, fields: args.fields, where: args.where, keys });
             else if (['lookup', 'stream'].includes(entry.key) && supplyIdentities.size && args.where?.length) {
               history.push(`turn ${turn}: ${entry.file} has no ${db.entity} rows for the list; read whole by the where`);

@@ -45,7 +45,7 @@ function systemPrompt(db) {
   return `You are the Investigator in a study over the ${db.database}. You are given a question about a list of points (the tools hold the list) and you return the rows that answer it, from one origin, with the mapping you made.
 
 How it goes:
-- search finds where words live: a table by its name or description, a column by its name, a value by the recorded values of every column (with how many rows hold it). Search the field the question asks for and the context it names; search a point when you need to know where such values live. Search again when the first search does not settle the origin.
+- search finds where words live: a table by its name or description, a column by its name, a value by the recorded values of every column (with how many rows hold it). Search the field the question asks for and the context it names; search a point only when it is not a ${db.entity} of the release, to learn which column holds such values. A point that is a ${db.entity} is read by the list: fetch the table found. Search again when the first search does not settle the origin.
 - fetch reads rows from one table for the points, with the fields the question asks for and a where filter for the context. Values are spelled as the search shows them. A question that spans two tables (what one table lists is read from another) is two fetches, the second taking its points from the first with from and column.
 - finish names the results that answer the question, the mapping (field → table and column) and a note: what was chosen over what and why, what no table holds, which points did not resolve. The rows are the evidence; the study computes with them.
 Keep every call small: no fetch of a whole table to look at it; the search says what is there.`;
@@ -55,12 +55,21 @@ const GATE_SYSTEM = `You check a question put to a data agent before it runs. Th
 
 const flat = value => String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 
+// The columns of a table whose recorded values are spelled like the database's entity ids.
+async function idColumns(adapter, e) {
+  if (typeof adapter.isEntityId !== 'function') return [];
+  const profile = await adapter.profile(e).catch(() => null);
+  return (profile?.columns || []).filter(c => [...(c.observed_values || []), ...(c.full_examples || []), ...(c.examples || [])].some(v => adapter.isEntityId(v))).map(c => c.column);
+}
+
 // Where words live in the release: tables by name or description, columns by name, values by
 // the recorded values of every column (counted at the source), items inside list cells, and the
-// text of big columns of the tables found by name.
-async function searchRelease(adapter, catalog, words, listed) {
+// text of big columns of the tables found by name. A word that is an entity of the database is
+// answered with its id and the columns of the tables found so far that hold such ids.
+async function searchRelease(adapter, catalog, words, listed, found = new Set()) {
   const needles = [...new Set(words.map(w => flat(w)).filter(w => w.length >= 2))];
   const tables = [], columns = [], values = [], items = [];
+  const entities = (await adapter.resolveGenes(words).catch(() => [])).map((gene, i) => gene ? { word: words[i], gene } : null).filter(Boolean);
   for (const e of catalog) {
     if (e.key === 'unreadable') continue;
     const about = flat(`${e.file} ${e.title || ''} ${e.description || ''}`);
@@ -75,6 +84,17 @@ async function searchRelease(adapter, catalog, words, listed) {
   }
   tables.sort((a, b) => b.score - a.score); columns.sort((a, b) => b.score - a.score);
   const lines = [];
+  for (const { e } of tables) found.add(e.file);
+  if (entities.length) {
+    // The list reads an entity's rows by its keys; a pair table holds ids on both sides.
+    const holders = [];
+    for (const file of found) {
+      const e = catalog.find(x => x.file === file);
+      const ids = e ? await idColumns(adapter, e) : [];
+      if (ids.length) holders.push(`${file} · ${ids.join(', ')}${ids.length > 1 ? ' (a pair table: match against both)' : ''}`);
+    }
+    lines.push(`${entities.map(x => `${JSON.stringify(x.word)} is a ${adapter.identity().entity} of the release (${x.gene.ensembl})`).join('; ')}: fetch reads its rows for the list by its keys, no search of the point is needed${holders.length ? `; columns holding ${adapter.identity().entity} ids in the tables found: ${holders.slice(0, SEARCH_HITS).join('; ')}` : '; search a word of the subject to find the table, then fetch with the list'}`);
+  }
   if (tables.length) lines.push(`tables named by the words: ${tables.slice(0, SEARCH_HITS).map(({ e }) => `${e.file} — ${e.title || e.file}${e.description ? `: ${String(e.description).slice(0, 90)}` : ''} (${e.columns.length > 10 ? `${e.columns.slice(0, 10).join(', ')} … ${e.columns.length} columns` : e.columns.join(', ')})`).join('\n  ')}`);
   if (columns.length) lines.push(`columns named by the words: ${columns.slice(0, SEARCH_HITS).map(({ e, column }) => `${e.file} · ${column}`).join('; ')}${columns.length > SEARCH_HITS ? ` (+${columns.length - SEARCH_HITS})` : ''}`);
   if (values.length) {
@@ -86,16 +106,22 @@ async function searchRelease(adapter, catalog, words, listed) {
     lines.push(`values holding the words: ${shown.join('; ')}${values.length > SEARCH_HITS ? ` (+${values.length - SEARCH_HITS})` : ''}`);
   }
   if (items.length) lines.push(`items inside list cells: ${items.slice(0, SEARCH_HITS).map(v => `${v.e.file} · ${v.column}: ${v.found.join(' | ')}${v.more ? ` (+${v.more})` : ''}`).join('; ')}`);
-  // Big text columns have no recorded vocabulary: the tables found by name are scanned for the words.
-  if (typeof adapter.textHits === 'function' && !values.length) {
+  // A word no vocabulary holds (a symbol, an id, a sample, free text) is scanned for in the text
+  // columns that have no vocabulary, across every table: where it lives, with how many rows.
+  if (typeof adapter.textHits === 'function') {
+    const covered = new Set([...values, ...items].flatMap(v => words.filter(w => v.found.some(x => flat(x).includes(flat(w))))));
+    const unplaced = words.filter(w => flat(w).length >= 2 && !covered.has(w) && !entities.some(x => x.word === w));
     const scanned = [];
-    for (const { e } of tables.slice(0, 3)) {
-      const profile = await adapter.profile(e).catch(() => null);
-      for (const card of (profile?.columns || []).filter(c => c.kind === 'text' && !Array.isArray(c.observed_values)).slice(0, 4)) {
-        for (const w of words) { const hit = await adapter.textHits(e, card.column, w).catch(() => null); if (hit?.rows) scanned.push(`${e.file} · ${card.column} contains "${w}" in ${count(hit.rows)} rows (${hit.values.join(' | ')})`); }
+    if (unplaced.length) {
+      for (const e of catalog) {
+        if (e.key === 'unreadable') continue;
+        const profile = await adapter.profile(e).catch(() => null);
+        for (const card of (profile?.columns || []).filter(c => c.kind === 'text' && !Array.isArray(c.observed_values))) {
+          for (const w of unplaced) { const hit = await adapter.textHits(e, card.column, w).catch(() => null); if (hit?.rows) scanned.push({ line: `${e.file} · ${card.column} = ${hit.values.join(' | ')} (${count(hit.rows)} rows hold "${w}")`, rows: hit.rows }); }
+        }
       }
     }
-    if (scanned.length) lines.push(`text of big columns: ${scanned.slice(0, SEARCH_HITS).join('; ')}`);
+    if (scanned.length) lines.push(`text columns holding the words: ${scanned.sort((a, b) => b.rows - a.rows).slice(0, SEARCH_HITS).map(s => s.line).join('; ')}${scanned.length > SEARCH_HITS ? ` (+${scanned.length - SEARCH_HITS})` : ''}`);
   }
   // Where the points live, when they are not the database's entities.
   if (listed.length && !listed.resolvedAny) {
@@ -111,6 +137,8 @@ async function searchRelease(adapter, catalog, words, listed) {
   return lines.length ? lines.join('\n') : `nothing in the release is named by ${words.map(w => JSON.stringify(w)).join(', ')}: try a word of the subject, or a value as the data spells it`;
 }
 
+const SEARCH_RULE = 'A point that is an entity of the release is read by the list: fetch the table found, without searching the point itself.';
+
 async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/geneDataAdapter')) {
   const { question, mode = 'offline' } = args;
   const points = args.points ?? args.genes ?? null;
@@ -119,6 +147,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
   const results = new Map();
   const history = [];
   const searches = [];
+  const found = new Set();   // tables found by any search so far, for what a later search says about a point
   const { onStep } = ctx;
   const emit = (stage, label, message) => onStep?.({ stage, label, message });
   let release = null, resolved = [], db = null;
@@ -203,7 +232,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
           if (name === 'search') {
             const words = (args.words || []).map(String).map(w => w.trim()).filter(Boolean);
             if (!words.length) throw new Error('search needs a word');
-            const text = await searchRelease(adapter, catalog, words, listed);
+            const text = await searchRelease(adapter, catalog, words, listed, found);
             searches.push({ words, text });
             history.push(`turn ${turn}: searched ${words.map(w => JSON.stringify(w)).join(', ')} (under SEARCHES)`);
             seen.set(key, 'under SEARCHES'); progressed = true;

@@ -128,6 +128,26 @@ test('a filter value or a point the table spells differently is read as the tabl
   assert.match(keyed.requests[1].messages[1].content, /failed: the list already selects the rows by Gene; a where on Gene can only drop points from it\. Leave that clause out/);
 });
 
+test('a search finds a word no vocabulary holds by scanning text columns, and says of a key point that the list reads it', async () => {
+  const { run, requests } = await investigator([
+    response(call('search', { words: ['consensus', 'EGFR', 'ERBB2'] })),
+    response(call('fetch', { title: 'Rows', description: 'EGFR rows', table: 'rna_tissue_consensus.tsv', fields: ['Tissue', 'nTPM'] })),
+    response(call('finish', { results: ['Rows'] }))
+  ]);
+  const result = await run({ points: ['EGFR'], question: 'nTPM per tissue' });
+  assert.equal(result.status, 'ok');
+  const desk2 = requests[1].messages[1].content;
+  assert.match(desk2, /"EGFR" is a gene of the release \(ENSG1\); "ERBB2" is a gene of the release \(ENSG2\): fetch reads its rows for the list by its keys, no search of the point is needed; columns holding gene ids in the tables found: rna_tissue_consensus\.tsv · Gene/);
+  assert.match(desk2, /tables named by the words: rna_tissue_consensus\.tsv — Consensus tissue RNA/);
+  assert.doesNotMatch(desk2, /text columns holding the words/, 'a key point is not scanned for');
+  const scan = await investigator([
+    response(call('search', { words: ['lung'] })),
+    response(call('finish', { results: [], note: 'nothing to fetch' }))
+  ], { adapter: { async profile(e) { return { rows: 6, capped: false, columns: e.columns.map(c => ({ column: c, kind: 'text', blank_pct: 0, distinct: '1000+', observed_values: null, examples: [], full_examples: [] })) }; } } });
+  await scan.run({ question: 'rows in lung' });
+  assert.match(scan.requests[1].messages[1].content, /text columns holding the words: rna_tissue_consensus\.tsv · Tissue = lung \(2 rows hold "lung"\); tissues\.tsv · Tissue = lung \(1 rows hold "lung"\)/);
+});
+
 test('a search that names nothing says so, and an Investigator that gives up says what it tried', async () => {
   const { run, requests } = await investigator([
     response(call('search', { words: ['zzz'] })),

@@ -264,6 +264,11 @@ async function rowCount(e) {
   return duckStore.rowCount(e.file);
 }
 
+// Whether a value is spelled like an id of the database's entity.
+function isEntityId(value) {
+  return HUMAN_GENE_ID.test(String(value || ''));
+}
+
 // How many rows of a table hold one of the values in a column.
 async function holds(e, column, values) {
   return duckStore.holds(e.file, column, values);
@@ -316,4 +321,4 @@ async function entities() {
   return (await localData.master()).rows.map(row => ({ gene: row.Gene || null, ensembl: row.Ensembl || null }));
 }
 
-module.exports = { name: 'Human Protein Atlas per-gene tables', identity, access, catalog, overview, entry, resolveGene, resolveGenes, read, readMany, keysOf, rows, entities, applyWhere, render, cited, pageUrl, definition, profile, sample, rowCount, findValues, holds, textHits, sources: docs.SOURCES };
+module.exports = { name: 'Human Protein Atlas per-gene tables', identity, access, catalog, overview, entry, resolveGene, resolveGenes, read, readMany, keysOf, rows, entities, applyWhere, render, cited, pageUrl, definition, profile, sample, rowCount, findValues, holds, textHits, isEntityId, sources: docs.SOURCES };

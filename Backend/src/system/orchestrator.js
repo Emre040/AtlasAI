@@ -3,7 +3,7 @@
 // The tools the chat model can call. Each handler is an agent; the orchestrator only validates
 // arguments, fills in what the model left out, and forwards progress steps.
 const { inference } = require('../inference/gateway');
-const investigatorTrail = require('./agents/investigatorTrail');
+const investigatorBulk = require('./agents/investigatorBulk');
 const deepResearchTrail = require('./agents/deepResearchTrail');
 const dictionaryExpert = require('./agents/dictionaryExpert');
 const asoStudy = require('./agents/asoStudy');
@@ -73,7 +73,7 @@ const defs = [
       required: [],
       additionalProperties: false
     },
-    handler: investigatorTrail
+    handler: investigatorBulk
   },
   {
     name: 'deep_research_hpa',
@@ -179,10 +179,12 @@ async function execute(name, args, ctx = {}) {
 
   const rawQuery = String(ctx.rawQuery || '').trim();
   if (name === 'investigator_hpa') {
-    if (parsed.genes === undefined && !parsed.gene) {
-      const ensgMatch = rawQuery.match(/\bENSG\d{9,}\b/i);
-      if (ensgMatch) parsed.gene = ensgMatch[0].toUpperCase();
+    // One Investigator: a single point is a list of one.
+    if (parsed.points === undefined && parsed.genes === undefined) {
+      const single = parsed.gene || (rawQuery.match(/\bENSG\d{9,}\b/i) || [])[0];
+      if (single) parsed.points = [String(single).toUpperCase() === String(single).toUpperCase() && /^ENSG/i.test(single) ? String(single).toUpperCase() : String(single)];
     }
+    delete parsed.gene;
     if (!parsed.question && rawQuery) parsed.question = rawQuery;
   }
   if ((name === 'deep_research_hpa' || name === 'aso_hpa') && !parsed.goal && rawQuery) parsed.goal = rawQuery;

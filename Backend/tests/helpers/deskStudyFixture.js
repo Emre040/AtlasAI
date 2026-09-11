@@ -45,9 +45,11 @@ function fakeAdapter(overrides = {}) {
     async resolveGene(n) { return GENES.find(g => g.gene === n.toUpperCase() || g.ensembl === n) || null; },
     async readMany(genes, file) { const byGene = new Map(); for (const g of genes) byGene.set(g.ensembl, file === CONSENSUS.file ? ROWS[g.ensembl] || [] : []); return { entry: CONSENSUS, byGene }; },
     async read(gene, file) { return { entry: CONSENSUS, rows: file === CONSENSUS.file ? ROWS[gene.ensembl] || [] : [] }; },
-    async profile(e) { return { rows: 6, capped: false, columns: e.columns.map(c => c === 'nTPM' ? { column: c, kind: 'number', blank_pct: 17, distinct: '5', min: 0, max: 34.1, examples: [] } : { column: c, kind: 'text', blank_pct: 0, distinct: '3', observed_values: c === 'Tissue' ? ['liver', 'lung', 'heart'] : null, full_examples: ['x'], examples: ['x'] }) }; },
+    async profile(e) { return { rows: 6, capped: false, columns: e.columns.map(c => c === 'nTPM' ? { column: c, kind: 'number', blank_pct: 17, distinct: '5', min: 0, max: 34.1, examples: [] } : { column: c, kind: 'text', blank_pct: 0, distinct: '3', observed_values: c === 'Tissue' ? ['liver', 'lung', 'heart'] : null, full_examples: c === 'Gene' ? ['ENSG1', 'ENSG2'] : ['x'], examples: c === 'Gene' ? ['ENSG1', 'ENSG2'] : ['x'] }) }; },
     async sample(e) { return e === CONSENSUS ? ROWS.ENSG1.slice(0, 2) : [{ Tissue: 'liver', Organ: 'Liver & Gallbladder' }]; },
     async holds(e, column, values) { const wanted = new Set(values.map(v => String(v).trim().toLowerCase())); let n = 0; for await (const row of this.rows(e)) if (wanted.has(String(row[column] ?? '').trim().toLowerCase())) n++; return n; },
+    async textHits(e, column, word, limit = 4) { const needle = String(word).toLowerCase(); let rows = 0; const values = new Set(); for await (const row of this.rows(e)) { const cell = String(row[column] ?? ''); if (cell.toLowerCase().includes(needle)) { rows++; if (values.size < limit) values.add(cell); } } return { rows, values: [...values] }; },
+    isEntityId(value) { return /^ENSG/.test(String(value || '')); },
     definition: () => null,
     ...overrides
   };

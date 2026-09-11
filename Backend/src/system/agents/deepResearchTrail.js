@@ -108,6 +108,12 @@ async function planFilters(adapter, goal, context, requirements, study = null, a
     const have = wordsOf(item.requirement);
     const hit = named.find(n => [...wordsOf(n.option)].every(w => have.has(w)) && adapter.field(n.field));
     if (hit) { requirements.push({ id: `r${requirements.length + 1}`, requirement: item.requirement, field: hit.field, operator: 'AND', why: `the field's option "${hit.option}" names what the requirement names`, status: 'planned' }); continue; }
+    // A requirement whose every word sits inside an option of a field the plan already uses
+    // ("validated" inside "Unfavorable - validated prognostic") refines that field's walk: it
+    // rides with the requirement planned on that field instead of stopping the search.
+    const words = [...have].filter(w => w.length >= 3);
+    const inside = words.length && typeof adapter.optionIndex === 'function' ? adapter.optionIndex().find(entry => { const w = wordsOf(entry.option); return words.every(x => w.has(x)) && requirements.some(r => r.field === entry.field && r.status === 'planned'); }) : null;
+    if (inside) { const host = requirements.find(r => r.field === inside.field && r.status === 'planned'); host.requirement = `${host.requirement} (${item.requirement})`; continue; }
     requirements.push({ id: `r${requirements.length + 1}`, requirement: item.requirement, status: 'unexpressible', error: item.why });
   }
 

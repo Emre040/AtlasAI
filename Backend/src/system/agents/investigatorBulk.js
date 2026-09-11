@@ -1,15 +1,20 @@
 'use strict';
 
 /**
- * Investigator: a question in, the raw rows that answer it out. With a list of points (one or
- * hundreds; the database's entities, or any values such as tissues or categories) it returns
- * every point with the fields asked for; without a list it returns every row a filter selects.
- * The agent knows nothing about the database: the adapter names it, lists its tables and reads
- * them. The model names tables, columns and filters; it never carries values. It sees a table's
- * column names, asks for the values of a column when it needs a spelling, and never a whole table.
+ * Investigator: a question about points in, a mapping out. The points are the database's
+ * entities or any values (one, or thousands); the question names one field in one context. The
+ * agent knows nothing about the database: it searches the whole release for where the question's
+ * words and the points live (the catalogue of tables, column names, every column's recorded
+ * values, and the text of big columns), reads rows from one origin for the points, and returns
+ * them as the mapping it made, with its reasoning. Every call it makes is small: it sees a few
+ * candidate lines and a few lines of history, never a table.
+ *
+ * A question that asks for several fields, or one field in several contexts, is rejected before
+ * anything is read: one origin per run, and the study asks again, one context at a time.
  */
 
 const { inference } = require('../../inference/gateway');
+const { jsonCall } = require('../../inference/jsonCall');
 const { platformConfig } = require('../../policy/config');
 const { resolveAgentMode } = require('../../hpa/agentMode');
 const { FILES } = require('../../hpa/localData');
@@ -17,37 +22,93 @@ const { validate } = require('../aso/batchOperations');
 const { decodeArguments } = require('../aso/toolArguments');
 const { FILTER_OPS, correctSpelling, nearMisses, inList } = require('../aso/studyTools');
 const { fetchRows, fetchMatching, fetchAll } = require('../aso/fetchRows');
-const { tableCard, columnLine, namedColumns, resultLine, historyText, argsLine, section, count } = require('../aso/desk');
+const { historyText, argsLine, section, count, namedColumns } = require('../aso/desk');
 const { AgentStop, createAgentControl, fingerprint } = require('../aso/agentControl');
 
 const S = { type: 'string' };
 const WHERE = { type: 'array', description: 'Row filters; every clause must hold. A unary op takes column and op only.', items: { type: 'object', properties: { column: S, op: { type: 'string', enum: FILTER_OPS }, value: { description: 'Comparison value, or a list for in' } }, required: ['column', 'op'] } };
 const tool = (name, description, properties, required = []) => ({ type: 'function', function: { name, description, parameters: { type: 'object', properties, required } } });
 
+const SEARCH_HITS = 10;      // lines of each kind a search shows
+const SEARCHES_SHOWN = 3;    // searches kept on the desk
+const HISTORY_SHOWN = 8;     // history lines kept on the desk
+
 function tools(db) {
   return [
-    tool('find_tables', 'Tables whose name, title, description or a column contains the word, with their columns.', { about: S }, ['about']),
-    tool('open', 'Put a table on the desk: what it is and its first column names.', { table: S }, ['table']),
-    tool('columns', 'The columns of a table whose name contains the word.', { table: S, about: S }, ['table', 'about']),
-    tool('values', 'What a column of a table holds: every value of a category column, the range of a number column, the keys or labels inside list cells, spelled as the data spells them.', { table: S, column: S }, ['table', 'column']),
-    tool('fetch', `Retrieve rows from one table. With the list, or with from and column (the values of a column of an earlier result stand in for the list): one row per source row for each point, with the point, the fields, source_rows and source_status; the points are ${db.entity}s unless match names the column their values are in. Without the list: every row where holds. Omit fields for every column.`, { title: S, description: S, table: S, fields: { type: 'array', items: S }, where: WHERE, from: { type: 'string', description: 'Title of an earlier result whose column supplies the points of this fetch in place of the list, so what one table lists is read from another' }, column: { type: 'string', description: 'The column of from whose values are the points' }, match: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }], description: 'Column whose values the points are; a list of columns when a point may sit in any of them (the two sides of a pair table), the point then named in a column of its own' } }, ['table']),
-    tool('finish', 'Return the results that answer the question, by title. note states what no table holds and which points did not resolve.', { results: { type: 'array', items: S }, note: S }, ['results'])
+    tool('search', 'Where words live in the release: tables whose name or description carries them, columns named by them, columns whose recorded values hold them (with how many rows do), and the text of big columns. Search the field asked for, the context named, or a point; one word or several.', { words: { type: 'array', items: S } }, ['words']),
+    tool('fetch', `Rows from one table for the points: one row per source row for each point, with the point, the fields, source_rows and source_status. The points are ${db.entity}s read by their keys, or values of the column named by match (several columns when a point may sit in any of them, as in a pair table: the point is then named in a column of its own and the other side in other). Without points, every row where holds. With from and column, the values of a column of an earlier result are the points. Omit fields for every column.`, { title: S, description: S, table: S, fields: { type: 'array', items: S }, where: WHERE, from: { type: 'string', description: 'Title of an earlier result whose column supplies the points' }, column: { type: 'string', description: 'The column of from whose values are the points' }, match: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }], description: 'Column whose values the points are; a list of columns when a point may sit in any of them' } }, ['table']),
+    tool('finish', 'Return the mapping: the results that answer the question, by title; mapping says which table and column answered each field; note says what was chosen over what, what no table holds, and which points did not resolve.', { results: { type: 'array', items: S }, mapping: { type: 'array', items: { type: 'object', properties: { field: S, table: S, column: S }, required: ['field', 'table', 'column'] } }, note: S }, ['results'])
   ];
 }
 
-function systemPrompt(db, catalog) {
-  const listed = catalog.filter(e => e.key !== 'unreadable').map(e => e.file);
-  return `You are the Investigator in a study over the ${db.database}. You are given a question, with or without a list of points, and the tables of the database; the tools hold the list. You find the table whose columns hold what the question asks and fetch those fields, returning raw rows; the study computes, ranks and summarises with its own operations.
-
-The desk in the message is everything you have opened and fetched so far, and stays in front of you every turn.
+function systemPrompt(db) {
+  return `You are the Investigator in a study over the ${db.database}. You are given a question about a list of points (the tools hold the list) and you return the rows that answer it, from one origin, with the mapping you made.
 
 How it goes:
-- open a table: its card names its first columns; columns finds the rest by a word. values shows what one column holds, so fields and filter values are spelled as the data spells them. find_tables narrows the list below by a word.
-- fetch once per table with every field the question needs from it, and a where filter when the question names particular rows. With a list, the points are ${db.entity}s read by their keys, or the values of the column named by match; match names several columns when a point may sit in any of them, as in a pair table with two sides. With from and column, the points are the values of a column of an earlier result: what one table lists (the other side of a pair, the members of a set) is read from another in a second fetch, and the question is answered by both. Each result has a title and a description a reader understands. The result keeps repeated rows, zeros, blanks and ties as recorded; a point with no matching row gets one row with empty fields and a source_status saying why. A question that spans several tables is answered by a fetch from each.
-- finish names the results that answer the question. The fetched rows are the evidence and a result's title is its citation. The note states what no table holds and which points did not resolve.
+- search finds where words live: a table by its name or description, a column by its name, a value by the recorded values of every column (with how many rows hold it). Search the field the question asks for and the context it names; search a point when you need to know where such values live. Search again when the first search does not settle the origin.
+- fetch reads rows from one table for the points, with the fields the question asks for and a where filter for the context. Values are spelled as the search shows them. A question that spans two tables (what one table lists is read from another) is two fetches, the second taking its points from the first with from and column.
+- finish names the results that answer the question, the mapping (field → table and column) and a note: what was chosen over what and why, what no table holds, which points did not resolve. The rows are the evidence; the study computes with them.
+Keep every call small: no fetch of a whole table to look at it; the search says what is there.`;
+}
 
-TABLES (${listed.length}; find_tables narrows them by a word, open one for its columns)
-${listed.join(', ')}`;
+const GATE_SYSTEM = `You check a question put to a data agent before it runs. The agent reads one origin per run: one field (a measurement, a category, a label) in one context (one tissue, one cell type, one cohort, one condition), for a list of points held elsewhere. Reply with JSON: {"accepted": true|false, "reason": "<one sentence>"}. Reject when the question asks for several different fields to be read together, or for one field in several contexts named together (say which parts, so they can be asked one at a time). Accept a single field with a single filter, a list of points of any size, and a question that names no context.`;
+
+const flat = value => String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+// Where words live in the release: tables by name or description, columns by name, values by
+// the recorded values of every column (counted at the source), items inside list cells, and the
+// text of big columns of the tables found by name.
+async function searchRelease(adapter, catalog, words, listed) {
+  const needles = [...new Set(words.map(w => flat(w)).filter(w => w.length >= 2))];
+  const tables = [], columns = [], values = [], items = [];
+  for (const e of catalog) {
+    if (e.key === 'unreadable') continue;
+    const about = flat(`${e.file} ${e.title || ''} ${e.description || ''}`);
+    const named = words.filter(w => flat(w).length >= 2 && about.includes(flat(w)));
+    if (named.length) tables.push({ e, score: named.length });
+    for (const c of e.columns) { const hit = needles.filter(n => flat(c).includes(n)); if (hit.length) columns.push({ e, column: c, score: hit.length }); }
+    const profile = await adapter.profile(e).catch(() => null);
+    for (const card of profile?.columns || []) {
+      if (Array.isArray(card.observed_values)) for (const n of needles) { const found = card.observed_values.filter(v => flat(v).includes(n)); if (found.length) values.push({ e, column: card.column, found: found.slice(0, 3), more: found.length - Math.min(3, found.length) }); }
+      if (Array.isArray(card.parts?.values)) for (const n of needles) { const found = card.parts.values.filter(v => flat(v).includes(n)); if (found.length) items.push({ e, column: card.column, found: found.slice(0, 3), more: found.length - Math.min(3, found.length) }); }
+    }
+  }
+  tables.sort((a, b) => b.score - a.score); columns.sort((a, b) => b.score - a.score);
+  const lines = [];
+  if (tables.length) lines.push(`tables named by the words: ${tables.slice(0, SEARCH_HITS).map(({ e }) => `${e.file} — ${e.title || e.file}${e.description ? `: ${String(e.description).slice(0, 90)}` : ''} (${e.columns.length > 10 ? `${e.columns.slice(0, 10).join(', ')} … ${e.columns.length} columns` : e.columns.join(', ')})`).join('\n  ')}`);
+  if (columns.length) lines.push(`columns named by the words: ${columns.slice(0, SEARCH_HITS).map(({ e, column }) => `${e.file} · ${column}`).join('; ')}${columns.length > SEARCH_HITS ? ` (+${columns.length - SEARCH_HITS})` : ''}`);
+  if (values.length) {
+    const shown = [];
+    for (const v of values.slice(0, SEARCH_HITS)) {
+      const rows = typeof adapter.holds === 'function' ? await adapter.holds(v.e, v.column, v.found).catch(() => null) : null;
+      shown.push(`${v.e.file} · ${v.column} = ${v.found.join(' | ')}${v.more ? ` (+${v.more})` : ''}${rows !== null ? ` (${count(rows)} rows)` : ''}`);
+    }
+    lines.push(`values holding the words: ${shown.join('; ')}${values.length > SEARCH_HITS ? ` (+${values.length - SEARCH_HITS})` : ''}`);
+  }
+  if (items.length) lines.push(`items inside list cells: ${items.slice(0, SEARCH_HITS).map(v => `${v.e.file} · ${v.column}: ${v.found.join(' | ')}${v.more ? ` (+${v.more})` : ''}`).join('; ')}`);
+  // Big text columns have no recorded vocabulary: the tables found by name are scanned for the words.
+  if (typeof adapter.textHits === 'function' && !values.length) {
+    const scanned = [];
+    for (const { e } of tables.slice(0, 3)) {
+      const profile = await adapter.profile(e).catch(() => null);
+      for (const card of (profile?.columns || []).filter(c => c.kind === 'text' && !Array.isArray(c.observed_values)).slice(0, 4)) {
+        for (const w of words) { const hit = await adapter.textHits(e, card.column, w).catch(() => null); if (hit?.rows) scanned.push(`${e.file} · ${card.column} contains "${w}" in ${count(hit.rows)} rows (${hit.values.join(' | ')})`); }
+      }
+    }
+    if (scanned.length) lines.push(`text of big columns: ${scanned.slice(0, SEARCH_HITS).join('; ')}`);
+  }
+  // Where the points live, when they are not the database's entities.
+  if (listed.length && !listed.resolvedAny) {
+    const sample = listed.slice(0, 3);
+    const where = [];
+    for (const e of catalog) {
+      if (e.key === 'unreadable') continue;
+      const profile = await adapter.profile(e).catch(() => null);
+      for (const card of profile?.columns || []) if (Array.isArray(card.observed_values) && sample.every(p => card.observed_values.some(v => flat(v) === flat(p)) || nearMisses(p, card.observed_values).length === 1)) where.push(`${e.file} · ${card.column}`);
+    }
+    if (where.length) lines.push(`the points are values of: ${where.slice(0, SEARCH_HITS).join('; ')}`);
+  }
+  return lines.length ? lines.join('\n') : `nothing in the release is named by ${words.map(w => JSON.stringify(w)).join(', ')}: try a word of the subject, or a value as the data spells it`;
 }
 
 async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/geneDataAdapter')) {
@@ -56,12 +117,13 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
   const started = Date.now();
   const stats = { prompt: 0, completion: 0, total: 0, calls: 0 };
   const results = new Map();
-  const opened = new Map();
   const history = [];
+  const searches = [];
   const { onStep } = ctx;
   const emit = (stage, label, message) => onStep?.({ stage, label, message });
   let release = null, resolved = [], db = null;
   const unresolvedPoints = () => (points || []).filter((_, i) => !resolved[i]);
+  const done = (extra, turns) => ({ bulk: true, mode: 'offline', hpa_version: release?.hpaVersion || null, tokens: { total: { prompt: stats.prompt, completion: stats.completion, total: stats.total } }, calls: stats.calls, turns, seconds: (Date.now() - started) / 1000, unresolved: unresolvedPoints(), ...extra });
   try {
     if (points !== null && (!Array.isArray(points) || points.some(p => typeof p !== 'string' || !p.trim()))) throw new Error('Investigator points must be an array of names');
     if (typeof question !== 'string' || !question.trim()) throw new Error('Investigator requires a question');
@@ -71,59 +133,44 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
     if (release.mode !== 'offline') throw new Error('Investigator requires the local release');
     db = adapter.identity();
     const keys = { entity: db.entity, columns: db.keys };
-    const listed = points && points.length ? points : [];
+    const listed = points && points.length ? [...points] : [];
     resolved = listed.length ? await adapter.resolveGenes(listed) : [];
     const identities = new Map();
     for (const gene of resolved) if (gene && !identities.has(gene.ensembl)) identities.set(gene.ensembl, gene);
+    listed.resolvedAny = identities.size > 0;
     const catalog = await adapter.catalog();
-    const system = systemPrompt(db, catalog);
+    const system = systemPrompt(db);
     const offered = tools(db);
     const maxTurns = ctx.maxTurns || platformConfig().asoMaxSteps;
     await emit('start', 'Investigator', `${listed.length ? `${listed.length} points supplied, ${identities.size} resolve as ${db.entity}s` : 'No list'}. Question: ${question}`);
 
-    const findTables = async about => {
-      const word = String(about || '').trim().toLowerCase();
-      const hits = catalog.filter(e => e.key !== 'unreadable' && (!word || e.file.toLowerCase().includes(word) || String(e.title || '').toLowerCase().includes(word) || String(e.description || '').toLowerCase().includes(word) || e.columns.some(c => c.toLowerCase().includes(word))));
-      const lines = hits.map(e => `${e.file} — ${e.title || e.file} [${adapter.access(e)}]: ${e.columns.length > 24 ? `${e.columns.slice(0, 24).join(', ')} … (${e.columns.length} columns)` : e.columns.join(', ')}`);
-      // A word may be a value rather than a table: where it lives, spelled as the data spells it.
-      const values = word && typeof adapter.findValues === 'function' ? await adapter.findValues(word) : [];
-      for (const v of values) lines.push(`${v.file} — its column ${v.column} holds${v.inside ? ', inside its list cells,' : ''}: ${v.values.join(' | ')}${v.more ? ` (+${v.more} more)` : ''}`);
-      if (!lines.length) return `no table has "${about}" in its name, title, description, columns or recorded values; a value (a category, a sample, a name) lives in a column: find the table by a word of its subject, open it, and ask values for the column that could hold it`;
-      return lines.join('\n');
-    };
-    const openTable = async name => {
-      const entry = await adapter.entry(String(name || '').trim());
-      if (!entry || entry.key === 'unreadable') throw new Error(`no table named ${JSON.stringify(name)}${entry?.why ? `: ${entry.why}` : ''}; find_tables lists the tables`);
-      if (!opened.has(entry.file)) opened.set(entry.file, { entry, asked: [], profile: null });
-      return opened.get(entry.file);
-    };
-    // The values of one column, from the table's profile, read once per table.
-    const columnValues = async (name, column) => {
-      const o = await openTable(name);
-      const found = o.entry.columns.find(c => c === column) || o.entry.columns.find(c => c.toLowerCase() === String(column).toLowerCase());
-      if (!found) throw new Error(`${o.entry.file} has no column ${JSON.stringify(column)}; its columns: ${namedColumns(o.entry.columns)}`);
-      if (!o.profile) o.profile = await adapter.profile(o.entry);
-      if (!o.asked.includes(found)) o.asked.push(found);
-      const c = o.profile.columns.find(p => p.column === found);
-      return c ? columnLine(c) : `${found}: no values recorded`;
-    };
+    // The gate: one field in one context, or nothing is read.
+    const gateStats = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const gate = await jsonCall(GATE_SYSTEM, `Question: ${question}\nPoints: ${listed.length ? `${count(listed.length)} (${listed.slice(0, 3).join(', ')}${listed.length > 3 ? ', …' : ''})` : 'none'}`, onStep, 'Gate', gateStats);
+    stats.prompt += gateStats.promptTokens; stats.completion += gateStats.completionTokens; stats.total = stats.prompt + stats.completion; stats.calls++;
+    if (gate && gate.accepted === false) {
+      const reason = String(gate.reason || 'the question asks for more than one origin').trim();
+      await emit('error', 'Investigator', `rejected: ${reason}`);
+      return done({ found: false, status: 'rejected', stop_reason: 'rejected', incomplete: true, error: `rejected: ${reason}`, tables: [], retained: [], note: `rejected: ${reason}` }, 0);
+    }
+
     const desk = turn => {
       const list = listed.length
-        ? `${count(listed.length)} points supplied${identities.size ? `, ${count(identities.size)} resolve as ${db.entity}s in the release` : `; none is a ${db.entity} of the release, so fetch matches them against a column (match)`}${unresolvedPoints().length && identities.size ? `; not ${db.entity}s of the release: ${unresolvedPoints().slice(0, 12).join(', ')}${unresolvedPoints().length > 12 ? ` (+${unresolvedPoints().length - 12})` : ''}` : ''}. First points: ${listed.slice(0, 8).join(', ')}${listed.length > 8 ? ', …' : ''}.`
+        ? `${count(listed.length)} points supplied${identities.size ? `, ${count(identities.size)} resolve as ${db.entity}s in the release` : `; none is a ${db.entity} of the release, so fetch matches them against the column the search finds them in`}${unresolvedPoints().length && identities.size ? `; not ${db.entity}s of the release: ${unresolvedPoints().slice(0, 8).join(', ')}${unresolvedPoints().length > 8 ? ` (+${unresolvedPoints().length - 8})` : ''}` : ''}. First points: ${listed.slice(0, 5).join(', ')}`
         : 'No list: the question selects rows by a filter.';
-      const cards = [...opened.values()].map(o => tableCard({ name: o.entry.file, title: o.entry.title, description: o.entry.description, access: adapter.access(o.entry), columns: o.entry.columns, profile: o.profile?.columns, scanned: o.profile?.rows, capped: o.profile?.capped, focus: o.asked, whole: false }));
-      const lines = [...results.values()].map(t => resultLine({ id: t.title, description: t.description, rows: t.rows, columns: t.columns, origin: `fetch ${argsLine(t.args, 140)}` }));
+      const shownSearches = searches.slice(-SEARCHES_SHOWN).map(s => `search ${s.words.map(w => JSON.stringify(w)).join(', ')} →\n  ${s.text.split('\n').join('\n  ')}`);
+      const lines = [...results.values()].map(t => `${t.title} (${count(t.rows.length)} rows: ${namedColumns(t.columns)}) ← fetch ${argsLine(t.args, 120)}${t.coverage?.with_rows !== undefined ? `; ${t.coverage.with_rows} points with rows` : ''}`);
       return [
         section('QUESTION', question),
-        section('LIST', list),
-        section('OPENED', cards.join('\n') || '(no table opened yet)'),
+        section('POINTS', list),
+        section('SEARCHES', shownSearches.join('\n') || '(none yet)'),
         section('RESULTS', lines.join('\n') || '(none yet)'),
-        section('HISTORY', historyText(history)),
+        section('HISTORY', historyText(history.slice(-HISTORY_SHOWN))),
         `TURN ${turn}/${maxTurns}`
       ].join('\n\n');
     };
 
-    const done = new Map();   // fingerprint of a completed call → its outcome line
+    const seen = new Map();   // fingerprint of a completed call → its outcome line
     let idle = 0;
     for (let turn = 1; turn <= maxTurns; turn++) {
       await control.checkpoint('Investigator decision', true);
@@ -135,8 +182,8 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
       await control.checkpoint('Investigator decision: returned');
       const calls = response.choices?.[0]?.message?.tool_calls || [];
       if (!calls.length) {
-        history.push(`turn ${turn}: no tool called`);
-        if (++idle > 1) throw new AgentStop('no_progress', 'Investigator stopped calling tools');
+        history.push(`turn ${turn}: no tool called${response.choices?.[0]?.finish_reason === 'length' ? ' (the answer ran out of room before a call)' : ''}`);
+        if (++idle > 1) throw new AgentStop('no_progress', `Investigator stopped calling tools; it had tried: ${history.slice(-4).map(line => line.replace(/\s*\n\s*/g, ' ').slice(0, 200)).join('; ')}`);
         continue;
       }
       let progressed = false;
@@ -149,60 +196,36 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
           if (!spec) throw new Error(`no tool ${name}`);
           args = decodeArguments(JSON.parse(call.function.arguments || '{}'), spec.function.parameters, name);
           const ignored = validate(args, spec.function.parameters, name);
-          if (ignored.length) history.push(`turn ${turn}: ${name}: ${ignored.slice(0, 5).map(key => key.slice(name.length + 1).slice(0, 40)).join(', ')}${ignored.length > 5 ? ` (+${ignored.length - 5})` : ''} ${ignored.length === 1 ? 'is not an argument' : 'are not arguments'} of this tool, ignored`);
-          // The same fetch under another title is the same fetch.
+          if (ignored.length) history.push(`turn ${turn}: ${name}: ${ignored.slice(0, 5).map(key => key.slice(name.length + 1).slice(0, 40)).join(', ')} ${ignored.length === 1 ? 'is not an argument' : 'are not arguments'} of this tool, ignored`);
           const { title: _title, description: _description, ...bareArgs } = args;
           const key = fingerprint({ name, args: bareArgs });
-          if (name !== 'finish' && done.has(key)) { history.push(`turn ${turn}: ${name}(${argsLine(bareArgs)}) repeated; ${done.get(key)}`); continue; }
-          if (name === 'find_tables') {
-            const text = await findTables(args.about);
-            history.push(`turn ${turn}: find_tables "${args.about}" →\n${text.split('\n').map(l => `    ${l}`).join('\n')}`);
-            done.set(key, 'listed above'); progressed = true;
-          } else if (name === 'open') {
-            const o = await openTable(args.table);
-            history.push(`turn ${turn}: opened ${o.entry.file} (on the desk)`);
-            done.set(key, 'already on the desk'); progressed = true;
-            await emit('execution_step', 'Opened', `${o.entry.file}: ${o.entry.columns.length} columns`);
-          } else if (name === 'columns') {
-            const o = await openTable(args.table);
-            const word = String(args.about || '').trim().toLowerCase();
-            const hits = o.entry.columns.filter(c => c.toLowerCase().includes(word));
-            history.push(`turn ${turn}: columns of ${o.entry.file} about "${args.about}": ${hits.length ? hits.join(' | ') : `none of its ${o.entry.columns.length} columns`}`);
-            done.set(key, 'listed above'); progressed = true;
-          } else if (name === 'values') {
-            const line = await columnValues(args.table, args.column);
-            history.push(`turn ${turn}: values of ${args.table} ${args.column} (on its card)`);
-            done.set(key, 'on the table card'); progressed = true;
-            await emit('execution_step', 'Values', line.slice(0, 200));
+          if (name !== 'finish' && seen.has(key)) { history.push(`turn ${turn}: ${name}(${argsLine(bareArgs)}) repeated; ${seen.get(key)}`); continue; }
+          if (name === 'search') {
+            const words = (args.words || []).map(String).map(w => w.trim()).filter(Boolean);
+            if (!words.length) throw new Error('search needs a word');
+            const text = await searchRelease(adapter, catalog, words, listed);
+            searches.push({ words, text });
+            history.push(`turn ${turn}: searched ${words.map(w => JSON.stringify(w)).join(', ')} (under SEARCHES)`);
+            seen.set(key, 'under SEARCHES'); progressed = true;
+            await emit('execution_step', 'Search', `${words.join(', ')}: ${text.split('\n')[0].slice(0, 160)}`);
           } else if (name === 'fetch') {
-            // A result left unnamed is named by its fetch.
             const title = String(args.title || '').trim() || `fetch(${argsLine(bareArgs, 90)})`;
             const description = String(args.description || '').trim() || title;
             if (results.has(title)) throw new Error(`a result titled ${JSON.stringify(title)} exists; choose another title`);
             const entry = await adapter.entry(String(args.table || '').trim());
-            if (!entry) throw new Error(`no table named ${JSON.stringify(args.table)}; find_tables lists the tables`);
-            await openTable(entry.file);
-            // A filter value the table spells differently is read as the table spells it, and the
-            // history says so; a value that could be several is refused with all of them.
+            if (!entry || entry.key === 'unreadable') throw new Error(`no table named ${JSON.stringify(args.table)}${entry?.why ? `: ${entry.why}` : ''}; search names the tables`);
             const cards = (await adapter.profile(entry)).columns;
             const knownValuesOf = column => (cards.find(c => c.column === column) || cards.find(c => c.column.toLowerCase() === String(column).toLowerCase()))?.observed_values || null;
             const spelling = [];
-            if (args.where?.length) {
-              for (const clause of args.where) {
-                if (!clause || !['=', '!=', 'in'].includes(clause.op) || clause.value === null || clause.value === undefined) continue;
-                const values = clause.op === 'in' ? inList(clause.value) : [clause.value];
-                const read = correctSpelling(values, knownValuesOf(clause.column), clause.column, entry.file);
-                if (read.notes.length) { clause.value = clause.op === 'in' ? read.values : read.values[0]; spelling.push(...read.notes); }
-              }
+            // A filter value the table spells differently is read as the table spells it.
+            for (const clause of args.where || []) {
+              if (!clause || !['=', '!=', 'in'].includes(clause.op) || clause.value === null || clause.value === undefined) continue;
+              const column = entry.columns.find(c => c === clause.column) || entry.columns.find(c => c.toLowerCase() === String(clause.column || '').toLowerCase());
+              if (!column) throw new Error(`${entry.file} has no column ${JSON.stringify(clause.column)}; its columns: ${namedColumns(entry.columns)}`);
+              const read = correctSpelling(clause.op === 'in' ? inList(clause.value) : [clause.value], knownValuesOf(column), column, entry.file);
+              if (read.notes.length) { clause.value = clause.op === 'in' ? read.values : read.values[0]; spelling.push(...read.notes); }
             }
-            // A where on the column the list already selects by can only drop points: it is refused.
-            if (listed.length && !args.match && args.where?.length) {
-              const keyColumns = [entry.geneColumn, ...(['ensembl', 'name', 'master'].includes(entry.key) ? entry.columns.slice(0, entry.key === 'name' ? 2 : 1) : [])].filter(Boolean).map(c => c.toLowerCase());
-              const onKey = args.where.find(clause => keyColumns.includes(String(clause?.column || '').toLowerCase()));
-              if (onKey) throw new Error(`the list already selects the rows by ${onKey.column}; a where on ${onKey.column} can only drop points from it. Leave that clause out`);
-            }
-            // The points of a fetch are the list, or the values of a column of an earlier result:
-            // what one table lists is read from another without the model carrying a single value.
+            // The points of a fetch are the list, or the values of a column of an earlier result.
             let supplied = listed, supplyResolved = resolved, supplyIdentities = identities, chained = null;
             if (args.from !== undefined || args.column !== undefined) {
               if (args.from === undefined || args.column === undefined) throw new Error('from and column go together: the title of an earlier result and the column whose values are the points');
@@ -218,9 +241,15 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
               for (const gene of supplyResolved) if (gene && !supplyIdentities.has(gene.ensembl)) supplyIdentities.set(gene.ensembl, gene);
               chained = { from: source.title, column };
             }
-            // Points matched against a column are read as the column spells them. Points that are
+            // A where on the column the list already selects by can only drop points: refused.
+            if (supplied.length && !args.match && args.where?.length) {
+              const keyColumns = [entry.geneColumn, ...(['ensembl', 'name', 'master'].includes(entry.key) ? entry.columns.slice(0, entry.key === 'name' ? 2 : 1) : [])].filter(Boolean).map(c => c.toLowerCase());
+              const onKey = args.where.find(clause => keyColumns.includes(String(clause?.column || '').toLowerCase()));
+              if (onKey) throw new Error(`the list already selects the rows by ${onKey.column}; a where on ${onKey.column} can only drop points from it. Leave that clause out`);
+            }
+            // Points matched against a column are read as the column spells them; points that are
             // none of the database's entities and name no column are matched against the one
-            // column of the table whose recorded values hold them, spelling corrected the same way.
+            // column of the table whose recorded values hold them.
             let match = args.match;
             if (supplied.length && match) {
               for (const column of Array.isArray(match) ? match : [match]) {
@@ -246,7 +275,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             if (!supplied.length) fetched = await fetchAll({ adapter, entry, fields: args.fields, where: args.where, keys });
             else if (match) fetched = await fetchMatching({ adapter, entry, points: supplied, fields: args.fields, where: args.where, match, keys });
             else if (supplyIdentities.size) fetched = await fetchRows({ adapter, entry, supplied, resolved: supplyResolved, fields: args.fields, where: args.where, keys });
-            else throw new Error(`none of the points is a ${db.entity} of the release, and no column of ${entry.file} holds them; name the column their values are in with match, or fetch without the list`);
+            else throw new Error(`none of the points is a ${db.entity} of the release, and no column of ${entry.file} holds them; search a point to see where such values live, name the column with match, or fetch without the list`);
             const table = { name: title, title, description, rows: fetched.rows, columns: fetched.columns, args: { table: entry.file, fields: fetched.fields, ...(args.where?.length ? { where: args.where } : {}), ...(fetched.match ? { match: fetched.match } : {}), ...(chained || {}) }, coverage: fetched.coverage, source_file: entry.file };
             results.set(title, table);
             const c = fetched.coverage;
@@ -254,7 +283,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
               ? `${c.with_rows} points with rows${c.no_match ? `, ${c.no_match} with no row matching the filter` : ''}${c.no_rows ? `, ${c.no_rows} with no row in the table` : ''}${c.not_in_release ? `, ${c.not_in_release} not in the release` : ''}`
               : `${count(c.rows)} of ${count(c.scanned)} rows selected`;
             history.push(`turn ${turn}: fetch${chained ? ` for the ${count(supplied.length)} values of "${chained.from}" ${chained.column}` : ''} → "${title}" (${count(table.rows.length)} rows; ${summary})`);
-            done.set(key, `it made "${title}"`); progressed = true;
+            seen.set(key, `it made "${title}"`); progressed = true;
             await emit('selection_step', 'Result', `${title}: ${count(table.rows.length)} rows`);
           } else {
             const names = [...new Set((args.results || []).map(String))];
@@ -263,8 +292,9 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             if (!names.length && !String(args.note || '').trim()) throw new Error('finish needs result titles, or a note saying what no table holds');
             const tables = names.map(n => results.get(n));
             const note = String(args.note || '').trim();
-            await emit('complete', 'Investigator done', `${tables.length} result${tables.length === 1 ? '' : 's'}: ${names.join(', ')}${note ? `. ${note}` : ''}`);
-            return { bulk: true, found: tables.length > 0, status: 'ok', tables, retained: [...results.values()].filter(t => !names.includes(t.name)), note, unresolved: unresolvedPoints(), opened: [...opened.keys()], mode: 'offline', hpa_version: release.hpaVersion, tokens: { total: { prompt: stats.prompt, completion: stats.completion, total: stats.total } }, calls: stats.calls, turns: turn, seconds: (Date.now() - started) / 1000 };
+            const mapping = (args.mapping || []).filter(m => m && m.field && m.table && m.column).map(m => ({ field: String(m.field), table: String(m.table), column: String(m.column) }));
+            await emit('complete', 'Investigator done', `${tables.length} result${tables.length === 1 ? '' : 's'}: ${names.join(', ')}${mapping.length ? `. Mapped: ${mapping.map(m => `${m.field} → ${m.table}.${m.column}`).join('; ')}` : ''}${note ? `. ${note}` : ''}`);
+            return done({ found: tables.length > 0, status: 'ok', tables, retained: [...results.values()].filter(t => !names.includes(t.name)), mapping, note, opened: [] }, turn);
           }
         } catch (error) {
           if (error instanceof AgentStop) throw error;
@@ -273,7 +303,6 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
         }
       }
       idle = progressed ? 0 : idle + 1;
-      // A stop says what was tried, so the study does not summon the same dead end again.
       if (idle > 1) throw new AgentStop('no_progress', `Investigator repeated itself without new evidence; it had tried: ${history.slice(-4).map(line => line.replace(/\s*\n\s*/g, ' ').slice(0, 200)).join('; ')}`);
     }
     throw new AgentStop('turn_budget_exhausted', `Investigator used its ${maxTurns} turns without finishing`);
@@ -281,7 +310,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
     await emit('error', 'Investigator', error.message);
     const stop = error instanceof AgentStop ? { stop_reason: error.reason, incomplete: true } : {};
     // Stopped before naming its results: every fetched table is returned, the fullest first.
-    return { bulk: true, found: results.size > 0, status: 'partial', ...stop, error: error.message, tables: [...results.values()].sort((x, y) => y.rows.length - x.rows.length), retained: [], note: `Investigator stopped before finishing: ${error.message}`, unresolved: unresolvedPoints(), opened: [...opened.keys()], mode: 'offline', hpa_version: release?.hpaVersion || null, tokens: { total: { prompt: stats.prompt, completion: stats.completion, total: stats.total } }, calls: stats.calls, seconds: (Date.now() - started) / 1000 };
+    return done({ found: results.size > 0, status: 'partial', ...stop, error: error.message, tables: [...results.values()].sort((x, y) => y.rows.length - x.rows.length), retained: [], mapping: [], note: `Investigator stopped before finishing: ${error.message}`, opened: [] }, undefined);
   }
 }
 

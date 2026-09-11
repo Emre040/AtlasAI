@@ -412,7 +412,10 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
             lines.push(`${a.id} "${a.label}" (${a.size})`);
           }
           const nothingNew = made.length ? '' : ': nothing new; the Investigator answers per source table, one artifact each, and join combines them';
-          remember(`${id} ${toolName} "${title}" done → ${lines.join(', ')}${nothingNew}${result.note ? `. Investigator note: ${result.note}` : ''}${result.unresolved?.length ? `. Not in the release: ${result.unresolved.slice(0, 10).join(', ')}` : ''}`);
+          // The mapping the Investigator made stays on every artifact's line, not only in the history.
+          const mapped = result.mapping?.length ? `Mapped: ${result.mapping.map(m => `${m.field} → ${m.table}.${m.column}`).join('; ')}` : '';
+          for (const a of made) { if (mapped) a.description = `${a.description} ${mapped}${result.note ? `. ${result.note}` : ''}`; a.meta.mapping = result.mapping || []; }
+          remember(`${id} ${toolName} "${title}" done → ${lines.join(', ')}${nothingNew}${mapped ? `. ${mapped}` : ''}${result.note ? `. Investigator note: ${result.note}` : ''}${result.unresolved?.length ? `. Not in the release: ${result.unresolved.slice(0, 10).join(', ')}` : ''}`);
         } else {
           const a = await addArtifact({ ...agentArtifact(toolName, args, result), label: title, description, tool: toolName, args, inputs, toolId: id });
           made.push(a);

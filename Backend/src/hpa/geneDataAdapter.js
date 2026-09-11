@@ -264,6 +264,16 @@ async function rowCount(e) {
   return duckStore.rowCount(e.file);
 }
 
+// How many rows of a table hold one of the values in a column.
+async function holds(e, column, values) {
+  return duckStore.holds(e.file, column, values);
+}
+
+// Rows of a text column of a table containing a word: how many, and a few of the values.
+async function textHits(e, column, word, limit = 4) {
+  return duckStore.textHits(e.file, column, word, limit);
+}
+
 // Where a value lives: every column of every readable table whose recorded values, or the items
 // inside its list cells, contain the word (a category, a sample, a name), with the spellings
 // found. A word that is a value is not a table; this is how the table and the spelling are found.
@@ -306,4 +316,4 @@ async function entities() {
   return (await localData.master()).rows.map(row => ({ gene: row.Gene || null, ensembl: row.Ensembl || null }));
 }
 
-module.exports = { name: 'Human Protein Atlas per-gene tables', identity, access, catalog, overview, entry, resolveGene, resolveGenes, read, readMany, keysOf, rows, entities, applyWhere, render, cited, pageUrl, definition, profile, sample, rowCount, findValues, sources: docs.SOURCES };
+module.exports = { name: 'Human Protein Atlas per-gene tables', identity, access, catalog, overview, entry, resolveGene, resolveGenes, read, readMany, keysOf, rows, entities, applyWhere, render, cited, pageUrl, definition, profile, sample, rowCount, findValues, holds, textHits, sources: docs.SOURCES };

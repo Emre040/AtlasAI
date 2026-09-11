@@ -107,13 +107,18 @@ async function fetchMatching({ adapter, entry, points, fields, where = [], match
   const firstKeys = keyed && first ? adapter.keysOf(entry, first) : {};
   const identity = keyed && first ? identityColumns(entry, [first], [firstKeys[geneKey], firstKeys[idKey]]) : [];
   const wanted = (Array.isArray(fields) && fields.length ? resolveColumns(entry, fields) : entry.columns).filter(c => !identity.includes(c) && c !== column);
-  const columns = [column, ...keyColumns, ...wanted.filter(c => !keyColumns.includes(c)), 'source_rows', 'source_status'];
+  // A point matched against several columns of a pair table: the row keeps every side, and the
+  // side that is not the point is named in a column of its own, so the point's counterparts are
+  // that column and never the point itself.
+  const paired = matchColumns.length > 1;
+  const columns = [column, ...(paired ? ['other'] : []), ...keyColumns, ...wanted.filter(c => !keyColumns.includes(c)), 'source_rows', 'source_status'];
+  const otherOf = (row, key) => matchColumns.map(c => row[c]).find(v => String(v ?? '').trim().toLowerCase() !== key) ?? null;
   const out = [];
   const coverage = { supplied: points.length, entities: unique.length, with_rows: 0, no_rows: 0, no_match: 0, rows: 0 };
   for (const [key, point] of unique) {
     const all = byPoint.get(key);
     const rows = all.filter(predicate);
-    const base = { [column]: matchColumns.length === 1 && all.length ? all[0][column] : point };
+    const base = { [column]: matchColumns.length === 1 && all.length ? all[0][column] : point, ...(paired ? { other: null } : {}) };
     if (!rows.length) {
       if (all.length) coverage.no_match++; else coverage.no_rows++;
       out.push({ ...base, ...Object.fromEntries(keyColumns.map(c => [c, null])), ...nullFields(wanted), source_rows: 0, source_status: all.length ? STATUS.noMatch : STATUS.noRows });
@@ -123,7 +128,7 @@ async function fetchMatching({ adapter, entry, points, fields, where = [], match
     for (const row of rows) {
       coverage.rows++;
       const ids = keyed ? adapter.keysOf(entry, row) : {};
-      out.push({ ...base, ...Object.fromEntries(keyColumns.map(c => [c, ids[c] ?? null])), ...pick(row, wanted), source_rows: rows.length, source_status: STATUS.ok });
+      out.push({ ...base, ...(paired ? { other: otherOf(row, key) } : {}), ...Object.fromEntries(keyColumns.map(c => [c, ids[c] ?? null])), ...pick(row, wanted), source_rows: rows.length, source_status: STATUS.ok });
     }
   }
   return { rows: withColumns(out, columns), columns, coverage, fields: wanted, match: column };

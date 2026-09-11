@@ -47,6 +47,7 @@ function fakeAdapter(overrides = {}) {
     async read(gene, file) { return { entry: CONSENSUS, rows: file === CONSENSUS.file ? ROWS[gene.ensembl] || [] : [] }; },
     async profile(e) { return { rows: 6, capped: false, columns: e.columns.map(c => c === 'nTPM' ? { column: c, kind: 'number', blank_pct: 17, distinct: '5', min: 0, max: 34.1, examples: [] } : { column: c, kind: 'text', blank_pct: 0, distinct: '3', observed_values: c === 'Tissue' ? ['liver', 'lung', 'heart'] : null, full_examples: ['x'], examples: ['x'] }) }; },
     async sample(e) { return e === CONSENSUS ? ROWS.ENSG1.slice(0, 2) : [{ Tissue: 'liver', Organ: 'Liver & Gallbladder' }]; },
+    async holds(e, column, values) { const wanted = new Set(values.map(v => String(v).trim().toLowerCase())); let n = 0; for await (const row of this.rows(e)) if (wanted.has(String(row[column] ?? '').trim().toLowerCase())) n++; return n; },
     definition: () => null,
     ...overrides
   };

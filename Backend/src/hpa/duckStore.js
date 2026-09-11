@@ -235,6 +235,26 @@ class DuckStore {
     const t = this.tableOf(file);
     return (await this.all(`SELECT * FROM ${quoted(t.table)} LIMIT ${Math.max(1, Number(n) || 3)}`)).map(plain);
   }
+
+  // How many rows hold one of the values in the column, as the row filter matches (case and
+  // surrounding space aside, or the same number).
+  async holds(file, column, values) {
+    const t = this.tableOf(file);
+    const q = quoted(column);
+    const texts = [...new Set(values.map(v => String(v).trim().toLowerCase()))].map(literal);
+    const [{ n }] = await this.all(`SELECT count(*)::DOUBLE AS n FROM ${quoted(t.table)} WHERE lower(trim(${q})) IN (${texts.join(', ')})`);
+    return Number(n);
+  }
+
+  // Rows of a text column containing the word (case aside): how many, and a few of the values.
+  async textHits(file, column, word, limit = 4) {
+    const t = this.tableOf(file);
+    const q = quoted(column);
+    const pattern = literal(`%${String(word).replace(/[%_]/g, '')}%`);
+    const [{ n }] = await this.all(`SELECT count(*)::DOUBLE AS n FROM ${quoted(t.table)} WHERE ${q} ILIKE ${pattern}`);
+    const samples = Number(n) ? (await this.all(`SELECT DISTINCT ${q} AS v FROM ${quoted(t.table)} WHERE ${q} ILIKE ${pattern} LIMIT ${limit}`)).map(r => r.v) : [];
+    return { rows: Number(n), values: samples };
+  }
 }
 
 // The card of every column, from queries: tallies for all columns in one pass, then the distinct

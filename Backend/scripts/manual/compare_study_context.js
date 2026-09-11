@@ -81,7 +81,8 @@ async function main() {
     const runtime = require('../../src/config/runtime').loadRuntimeConfig(backend);
     require('../../src/system/aso/workspaceStore').configureWorkspaceRoot(values.out);
     require('../../src/hpa/localData').localData.configure({ root: runtime.dataLocalRoot, db });
-    await require('../../src/hpa/duckStore').duckStore.ensure({ root: runtime.dataLocalRoot, version: config.activeHpaVersion, datasets: await require('../../src/hpa/localData').localData.datasets.listReady(config.activeHpaVersion), log: message => console.error(`[HPA-DUCKDB] ${message}`) });
+    const activeHpaVersion = config.current().activeHpaVersion;
+    await require('../../src/hpa/duckStore').duckStore.ensure({ root: runtime.dataLocalRoot, version: activeHpaVersion, datasets: await require('../../src/hpa/localData').localData.datasets.listReady(activeHpaVersion), log: message => console.error(`[HPA-DUCKDB] ${message}`) });
     const orchestrator = require('../../src/system/orchestrator');
     // The run binds one catalog model for this process only: the active model, or --model <config_key>
     // (any catalog row with a platform credential); the database's active row is never changed.

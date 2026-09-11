@@ -50,7 +50,8 @@ async function bootstrap() {
   configureWorkspaceRoot(runtime.workspaceRoot);
   localData.configure({ root: runtime.dataLocalRoot, db });
   // The release database beside the files: built or brought up to date before the server answers.
-  await duckStore.ensure({ root: runtime.dataLocalRoot, version: platformConfig.activeHpaVersion, datasets: await localData.datasets.listReady(platformConfig.activeHpaVersion), log: message => console.log(`[HPA-DUCKDB] ${message}`) });
+  const activeHpaVersion = platformConfig.current().activeHpaVersion;
+  await duckStore.ensure({ root: runtime.dataLocalRoot, version: activeHpaVersion, datasets: await localData.datasets.listReady(activeHpaVersion), log: message => console.log(`[HPA-DUCKDB] ${message}`) });
 
   const batches = new BatchRepository(db);
   const conversations = new ConversationRepository(db);

@@ -83,3 +83,12 @@ test('a number an artifact or any artifact it was made from was made with is par
   assert.deepEqual(reportIssues({ claims: [{ text: 'EGFR is the only gene above 10 nTPM, at 32.2', artifact: 'a7', rows: [0], columns: ['nTPM'] }] }, s), []);
   assert.match(reportIssues({ claims: [{ text: 'EGFR is above 15 nTPM', artifact: 'a7', rows: [0], columns: ['nTPM'] }] }, s)[0], /states 15/);
 });
+
+test('a percent in a claim binds to the cell that holds the fraction, within its written precision', () => {
+  const a6 = { id: 'a6', kind: 'data', label: 'share', rows: [{ count: 86, fraction: 0.699187 }], columns: ['count', 'fraction'], tool: 'compute', args: {}, inputs: ['a1'] };
+  const s = { artifacts: [a6], byId: new Map([['a6', a6]]), plan: [] };
+  assert.deepEqual(reportIssues({ claims: [{ text: '86 partners, about 70% of them, are nuclear.', artifact: 'a6', rows: [0], columns: ['count', 'fraction'] }] }, s), []);
+  assert.deepEqual(reportIssues({ claims: [{ text: '69.9 percent are nuclear.', artifact: 'a6', rows: [0], columns: ['fraction'] }] }, s), []);
+  assert.match(reportIssues({ claims: [{ text: '75% are nuclear.', artifact: 'a6', rows: [0], columns: ['fraction'] }] }, s)[0], /states 75, not among the cells/);
+  assert.equal(reportIssues({ tables: [{ artifact: 'a6' }], limitations: ['The nuclear share of 70% depends on the main-location field'] }, s).some(i => /limitations/.test(i)), false);
+});

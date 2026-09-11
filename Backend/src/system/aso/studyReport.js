@@ -115,7 +115,7 @@ function claimIssue(claim, state) {
   // threshold, a top n) are part of their evidence.
   const lineage = (a, seen = new Set()) => !a || seen.has(a.id) ? [] : (seen.add(a.id), [...numbersIn(a.args || {}), ...(a.inputs || []).flatMap(id => lineage(state.byId.get(id), seen))]);
   const argNumbers = bound.parts.flatMap(b => lineage(b.artifact));
-  const unmatched = statedNumbers(claim.text).filter(({ value, tolerance }) => !near(bound.values, value, tolerance) && !near(argNumbers, value, tolerance) && !(Number.isInteger(value) && bound.counts.includes(value)));
+  const unmatched = statedNumbers(claim.text).filter(({ value, tolerance, percent }) => !near(bound.values, value, tolerance) && !near(argNumbers, value, tolerance) && !(Number.isInteger(value) && bound.counts.includes(value)) && !(percent && near(bound.values, value / 100, tolerance / 100)));
   if (!unmatched.length) return null;
   // A number that sits in a bound row, in a column the claim did not name, only needs the column.
   const inBoundRows = u => {
@@ -167,7 +167,7 @@ function reportIssues(args, state) {
   for (const [i, text] of (args.limitations || []).entries()) {
     // A number in a limitation is fine when a saved artifact holds it in a cell (the universe of
     // a test, a threshold); one that no artifact holds is unverified and does not belong there.
-    const loose = statedNumbers(text).filter(n => !locate(state, n.value, n.tolerance).length);
+    const loose = statedNumbers(text).filter(n => !locate(state, n.value, n.tolerance).length && !(n.percent && locate(state, n.value / 100, n.tolerance / 100).length));
     if (loose.length) issues.push(`limitations[${i}] states ${loose.map(n => n.raw).join(', ')}, which no saved artifact holds; write the limitation without the number, or state it as a claim bound to the rows that hold it`);
   }
   for (const [i, item] of (args.not_done || []).entries()) {

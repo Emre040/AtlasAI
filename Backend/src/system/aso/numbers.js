@@ -4,17 +4,21 @@
 // glued to letters (BRCA1, TP53, Q1). Shared by the report binder and the label guard.
 const NUMBER = /(?<![\w.])[-+−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+−]?\d+)?(?![\w])/g;
 
-// Each number with the tolerance its written precision implies: 32.2 binds within 0.05.
+// Each number with the tolerance its written precision implies: 32.2 binds within 0.05. A number
+// written as a percent (70%, 70 percent) is also the fraction 0.70: a cell that holds the fraction
+// binds it, within the same written precision.
 function statedNumbers(text) {
   const out = [];
-  for (const match of String(text || '').matchAll(NUMBER)) {
+  const source = String(text || '');
+  for (const match of source.matchAll(NUMBER)) {
     const clean = match[0].replace(/,/g, '').replaceAll('−', '-');
     const value = Number(clean);
     if (!Number.isFinite(value)) continue;
     const mantissa = clean.split(/[eE]/)[0];
     const exponent = /[eE]/.test(clean) ? Number(clean.split(/[eE]/)[1]) : 0;
     const decimals = mantissa.includes('.') ? mantissa.split('.')[1].length : 0;
-    out.push({ raw: match[0], value, tolerance: 0.5 * 10 ** (exponent - decimals) });
+    const percent = /^\s*(%|percent\b|per cent\b)/i.test(source.slice(match.index + match[0].length));
+    out.push({ raw: match[0], value, tolerance: 0.5 * 10 ** (exponent - decimals), percent });
   }
   return out;
 }

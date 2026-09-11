@@ -155,9 +155,14 @@ function classify(rows, args = {}) {
 }
 
 
-function applyWhere(rows, where = []) {
+// Every clause of where must hold; of any, at least one must.
+function applyWhere(rows, where = [], any = []) {
   const columns = columnsOf(rows);
-  return withColumns(rows.filter(wherePredicate(columns, where)), columns);
+  if (any !== undefined && !Array.isArray(any)) throw new Error('any must be an array of { column, op, value } clauses');
+  const every = wherePredicate(columns, where || []);
+  const some = (any || []).map(clause => wherePredicate(columns, [clause]));
+  if (!(where || []).length && !some.length) throw new Error('filter needs a clause: where (all must hold) or any (one must hold)');
+  return withColumns(rows.filter(row => every(row) && (!some.length || some.some(test => test(row)))), columns);
 }
 
 // A result's new columns go right after gene and ensembl, so the first look at it shows what
@@ -285,6 +290,12 @@ function join(left, right, how = 'inner', on = null, onColumns) {
     return naming(withColumns(out, [...leftCols, ...rightNames.values()]), rightNames, []);
   }
   if (!['inner', 'left', 'right', 'full'].includes(how)) throw new Error('join: how must be inner, left, right, full or cross');
+  // on beside a single on_columns names one key by its two sides: whichever side each is found on.
+  if (on && Array.isArray(onColumns) && onColumns.length === 1 && typeof onColumns[0] === 'string' && !String(on).includes('=') && !onColumns[0].includes('=')) {
+    const [other] = onColumns;
+    on = findColumn(left, other) && findColumn(right, on) && !(findColumn(left, on) && findColumn(right, other)) ? `${other}=${on}` : `${on}=${other}`;
+    onColumns = undefined;
+  }
   if (on && onColumns !== undefined) throw new Error('join: use on or on_columns, not both');
   if (onColumns !== undefined && (!Array.isArray(onColumns) || !onColumns.length || onColumns.some(name => typeof name !== 'string' || !name.trim()))) throw new Error('join: on_columns must be a nonempty array of column names');
   const composite = onColumns !== undefined;

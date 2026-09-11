@@ -214,7 +214,7 @@ test('an identical agent call is answered by the earlier job', async t => {
   assert.equal(result.outcome, 'completed', result.summary);
   assert.deepEqual(agentCalls.map(c => c.args.points), [['EGFR']], 'asked once');
   assert.equal(result.agents, 1);
-  assert.match(requests[2].messages[1].content, /turn 2: investigator_hpa\(points=\["EGFR"\], question=nTPM\) was already asked as t1: its result is a1/);
+  assert.match(requests[2].messages[1].content, /turn 2: investigator_hpa\(points=\["EGFR"\], question=nTPM\) was already asked as t1: its result is a1 "Values" \(\d+ rows\); asking again the same way returns nothing new: use what it made, or ask for other fields with from and the column that names the rows\nturn 2: that turn only repeated calls already made: use their artifacts as they are, ask differently, or finish/);
 });
 
 test('from on an artifact whose rows are all about one entity is refused with the columns that could hold the points', async t => {
@@ -262,14 +262,15 @@ test('an agent named as a run step starts on its own and the steps that use it w
     response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' }))),
     response(call('run', { steps: [
       { id: 'e', tool: 'investigator_hpa', args: named('Kidney', { points: ['ERBB2'], question: 'kidney nTPM' }) },
-      { id: 'f', tool: 'filter', args: named('Liver', { artifact: '@e', where: [{ column: 'Tissue', op: '=', value: 'liver' }] }) }
+      { id: 'f', tool: 'filter', args: named('Liver', { artifact: '@e', where: [{ column: 'Tissue', op: '=', value: 'liver' }] }) },
+      { id: 'g', tool: 'join', args: named('Beside', { a: 'a1', b: 'e', how: 'inner' }) }
     ] })),
     response(call('finish', { tables: [{ artifact: 'a1' }] }))
   ]);
   const result = await run({});
   assert.equal(result.outcome, 'completed', result.summary);
   assert.deepEqual(agentCalls.map(c => c.args.points), [['EGFR'], ['ERBB2']], 'the agent step ran on its own');
-  assert.match(requests[2].messages[1].content, /turn 2: run: e started as t2; f uses @e, which t2 is producing: run it again with that artifact's id when it is on the desk/);
+  assert.match(requests[2].messages[1].content, /turn 2: run: e started as t2; f uses @e, which t2 is producing: run it again with that artifact's id when it is on the desk; g uses @e, which t2 is producing/, 'a step named bare where an artifact id goes waits too');
 });
 
 test('a call that failed for a reason that does not change is refused when it is repeated', async t => {

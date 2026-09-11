@@ -30,7 +30,7 @@ function tools(db) {
     tool('open', 'Put a table on the desk: what it is and its first column names.', { table: S }, ['table']),
     tool('columns', 'The columns of a table whose name contains the word.', { table: S, about: S }, ['table', 'about']),
     tool('values', 'What a column of a table holds: every value of a category column, the range of a number column, the keys or labels inside list cells, spelled as the data spells them.', { table: S, column: S }, ['table', 'column']),
-    tool('fetch', `Retrieve rows from one table. With the list: one row per source row for each point, with the point, the fields, source_rows and source_status; the points are ${db.entity}s unless match names the column their values are in. Without the list: every row where holds. Omit fields for every column.`, { title: S, description: S, table: S, fields: { type: 'array', items: S }, where: WHERE, match: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }], description: 'Column whose values the points are; a list of columns when a point may sit in any of them (the two sides of a pair table), the point then named in a column of its own' } }, ['title', 'description', 'table']),
+    tool('fetch', `Retrieve rows from one table. With the list, or with from and column (the values of a column of an earlier result stand in for the list): one row per source row for each point, with the point, the fields, source_rows and source_status; the points are ${db.entity}s unless match names the column their values are in. Without the list: every row where holds. Omit fields for every column.`, { title: S, description: S, table: S, fields: { type: 'array', items: S }, where: WHERE, from: { type: 'string', description: 'Title of an earlier result whose column supplies the points of this fetch in place of the list, so what one table lists is read from another' }, column: { type: 'string', description: 'The column of from whose values are the points' }, match: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }], description: 'Column whose values the points are; a list of columns when a point may sit in any of them (the two sides of a pair table), the point then named in a column of its own' } }, ['title', 'description', 'table']),
     tool('finish', 'Return the results that answer the question, by title. note states what no table holds and which points did not resolve.', { results: { type: 'array', items: S }, note: S }, ['results'])
   ];
 }
@@ -43,7 +43,7 @@ The desk in the message is everything you have opened and fetched so far, and st
 
 How it goes:
 - open a table: its card names its first columns; columns finds the rest by a word. values shows what one column holds, so fields and filter values are spelled as the data spells them. find_tables narrows the list below by a word.
-- fetch once per table with every field the question needs from it, and a where filter when the question names particular rows. With a list, the points are ${db.entity}s read by their keys, or the values of the column named by match; match names several columns when a point may sit in any of them, as in a pair table with two sides. Each result has a title and a description a reader understands. The result keeps repeated rows, zeros, blanks and ties as recorded; a point with no matching row gets one row with empty fields and a source_status saying why. A question that spans several tables is answered by a fetch from each.
+- fetch once per table with every field the question needs from it, and a where filter when the question names particular rows. With a list, the points are ${db.entity}s read by their keys, or the values of the column named by match; match names several columns when a point may sit in any of them, as in a pair table with two sides. With from and column, the points are the values of a column of an earlier result: what one table lists (the other side of a pair, the members of a set) is read from another in a second fetch, and the question is answered by both. Each result has a title and a description a reader understands. The result keeps repeated rows, zeros, blanks and ties as recorded; a point with no matching row gets one row with empty fields and a source_status saying why. A question that spans several tables is answered by a fetch from each.
 - finish names the results that answer the question. The fetched rows are the evidence and a result's title is its citation. The note states what no table holds and which points did not resolve.
 
 TABLES (${listed.length}; find_tables narrows them by a word, open one for its columns)
@@ -177,20 +177,37 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             const entry = await adapter.entry(String(args.table || '').trim());
             if (!entry) throw new Error(`no table named ${JSON.stringify(args.table)}; find_tables lists the tables`);
             await openTable(entry.file);
+            // The points of a fetch are the list, or the values of a column of an earlier result:
+            // what one table lists is read from another without the model carrying a single value.
+            let supplied = listed, supplyResolved = resolved, supplyIdentities = identities, chained = null;
+            if (args.from !== undefined || args.column !== undefined) {
+              if (args.from === undefined || args.column === undefined) throw new Error('from and column go together: the title of an earlier result and the column whose values are the points');
+              const wanted = String(args.from).trim();
+              const source = results.get(wanted) || [...results.values()].find(t => t.title.toLowerCase() === wanted.toLowerCase());
+              if (!source) throw new Error(`no result titled ${JSON.stringify(wanted)}; results so far: ${[...results.keys()].join(', ') || 'none'}`);
+              const column = source.columns.find(c => c === args.column) || source.columns.find(c => c.toLowerCase() === String(args.column).trim().toLowerCase());
+              if (!column) throw new Error(`${JSON.stringify(source.title)} has no column ${JSON.stringify(args.column)}; its columns: ${namedColumns(source.columns)}`);
+              supplied = [...new Set(source.rows.map(r => r[column]).filter(v => v !== null && v !== undefined && String(v).trim() !== '').map(String))];
+              if (!supplied.length) throw new Error(`${JSON.stringify(source.title)} holds no value in ${column}`);
+              supplyResolved = args.match ? [] : await adapter.resolveGenes(supplied);
+              supplyIdentities = new Map();
+              for (const gene of supplyResolved) if (gene && !supplyIdentities.has(gene.ensembl)) supplyIdentities.set(gene.ensembl, gene);
+              chained = { from: source.title, column };
+            }
             const filter = args.where?.length ? ` where ${args.where.map(w => `${w.column} ${w.op} ${w.value ?? ''}`).join(' and ')}` : '';
-            await emit('execution_step', 'Fetch', `${entry.file}${args.fields?.length ? ` fields ${args.fields.join(', ')}` : ''}${filter}${listed.length ? ` for ${count(listed.length)} points` : ''}`);
+            await emit('execution_step', 'Fetch', `${entry.file}${args.fields?.length ? ` fields ${args.fields.join(', ')}` : ''}${filter}${supplied.length ? ` for ${count(supplied.length)} points${chained ? ` from "${chained.from}" ${chained.column}` : ''}` : ''}`);
             let fetched;
-            if (!listed.length) fetched = await fetchAll({ adapter, entry, fields: args.fields, where: args.where, keys });
-            else if (args.match) fetched = await fetchMatching({ adapter, entry, points: listed, fields: args.fields, where: args.where, match: args.match, keys });
-            else if (identities.size) fetched = await fetchRows({ adapter, entry, supplied: listed, resolved, fields: args.fields, where: args.where, keys });
+            if (!supplied.length) fetched = await fetchAll({ adapter, entry, fields: args.fields, where: args.where, keys });
+            else if (args.match) fetched = await fetchMatching({ adapter, entry, points: supplied, fields: args.fields, where: args.where, match: args.match, keys });
+            else if (supplyIdentities.size) fetched = await fetchRows({ adapter, entry, supplied, resolved: supplyResolved, fields: args.fields, where: args.where, keys });
             else throw new Error(`none of the points is a ${db.entity} of the release; name the column their values are in with match`);
-            const table = { name: title, title, description, rows: fetched.rows, columns: fetched.columns, args: { table: entry.file, fields: fetched.fields, ...(args.where?.length ? { where: args.where } : {}), ...(fetched.match ? { match: fetched.match } : {}) }, coverage: fetched.coverage, source_file: entry.file };
+            const table = { name: title, title, description, rows: fetched.rows, columns: fetched.columns, args: { table: entry.file, fields: fetched.fields, ...(args.where?.length ? { where: args.where } : {}), ...(fetched.match ? { match: fetched.match } : {}), ...(chained || {}) }, coverage: fetched.coverage, source_file: entry.file };
             results.set(title, table);
             const c = fetched.coverage;
-            const summary = listed.length
+            const summary = supplied.length
               ? `${c.with_rows} points with rows${c.no_match ? `, ${c.no_match} with no row matching the filter` : ''}${c.no_rows ? `, ${c.no_rows} with no row in the table` : ''}${c.not_in_release ? `, ${c.not_in_release} not in the release` : ''}`
               : `${count(c.rows)} of ${count(c.scanned)} rows selected`;
-            history.push(`turn ${turn}: fetch → "${title}" (${count(table.rows.length)} rows; ${summary})`);
+            history.push(`turn ${turn}: fetch${chained ? ` for the ${count(supplied.length)} values of "${chained.from}" ${chained.column}` : ''} → "${title}" (${count(table.rows.length)} rows; ${summary})`);
             done.set(key, `it made "${title}"`); progressed = true;
             await emit('selection_step', 'Result', `${title}: ${count(table.rows.length)} rows`);
           } else {
@@ -216,7 +233,8 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
   } catch (error) {
     await emit('error', 'Investigator', error.message);
     const stop = error instanceof AgentStop ? { stop_reason: error.reason, incomplete: true } : {};
-    return { bulk: true, found: results.size > 0, status: 'partial', ...stop, error: error.message, tables: [...results.values()], retained: [], note: `Investigator stopped before finishing: ${error.message}`, unresolved: unresolvedPoints(), opened: [...opened.keys()], mode: 'offline', hpa_version: release?.hpaVersion || null, tokens: { total: { prompt: stats.prompt, completion: stats.completion, total: stats.total } }, calls: stats.calls, seconds: (Date.now() - started) / 1000 };
+    // Stopped before naming its results: every fetched table is returned, the fullest first.
+    return { bulk: true, found: results.size > 0, status: 'partial', ...stop, error: error.message, tables: [...results.values()].sort((x, y) => y.rows.length - x.rows.length), retained: [], note: `Investigator stopped before finishing: ${error.message}`, unresolved: unresolvedPoints(), opened: [...opened.keys()], mode: 'offline', hpa_version: release?.hpaVersion || null, tokens: { total: { prompt: stats.prompt, completion: stats.completion, total: stats.total } }, calls: stats.calls, seconds: (Date.now() - started) / 1000 };
   }
 }
 

@@ -94,3 +94,22 @@ test('finish without a matching result is refused with the titles that exist', a
   assert.equal(result.note, 'MET has no recorded liver value');
   assert.match(requests[2].messages[1].content, /finish\(results=\["livre"\]\) failed: no result titled livre; results so far: liver/);
 });
+
+test('a fetch takes its points from a column of an earlier result: what one table lists is read from another', async () => {
+  const { run, requests } = await investigator([
+    response(call('fetch', { title: 'Liver rows', description: 'Every gene with a liver row', table: 'rna_tissue_consensus.tsv', fields: ['nTPM'], where: [{ column: 'Tissue', op: '=', value: 'liver' }] })),
+    response(call('fetch', { title: 'Lung nTPM of those', description: 'Lung nTPM for each gene of Liver rows', table: 'rna_tissue_consensus.tsv', fields: ['Tissue', 'nTPM'], where: [{ column: 'Tissue', op: '=', value: 'lung' }], from: 'Liver rows', column: 'nope' })),
+    response(call('fetch', { title: 'Lung nTPM of those', description: 'Lung nTPM for each gene of Liver rows', table: 'rna_tissue_consensus.tsv', fields: ['Tissue', 'nTPM'], where: [{ column: 'Tissue', op: '=', value: 'lung' }], from: 'Liver rows', column: 'gene' })),
+    response(call('finish', { results: ['Liver rows', 'Lung nTPM of those'] }))
+  ]);
+  const result = await run({ question: 'the lung nTPM of every gene with a liver row' });
+  assert.equal(result.status, 'ok');
+  assert.equal(result.tables.length, 2);
+  const second = result.tables[1];
+  assert.deepEqual(second.args, { table: 'rna_tissue_consensus.tsv', fields: ['Tissue', 'nTPM'], where: [{ column: 'Tissue', op: '=', value: 'lung' }], from: 'Liver rows', column: 'gene' });
+  assert.equal(second.coverage.supplied, 3, 'the three genes of Liver rows are the points');
+  assert.deepEqual(second.rows.map(r => [r.gene, r.nTPM]), [['EGFR', '14.1'], ['ERBB2', '34.1'], ['MET', null]]);
+  assert.match(requests[2].messages[1].content, /failed: "Liver rows" has no column "nope"; its columns: /);
+  assert.match(requests[3].messages[1].content, /turn 3: fetch for the 3 values of "Liver rows" gene → "Lung nTPM of those" \(3 rows; 2 points with rows, 1 with no row matching the filter\)/);
+  assert.equal(result.calls, 4);
+});

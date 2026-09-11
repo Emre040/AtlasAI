@@ -350,7 +350,9 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     const fingerprint = JSON.stringify([toolName, executionArgs]).toLowerCase();
     const earlier = agentJobs.get(fingerprint);
     if (earlier) {
-      remember(earlier.made ? `${toolName}(${desk.argsLine(bare(args), 140)}) was already asked as ${earlier.id}: its result is ${earlier.made.join(', ')}` : `${toolName}(${desk.argsLine(bare(args), 140)}) is already running as ${earlier.id}`);
+      // Its artifacts, each once, the fullest first, with their size: the desk line says the rest.
+      const made = earlier.made ? [...new Set(earlier.made)].map(id => state.byId.get(id)).filter(Boolean).sort((x, y) => (y.rows?.length || 0) - (x.rows?.length || 0)) : [];
+      remember(earlier.made ? `${toolName}(${desk.argsLine(bare(args), 140)}) was already asked as ${earlier.id}: its result is ${made.map(a => `${a.id} "${a.label}" (${a.size})`).join(', ') || 'nothing'}; asking again the same way returns nothing new: use what it made, or ask for other fields with from and the column that names the rows` : `${toolName}(${desk.argsLine(bare(args), 140)}) is already running as ${earlier.id}`);
       return false;
     }
     const id = `t${++state.ids.t}`;
@@ -639,7 +641,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       });
       await log('turn', { turn, text: message.content ? String(message.content).slice(0, 600) : null, calls: calls.map(c => ({ tool: c.name, args: c.args })), offered: offered.length });
       if (message.content && !calls.length) remember(`said: ${String(message.content).slice(0, 300)}`);
-      let waiting = false, sync = 0, started = 0;
+      let waiting = false, sync = 0, started = 0, repeated = 0;
       async function executeCall(call) {
         if (call.error) throw new Error(`invalid arguments: ${call.error}`);
         const spec = offered.find(t => t.function.name === call.name);
@@ -679,7 +681,9 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           for (const s of all) {
             if (!s || agentNames.has(s.tool)) continue;
             const text = JSON.stringify(s.args || {});
-            const dep = [...lifted.keys()].find(stepId => text.includes(`@${stepId}`));
+            // A step uses another as @id, or names it bare where an artifact id goes.
+            const names = Object.values(s.args || {}).flatMap(v => (Array.isArray(v) ? v : [v])).filter(v => typeof v === 'string');
+            const dep = [...lifted.keys()].find(stepId => text.includes(`@${stepId}`) || names.includes(stepId));
             if (dep) waits.push(`${s.id} uses @${dep}${lifted.get(dep) ? `, which ${lifted.get(dep) === 'already asked' ? 'an earlier call' : lifted.get(dep)} is producing: run it again with that artifact's id when it is on the desk` : ', which failed'}`);
             else steps.push(s);
           }
@@ -715,8 +719,9 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           await log('plan', { items: state.plan });
           return;
         }
-        if (TABLE_TOOLS.has(call.name)) { await runTableTool(call.name, call.args); sync++; return; }
-        if (agentNames.has(call.name)) { if (startAgent(call.name, call.args)) started++; else sync++; return; }
+        // A call already made, or already asked, does no work: the turn is idle if that is all it did.
+        if (TABLE_TOOLS.has(call.name)) { const made = await runTableTool(call.name, call.args); if (made?.repeated) repeated++; else sync++; return; }
+        if (agentNames.has(call.name)) { if (startAgent(call.name, call.args)) started++; else repeated++; return; }
         throw new Error(`no tool ${call.name}`);
       }
       const guarded = async call => {
@@ -743,7 +748,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       // An agent still running holds the next decision: the loop wakes when the first one returns,
       // so no turn is spent looking at an unchanged desk.
       if (state.running.size) { stalls = 0; await waitForCompletion(); continue; }
-      if (sync === 0 && started === 0 && !waiting) { stalls++; remember('that turn did no work: summon agents, run operations, or finish'); if (stalls > MAX_STALLS) break; continue; }
+      if (sync === 0 && started === 0 && !waiting) { stalls++; remember(repeated ? 'that turn only repeated calls already made: use their artifacts as they are, ask differently, or finish' : 'that turn did no work: summon agents, run operations, or finish'); if (stalls > MAX_STALLS) break; continue; }
       if (waiting) { stalls++; remember('nothing is running, so there is nothing to wait for: act or finish'); if (stalls > MAX_STALLS) break; continue; }
       stalls = 0;
     }

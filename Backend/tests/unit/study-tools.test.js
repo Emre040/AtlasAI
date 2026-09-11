@@ -133,6 +133,19 @@ test('join takes a key the two sides name differently as left=right', () => {
   assert.throws(() => tools.join(seeds, pairs, 'inner', 'ensembl'), /no column "ensembl" on right .* left=right/);
   const composite = tools.join(seeds, pairs, 'inner', null, ['ensembl=ensembl_gene_id_2']);
   assert.deepEqual(composite.map(r => [r.gene, r.datasets]), [['ALB', 'y']]);
+  // on beside a single on_columns names one key by its two sides, whichever side each is found on.
+  assert.deepEqual(tools.join(seeds, pairs, 'inner', 'ensembl', ['ensembl_gene_id_1']).map(r => r.gene), ['HP']);
+  assert.deepEqual(tools.join(seeds, pairs, 'inner', 'ensembl_gene_id_1', ['ensembl']).map(r => r.gene), ['HP']);
+  assert.throws(() => tools.join(seeds, pairs, 'inner', 'ensembl', ['ensembl_gene_id_1', 'datasets']), /use on or on_columns, not both/);
+});
+
+test('filter keeps the rows where every clause of where holds and at least one clause of any', () => {
+  const rows = tools.withColumns([{ gene: 'A', fav: 'x', unf: null }, { gene: 'B', fav: null, unf: 'y' }, { gene: 'C', fav: null, unf: null }], ['gene', 'fav', 'unf']);
+  const either = [{ column: 'fav', op: 'is_present' }, { column: 'unf', op: 'is_present' }];
+  assert.deepEqual(tools.applyWhere(rows, [], either).map(r => r.gene), ['A', 'B']);
+  assert.deepEqual(tools.applyWhere(rows, either).map(r => r.gene), [], 'as where, both must hold');
+  assert.deepEqual(tools.applyWhere(rows, [{ column: 'gene', op: '=', value: 'B' }], either).map(r => r.gene), ['B']);
+  assert.throws(() => tools.applyWhere(rows, [], []), /filter needs a clause/);
 });
 
 test('a profile lists the items of a list column as a vocabulary, but not free text', () => {

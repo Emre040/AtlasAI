@@ -51,7 +51,7 @@ function systemPrompt(db) {
 Never fetch a whole table to look at it; the search says what is there.`;
 }
 
-const GATE_SYSTEM = `You check a question put to a data agent before it runs. The agent answers ONE question per run: one field (one measurement, one annotation, one category) in one context, for a list of points. Reply with JSON: {"accepted": true|false, "reason": "<one sentence>"}. Reject a question that asks for more than one thing: several fields (favorable and unfavorable, a category and a value, an expression and a location), or several contexts of one kind (two tissues, two cell types, two cohorts), naming them so they can be asked one at a time. Accept one field with its unit or qualifier, a list of points of any size, a filter, both sides of a pair (the partner is the one field), and a question that names no context or says any or all. Where the data is kept is not your concern.`;
+const gateSystem = db => `You check a question put to a data agent before it runs. The agent answers ONE question per run: one field (one measurement, one annotation, one category) in one context, for a list of points. Reply with JSON: {"accepted": true|false, "reason": "<one sentence>"}. A ${db.entity}'s name or id is never a field: the points come with theirs. Reject a question that asks for more than one thing: several fields (favorable and unfavorable, a category and a value, an expression and a location), or several contexts of one kind (two tissues, two cell types, two cohorts), naming them so they can be asked one at a time. Accept one field with its unit or qualifier, a list of points of any size, a filter, both sides of a pair (the partner is the one field), and a question that names no context or says any or all. Where the data is kept is not your concern.`;
 
 const flat = value => String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 // A recorded value holds a word when either contains the other, the shorter being a word's length.
@@ -296,7 +296,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
 
     // The gate: one field in one context, or nothing is read.
     const gateStats = { promptTokens: 0, completionTokens: 0, totalTokens: 0, perStep: {} };
-    const gate = await jsonCall(GATE_SYSTEM, `Question: ${question}\nPoints: ${listed.length ? `${count(listed.length)} (${listed.slice(0, 3).join(', ')}${listed.length > 3 ? ', …' : ''})` : 'none'}`, onStep, 'Gate', gateStats);
+    const gate = await jsonCall(gateSystem(db), `Question: ${question}\nPoints: ${listed.length ? `${count(listed.length)} (${listed.slice(0, 3).join(', ')}${listed.length > 3 ? ', …' : ''})` : 'none'}`, onStep, 'Gate', gateStats);
     stats.prompt += gateStats.promptTokens; stats.completion += gateStats.completionTokens; stats.total = stats.prompt + stats.completion; stats.calls++;
     if (gate && gate.accepted === false) {
       const reason = String(gate.reason || 'the question asks for more than one origin').trim();

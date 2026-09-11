@@ -172,16 +172,83 @@ function freshFirst(rows, inputColumns = []) {
   return withColumns(rows.map(r => { const o = {}; for (const k of order) if (k in r) o[k] = r[k]; return o; }), order);
 }
 
+// The ways two tables combine. There is no union: a union kept one row per entity and silently
+// dropped the rest, which on a table with one row per gene and tissue threw away every second
+// measurement (a study lost all its pancreas rows that way). Stacking is concat, which keeps every
+// row; one row per entity across both is concat followed by distinct, two steps the study can see.
 function setOp(kind, left, right, on = null) {
   const columns = [...new Set([...columnsOf(left), ...columnsOf(right)])];
   if (kind === 'concat') return withColumns([...left, ...right], columns);
+  if (kind === 'union') throw new Error('combine: there is no union, it would keep one row per entity and drop the others; to stack two tables use concat (then distinct on the entity for a set), for the entities in both use intersect');
   requireKeys(left, on, kind); requireKeys(right, on, kind);
   const rightKeys = new Set(right.flatMap(r => keysOf(r, on)));
   const inRight = r => keysOf(r, on).some(k => rightKeys.has(k));
-  if (kind === 'union') { const seen = new Set(); return withColumns([...left, ...right].filter(r => { const keys = keysOf(r, on); if (keys.some(k => seen.has(k))) return false; for (const k of keys) seen.add(k); return true; }), columns); }
   if (kind === 'intersect') return withColumns(left.filter(inRight), columnsOf(left));
   if (kind === 'difference') return withColumns(left.filter(r => !inRight(r)), columnsOf(left));
   throw new Error(`unknown set operation ${kind}`);
+}
+
+// Whether every present value of a column is a number.
+function numericColumn(rows, column) {
+  let seen = false;
+  for (const r of rows) { const v = r[column]; if (isMissing(v)) continue; seen = true; if (typeof v === 'boolean' || !Number.isFinite(Number(v))) return false; }
+  return seen;
+}
+
+// Whether a column has one value on all rows of an entity.
+function constantPerEntity(rows, key, column) {
+  const seen = new Map();
+  for (const r of rows) { const id = r[key]; const v = isMissing(r[column]) ? null : String(r[column]); if (!seen.has(id)) seen.set(id, v); else if (seen.get(id) !== v) return false; }
+  return true;
+}
+
+// The shape of a table: how many entities it covers and, when it has more rows than entities,
+// the one categorical column that tells the rows of an entity apart (a tissue, a cell type, a
+// cancer), with its values when there are few. A study reads this off the desk instead of
+// guessing whether "72 rows" is 72 genes or 36 genes in two tissues.
+const GRAIN_VALUES = 12;
+function grain(rows, columns, identityKeys = IDENTITY) {
+  if (!Array.isArray(rows) || rows.length < 2 || !Array.isArray(columns)) return null;
+  const key = [...identityKeys].reverse().find(k => columns.includes(k));
+  if (!key) return null;
+  const entities = new Set(rows.map(r => r[key]).filter(v => !isMissing(v))).size;
+  if (!entities) return null;
+  if (entities >= rows.length) return { key, entities, by: null, values: null, distinct: 0 };
+  for (const c of columns) {
+    if (identityKeys.includes(c) || numericColumn(rows, c)) continue;
+    const values = [...new Set(rows.map(r => r[c]).filter(v => !isMissing(v)).map(String))];
+    if (values.length < 2) continue;
+    const pairs = new Set(rows.map(r => `${r[key]} ${r[c]}`)).size;
+    if (pairs === rows.length) return { key, entities, by: c, values: values.length <= GRAIN_VALUES ? values.sort() : null, distinct: values.length };
+  }
+  return { key, entities, by: null, values: null, distinct: 0 };
+}
+
+// A long table with one measurement per entity and category (each gene's nTPM in a few named
+// tissues) as one row per entity with a column per category value. That is the shape a question
+// that names the tissues asks for, and the shape a scatter, a mean or a ratio needs, so the study
+// gets it without a pivot or a filter first. Null when the table is not of that kind: no repeated
+// entities, many category values, several measurements, or a column that varies within an entity.
+// `only` names the columns the lookup filtered to named values: a table widens by one of those,
+// never by a column the question did not name (a table of every tissue stays long).
+const WIDE_VALUES = 8;
+function widenByCategory(rows, columns, identityKeys = IDENTITY, { only = null } = {}) {
+  const g = grain(rows, columns, identityKeys);
+  if (!g?.by || g.distinct > WIDE_VALUES || (only && !only.includes(g.by))) return null;
+  const values = [...new Set(rows.map(r => r[g.by]).filter(v => !isMissing(v)).map(String))];
+  const measures = columns.filter(c => c !== g.by && !identityKeys.includes(c) && numericColumn(rows, c) && !constantPerEntity(rows, g.key, c));
+  if (measures.length !== 1) return null;
+  const [measure] = measures;
+  const carried = columns.filter(c => c !== g.by && c !== measure && !['source_rows', 'source_status'].includes(c));
+  if (!carried.every(c => constantPerEntity(rows, g.key, c)) || values.some(v => carried.includes(v))) return null;
+  const byEntity = new Map();
+  for (const r of rows) {
+    const id = r[g.key];
+    if (!byEntity.has(id)) { const base = {}; for (const c of carried) base[c] = r[c]; for (const v of values) base[v] = null; byEntity.set(id, base); }
+    byEntity.get(id)[String(r[g.by])] = isMissing(r[measure]) ? null : r[measure];
+  }
+  const out = withColumns([...byEntity.values()], [...carried, ...values]);
+  return { rows: out, columns: out.columns, by: g.by, measure, values };
 }
 
 // SQL-like: a left row joined with every right row of the same gene, so a long table (one row per
@@ -1097,4 +1164,4 @@ function chartSpec(args, input) {
   return { ...base, ...chartDomains(args, axes), data };
 }
 
-module.exports = { aggregateMany, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, inList, applyWhere, wherePredicate, freshFirst, correlate, overlap, explode, profile, profileStream, listGrammar, setOp, join, select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, columnsOf, withColumns, findColumn, keyOf, num, isMissing };
+module.exports = { grain, widenByCategory, aggregateMany, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, inList, applyWhere, wherePredicate, freshFirst, correlate, overlap, explode, profile, profileStream, listGrammar, setOp, join,select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, columnsOf, withColumns, findColumn, keyOf, num, isMissing };

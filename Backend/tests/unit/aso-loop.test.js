@@ -59,11 +59,12 @@ test('plan, delegate, compute a chain, and finish a report bound to the data', a
   assert.match(result.summary, /- EGFR is higher in liver \(32\.2\) than in lung \(14\.1\)\. \(evidence: a1 row 0: gene=EGFR, Tissue=liver, nTPM=32\.2; row 1: gene=EGFR, Tissue=lung, nTPM=14\.1\)/);
   // The desk of turn 2: the artifact as one line with its title and description, its few rows whole.
   const desk2 = requests[1].messages[1].content;
-  assert.match(desk2, /ARTIFACTS\na1 "Lung and liver nTPM" \(4 rows over 2 genes: gene, ensembl, Tissue, nTPM, source_rows, source_status\) ← investigator_hpa t1 "lung and liver nTPM"\n  Lung and liver nTPM, described\n  0: EGFR \| ENSG1 \| liver \| 32\.2 \| 2 \| ok\n  1: EGFR \| ENSG1 \| lung \| 14\.1 \| 2 \| ok\n  2: ERBB2/);
+  // The line says what a row is: one per gene and tissue, and which tissues, so nothing counts or filters it blind.
+  assert.match(desk2, /ARTIFACTS\na1 "Lung and liver nTPM" \(4 rows over 2 genes, one row per gene and Tissue \(Tissue: liver, lung\): gene, ensembl, Tissue, nTPM, source_rows, source_status\) ← investigator_hpa t1 "lung and liver nTPM"\n  Lung and liver nTPM, described\n  0: EGFR \| ENSG1 \| liver \| 32\.2 \| 2 \| ok\n  1: EGFR \| ENSG1 \| lung \| 14\.1 \| 2 \| ok\n  2: ERBB2/);
   assert.match(desk2, /HISTORY\nturn 1: plan: 3 deliverables\nturn 1: t1 investigator_hpa "Lung and liver nTPM" done → a1 "Lung and liver nTPM" \(4 rows\)/);
   assert.match(desk2, /PLAN\n1\. \[todo\] lung and liver nTPM \| table\n2\. \[todo\] heatmap \| heatmap/);
   const desk3 = requests[2].messages[1].content;
-  assert.match(desk3, /a1 "Lung and liver nTPM" \(4 rows over 2 genes: [^\n]*\n  Lung and liver nTPM, described\na2 "Heat matrix"/, 'once thepivot read a1, its rows leave the desk');
+  assert.match(desk3, /a1 "Lung and liver nTPM" \(4 rows over 2 genes, one row per gene and Tissue[^\n]*\n  Lung and liver nTPM, described\na2 "Heat matrix"/, 'once thepivot read a1, its rows leave the desk');
   assert.match(desk3, /a2 "Heat matrix" matrix 2 × 2 \(rows: EGFR, ERBB2; columns: liver, lung\) ← pivot t2 of a1; a heatmap input\n  Heat matrix, described/);
   assert.match(desk3, /a3 "Heat" figure heatmap ← chart t3\(artifact=a2, type=heatmap\) \(rendered\)/);
   assert.match(requests[3].messages[1].content, /a4 "Bars" figure grouped_bar/);

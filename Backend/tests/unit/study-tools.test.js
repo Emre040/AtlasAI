@@ -147,3 +147,43 @@ test('aggregate recorded counts the rows whose cell holds a value, so a left joi
   const out = tools.aggregate(rows, { column: 'partner', metrics: ['count', 'recorded', 'missing'], group_by: 'seed' });
   assert.deepEqual(out.map(r => [r.seed, r.count, r.recorded, r.missing]), [['ALB', 1, 0, 1], ['HP', 1, 1, 0], ['APOA1', 2, 2, 0]]);
 });
+
+test('there is no union: stacking is concat, and the refusal says so', () => {
+  const a = tools.withColumns([{ gene: 'ALB', ensembl: 'E1', Tissue: 'Pancreas', nTPM: 1 }, { gene: 'ALB', ensembl: 'E1', Tissue: 'Kidney', nTPM: 2 }], ['gene', 'ensembl', 'Tissue', 'nTPM']);
+  const b = tools.withColumns([{ gene: 'INS', ensembl: 'E2', Tissue: 'Pancreas', nTPM: 3 }, { gene: 'INS', ensembl: 'E2', Tissue: 'Kidney', nTPM: 4 }], ['gene', 'ensembl', 'Tissue', 'nTPM']);
+  assert.throws(() => tools.setOp('union', a, b), /there is no union.*use concat/);
+  assert.equal(tools.setOp('concat', a, b).length, 4);
+  assert.equal(tools.setOp('intersect', a, b).length, 0);
+});
+
+test('grain says how many entities a table covers and which column tells their rows apart', () => {
+  const long = tools.withColumns([
+    { gene: 'ALB', ensembl: 'E1', 'Gene name': 'ALB', Tissue: 'Pancreas', nTPM: 1.5 }, { gene: 'ALB', ensembl: 'E1', 'Gene name': 'ALB', Tissue: 'Kidney', nTPM: '2' },
+    { gene: 'INS', ensembl: 'E2', 'Gene name': 'INS', Tissue: 'Pancreas', nTPM: 3 }, { gene: 'INS', ensembl: 'E2', 'Gene name': 'INS', Tissue: 'Kidney', nTPM: null }
+  ], ['gene', 'ensembl', 'Gene name', 'Tissue', 'nTPM']);
+  assert.deepEqual(tools.grain(long, long.columns), { key: 'ensembl', entities: 2, by: 'Tissue', values: ['Kidney', 'Pancreas'], distinct: 2 });
+  const perGene = tools.withColumns([{ gene: 'ALB', ensembl: 'E1', nTPM: 1 }, { gene: 'INS', ensembl: 'E2', nTPM: 2 }], ['gene', 'ensembl', 'nTPM']);
+  assert.deepEqual(tools.grain(perGene, perGene.columns), { key: 'ensembl', entities: 2, by: null, values: null, distinct: 0 });
+  assert.equal(tools.grain([{ x: 1 }, { x: 2 }], ['x']), null);
+});
+
+test('a measurement in a few named categories widens to one row per entity with a column per category', () => {
+  const long = tools.withColumns([
+    { gene: 'ALB', ensembl: 'E1', 'Gene name': 'ALB', Tissue: 'Pancreas', nTPM: 1.5, source_rows: 1, source_status: 'ok' }, { gene: 'ALB', ensembl: 'E1', 'Gene name': 'ALB', Tissue: 'Kidney', nTPM: '2', source_rows: 1, source_status: 'ok' },
+    { gene: 'INS', ensembl: 'E2', 'Gene name': 'INS', Tissue: 'Pancreas', nTPM: 3, source_rows: 1, source_status: 'ok' }
+  ], ['gene', 'ensembl', 'Gene name', 'Tissue', 'nTPM', 'source_rows', 'source_status']);
+  const wide = tools.widenByCategory(long, long.columns);
+  assert.deepEqual(wide.columns, ['gene', 'ensembl', 'Gene name', 'Pancreas', 'Kidney']);
+  assert.deepEqual(wide.rows, [{ gene: 'ALB', ensembl: 'E1', 'Gene name': 'ALB', Pancreas: 1.5, Kidney: '2' }, { gene: 'INS', ensembl: 'E2', 'Gene name': 'INS', Pancreas: 3, Kidney: null }]);
+  assert.equal(wide.by, 'Tissue'); assert.equal(wide.measure, 'nTPM');
+  // only a column the lookup filtered to named values widens the table; a table of every tissue stays long
+  assert.equal(tools.widenByCategory(long, long.columns, undefined, { only: ['Cancer'] }), null);
+  assert.equal(tools.widenByCategory(long, long.columns, undefined, { only: ['Tissue'] }).columns.length, 5);
+  // two measurements, or a column that varies within an entity, or many categories: the table stays long
+  const two = tools.withColumns(long.map((r, i) => ({ ...r, pTPM: 9 + i })), [...long.columns, 'pTPM']);
+  assert.equal(tools.widenByCategory(two, two.columns), null);
+  const varying = tools.withColumns(long.map((r, i) => ({ ...r, note: `n${i}` })), [...long.columns, 'note']);
+  assert.equal(tools.widenByCategory(varying, varying.columns), null);
+  const many = tools.withColumns(Array.from({ length: 9 }, (_, i) => ({ gene: 'ALB', ensembl: 'E1', Tissue: `T${i}`, nTPM: i })), ['gene', 'ensembl', 'Tissue', 'nTPM']);
+  assert.equal(tools.widenByCategory(many, many.columns), null);
+});

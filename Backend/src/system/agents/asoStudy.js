@@ -53,7 +53,7 @@ const STUDY_TOOLS = [
   tool('note', 'Keep a decision or open question on the desk; replace overwrites note N.', { text: S, replace: N }, ['text']),
   tool('open', 'Show rows of an artifact: rows and offset page it, columns narrow it.', { artifact: A, rows: N, offset: N, columns: { type: 'array', items: S } }, ['artifact']),
   tool('run', 'Run dependent operations together; a step names an operation and its args, and refers to an earlier step of the same call as @id (an existing artifact by its own id).',{ steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
-  op('combine', 'Rows of a and b as one table: union (either, one row per entity), intersect (rows of a whose entity is in b), difference (rows of a whose entity is not in b) or concat (all rows of a, then all of b; label names a column that says which input each row came from, by its title, so stacked cohorts stay told apart). on matches by a column instead of the entity.', { a: A, b: A, how: { type: 'string', enum: ['union', 'intersect', 'difference', 'concat'] }, on: S, label: S }, ['a', 'b', 'how']),
+  op('combine', 'Rows of a and b as one table: concat (every row of a, then every row of b; label names a column that says which input each row came from, by its title, so stacked cohorts stay told apart), intersect (rows of a whose entity is in b) or difference (rows of a whose entity is not in b). on matches by a column instead of the entity. One row per entity across both tables is concat then distinct.', { a: A, b: A, how: { type: 'string', enum: ['concat', 'intersect', 'difference'] }, on: S, label: S }, ['a', 'b', 'how']),
   TABLE_OPERATIONS.get('join'),
   TABLE_OPERATIONS.get('filter'),
   TABLE_OPERATIONS.get('select'),
@@ -320,12 +320,18 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           if (!result.tables?.length) throw new Error(result.error || result.note || 'Investigator returned no table');
           // A table that reads the same source table, fields, filter and points as an earlier artifact
           // is that artifact: it is not registered twice, and the earlier id stands for it.
-          const twinOf = table => state.artifacts.find(x => x.tool === toolName && x.rows?.length === table.rows.length && JSON.stringify(x.meta?.lookups) === JSON.stringify([table.args]) && JSON.stringify(x.meta?.points) === JSON.stringify(executionArgs.points));
+          const twinOf = table => state.artifacts.find(x => x.tool === toolName && (x.meta?.source_rows ?? x.rows?.length) === table.rows.length && JSON.stringify(x.meta?.lookups) === JSON.stringify([table.args]) && JSON.stringify(x.meta?.points) === JSON.stringify(executionArgs.points));
           const lines = [];
           for (const table of result.tables) {
             const twin = twinOf(table);
             if (twin) { repeats.push(twin); lines.push(`${twin.id} again (the same rows)`); continue; }
-            const a = await addArtifact({ kind: 'data', label: table.title || title, description: table.description || description, rows: table.rows, columns: table.columns, tool: toolName, args, inputs, toolId: id, meta: { lookups: [table.args], points: executionArgs.points, coverage: table.coverage, source_file: table.source_file, source_files: [table.source_file], status: result.status, hpa_version: result.hpa_version } });
+            // One measurement per entity in a few categories the question named (a gene's nTPM in
+            // two tissues, fetched with a filter on those tissues) arrives as one row per entity
+            // with a column per category: the shape a scatter, a mean or a ratio needs.
+            const named = (table.args?.where || []).map(w => w?.column).filter(Boolean);
+            const wide = named.length ? tools.widenByCategory(table.rows, table.columns, identity.keys, { only: named }) : null;
+            const shape = wide ? ` One row per ${identity.entity}; ${wide.measure} by ${wide.by} in the columns ${wide.values.join(', ')}.` : '';
+            const a = await addArtifact({ kind: 'data', label: table.title || title, description: `${table.description || description}${shape}`, rows: wide ? wide.rows : table.rows, columns: wide ? wide.columns : table.columns, tool: toolName, args, inputs, toolId: id, meta: { lookups: [table.args], points: executionArgs.points, coverage: table.coverage, source_file: table.source_file, source_files: [table.source_file], status: result.status, hpa_version: result.hpa_version, source_rows: table.rows.length, ...(wide ? { shape: { wide_by: wide.by, measure: wide.measure, values: wide.values } } : {}) } });
             made.push(a);
             lines.push(`${a.id} "${a.label}" (${a.size})`);
           }
@@ -368,7 +374,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     let out;
     switch (toolName) {
       case 'combine': {
-        if (!['union', 'intersect', 'difference', 'concat'].includes(args.how)) throw new Error('combine: how is union, intersect, difference or concat');
+        if (args.how !== 'union' && !['concat', 'intersect', 'difference'].includes(args.how)) throw new Error('combine: how is concat, intersect or difference');
         const label = typeof args.label === 'string' && args.label.trim() ? args.label.trim() : null;
         if (label && args.how !== 'concat') throw new Error('combine: label goes with concat, which keeps every row of both inputs');
         // With a label, each row says which input it came from, by that input's title.
@@ -472,13 +478,14 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     const consumed = new Set(state.artifacts.flatMap(a => a.inputs || []));
     // The artifacts whose every row is on the desk this turn; open answers for them from the desk.
     state.wholeOnDesk = new Set(state.artifacts.filter(a => Array.isArray(a.rows) && !consumed.has(a.id) && desk.inline(a.rows, a.columns)).map(a => a.id));
-    // A table with more rows than entities says so: ranking or counting it counts rows, not entities.
+    // A table with more rows than entities says so, and says what tells its rows apart (one row
+    // per gene and tissue, with the tissues): ranking or counting it counts rows, not entities,
+    // and a filter on that column uses the values as written.
     const spread = a => {
-      if (!Array.isArray(a.rows) || a.rows.length < 2) return '';
-      const key = [...identity.keys].reverse().find(k => a.columns.includes(k));
-      if (!key) return '';
-      const n = new Set(a.rows.map(r => r[key]).filter(v => !(v === null || v === undefined || v === ''))).size;
-      return n && n < a.rows.length ? ` over ${desk.count(n)} ${identity.entity}s` : '';
+      const g = tools.grain(a.rows, a.columns, identity.keys);
+      if (!g || g.entities >= a.rows.length) return '';
+      const by = g.by ? `, one row per ${identity.entity} and ${g.by}${g.values ? ` (${g.by}: ${g.values.join(', ')})` : ` (${desk.count(g.distinct)} values)`}` : '';
+      return ` over ${desk.count(g.entities)} ${identity.entity}s${by}`;
     };
     const lines = state.artifacts.map(a => desk.resultLine({ id: a.id, title: a.label, description: a.description, origin: origin(a), rows: a.rows || [], columns: a.columns, spread: spread(a), matrix: a.matrix, figure: a.figure, images: a.images, text: a.text, consumed: consumed.has(a.id) }));
     // A view stays whole until a later turn's operation consumes its artifact; then it folds to

@@ -8,7 +8,8 @@ async function investigator(script, options = {}) {
   const stubs = {
     '../../inference/gateway': { inference: { chat: { completions: { async create(request) { requests.push(request); const next = script.shift(); if (!next) throw new Error('script exhausted'); return typeof next === 'function' ? next(request) : next; } } } } },
     // The gate is its own small model call; tests script its verdict.
-    '../../inference/jsonCall': { jsonCall: async (system, user, onStep, label, stats) => { gates.push({ system, user, label }); stats.promptTokens += 50; stats.completionTokens += 10; stats.totalTokens += 60; return options.gate || { accepted: true, reason: 'one field in one context' }; } },
+    // The stub touches the stats the way the real call does, so a mismatch in their shape fails here.
+    '../../inference/jsonCall': { jsonCall: async (system, user, onStep, label, stats) => { gates.push({ system, user, label }); stats.promptTokens += 50; stats.completionTokens += 10; stats.totalTokens += 60; stats.perStep[label] = stats.perStep[label] || { prompt: 0, completion: 0, total: 0 }; stats.perStep[label].total += 60; return options.gate || { accepted: true, reason: 'one field in one context' }; } },
     '../../policy/config': { platformConfig: () => ({ asoMaxSteps: options.maxTurns || 8 }) },
     '../../hpa/agentMode': { async resolveAgentMode() { return { mode: 'offline', hpaVersion: 'test' }; } },
     '../../hpa/localData': { FILES: { master: 'proteinatlas.tsv' } }

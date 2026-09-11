@@ -145,7 +145,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
     await emit('start', 'Investigator', `${listed.length ? `${listed.length} points supplied, ${identities.size} resolve as ${db.entity}s` : 'No list'}. Question: ${question}`);
 
     // The gate: one field in one context, or nothing is read.
-    const gateStats = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const gateStats = { promptTokens: 0, completionTokens: 0, totalTokens: 0, perStep: {} };
     const gate = await jsonCall(GATE_SYSTEM, `Question: ${question}\nPoints: ${listed.length ? `${count(listed.length)} (${listed.slice(0, 3).join(', ')}${listed.length > 3 ? ', …' : ''})` : 'none'}`, onStep, 'Gate', gateStats);
     stats.prompt += gateStats.promptTokens; stats.completion += gateStats.completionTokens; stats.total = stats.prompt + stats.completion; stats.calls++;
     if (gate && gate.accepted === false) {

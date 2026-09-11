@@ -113,3 +113,11 @@ test('the binder does the naming it can do itself: a column it locates, all rows
   assert.match(reportIssues({ claims: [{ text: 'Of the 124 partners, 86 are nuclear.', artifact: 'a7', rows: [0], columns: ['nuclear_count'] }] }, s)[0], /states 124/);
   assert.match(reportIssues({ claims: [{ text: 'all of them', artifact: 'a8' }] }, s)[0], /must name the rows/);
 });
+
+test('a percent that is the ratio of two bound numbers is bound', () => {
+  const a9 = { id: 'a9', kind: 'data', label: 'counts', rows: [{ nuclear: 86, partners: 123 }], columns: ['nuclear', 'partners'], tool: 'aggregate', args: {}, inputs: [] };
+  const s = { artifacts: [a9], byId: new Map([['a9', a9]]), plan: [] };
+  assert.deepEqual(reportIssues({ claims: [{ text: '86 of the 123 partners (70%) are nuclear.', artifact: 'a9', rows: [0], columns: ['nuclear', 'partners'] }] }, s), []);
+  assert.deepEqual(reportIssues({ claims: [{ text: '86 of the 123 partners (69.9%) are nuclear.', artifact: 'a9', rows: [0], columns: ['nuclear', 'partners'] }] }, s), []);
+  assert.match(reportIssues({ claims: [{ text: '86 of the 123 partners (75%) are nuclear.', artifact: 'a9', rows: [0], columns: ['nuclear', 'partners'] }] }, s)[0], /states 75/);
+});

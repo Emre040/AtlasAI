@@ -123,7 +123,11 @@ function claimIssue(claim, state) {
   // A whole number that is the row count of any saved artifact is bound: the artifact's size is on
   // the desk and in the report ("the 123 partners", citing the distribution drawn from them).
   const rowCounts = new Set(state.artifacts.map(a => (a.rows || []).length));
-  let unmatched = statedNumbers(claim.text).filter(({ value, tolerance, percent }) => !near(bound.values, value, tolerance) && !near(argNumbers, value, tolerance) && !(Number.isInteger(value) && (bound.counts.includes(value) || rowCounts.has(value))) && !(percent && near(bound.values, value / 100, tolerance / 100)));
+  // A percent is also the ratio of two bound numbers ("86 of the 123 partners (70%)"): arithmetic
+  // the reader can redo from the cells beside the claim.
+  const basis = [...new Set([...bound.values, ...bound.counts, ...[...rowCounts]])].filter(v => Number.isFinite(v));
+  const ratioOfBound = (value, tolerance) => basis.some(x => basis.some(y => y > 0 && x <= y && Math.abs((x / y) * 100 - value) <= tolerance + 1e-9 * value));
+  let unmatched = statedNumbers(claim.text).filter(({ value, tolerance, percent }) => !near(bound.values, value, tolerance) && !near(argNumbers, value, tolerance) && !(Number.isInteger(value) && (bound.counts.includes(value) || rowCounts.has(value))) && !(percent && (near(bound.values, value / 100, tolerance / 100) || ratioOfBound(value, tolerance))));
   if (!unmatched.length) return null;
   // A number that sits in a bound row, in a column the claim did not name, is bound by naming the
   // column: the binder does that itself, so the evidence prints the cell.

@@ -40,7 +40,7 @@ test('the investigator searches the release, fetches for the whole list and retu
   // The desk of the second turn: the search's findings, compact, and nothing of any table.
   const desk2 = requests[1].messages[1].content;
   assert.match(desk2, /POINTS\n4 points supplied, 3 resolve as genes in the release; not genes of the release: NOPE\. First points: EGFR, ERBB2, MET, NOPE/);
-  assert.match(desk2, /SEARCHES\nsearch "liver", "nTPM" →\n  tables matching the words, most words first:\n    rna_tissue_consensus\.tsv — Consensus tissue RNA: Consensus nTPM per tissue \(Gene, Gene name, Tissue, nTPM\) ← its name or description; columns nTPM; Tissue = liver \(3 rows\)\n    tissues\.tsv — Tissue lookup: Tissue to organ \(Tissue, Organ\) ← Tissue = liver \(1 rows\)\n\nTABLES FOUND\nrna_tissue_consensus\.tsv \(Gene, Gene name, Tissue, nTPM\)\ntissues\.tsv \(Tissue, Organ\)\n/);
+  assert.match(desk2, /SEARCHES\nsearch "liver", "nTPM" →\n  liver \+ nTPM:\n    rna_tissue_consensus\.tsv \(Gene, Gene name, Tissue, nTPM\) — Consensus tissue RNA: liver: Tissue = liver \(3 rows\); nTPM: column nTPM\n  liver: tissues\.tsv \(Tissue = liver\)\n\nTABLES FOUND\n\(under SEARCHES\)\n/);
   assert.match(requests[0].messages[1].content, /TABLES FOUND\n\(none yet\)/);
   assert.doesNotMatch(desk2, /OPENED|columns: Gene, Gene name/, 'no table card');
   assert.ok(Buffer.byteLength(desk2) < 2500, `a turn's desk stays small: ${Buffer.byteLength(desk2)} bytes`);
@@ -121,12 +121,11 @@ test('a filter value or a point the table spells differently is read as the tabl
   assert.match(points.requests[1].messages[1].content, /turn 1: the points are values of Tissue, not genes: matched against it\nturn 1: read "Liver-" as "liver", the spelling of Tissue/);
   const keyed = await investigator([
     response(call('fetch', { title: 'Rows', description: 'Rows of the points', table: 'rna_tissue_consensus.tsv', where: [{ column: 'Gene', op: 'in', value: 'ENSG1' }] })),
-    response(call('fetch', { title: 'Rows', description: 'Rows of the points', table: 'rna_tissue_consensus.tsv', where: [{ column: 'Gene', op: 'in', value: 'ENSG1, ENSG2' }] })),
-    response(call('fetch', { title: 'Rows', description: 'Rows of the points', table: 'rna_tissue_consensus.tsv', where: [{ column: 'Gene', op: 'in', value: 'ENSG1, ENSG2' }] }))
+    response(call('fetch', { title: 'Rows', description: 'Rows of the points', table: 'rna_tissue_consensus.tsv', where: [{ column: 'Gene', op: 'in', value: 'ENSG1' }] }))
   ]);
   const twice = await keyed.run({ points: ['EGFR', 'ERBB2'], question: 'nTPM of these genes' });
-  assert.match(keyed.requests[1].messages[1].content, /failed: the list already selects the rows by Gene; this where names 1 of its 2 points and would drop the rest \(ERBB2\)\. Leave that clause out/);
-  assert.equal(twice.status, 'ok', 'a where naming every point of the list changes nothing and is allowed');
+  assert.match(keyed.requests[1].messages[1].content, /turn 1: the where on Gene names 1 of the list's 2 points; the list selects the rows, so it is set aside\nturn 1: fetch → "Rows" \(5 rows/);
+  assert.equal(twice.status, 'ok', 'the list selects the rows; a where on the key column is set aside');
   assert.equal(twice.tables[0].rows.length, 5);
   assert.equal(twice.note, 'returned when the same fetch was asked again; the mapping is read from the fetches', 'a fetch asked again after it was made returns the results');
   assert.deepEqual(twice.mapping, [{ field: 'Tissue', table: 'rna_tissue_consensus.tsv', column: 'Tissue' }, { field: 'nTPM', table: 'rna_tissue_consensus.tsv', column: 'nTPM' }], 'the mapping is read from the fetch');
@@ -141,8 +140,8 @@ test('a search finds a word no vocabulary holds by scanning text columns, and sa
   const result = await run({ points: ['EGFR'], question: 'nTPM per tissue' });
   assert.equal(result.status, 'ok');
   const desk2 = requests[1].messages[1].content;
-  assert.match(desk2, /"EGFR" is a gene of the release \(EGFR = ENSG1\); "ERBB2" is a gene of the release \(ERBB2 = ENSG2\): fetch reads its rows for the list by its keys, no search of the point is needed; columns holding gene ids in the tables found: rna_tissue_consensus\.tsv · Gene/);
-  assert.match(desk2, /tables matching the words, most words first:\n    rna_tissue_consensus\.tsv — Consensus tissue RNA/);
+  assert.match(desk2, /"EGFR" is a gene of the release \(EGFR = ENSG1\): fetch reads its rows for the list by its keys, no search of the point is needed; columns holding gene ids in the tables found: rna_tissue_consensus\.tsv · Gene\n  "ERBB2" is a gene of the release \(ERBB2 = ENSG2\): a where on a column of gene ids selects its rows; columns holding gene ids in the tables found: rna_tissue_consensus\.tsv · Gene/);
+  assert.match(desk2, /consensus:\n    rna_tissue_consensus\.tsv \(Gene, Gene name, Tissue, nTPM\) — Consensus tissue RNA: consensus: its name or description\n/);
   assert.doesNotMatch(desk2, /text columns holding the words/, 'a key point is not scanned for');
   const scan = await investigator([
     response(call('search', { words: ['lung'] })),
@@ -191,14 +190,13 @@ test('a search that names nothing says so, and an Investigator that gives up say
   assert.match(result.error, /repeated itself without new evidence; it had tried: turn 1: searched "zzz" \(under SEARCHES\); turn 2: search\(words=\["zzz"\]\) repeated; under SEARCHES/);
 });
 
-test('finish without a matching result is refused with the titles that exist', async () => {
-  const { run, requests } = await investigator([
+test('finish naming no result title returns every result made', async () => {
+  const { run } = await investigator([
     response(call('fetch', { title: 'liver', description: 'liver nTPM', table: 'rna_tissue_consensus.tsv', fields: ['nTPM'], where: [{ column: 'Tissue', op: '=', value: 'liver' }] })),
-    response(call('finish', { results: ['livre'] })),
-    response(call('finish', { results: ['liver'], note: 'MET has no recorded liver value' }))
+    response(call('finish', { results: ['EGFR: 32.2', 'MET: none'], note: 'MET has no recorded liver value' }))
   ]);
   const result = await run({ points: ['EGFR', 'MET'], question: 'liver nTPM' });
   assert.equal(result.status, 'ok');
+  assert.deepEqual(result.tables.map(t => t.title), ['liver'], 'the values read are no titles; every result made is returned');
   assert.equal(result.note, 'MET has no recorded liver value');
-  assert.match(requests[2].messages[1].content, /finish\(results=\["livre"\]\) failed: no result titled livre; results so far: liver/);
 });

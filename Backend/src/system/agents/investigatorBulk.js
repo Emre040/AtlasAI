@@ -29,33 +29,33 @@ const S = { type: 'string' };
 const WHERE = { type: 'array', description: 'Row filters; every clause must hold. A unary op takes column and op only.', items: { type: 'object', properties: { column: S, op: { type: 'string', enum: FILTER_OPS }, value: { description: 'Comparison value, or a list for in' } }, required: ['column', 'op'] } };
 const tool = (name, description, properties, required = []) => ({ type: 'function', function: { name, description, parameters: { type: 'object', properties, required } } });
 
-const SEARCH_HITS = 10;      // lines of each kind a search shows
+const SEARCH_HITS = 10;      // entries a line of the entity or text-scan kind shows
 const SEARCHES_SHOWN = 3;    // searches kept on the desk
 const HISTORY_SHOWN = 8;     // history lines kept on the desk
-const FOUND_PER_SEARCH = 3;  // tables a search adds to the tables found, kept on the desk
 const RESULT_ROWS_SHOWN = 3; // first rows of each result shown on the desk; the rest are counted
 
 function tools(db) {
+  const where = { type: 'array', items: { type: 'object', properties: { column: S, op: { type: 'string', enum: FILTER_OPS }, value: {} }, required: ['column', 'op'] } };
   return [
-    tool('search', 'Where words live in the release: tables whose name or description carries them, columns named by them, columns whose recorded values hold them (with how many rows do), and the text of big columns. Search the field asked for, the context named, or a point; one word or several.', { words: { type: 'array', items: S } }, ['words']),
-    tool('fetch', `Rows from one table for the points: one row per source row for each point, with the point, the fields, source_rows and source_status. The points are ${db.entity}s read by their keys, or values of the column named by match (several columns when a point may sit in any of them, as in a pair table: the point is then named in a column of its own and the other side in other). Without points, every row where holds. With from and column, the values of a column of an earlier result are the points. Omit fields for every column.`, { title: S, description: S, table: S, fields: { type: 'array', items: S }, where: WHERE, from: { type: 'string', description: 'Title of an earlier result whose column supplies the points' }, column: { type: 'string', description: 'The column of from whose values are the points' }, match: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }], description: 'Column whose values the points are; a list of columns when a point may sit in any of them' } }, ['table']),
-    tool('finish', 'Return the mapping: the results that answer the question, by title; mapping says, for each field asked, the table it was read from and the column of the result that holds it; note says what was chosen over what, what no table holds, and which points did not resolve.', { results: { type: 'array', items: S }, mapping: { type: 'array', items: { type: 'object', properties: { field: S, table: S, column: S }, required: ['field', 'table', 'column'] } }, note: S }, ['results'])
+    tool('search', 'Where words live in the release: tables by name or description, columns by name, recorded values with row counts. The field asked, the context named, or a point that is not a gene; one word or several.', { words: { type: 'array', items: S } }, ['words']),
+    tool('fetch', `Rows of one table for the points: the fields asked (every column when omitted), where clauses that must all hold, match = the column the points are values of (the other side of a pair table comes back as other). Points that are ${db.entity}s need no match. from + column: the values of a column of an earlier result are the points.`, { title: S, table: S, fields: { type: 'array', items: S }, where, from: S, column: S, match: { type: 'array', items: S, description: 'the column the points are values of; two columns for a pair table' } }, ['table']),
+    tool('finish', 'Done: the results that answer the question, the mapping (field → table, column of the result) and a note: what was chosen over what, what no table holds, which points did not resolve.', { results: { type: 'array', items: S, description: 'titles of the results, as listed under RESULTS' }, mapping: { type: 'array', items: { type: 'object', properties: { field: S, table: S, column: S }, required: ['field', 'table', 'column'] } }, note: S }, ['results'])
   ];
 }
 
 function systemPrompt(db) {
-  return `You are the Investigator in a study over the ${db.database}. You are given a question about a list of points (the tools hold the list) and you return the rows that answer it, from one origin, with the mapping you made.
-
-How it goes:
-- search finds where words live: a table by its name or description, a column by its name, a value by the recorded values of every column (with how many rows hold it). Search the field the question asks for and the context it names; search a point only when it is not a ${db.entity} of the release, to learn which column holds such values. A point that is a ${db.entity} is read by the list: fetch the table found. Search again when the first search does not settle the origin.
-- fetch reads rows from one table for the points, with the fields the question asks for and a where filter for the context. Values are spelled as the search shows them. A question that spans two tables (what one table lists is read from another) is two fetches, the second taking its points from the first with from and column.
-- finish names the results that answer the question, the mapping (field → table and column) and a note: what was chosen over what and why, what no table holds, which points did not resolve. The rows are the evidence; the study computes with them. Finish as soon as a result holds rows for the points with the field asked; fetching the same rows again with other arguments adds nothing.
-Keep every call small: no fetch of a whole table to look at it; the search says what is there.`;
+  return `You are the Investigator in a study over the ${db.database}: given a question about a list of points (the tools hold the list), you return the rows that answer it, from one table, with the mapping you made.
+- search says where words live. Search the field asked and the context named, with specific words; a point that is a ${db.entity} is read by the list, not searched.
+- fetch reads the rows: the table found, the fields asked (every column when the field's name is not known), a where for the context, spelled as the search shows. What one table lists and another measures is two fetches, the second taking its points from the first (from, column).
+- finish as soon as a result holds rows for the points with the field asked: the results, the mapping (field → table, column of the result), a note on what was chosen over what, what no table holds, which points did not resolve. The rows are the evidence; the study computes with them.
+Never fetch a whole table to look at it; the search says what is there.`;
 }
 
-const GATE_SYSTEM = `You check a question put to a data agent before it runs. The agent answers one question per run: one kind of data, in one context, for a list of points. Reply with JSON: {"accepted": true|false, "reason": "<one sentence>"}. Reject only a question that asks for several at once: several contexts of one kind (two tissues, two cell types, two cohorts) or several kinds of data (an expression and a location), naming them so they can be asked one at a time. Accept everything else: one kind of data with its qualifiers (a value with its category or reliability, both sides of a pair), a list of points of any size, a filter, and a question that names no context or says any or all. Where the data is kept is not your concern.`;
+const GATE_SYSTEM = `You check a question put to a data agent before it runs. The agent answers one question per run: one kind of data, in one context, for a list of points. Reply with JSON: {"accepted": true|false, "reason": "<one sentence>"}. Reject only a question that asks for several at once: several contexts of one kind (two tissues, two cell types, two cohorts), or two different measurements (an RNA expression and a protein location), naming them so they can be asked one at a time. Accept everything else: what is said about the same points in one context, however many columns (a category with its value, a level with its reliability, an association with its p-value, both sides of a pair), a list of points of any size, a filter, and a question that names no context or says any or all. Where the data is kept is not your concern.`;
 
 const flat = value => String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+// A recorded value holds a word when either contains the other, the shorter being a word's length.
+const holdsWord = (value, needle) => { const f = flat(value); return f.includes(needle) || (f.length >= 4 && needle.includes(f)); };
 
 // The columns of a table whose recorded values are spelled like the database's entity ids.
 async function idColumns(adapter, e) {
@@ -79,35 +79,52 @@ function spelledOtherwise(points, spelled) {
   return notes.length ? ` (${notes.join(', ')})` : '';
 }
 
-// Where words live in the release, by table: a table by its name or description, a column by its
-// name, a value by the recorded values of a column (counted at the source), an item inside list
-// cells. Tables matching the most words come first, each with every place a word was found in it.
-// A word that is an entity of the database is answered with its id and the columns of the tables
-// found so far that hold such ids; a word no vocabulary holds is scanned for in the text of big
+// Where words live in the release: a table by its name or description, a column by its name, a
+// value by the recorded values of a column (counted at the source), an item inside list cells.
+// Tables are grouped by the words they match, most words first; in the first group a table placed
+// by its text or its values is shown with its columns and the values found, a table placed by a
+// column name alone is named; the other groups name their tables with the values found. A word
+// that is an entity of the database is answered with its id and the columns of the tables found
+// so far that hold such ids; a word no vocabulary holds is scanned for in the text of big
 // columns; points that are not entities are placed in the columns that hold them, by vocabulary
-// or by the spellings recorded at the source.
+// or by the spellings recorded at the source. Returns the text and the tables of the first group.
 async function searchRelease(adapter, catalog, words, listed, found = new Set(), memo = new Map()) {
   const needles = [...new Set(words.map(w => flat(w)).filter(w => w.length >= 2))];
   const entities = (await adapter.resolveGenes(words).catch(() => [])).map((gene, i) => gene ? { word: words[i], gene } : null).filter(Boolean);
   const hits = new Map();
-  const hit = e => { if (!hits.has(e.file)) hits.set(e.file, { e, words: new Set(), named: false, columns: [], values: [], items: [] }); return hits.get(e.file); };
+  const hit = e => { if (!hits.has(e.file)) hits.set(e.file, { e, words: new Set(), named: new Set(), titled: new Set(), columns: [], values: [], items: [] }); return hits.get(e.file); };
   for (const e of catalog) {
     if (e.key === 'unreadable') continue;
     const about = flat(`${e.file} ${e.title || ''} ${e.description || ''}`);
     const named = needles.filter(n => about.includes(n));
-    if (named.length) { const h = hit(e); h.named = true; for (const n of named) h.words.add(n); }
-    for (const c of e.columns) { const inName = needles.filter(n => flat(c).includes(n)); if (inName.length) { const h = hit(e); h.columns.push(c); for (const n of inName) h.words.add(n); } }
+    if (named.length) { const h = hit(e); const own = flat(`${e.file} ${e.title || ''}`); for (const n of named) { h.named.add(n); h.words.add(n); if (own.includes(n)) h.titled.add(n); } }
     const profile = await adapter.profile(e).catch(() => null);
+    for (const c of e.columns) {
+      const inName = needles.filter(n => flat(c).includes(n));
+      if (!inName.length) continue;
+      const h = hit(e);
+      h.columns.push({ column: c, card: (profile?.columns || []).find(card => card.column === c) || null, words: inName });
+      for (const n of inName) h.words.add(n);
+    }
     for (const card of profile?.columns || []) {
       for (const [kind, recorded] of [['values', card.observed_values], ['items', card.parts?.values]]) {
         if (!Array.isArray(recorded)) continue;
-        for (const n of needles) { const f = recorded.filter(v => flat(v).includes(n)); if (f.length) { const h = hit(e); h[kind].push({ column: card.column, found: f.slice(0, 3), more: f.length - Math.min(3, f.length) }); h.words.add(n); } }
+        for (const n of needles) { const f = recorded.filter(v => holdsWord(v, n)); if (f.length) { const h = hit(e); h[kind].push({ column: card.column, found: f.slice(0, 3), more: f.length - Math.min(3, f.length), word: n }); h.words.add(n); } }
       }
     }
   }
-  const ranked = [...hits.values()].sort((a, b) => b.words.size - a.words.size || Number(b.named) - Number(a.named) || (b.columns.length + b.values.length + b.items.length) - (a.columns.length + a.values.length + a.items.length));
-  const shown = ranked.slice(0, SEARCH_HITS);
-  for (const h of ranked.slice(0, FOUND_PER_SEARCH)) found.add(h.e.file);
+  const ranked = [...hits.values()].sort((a, b) => b.words.size - a.words.size || b.titled.size - a.titled.size || b.named.size - a.named.size || (b.columns.length + b.values.length + b.items.length) - (a.columns.length + a.values.length + a.items.length));
+  const wordOf = new Map();
+  for (const w of words) { const n = flat(w); if (n.length >= 2 && !wordOf.has(n)) wordOf.set(n, w); }
+  const groups = [];
+  for (const h of ranked) {
+    const key = needles.filter(n => h.words.has(n)).map(n => wordOf.get(n)).join(' + ');
+    let g = groups.find(x => x.key === key);
+    if (!g) { g = { key, tables: [] }; groups.push(g); }
+    g.tables.push(h);
+  }
+  const first = groups[0]?.tables || [];
+  for (const h of first) found.add(h.e.file);
   const lines = [];
   if (entities.length) {
     // The list reads an entity's rows by its keys; a pair table holds ids on both sides.
@@ -118,24 +135,50 @@ async function searchRelease(adapter, catalog, words, listed, found = new Set(),
       if (ids.length) holders.push(`${file} · ${ids.join(', ')}${ids.length > 1 ? ' (a pair table: match against both)' : ''}`);
     }
     const master = catalog.find(e => e.key === 'master');
-    lines.push(`${entities.map(x => `${JSON.stringify(x.word)} is a ${adapter.identity().entity} of the release (${x.gene.gene} = ${x.gene.ensembl})`).join('; ')}: fetch reads its rows for the list by its keys, no search of the point is needed${master ? `; its own row (name, id, annotations) is in ${master.file}` : ''}${holders.length ? `; columns holding ${adapter.identity().entity} ids in the tables found: ${holders.slice(0, SEARCH_HITS).join('; ')}` : '; search a word of the subject to find the table, then fetch with the list'}`);
+    const pointWords = new Set(listed.map(p => flat(p)));
+    const asPoints = entities.filter(x => pointWords.has(flat(x.word)) || pointWords.has(flat(x.gene.gene)) || pointWords.has(flat(x.gene.ensembl)));
+    const asValues = entities.filter(x => !asPoints.includes(x));
+    const idOf = x => `${JSON.stringify(x.word)} is a ${adapter.identity().entity} of the release (${x.gene.gene} = ${x.gene.ensembl})`;
+    const where = holders.length ? `; columns holding ${adapter.identity().entity} ids in the tables found: ${holders.slice(0, SEARCH_HITS).join('; ')}` : '';
+    if (asPoints.length) lines.push(`${asPoints.map(idOf).join('; ')}: fetch reads its rows for the list by its keys, no search of the point is needed${master ? `; its own row (name, id, annotations) is in ${master.file}` : ''}${where || '; search a word of the subject to find the table, then fetch with the list'}`);
+    if (asValues.length) lines.push(`${asValues.map(idOf).join('; ')}: a where on a column of ${adapter.identity().entity} ids selects its rows${where}`);
   }
-  if (shown.length) {
-    const place = async h => {
+  if (groups.length) {
+    const single = v => v.found.length === 1 && !v.more;
+    // Where each word was found in a table: the columns named by it (counted when many), the
+    // columns whose values or items hold it (the value when one, else how many), and the
+    // vocabulary of a column named by the whole search, which a where or a match needs.
+    const placesOf = async (h, counted) => {
       const parts = [];
-      if (h.named) parts.push('its name or description');
-      if (h.columns.length) parts.push(`columns ${h.columns.slice(0, 4).join(', ')}${h.columns.length > 4 ? ` (+${h.columns.length - 4})` : ''}`);
-      for (const [i, v] of h.values.slice(0, 3).entries()) {
-        const rows = i < 2 && typeof adapter.holds === 'function' ? await adapter.holds(h.e, v.column, v.found).catch(() => null) : null;
-        parts.push(`${v.column} = ${v.found.join(' | ')}${v.more ? ` (+${v.more})` : ''}${rows !== null ? ` (${count(rows)} rows)` : ''}`);
+      for (const n of needles.filter(n => h.words.has(n))) {
+        const places = [];
+        const cols = h.columns.filter(c => c.words.includes(n));
+        if (cols.length) places.push(cols.length <= 3 ? `column${cols.length > 1 ? 's' : ''} ${cols.map(c => c.column).join(', ')}` : `${count(cols.length)} column names (${cols.slice(0, 3).map(c => c.column).join(', ')}, …)`);
+        for (const v of h.values.filter(v => v.word === n)) {
+          const rows = counted && single(v) && typeof adapter.holds === 'function' ? await adapter.holds(h.e, v.column, v.found).catch(() => null) : null;
+          places.push(single(v) ? `${v.column} = ${v.found[0]}${rows !== null ? ` (${count(rows)} rows)` : ''}` : v.more ? `${v.column} (${count(v.found.length + v.more)} values, e.g. ${v.found[0]})` : `${v.column} = ${v.found.join(' | ')}`);
+        }
+        for (const v of h.items.filter(v => v.word === n)) places.push(single(v) ? `${v.column} lists ${v.found[0]}` : `${v.column} lists ${count(v.found.length + v.more)} items, e.g. ${v.found[0]}`);
+        if (h.named.has(n) && !places.length) places.push('its name or description');
+        if (places.length) parts.push(`${wordOf.get(n)}: ${places.join(', ')}`);
       }
-      if (h.values.length > 3) parts.push(`(+${h.values.length - 3} columns with such values)`);
-      for (const v of h.items.slice(0, 2)) parts.push(`${v.column} lists ${v.found.join(' | ')}${v.more ? ` (+${v.more})` : ''}`);
+      for (const c of h.columns.filter(c => needles.every(n => c.words.includes(n)) && vocabularyShown(c.card))) parts.push(`column ${c.column} = ${vocabularyShown(c.card)}`);
       return parts.join('; ');
     };
-    const rendered = [];
-    for (const h of shown) rendered.push(`${h.e.file} — ${h.e.title || h.e.file}${h.e.description ? `: ${String(h.e.description).slice(0, 80)}` : ''} (${h.e.columns.length > 8 ? `${h.e.columns.slice(0, 8).join(', ')} … ${h.e.columns.length} columns` : h.e.columns.join(', ')}) ← ${await place(h)}`);
-    lines.push(`tables matching the words, most words first:\n  ${rendered.join('\n  ')}${ranked.length > shown.length ? `\n  (+${ranked.length - shown.length} tables)` : ''}`);
+    // A table of a later group is named with the columns holding the words, and the value when
+    // a column holds one.
+    const holding = h => { const byColumn = new Map(); for (const v of [...h.values, ...h.items]) { const seen = byColumn.get(v.column) || new Set(); for (const f of v.found) seen.add(f); if (v.more) seen.add(null); byColumn.set(v.column, seen); } return [...byColumn.entries()].map(([column, found]) => found.size === 1 && !found.has(null) ? `${column} = ${[...found][0]}` : column); };
+    const brief = h => { const cols = holding(h); return `${h.e.file}${cols.length ? ` (${cols.slice(0, 3).join(', ')}${cols.length > 3 ? `, +${cols.length - 3}` : ''})` : ''}`; };
+    for (const [i, g] of groups.entries()) {
+      const head = `${g.key}${g.tables.length > 1 ? ` (${count(g.tables.length)} tables)` : ''}:`;
+      if (i > 0) { lines.push(`${head} ${g.tables.map(brief).join(', ')}`); continue; }
+      // The first group in full; a table placed by a column name alone is named with it.
+      const placed = g.tables.filter(h => h.named.size || h.values.length || h.items.length || h.columns.some(c => needles.every(n => c.words.includes(n))));
+      const full = [];
+      for (const h of placed) full.push(`${h.e.file} (${columnsNamed(h.e.columns)}) — ${h.e.title || h.e.file}: ${await placesOf(h, true)}`);
+      const rest = g.tables.filter(h => !placed.includes(h)).map(h => `${h.e.file} (${[...new Set(h.columns.map(c => c.column))].slice(0, 3).join(', ')})`);
+      lines.push(`${head}${full.length ? `\n  ${full.join('\n  ')}` : ''}${rest.length ? `${full.length ? '\n  ' : ' '}by a column name: ${rest.join(', ')}` : ''}`);
+    }
   }
   // A word no vocabulary holds (a symbol, an id, a sample, free text) is scanned for in the text
   // columns that have no vocabulary, across every table: where it lives, with how many rows.
@@ -172,7 +215,36 @@ async function searchRelease(adapter, catalog, words, listed, found = new Set(),
     }
     if (where.length) lines.push(`the points are values of: ${where.slice(0, SEARCH_HITS).join('; ')}`);
   }
-  return lines.length ? lines.join('\n') : `nothing in the release is named by ${words.map(w => JSON.stringify(w)).join(', ')}: try a word of the subject, or a value as the data spells it`;
+  return { text: lines.length ? lines.join('\n') : `nothing in the release is named by ${words.map(w => JSON.stringify(w)).join(', ')}: try a word of the subject, or a value as the data spells it`, tables: first.map(h => h.e.file) };
+}
+
+const columnsNamed = columns => columns.length > 12 ? `${columns.slice(0, 12).join(', ')} … ${columns.length} columns` : columns.join(', ');
+
+// Where a filter value is recorded in the release, when the table filtered holds no row with it:
+// the columns of any table whose vocabulary holds the words of the value.
+async function recordedElsewhere(adapter, catalog, value, except) {
+  const needle = flat(value);
+  if (needle.length < 3) return [];
+  const places = [];
+  for (const e of catalog) {
+    if (e.key === 'unreadable') continue;
+    const profile = await adapter.profile(e).catch(() => null);
+    for (const card of profile?.columns || []) {
+      const recorded = [...(Array.isArray(card.observed_values) ? card.observed_values : []), ...(Array.isArray(card.parts?.values) ? card.parts.values : [])];
+      const found = recorded.filter(v => holdsWord(v, needle));
+      if (found.length && !(e.file === except.file && found.every(v => except.columns.has(card.column)))) places.push(`${e.file} · ${card.column} = ${found.slice(0, 3).join(' | ')}${found.length > 3 ? ` (+${found.length - 3})` : ''}`);
+    }
+  }
+  return places;
+}
+
+// The recorded values of a text column as the search shows them: the whole vocabulary when the
+// card holds it, otherwise its size with the commonest values; nothing for a numeric column.
+function vocabularyShown(card) {
+  if (!card || card.kind !== 'text') return '';
+  if (Array.isArray(card.observed_values) && card.observed_values.length && card.observed_values.length <= 12) return card.observed_values.join(' | ');
+  const examples = (card.examples || []).filter(Boolean);
+  return examples.length ? `${card.distinct} values, e.g. ${examples.join(' | ')}` : '';
 }
 
 const SEARCH_RULE = 'A point that is an entity of the release is read by the list: fetch the table found, without searching the point itself.';
@@ -227,13 +299,16 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
         ? `${count(listed.length)} points supplied${identities.size ? `, ${count(identities.size)} resolve as ${db.entity}s in the release` : `; none is a ${db.entity} of the release, so fetch matches them against the column the search finds them in`}${unresolvedPoints().length && identities.size ? `; not ${db.entity}s of the release: ${unresolvedPoints().slice(0, 8).join(', ')}${unresolvedPoints().length > 8 ? ` (+${unresolvedPoints().length - 8})` : ''}` : ''}. First points: ${listed.slice(0, 5).join(', ')}`
         : 'No list: the question selects rows by a filter.';
       const shownSearches = searches.slice(-SEARCHES_SHOWN).map(s => `search ${s.words.map(w => JSON.stringify(w)).join(', ')} →\n  ${s.text.split('\n').join('\n  ')}`);
+      // Tables found by searches that left the desk keep their columns here.
+      const visible = new Set(searches.slice(-SEARCHES_SHOWN).flatMap(s => s.tables || []));
+      const foundLines = [...found].filter(file => !visible.has(file)).map(file => { const e = catalog.find(x => x.file === file); return e ? `${e.file} (${columnsNamed(e.columns)})` : file; });
       // Each result with its first rows, so what a fetch holds is seen and not fetched again.
-      const lines = [...results.values()].map(t => `${t.title} (${count(t.rows.length)} rows: ${namedColumns(t.columns)}) ← fetch ${argsLine(t.args, 120)}${t.coverage?.with_rows !== undefined ? `; ${t.coverage.with_rows} points with rows` : ''}${t.rows.length ? `\n  ${sampleLines(t.rows, t.columns, RESULT_ROWS_SHOWN).join('\n  ')}${t.rows.length > RESULT_ROWS_SHOWN ? `\n  … +${count(t.rows.length - RESULT_ROWS_SHOWN)} rows` : ''}` : ''}`);
+      const lines = [...results.values()].map(t => `${t.title} (${count(t.rows.length)} rows: ${namedColumns(t.columns)}) ← fetch ${argsLine(t.args, 120)}${t.coverage?.with_rows !== undefined ? `; ${t.coverage.with_rows} points with rows` : ''}${t.identity?.length ? `; ${t.identity.join(', ')} are the keys` : ''}${t.rows.length ? `\n  ${sampleLines(t.rows, t.columns, RESULT_ROWS_SHOWN).join('\n  ')}${t.rows.length > RESULT_ROWS_SHOWN ? `\n  … +${count(t.rows.length - RESULT_ROWS_SHOWN)} rows` : ''}` : ''}`);
       return [
         section('QUESTION', question),
         section('POINTS', list),
         section('SEARCHES', shownSearches.join('\n') || '(none yet)'),
-        section('TABLES FOUND', [...found].map(file => { const e = catalog.find(x => x.file === file); return e ? `${e.file} (${e.columns.length > 10 ? `${e.columns.slice(0, 10).join(', ')} … ${e.columns.length} columns` : e.columns.join(', ')})` : file; }).join('\n') || '(none yet)'),
+        section('TABLES FOUND', foundLines.join('\n') || (found.size ? '(under SEARCHES)' : '(none yet)')),
         section('RESULTS', lines.join('\n') || '(none yet)'),
         section('HISTORY', historyText(history.slice(-HISTORY_SHOWN))),
         `TURN ${turn}/${maxTurns}`
@@ -286,22 +361,22 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
           if (name === 'search') {
             const words = (args.words || []).map(String).map(w => w.trim()).filter(Boolean);
             if (!words.length) throw new Error('search needs a word');
-            const text = await searchRelease(adapter, catalog, words, listed, found, memo);
-            searches.push({ words, text, key });
+            const { text, tables: placed } = await searchRelease(adapter, catalog, words, listed, found, memo);
+            searches.push({ words, text, key, tables: placed });
             history.push(`turn ${turn}: searched ${words.map(w => JSON.stringify(w)).join(', ')} (under SEARCHES)`);
             seen.set(key, 'under SEARCHES'); progressed = true;
             await emit('execution_step', 'Search', `${words.join(', ')}: ${text.split('\n')[0].slice(0, 160)}`);
           } else if (name === 'fetch') {
-            const title = String(args.title || '').trim() || `${String(args.table || '').replace(/\.tsv$/i, '')}: ${(args.fields || []).join(', ') || 'every column'}${args.where?.length ? ` where ${args.where.map(w => `${w.column} ${w.op} ${Array.isArray(w.value) ? w.value.join('|') : w.value ?? ''}`).join(' and ')}` : ''}`.slice(0, 120);
-            const description = String(args.description || '').trim() || title;
-            if (results.has(title)) throw new Error(`a result titled ${JSON.stringify(title)} exists; choose another title`);
+            let title = String(args.title || '').trim() || `${String(args.table || '').replace(/\.tsv$/i, '')}: ${(args.fields || []).join(', ') || 'every column'}${args.where?.length ? ` where ${args.where.map(w => `${w.column} ${w.op} ${Array.isArray(w.value) ? w.value.join('|') : w.value ?? ''}`).join(' and ')}` : ''}`.slice(0, 120);
+            const description = title;
+            const spelling = [];
+            if (results.has(title)) { let n = 2; while (results.has(`${title} (${n})`)) n++; spelling.push(`a result titled ${JSON.stringify(title)} exists: this one is titled "${title} (${n})"`); title = `${title} (${n})`; }
             const entry = await adapter.entry(String(args.table || '').trim());
             if (!entry || entry.key === 'unreadable') throw new Error(`no table named ${JSON.stringify(args.table)}${entry?.why ? `: ${entry.why}` : ''}; search names the tables`);
             const cards = (await adapter.profile(entry)).columns;
             // The vocabulary of a column: its recorded values, and the items of its list cells.
             const vocabularyOf = card => Array.isArray(card?.observed_values) || card?.parts?.kind === 'items' ? [...(card.observed_values || []), ...(card.parts?.kind === 'items' ? card.parts.values : [])] : null;
             const knownValuesOf = column => vocabularyOf(cards.find(c => c.column === column) || cards.find(c => c.column.toLowerCase() === String(column).toLowerCase()));
-            const spelling = [];
             const idCols = await idColumns(adapter, entry);
             // A filter value the table spells differently is read as the table spells it; on a
             // column of entity ids, an entity named by name is read by its id.
@@ -322,10 +397,13 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             }
             // The points of a fetch are the list, or the values of a column of an earlier result.
             let supplied = listed, supplyResolved = resolved, supplyIdentities = identities, chained = null;
+            // A column named without from is the column the points are values of.
+            if (args.from === undefined && args.column !== undefined && args.match === undefined) { args.match = args.column; delete args.column; spelling.push('column without from read as match'); }
             if (args.from !== undefined || args.column !== undefined) {
               if (args.from === undefined || args.column === undefined) throw new Error('from and column go together: the title of an earlier result and the column whose values are the points');
               const wanted = String(args.from).trim();
-              const source = results.get(wanted) || [...results.values()].find(t => t.title.toLowerCase() === wanted.toLowerCase());
+              const byTable = [...results.values()].filter(t => String(t.args?.table || '').toLowerCase().replace(/\.tsv$/, '') === wanted.toLowerCase().replace(/\.tsv$/, ''));
+              const source = results.get(wanted) || [...results.values()].find(t => t.title.toLowerCase() === wanted.toLowerCase()) || (byTable.length === 1 ? byTable[0] : null);
               if (!source) throw new Error(`no result titled ${JSON.stringify(wanted)}; results so far: ${[...results.keys()].join(', ') || 'none'}`);
               const column = source.columns.find(c => c === args.column) || source.columns.find(c => c.toLowerCase() === String(args.column).trim().toLowerCase());
               if (!column) throw new Error(`${JSON.stringify(source.title)} has no column ${JSON.stringify(args.column)}; its columns: ${namedColumns(source.columns)}`);
@@ -339,25 +417,29 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             // A where whose values are the points names the column the points are values of: the
             // points are matched against it, and the clause, which the match makes, is set aside.
             let match = args.match;
+            if (supplied.length && (Array.isArray(match) ? match.length : match)) {
+              const asked = Array.isArray(match) ? match : [match];
+              const columns = asked.filter(c => entry.columns.some(k => k.toLowerCase() === String(c).trim().toLowerCase()));
+              const pointsNamed = asked.filter(c => !columns.includes(c) && supplied.some(p => flat(p) === flat(c)));
+              if (pointsNamed.length) { match = columns.length ? columns : undefined; spelling.push(`match named ${pointsNamed.length === asked.length ? 'the points' : pointsNamed.join(', ')}, which the list supplies: ${match ? 'left out of match' : 'match dropped'}`); }
+            }
             if (supplied.length && !match && !supplyIdentities.size && args.where?.length) {
               const pointKeys = new Set(supplied.map(p => flat(p)));
               const naming = args.where.filter(c => c && ['=', 'in', 'contains'].includes(c.op) && (c.op === 'in' ? inList(c.value) : [c.value]).every(v => pointKeys.has(flat(v))));
               if (naming.length === 1) { match = naming[0].column; args.where = args.where.filter(c => c !== naming[0]); spelling.push(`the where on ${naming[0].column} names the points: matched against it`); }
             }
-            // A where on the column the list already selects by is refused when it would drop points
-            // of the list (it names fewer than the list); one that names them all changes nothing.
+            // A where on the column the list already selects by is set aside: the list is the
+            // selection, by whichever spelling the column holds; a clause naming fewer points than
+            // the list, or other ids, would only lose rows.
             if (supplied.length && !match && args.where?.length) {
               const keyColumns = [entry.geneColumn, ...(['ensembl', 'name', 'master'].includes(entry.key) ? entry.columns.slice(0, entry.key === 'name' ? 2 : 1) : [])].filter(Boolean).map(c => c.toLowerCase());
               const keysOfList = new Set([...supplied, ...supplyResolved.filter(Boolean).flatMap(g => [g.gene, g.ensembl])].filter(Boolean).map(v => String(v).trim().toLowerCase()));
               for (const clause of [...args.where]) {
                 if (!clause || !keyColumns.includes(String(clause.column || '').toLowerCase()) || !['=', 'in'].includes(clause.op)) continue;
                 const named = new Set((clause.op === 'in' ? inList(clause.value) : [clause.value]).map(v => String(v).trim().toLowerCase()));
-                const dropped = supplied.filter((p, i) => { const g = supplyResolved[i]; return ![p, g?.gene, g?.ensembl].filter(Boolean).some(v => named.has(String(v).trim().toLowerCase())); });
-                if (dropped.length) throw new Error(`the list already selects the rows by ${clause.column}; this where names ${named.size} of its ${count(supplied.length)} points and would drop the rest (${dropped.slice(0, 3).join(', ')}${dropped.length > 3 ? ', …' : ''}). Leave that clause out`);
-                // The clause names the very points of the list: the list already selects them, by
-                // whichever spelling the column holds, so the clause is set aside.
+                const dropped = supplied.filter((p, i) => { const g = supplyResolved[i]; return g && ![p, g.gene, g.ensembl].filter(Boolean).some(v => named.has(String(v).trim().toLowerCase())); });
                 args.where = args.where.filter(c => c !== clause);
-                spelling.push(`the where on ${clause.column} names the points of the list, which already selects them: set aside`);
+                spelling.push(dropped.length ? `the where on ${clause.column} names ${count(named.size)} of the list's ${count(supplied.length)} points; the list selects the rows, so it is set aside` : `the where on ${clause.column} names the points of the list, which already selects them: set aside`);
               }
             }
             // Points matched against a column are read as the column spells them; points that are
@@ -409,6 +491,32 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
                 }
               }
             }
+            // A field naming no column is dropped with a note (a point is no column: the list reads
+            // it); a fetch with no field left fails with the columns.
+            if (Array.isArray(args.fields) && args.fields.length) {
+              const known = [], unknown = [];
+              for (const f of args.fields) {
+                const name = String(f);
+                const hit = entry.columns.find(c => c === name) || entry.columns.find(c => c.toLowerCase() === name.toLowerCase()) || entry.columns.find(c => c.toLowerCase().startsWith(name.toLowerCase()));
+                (hit ? known : unknown).push(name);
+              }
+              if (unknown.length && known.length) {
+                args.fields = known;
+                const pointNamed = unknown.filter(u => supplied.some(p => flat(p) === flat(u)));
+                spelling.push(`no column of ${entry.file} is named ${unknown.join(', ')}${pointNamed.length ? ` (${pointNamed.join(', ')}: ${pointNamed.length === 1 ? 'a point, read by the list' : 'points, read by the list'})` : ''}: dropped from the fields`);
+              }
+            }
+            // A fetch that would read the rows of a result made already (the same table, fields,
+            // filter and points; a match on entity points changes nothing) is the agent done
+            // without saying so: every result is returned, the mapping read from the fetches.
+            const effective = fingerprint({ table: entry.file, fields: [...(args.fields || [])].sort(), where: args.where || [], from: chained?.from, column: chained?.column, match: supplyIdentities.size ? undefined : match });
+            const made = [...results.values()].find(t => t.effective === effective);
+            if (made) {
+              const tables = [...results.values()];
+              const mapping = [...new Map(tables.flatMap(t => (t.args.fields || []).map(field => ({ field, table: t.args.table, column: field }))).map(m => [`${m.field} ${m.table} ${m.column}`, m])).values()];
+              await emit('complete', 'Investigator done', `${tables.length} result${tables.length === 1 ? '' : 's'}, returned when the rows of "${made.title}" were fetched again`);
+              return done({ found: true, status: 'ok', tables, retained: [], mapping, note: `returned when the rows of "${made.title}" were fetched again; the mapping is read from the fetches`, opened: [] }, turn);
+            }
             if (spelling.length) history.push(`turn ${turn}: ${[...new Set(spelling)].join('; ')}`);
             const filter = args.where?.length ? ` where ${args.where.map(w => `${w.column} ${w.op} ${w.value ?? ''}`).join(' and ')}` : '';
             await emit('execution_step', 'Fetch', `${entry.file}${args.fields?.length ? ` fields ${args.fields.join(', ')}` : ''}${filter}${supplied.length ? ` for ${count(supplied.length)} points${chained ? ` from "${chained.from}" ${chained.column}` : ''}${match ? ` matched against ${Array.isArray(match) ? match.join(', ') : match}` : ''}` : ''}`);
@@ -416,10 +524,26 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             if (!supplied.length) fetched = await fetchAll({ adapter, entry, fields: args.fields, where: args.where, keys });
             else if (match) fetched = await fetchMatching({ adapter, entry, points: supplied, fields: args.fields, where: args.where, match, keys, aliases });
             else if (supplyIdentities.size) fetched = await fetchRows({ adapter, entry, supplied, resolved: supplyResolved, fields: args.fields, where: args.where, keys });
+            else if (['lookup', 'stream'].includes(entry.key) && supplyIdentities.size && args.where?.length) {
+              history.push(`turn ${turn}: ${entry.file} has no ${db.entity} rows for the list; read whole by the where`);
+              fetched = await fetchAll({ adapter, entry, fields: args.fields, where: args.where, keys });
+            }
             else throw new Error(`none of the points is a ${db.entity} of the release, and no column of ${entry.file} holds them; search a point to see where such values live, name the column with match, or fetch without the list`);
-            const table = { name: title, title, description, rows: fetched.rows, columns: fetched.columns, args: { table: entry.file, fields: fetched.fields, ...(args.where?.length ? { where: args.where } : {}), ...(fetched.match ? { match: fetched.match } : {}), ...(chained || {}) }, coverage: fetched.coverage, source_file: entry.file };
+            const table = { name: title, title, description, rows: fetched.rows, columns: fetched.columns, args: { table: entry.file, fields: fetched.fields, ...(args.where?.length ? { where: args.where } : {}), ...(fetched.match ? { match: fetched.match } : {}), ...(chained || {}) }, coverage: fetched.coverage, source_file: entry.file, effective, identity: fetched.identity_columns || [] };
             results.set(title, table);
             const c = fetched.coverage;
+            // A filter that matched no row at all: the desk says where its values are recorded.
+            if (args.where?.length && ((supplied.length && !c.with_rows && c.no_match) || (!supplied.length && !c.rows))) {
+              const notes = [];
+              for (const clause of args.where) {
+                if (!clause || clause.value === null || clause.value === undefined) continue;
+                for (const value of (clause.op === 'in' ? inList(clause.value) : [clause.value]).map(String).slice(0, 3)) {
+                  const places = await recordedElsewhere(adapter, catalog, value, { file: entry.file, columns: new Set([clause.column]) });
+                  notes.push(places.length ? `${JSON.stringify(value)} is recorded in ${places.slice(0, 6).join('; ')}${places.length > 6 ? ` (+${places.length - 6})` : ''}` : `${JSON.stringify(value)} is recorded nowhere in the release`);
+                }
+              }
+              if (notes.length) history.push(`turn ${turn}: no row of ${entry.file} matched the where: ${notes.join('. ')}`);
+            }
             const summary = supplied.length
               ? `${c.with_rows} points with rows${c.no_match ? `, ${c.no_match} with no row matching the filter` : ''}${c.no_rows ? `, ${c.no_rows} with no row in the table` : ''}${c.not_in_release ? `, ${c.not_in_release} not in the release` : ''}`
               : `${count(c.rows)} of ${count(c.scanned)} rows selected`;
@@ -431,7 +555,10 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             const titleOf = name => { const want = String(name).trim(); const keys = [...results.keys()]; return keys.find(k => k === want) || keys.find(k => k.toLowerCase() === want.toLowerCase()) || (keys.filter(k => k.toLowerCase().startsWith(want.toLowerCase())).length === 1 ? keys.find(k => k.toLowerCase().startsWith(want.toLowerCase())) : null); };
             const named = (args.results || []).map(n => [String(n), titleOf(n)]);
             const unknown = named.filter(([, k]) => !k).map(([n]) => n);
-            if (unknown.length) throw new Error(`no result titled ${unknown.join(', ')}; results so far: ${[...results.keys()].join(', ') || 'none'}`);
+            // Names that are no titles at all (the values read, a table) with results made: the
+            // agent is done with what it fetched, and every result is returned.
+            if (unknown.length && named.every(([, k]) => !k) && results.size) { history.push(`turn ${turn}: finish named no result title (${unknown.slice(0, 2).map(n => n.slice(0, 40)).join(', ')}${unknown.length > 2 ? ', …' : ''}); every result made is returned`); named.splice(0, named.length, ...[...results.keys()].map(k => [k, k])); }
+            else if (unknown.length) throw new Error(`no result titled ${unknown.join(', ')}; results are named by their titles under RESULTS: ${[...results.keys()].join(', ') || 'none'}`);
             const names = [...new Set(named.map(([, k]) => k))];
             if (!names.length && !String(args.note || '').trim()) throw new Error('finish needs result titles, or a note saying what no table holds');
             const tables = names.map(n => results.get(n));
@@ -440,11 +567,16 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             // A mapped column is a column of the results named, as the result spells it: the study
             // reads the field there.
             const held = [...new Set(tables.flatMap(t => t.columns))];
-            const astray = [];
+            const astray = [], resolved = [];
             for (const m of mapping) {
               const column = held.find(c => c === m.column) || held.find(c => c.toLowerCase() === m.column.toLowerCase());
-              if (column) m.column = column; else astray.push(m);
+              const start = m.column.replace(/[*.\s]+$/, '').toLowerCase();
+              const starting = column ? [] : held.filter(c => start && c.toLowerCase().startsWith(start));
+              if (column) resolved.push({ ...m, column });
+              else if (starting.length) resolved.push(...starting.map(c => ({ ...m, column: c })));
+              else astray.push(m);
             }
+            mapping.splice(0, mapping.length, ...resolved);
             if (astray.length) throw new Error(`the mapping names ${astray.map(m => `${m.column} for ${m.field}`).join(', ')}, which no result named has; the columns of ${tables.map(t => `"${t.title}"`).join(', ')}: ${namedColumns(held)}`);
             await emit('complete', 'Investigator done', `${tables.length} result${tables.length === 1 ? '' : 's'}: ${names.join(', ')}${mapping.length ? `. Mapped: ${mapping.map(m => `${m.field} → ${m.table}.${m.column}`).join('; ')}` : ''}${note ? `. ${note}` : ''}`);
             return done({ found: tables.length > 0, status: 'ok', tables, retained: [...results.values()].filter(t => !names.includes(t.name)), mapping, note, opened: [] }, turn);

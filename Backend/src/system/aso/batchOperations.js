@@ -13,10 +13,21 @@ function object(value, label) {
 // value where a list is declared becomes a list of one, and an argument the schema does not
 // declare is removed and named in the returned list, so a stray key never fails a call whose
 // declared arguments are right.
+// What a schema accepts, in words.
+function kindOf(schema) {
+  if (Array.isArray(schema.anyOf)) return schema.anyOf.map(kindOf).join(' or ');
+  if (schema.enum) return `one of ${schema.enum.join(', ')}`;
+  if (schema.type === 'array') return `a list of ${schema.items?.type ? `${kindOf(schema.items)}s` : 'values'}`;
+  if (schema.type === 'object') return 'an object';
+  return schema.type ? `a ${schema.type}` : 'a value';
+}
+
+const acceptsType = (schema, type) => schema.type === type || (Array.isArray(schema.anyOf) && schema.anyOf.some(option => acceptsType(option, type)));
+
 function validate(value, schema, label, ignored = []) {
   if (schema.enum && !schema.enum.includes(value)) throw new Error(`${label} must be one of ${schema.enum.join(', ')}`);
   if (Array.isArray(schema.anyOf)) {
-    if (!schema.anyOf.some(option => { try { validate(value, option, label, ignored); return true; } catch { return false; } })) throw new Error(`${label} must match one of the declared value types`);
+    if (!schema.anyOf.some(option => { try { validate(value, option, label, ignored); return true; } catch { return false; } })) throw new Error(`${label} must be ${kindOf(schema)}; got ${JSON.stringify(value).slice(0, 80)}`);
     return ignored;
   }
   if (schema.type === 'null') {
@@ -31,9 +42,16 @@ function validate(value, schema, label, ignored = []) {
     // removed so the operation never sees it; a required field stays and is checked as sent.
     for (const [key, item] of Object.entries(value)) {
       const declared = schema.properties && Object.hasOwn(schema.properties, key) ? schema.properties[key] : null;
-      if (item === null && declared && !(schema.required || []).includes(key) && declared.type !== 'null' && !declared.anyOf) delete value[key];
+      if (item === null && declared && !(schema.required || []).includes(key) && declared.type !== 'null' && !acceptsType(declared, 'null')) delete value[key];
       // One value where a list is declared is a list of one (metrics: "count" is metrics: ["count"]).
       else if (declared?.type === 'array' && (typeof item === 'string' || typeof item === 'number') && (!declared.items?.type || declared.items.type === typeof item)) value[key] = [item];
+      // An object holding one string where a string is declared is that string (match: {column: "Tissue"}).
+      else if (declared && item && typeof item === 'object' && !Array.isArray(item) && acceptsType(declared, 'string') && !acceptsType(declared, 'object')) {
+        const strings = Object.values(item).filter(v => typeof v === 'string');
+        const keys = Object.keys(item);
+        if (strings.length === 1) value[key] = strings[0];
+        else if (keys.length === 1 && Array.isArray(item[keys[0]])) value[key] = keys[0];
+      }
     }
     for (const name of schema.required || []) if (!Object.hasOwn(value, name)) throw new Error(`${label}.${name} is required`);
     for (const [key, item] of Object.entries(value)) {

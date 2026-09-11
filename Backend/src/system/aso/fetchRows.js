@@ -21,7 +21,12 @@ function resolveColumn(entry, name) {
   return found;
 }
 
-const resolveColumns = (entry, names) => names.map(name => resolveColumn(entry, name));
+const resolveColumns = (entry, names) => [...new Set(names.flatMap(name => {
+  const exact = entry.columns.find(c => c === name) || entry.columns.find(c => c.toLowerCase() === String(name).toLowerCase());
+  if (exact) return [exact];
+  const starting = entry.columns.filter(c => c.toLowerCase().startsWith(String(name).toLowerCase()));
+  return starting.length ? starting : [resolveColumn(entry, name)];
+}))];
 
 // Columns whose values are the entity's own keys carry nothing the key columns do not.
 function identityColumns(entry, sampleRows, keys) {

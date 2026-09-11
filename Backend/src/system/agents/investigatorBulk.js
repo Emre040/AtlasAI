@@ -631,8 +631,15 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
   } catch (error) {
     await emit('error', 'Investigator', error.message);
     const stop = error instanceof AgentStop ? { stop_reason: error.reason, incomplete: true } : {};
-    // Stopped before naming its results: every fetched table is returned, the fullest first.
-    return done({ found: results.size > 0, status: 'partial', ...stop, error: error.message, tables: [...results.values()].sort((x, y) => y.rows.length - x.rows.length), retained: [], mapping: [], note: `Investigator stopped before finishing: ${error.message}`, opened: [] }, undefined);
+    // Stopped before naming its results: what the searches established goes to the study first
+    // (a word nothing in the release is named by is a finding), then every fetched table, the
+    // fullest first, with the mapping read from the fetches.
+    const nothing = searches.filter(x => x.text.startsWith('nothing in the release is named by')).map(x => x.text.split(':')[0]);
+    const findings = nothing.length ? `${[...new Set(nothing)].join('; ')}. ` : '';
+    const tables = [...results.values()].sort((x, y) => y.rows.length - x.rows.length);
+    const mapping = [...new Map(tables.flatMap(t => (t.args.fields || []).map(field => ({ field, table: t.args.table, column: field }))).map(m => [`${m.field} ${m.table} ${m.column}`, m])).values()];
+    const message = `${findings}${tables.length ? `${count(tables.length)} result${tables.length === 1 ? '' : 's'} fetched. ` : ''}${error.message}`;
+    return done({ found: results.size > 0, status: 'partial', ...stop, error: message, tables, retained: [], mapping, note: `Investigator stopped before finishing: ${message}`, opened: [] }, undefined);
   }
 }
 

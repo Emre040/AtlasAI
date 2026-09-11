@@ -218,10 +218,7 @@ function reportIssues(args, state) {
     if (issue) issues.push(`claims[${i}]: ${issue}`);
   }
   for (const [i, text] of (args.limitations || []).entries()) {
-    // A number in a limitation is fine when a saved artifact holds it in a cell (the universe of
-    // a test, a threshold); one that no artifact holds is unverified and does not belong there.
-    const loose = statedNumbers(text).filter(n => !locate(state, n.value, n.tolerance).length && !(n.percent && locate(state, n.value / 100, n.tolerance / 100).length));
-    if (loose.length) issues.push(`limitations[${i}] states ${loose.map(n => n.raw).join(', ')}, which no saved artifact holds; write the limitation without the number, or state it as a claim bound to the rows that hold it`);
+    if (typeof text !== 'string' || !text.trim()) issues.push(`limitations[${i}] needs text`);
   }
   for (const [i, item] of (args.not_done || []).entries()) {
     if (!item || !Number.isSafeInteger(item.item) || item.item < 1 || item.item > state.plan.length) issues.push(`not_done[${i}].item must name a plan item between 1 and ${state.plan.length}`);
@@ -270,7 +267,9 @@ function renderReport(args, state, figures) {
   }
   if (figures.length) sections.push(figures.map((artifact, i) => figureLine(artifact, i + 1)).join('\n'));
   if ((args.claims || []).length) sections.push(`**Findings**\n\n${args.claims.map(claim => { const bound = binding(claim, state); return `- ${claim.text.trim()} (evidence: ${evidenceText(bound)})`; }).join('\n')}`);
-  if ((args.limitations || []).length) sections.push(`**Limitations**\n\n${args.limitations.map(text => `- ${String(text).trim()}`).join('\n')}`);
+  // A limitation is scope, not evidence: a number in it that no saved artifact holds (a definition's
+  // threshold, a count from elsewhere) is printed with a note saying it is unverified here.
+  if ((args.limitations || []).length) sections.push(`**Limitations**\n\n${args.limitations.map(text => { const loose = statedNumbers(text).filter(n => !locate(state, n.value, n.tolerance).length && !(n.percent && locate(state, n.value / 100, n.tolerance / 100).length) && !state.artifacts.some(a => (a.rows || []).length === n.value)); return `- ${String(text).trim()}${loose.length ? ` (${loose.map(n => n.raw).join(', ')}: not verified against the data of this study)` : ''}`; }).join('\n')}`);
   if ((args.not_done || []).length) sections.push(`**Not done**\n\n${args.not_done.map(item => `- Plan item ${item.item}: ${String(item.why).trim()}`).join('\n')}`);
   return sections.join('\n\n');
 }

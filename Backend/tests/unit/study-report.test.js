@@ -42,9 +42,10 @@ test('tables, figures and limitations are checked structurally', () => {
   assert.match(reportIssues({ tables: [{ artifact: 'a2' }] }, state)[0], /a2 is a figure, not a table/);
   assert.match(reportIssues({ figures: ['a3'] }, state)[0], /a3 was not rendered/);
   assert.match(reportIssues({ figures: ['a1'] }, state)[0], /"a1" is not a saved figure/);
-  assert.match(reportIssues({ tables: [{ artifact: 'a1' }], limitations: ['3 genes had no record'] }, state)[0], /limitations\[0\] states 3, which no saved artifact holds/);
-  // a number a saved artifact holds in a cell (a universe size, a threshold) may stand in a limitation
-  assert.equal(reportIssues({ tables: [{ artifact: 'a1' }], limitations: ['Values above 32.2 nTPM were not checked further'] }, state).some(i => /limitations/.test(i)), false);
+  // a limitation is scope, not evidence: a number no artifact holds does not block the report but is marked unverified when rendered
+  assert.deepEqual(reportIssues({ tables: [{ artifact: 'a1' }], limitations: ['Enrichment means at least 4-fold more than any other tissue'] }, state), []);
+  assert.match(renderReport({ tables: [{ artifact: 'a1' }], limitations: ['Enrichment means at least 4-fold more than any other tissue', 'Values above 32.2 nTPM were not checked further'] }, state, []), /- Enrichment means at least 4-fold more than any other tissue \(4: not verified against the data of this study\)\n- Values above 32\.2 nTPM were not checked further$/);
+  assert.match(reportIssues({ tables: [{ artifact: 'a1' }], limitations: [''] }, state)[0], /limitations\[0\] needs text/);
   assert.match(reportIssues({ tables: [{ artifact: 'a1' }], not_done: [{ item: 4, why: 'x' }] }, state)[0], /between 1 and 1/);
   assert.match(reportIssues({ figures: [] }, state)[0], /needs at least one table, figure or claim/);
 });

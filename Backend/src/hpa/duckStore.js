@@ -33,6 +33,7 @@ const BUILD_WAIT_MS = 90 * 60_000;    // how long a start waits for a build runn
 const tableName = file => file.replace(/\.tsv$/i, '').replace(/[^A-Za-z0-9_]/g, '_');
 const quoted = name => `"${String(name).replace(/"/g, '""')}"`;
 const literal = text => `'${String(text).replace(/'/g, "''")}'`;
+const flatKey = v => String(v ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const blank = column => `(${column} IS NULL OR trim(${column}) = '')`;
 // A row as the file readers give it: a missing cell is the empty string.
 const plain = row => { const out = {}; for (const key of Object.keys(row)) { const v = row[key]; out[key] = v === null || v === undefined ? '' : typeof v === 'bigint' ? Number(v) : v; } return out; };
@@ -205,15 +206,15 @@ class DuckStore {
   profileOf(file) { return this.tableOf(file).profile; }
 
   // Every row of a table, or those whose column holds one of the values: as the file spells it,
-  // case and surrounding space aside, or the same number, which is how the row filter matches.
-  // A clause names one column, or several (columns) of which any may hold the value; clauses
-  // must all hold.
+  // case and surrounding space aside, or the same number, which is how the row filter matches;
+  // a list column (separators, by column) holds a value as one of its items. A clause names one
+  // column, or several (columns) of which any may hold the value; clauses must all hold.
   rows(file, { where = [] } = {}) {
     const t = this.tableOf(file);
-    const clauses = where.map(({ column, columns, values }) => {
+    const clauses = where.map(({ column, columns, values, separators }) => {
       const texts = [...new Set(values.map(v => String(v).trim().toLowerCase()))].map(literal);
       const numbers = [...new Set(values.map(v => Number(String(v).replace(/,/g, '').trim())).filter(Number.isFinite))];
-      const holds = name => { const q = quoted(name); return `lower(trim(${q})) IN (${texts.join(', ')})${numbers.length ? ` OR TRY_CAST(replace(${q}, ',', '') AS DOUBLE) IN (${numbers.join(', ')})` : ''}`; };
+      const holds = name => { const q = quoted(name), sep = separators?.[name]; return `lower(trim(${q})) IN (${texts.join(', ')})${sep ? ` OR list_has_any(list_transform(string_split(${q}, ${literal(sep)}), x -> lower(trim(x))), [${texts.join(', ')}])` : ''}${numbers.length ? ` OR TRY_CAST(replace(${q}, ',', '') AS DOUBLE) IN (${numbers.join(', ')})` : ''}`; };
       return `(${(columns || [column]).map(holds).join(' OR ')})`;
     });
     return this.stream(`SELECT * FROM ${quoted(t.table)}${clauses.length ? ` WHERE ${clauses.join(' AND ')}` : ''}`);
@@ -244,6 +245,20 @@ class DuckStore {
     const texts = [...new Set(values.map(v => String(v).trim().toLowerCase()))].map(literal);
     const [{ n }] = await this.all(`SELECT count(*)::DOUBLE AS n FROM ${quoted(t.table)} WHERE lower(trim(${q})) IN (${texts.join(', ')})`);
     return Number(n);
+  }
+
+  // The recorded spellings of values in a column: the distinct values whose letters and digits,
+  // case aside, are those of a value asked (A549 finds A-549), by value asked; none has [].
+  async spellings(file, column, values) {
+    const t = this.tableOf(file);
+    const asked = new Map();
+    for (const v of values) { const k = flatKey(v); if (k && !asked.has(k)) asked.set(k, []); }
+    const out = new Map(values.map(v => [v, []]));
+    if (!asked.size) return out;
+    const rows = await this.all(`SELECT v, k FROM (SELECT DISTINCT ${quoted(column)} AS v FROM ${quoted(t.table)}) d, LATERAL (SELECT lower(regexp_replace(CAST(v AS VARCHAR), '[^A-Za-z0-9]', '', 'g')) AS k) WHERE k IN (${[...asked.keys()].map(literal).join(', ')})`);
+    for (const row of rows) asked.get(row.k)?.push(row.v);
+    for (const v of values) out.set(v, [...(asked.get(flatKey(v)) || [])]);
+    return out;
   }
 
   // Rows of a text column containing the word (case aside): how many, and a few of the values.

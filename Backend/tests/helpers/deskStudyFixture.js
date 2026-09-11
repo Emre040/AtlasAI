@@ -49,6 +49,7 @@ function fakeAdapter(overrides = {}) {
     async sample(e) { return e === CONSENSUS ? ROWS.ENSG1.slice(0, 2) : [{ Tissue: 'liver', Organ: 'Liver & Gallbladder' }]; },
     async holds(e, column, values) { const wanted = new Set(values.map(v => String(v).trim().toLowerCase())); let n = 0; for await (const row of this.rows(e)) if (wanted.has(String(row[column] ?? '').trim().toLowerCase())) n++; return n; },
     async textHits(e, column, word, limit = 4) { const needle = String(word).toLowerCase(); let rows = 0; const values = new Set(); for await (const row of this.rows(e)) { const cell = String(row[column] ?? ''); if (cell.toLowerCase().includes(needle)) { rows++; if (values.size < limit) values.add(cell); } } return { rows, values: [...values] }; },
+    async spellings(e, column, values) { const flat = v => String(v ?? '').toLowerCase().replace(/[^a-z0-9]/g, ''); const out = new Map(values.map(v => [v, []])); for await (const row of this.rows(e)) { const cell = String(row[column] ?? ''); for (const v of values) if (cell && flat(cell) === flat(v) && !out.get(v).includes(cell)) out.get(v).push(cell); } return out; },
     isEntityId(value) { return /^ENSG/.test(String(value || '')); },
     definition: () => null,
     ...overrides

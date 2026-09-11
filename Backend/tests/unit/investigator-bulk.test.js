@@ -40,9 +40,8 @@ test('the investigator searches the release, fetches for the whole list and retu
   // The desk of the second turn: the search's findings, compact, and nothing of any table.
   const desk2 = requests[1].messages[1].content;
   assert.match(desk2, /POINTS\n4 points supplied, 3 resolve as genes in the release; not genes of the release: NOPE\. First points: EGFR, ERBB2, MET, NOPE/);
-  assert.match(desk2, /SEARCHES\nsearch "liver", "nTPM" →\n  tables named by the words: rna_tissue_consensus\.tsv — Consensus tissue RNA: Consensus nTPM per tissue \(Gene, Gene name, Tissue, nTPM\)/);
-  assert.match(desk2, /\n  columns named by the words: rna_tissue_consensus\.tsv · nTPM\n/);
-  assert.match(desk2, /\n  values holding the words: rna_tissue_consensus\.tsv · Tissue = liver \(3 rows\); tissues\.tsv · Tissue = liver/);
+  assert.match(desk2, /SEARCHES\nsearch "liver", "nTPM" →\n  tables matching the words, most words first:\n    rna_tissue_consensus\.tsv — Consensus tissue RNA: Consensus nTPM per tissue \(Gene, Gene name, Tissue, nTPM\) ← its name or description; columns nTPM; Tissue = liver \(3 rows\)\n    tissues\.tsv — Tissue lookup: Tissue to organ \(Tissue, Organ\) ← Tissue = liver \(1 rows\)\n\nTABLES FOUND\nrna_tissue_consensus\.tsv \(Gene, Gene name, Tissue, nTPM\)\ntissues\.tsv \(Tissue, Organ\)\n/);
+  assert.match(requests[0].messages[1].content, /TABLES FOUND\n\(none yet\)/);
   assert.doesNotMatch(desk2, /OPENED|columns: Gene, Gene name/, 'no table card');
   assert.ok(Buffer.byteLength(desk2) < 2500, `a turn's desk stays small: ${Buffer.byteLength(desk2)} bytes`);
   // The desk of the third turn: the result as one line.
@@ -143,7 +142,7 @@ test('a search finds a word no vocabulary holds by scanning text columns, and sa
   assert.equal(result.status, 'ok');
   const desk2 = requests[1].messages[1].content;
   assert.match(desk2, /"EGFR" is a gene of the release \(EGFR = ENSG1\); "ERBB2" is a gene of the release \(ERBB2 = ENSG2\): fetch reads its rows for the list by its keys, no search of the point is needed; columns holding gene ids in the tables found: rna_tissue_consensus\.tsv · Gene/);
-  assert.match(desk2, /tables named by the words: rna_tissue_consensus\.tsv — Consensus tissue RNA/);
+  assert.match(desk2, /tables matching the words, most words first:\n    rna_tissue_consensus\.tsv — Consensus tissue RNA/);
   assert.doesNotMatch(desk2, /text columns holding the words/, 'a key point is not scanned for');
   const scan = await investigator([
     response(call('search', { words: ['lung'] })),
@@ -151,6 +150,32 @@ test('a search finds a word no vocabulary holds by scanning text columns, and sa
   ], { adapter: { async profile(e) { return { rows: 6, capped: false, columns: e.columns.map(c => ({ column: c, kind: 'text', blank_pct: 0, distinct: '1000+', observed_values: null, examples: [], full_examples: [] })) }; } } });
   await scan.run({ question: 'rows in lung' });
   assert.match(scan.requests[1].messages[1].content, /text columns holding the words: rna_tissue_consensus\.tsv · Tissue = lung \(2 rows hold "lung"\); tissues\.tsv · Tissue = lung \(1 rows hold "lung"\)/);
+});
+
+test('points spelled otherwise than a column without a vocabulary are placed and matched by the spellings recorded at the source', async () => {
+  const noVocabulary = { adapter: { async profile(e) { return { rows: 6, capped: false, columns: e.columns.map(c => c === 'nTPM' ? { column: c, kind: 'number', blank_pct: 17, distinct: '5', min: 0, max: 34.1, examples: [] } : { column: c, kind: 'text', blank_pct: 0, distinct: '1000+', observed_values: null, examples: [], full_examples: [] }) }; } } };
+  const { run, requests } = await investigator([
+    response(call('search', { words: ['nTPM'] })),
+    response(call('fetch', { title: 'Liver rows', description: 'nTPM of the liver rows', table: 'rna_tissue_consensus.tsv', fields: ['nTPM'] })),
+    response(call('finish', { results: ['Liver rows'], mapping: [{ field: 'nTPM', table: 'rna_tissue_consensus.tsv', column: 'nTPM' }] }))
+  ], noVocabulary);
+  const result = await run({ points: ['LI-VER'], question: 'nTPM of the rows of this tissue' });
+  assert.equal(result.status, 'ok');
+  assert.match(requests[1].messages[1].content, /the points are values of: rna_tissue_consensus\.tsv · Tissue \(LI-VER as liver\); tissues\.tsv · Tissue \(LI-VER as liver\)/);
+  assert.match(requests[2].messages[1].content, /turn 2: the points are values of Tissue, not genes: matched against it\nturn 2: read "LI-VER" as "liver", the spelling of Tissue\nturn 2: fetch → "Liver rows" \(3 rows; 1 points with rows\)/);
+  assert.deepEqual(result.tables[0].rows.map(r => [r.Tissue, r.gene, r.nTPM]), [['liver', 'EGFR', '32.2'], ['liver', 'ERBB2', '30.7'], ['liver', 'MET', null]]);
+});
+
+test('a where whose value is the point names the column the points are matched against', async () => {
+  const { run, requests } = await investigator([
+    response(call('fetch', { title: 'Liver rows', description: 'the rows of the liver', table: 'rna_tissue_consensus.tsv', fields: ['Gene name', 'nTPM'], where: [{ column: 'Tissue', op: '=', value: 'liver' }] })),
+    response(call('finish', { results: ['Liver rows'], mapping: [{ field: 'nTPM', table: 'rna_tissue_consensus.tsv', column: 'nTPM' }] }))
+  ]);
+  const result = await run({ points: ['liver'], question: 'genes with their nTPM in this tissue' });
+  assert.equal(result.status, 'ok');
+  assert.match(requests[1].messages[1].content, /turn 1: the where on Tissue names the points: matched against it\nturn 1: fetch → "Liver rows" \(3 rows; 1 points with rows\)/);
+  assert.ok(!result.tables[0].args.where?.length, 'the clause the match makes is set aside');
+  assert.deepEqual(result.tables[0].rows.map(r => [r.Tissue, r.gene, r.nTPM]), [['liver', 'EGFR', '32.2'], ['liver', 'ERBB2', '30.7'], ['liver', 'MET', null]]);
 });
 
 test('a search that names nothing says so, and an Investigator that gives up says what it tried', async () => {

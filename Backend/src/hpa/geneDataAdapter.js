@@ -275,6 +275,11 @@ async function holds(e, column, values) {
 }
 
 // Rows of a text column of a table containing a word: how many, and a few of the values.
+// The recorded spellings of values in a column of the table, by value.
+async function spellings(e, column, values) {
+  return duckStore.spellings(e.file, column, values);
+}
+
 async function textHits(e, column, word, limit = 4) {
   return duckStore.textHits(e.file, column, word, limit);
 }
@@ -321,4 +326,4 @@ async function entities() {
   return (await localData.master()).rows.map(row => ({ gene: row.Gene || null, ensembl: row.Ensembl || null }));
 }
 
-module.exports = { name: 'Human Protein Atlas per-gene tables', identity, access, catalog, overview, entry, resolveGene, resolveGenes, read, readMany, keysOf, rows, entities, applyWhere, render, cited, pageUrl, definition, profile, sample, rowCount, findValues, holds, textHits, isEntityId, sources: docs.SOURCES };
+module.exports = { name: 'Human Protein Atlas per-gene tables', identity, access, catalog, overview, entry, resolveGene, resolveGenes, read, readMany, keysOf, rows, entities, applyWhere, render, cited, pageUrl, definition, profile, sample, rowCount, findValues, holds, textHits, spellings, isEntityId, sources: docs.SOURCES };

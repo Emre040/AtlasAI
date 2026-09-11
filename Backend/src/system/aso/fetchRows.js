@@ -9,7 +9,7 @@
  * study does that with its own operations. The database's own reader supplies the rows.
  */
 
-const { wherePredicate, withColumns, isMissing, inList } = require('./studyTools');
+const { wherePredicate, withColumns, isMissing, inList, listSeparator } = require('./studyTools');
 const { namedColumns } = require('./desk');
 
 const STATUS = Object.freeze({ ok: 'ok', noRows: 'no rows in table', noMatch: 'no rows match filter', notInRelease: 'not in release' });
@@ -76,17 +76,22 @@ async function fetchRows({ adapter, entry, supplied, resolved, fields, where = [
 }
 
 // The rows whose value in one column is one of the points: the points are any values (tissues,
-// cell lines, categories), matched case-insensitively. Rows of an entity-keyed table also carry
-// the entity keys.
+// cell lines, categories), matched case-insensitively; a list column holds a point as one of
+// its items. Rows of an entity-keyed table also carry the entity keys.
 async function fetchMatching({ adapter, entry, points, fields, where = [], match, keys, aliases = null }) {
   if (!entry) throw new Error('fetch needs a table');
   if (entry.key === 'unreadable') throw new Error(`${entry.file} is in the release but not readable here`);
   // One column, or several when a point may sit in any of them (the two sides of a pair table);
-  // with several, the result names the point in a column of its own and keeps every side.
+  // with several, the result names the point in a column of its own and the other side in other,
+  // and the sides themselves are not repeated: which side held the point says nothing.
   const matchColumns = (Array.isArray(match) ? match : [match]).map(name => resolveColumn(entry, name));
-  const column = matchColumns.length === 1 ? matchColumns[0] : 'point';
+  const paired = matchColumns.length > 1;
+  const column = paired ? 'point' : matchColumns[0];
+  const cards = typeof adapter.profile === 'function' ? (await adapter.profile(entry).catch(() => null))?.columns || [] : [];
+  const separators = Object.fromEntries(matchColumns.map(c => [c, listSeparator(cards.find(card => card.column === c))]).filter(([, sep]) => sep));
+  const itemsOf = (cell, sep) => sep && cell !== null && cell !== undefined ? String(cell).split(sep) : [cell];
   const predicate = wherePredicate(entry.columns, where || []);
-  const keyed = !['lookup', 'stream'].includes(entry.key);
+  const keyed = !['lookup', 'stream'].includes(entry.key) && !paired;
   const [geneKey, idKey] = keys.columns;
   const keyColumns = keyed ? [geneKey, idKey].filter(c => c !== column) : [];
   const unique = [...new Map(points.map(p => [String(p).trim().toLowerCase(), String(p).trim()])).entries()];
@@ -98,10 +103,10 @@ async function fetchMatching({ adapter, entry, points, fields, where = [], match
   const spellings = [...keyOfValue.keys()];
   // The read is narrowed at the source to rows where any match column holds a point; the rows
   // are then matched here as before, so what is kept is exactly what matches.
-  for await (const row of adapter.rows(entry, { where: [{ columns: matchColumns, values: spellings }] })) {
+  for await (const row of adapter.rows(entry, { where: [{ columns: matchColumns, values: spellings, ...(Object.keys(separators).length ? { separators } : {}) }] })) {
     const seen = new Set();
-    for (const c of matchColumns) {
-      const key = keyOfValue.get(String(row[c] ?? '').trim().toLowerCase());
+    for (const c of matchColumns) for (const item of itemsOf(row[c], separators[c])) {
+      const key = keyOfValue.get(String(item ?? '').trim().toLowerCase());
       if (key === undefined || seen.has(key)) continue;
       seen.add(key);
       byPoint.get(key).push(row);
@@ -110,19 +115,20 @@ async function fetchMatching({ adapter, entry, points, fields, where = [], match
   const first = [...byPoint.values()].find(rows => rows.length)?.[0];
   const firstKeys = keyed && first ? adapter.keysOf(entry, first) : {};
   const identity = keyed && first ? identityColumns(entry, [first], [firstKeys[geneKey], firstKeys[idKey]]) : [];
-  const wanted = (Array.isArray(fields) && fields.length ? resolveColumns(entry, fields) : entry.columns).filter(c => !identity.includes(c) && c !== column);
-  // A point matched against several columns of a pair table: the row keeps every side, and the
-  // side that is not the point is named in a column of its own, so the point's counterparts are
-  // that column and never the point itself.
-  const paired = matchColumns.length > 1;
+  const wanted = (Array.isArray(fields) && fields.length ? resolveColumns(entry, fields) : entry.columns).filter(c => !identity.includes(c) && c !== column && !(paired && matchColumns.includes(c)));
+  // A point matched against several columns of a pair table: the side that is not the point is
+  // named in a column of its own, so the point's counterparts are that column and never the
+  // point itself.
   const columns = [column, ...(paired ? ['other'] : []), ...keyColumns, ...wanted.filter(c => !keyColumns.includes(c)), 'source_rows', 'source_status'];
   const otherOf = (row, key) => matchColumns.map(c => row[c]).find(v => keyOfValue.get(String(v ?? '').trim().toLowerCase()) !== key) ?? null;
+  // The point is shown as the column spells it, when the column holds it whole.
+  const spelledAs = (all, point) => !paired && all.length && !separators[column] ? all[0][column] : point;
   const out = [];
   const coverage = { supplied: points.length, entities: unique.length, with_rows: 0, no_rows: 0, no_match: 0, rows: 0 };
   for (const [key, point] of unique) {
     const all = byPoint.get(key);
     const rows = all.filter(predicate);
-    const base = { [column]: matchColumns.length === 1 && all.length ? all[0][column] : point, ...(paired ? { other: null } : {}) };
+    const base = { [column]: spelledAs(all, point), ...(paired ? { other: null } : {}) };
     if (!rows.length) {
       if (all.length) coverage.no_match++; else coverage.no_rows++;
       out.push({ ...base, ...Object.fromEntries(keyColumns.map(c => [c, null])), ...nullFields(wanted), source_rows: 0, source_status: all.length ? STATUS.noMatch : STATUS.noRows });

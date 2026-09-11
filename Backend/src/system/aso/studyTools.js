@@ -825,8 +825,14 @@ function columnCard(c, s) {
     observed_values: kind === 'text' && distinctCount < 1000 ? [...s.distinct.keys()] : null,
     min: kind === 'number' ? s.min : undefined, max: kind === 'number' ? s.max : undefined,
     list: grammar && grammar.sep ? `list of '${grammar.shape}' items separated by '${grammar.sep}'` : (grammar && grammar.shape !== 'item' ? `'${grammar.shape}'` : undefined),
+    separator: grammar && grammar.sep ? grammar.sep : undefined,
     parts
   };
+}
+
+// The separator of a list column's cells, from its card; none for a column of single values.
+function listSeparator(card) {
+  return card?.separator || (String(card?.list || '').match(/separated by '(.+)'$/) || [])[1] || null;
 }
 
 function profile(rows, columns) {
@@ -1248,4 +1254,4 @@ function chartSpec(args, input) {
   return { ...base, ...chartDomains(args, axes), data };
 }
 
-module.exports = { grain, widenByCategory, aggregateMany, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, inList, applyWhere, wherePredicate, nearMisses, refuseMisspelled, correctSpelling, freshFirst, correlate, overlap, explode, profile, profileStream, columnCard, listGrammar, setOp, join,select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, columnsOf, withColumns, findColumn, keyOf, num, isMissing };
+module.exports = { grain, widenByCategory, aggregateMany, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, inList, applyWhere, wherePredicate, nearMisses, refuseMisspelled, correctSpelling, freshFirst, correlate, overlap, explode, profile, profileStream, columnCard, listGrammar, listSeparator, setOp, join,select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, columnsOf, withColumns, findColumn, keyOf, num, isMissing };

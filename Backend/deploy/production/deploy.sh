@@ -135,6 +135,12 @@ if ! flock --nonblock "${canonical_data_local}/.sync.lock" node scripts/sync-hpa
   echo "[deploy] HPA data sync incomplete or already running; see ${log_root}/${sha}.hpa-sync.log" >&2
 fi
 
+# Bring the release database (DuckDB beside the files) in step with the files just synced, so the
+# canary does not spend its start building it. The server checks it again before it answers.
+if ! flock --nonblock "${canonical_data_local}/.sync.lock" node scripts/build-hpa-duckdb.js >"${log_root}/${sha}.hpa-duckdb.log" 2>&1; then
+  echo "[deploy] HPA database build incomplete or already running; see ${log_root}/${sha}.hpa-duckdb.log" >&2
+fi
+
 if ss -H -ltn "sport = :${canary_port}" | grep -q .; then
   exit 9
 fi

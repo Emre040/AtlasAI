@@ -15,6 +15,7 @@ const { RequestEventRepository } = require('./src/database/repositories/requestE
 const { RunRepository } = require('./src/database/repositories/runs');
 const { WorkspaceRepository } = require('./src/database/repositories/workspaces');
 const { localData } = require('./src/hpa/localData');
+const { duckStore } = require('./src/hpa/duckStore');
 const { initializeInferenceGateway, resolveActiveModel } = require('./src/inference/gateway');
 const { initializePlatformConfig } = require('./src/policy/config');
 const { PolicyEngine } = require('./src/policy/limits');
@@ -48,6 +49,8 @@ async function bootstrap() {
   const platformConfig = await initializePlatformConfig(db);
   configureWorkspaceRoot(runtime.workspaceRoot);
   localData.configure({ root: runtime.dataLocalRoot, db });
+  // The release database beside the files: built or brought up to date before the server answers.
+  await duckStore.ensure({ root: runtime.dataLocalRoot, version: platformConfig.activeHpaVersion, datasets: await localData.datasets.listReady(platformConfig.activeHpaVersion), log: message => console.log(`[HPA-DUCKDB] ${message}`) });
 
   const batches = new BatchRepository(db);
   const conversations = new ConversationRepository(db);

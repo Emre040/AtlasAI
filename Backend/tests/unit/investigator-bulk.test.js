@@ -113,3 +113,16 @@ test('a fetch takes its points from a column of an earlier result: what one tabl
   assert.match(requests[3].messages[1].content, /turn 3: fetch for the 3 values of "Liver rows" gene → "Lung nTPM of those" \(3 rows; 2 points with rows, 1 with no row matching the filter\)/);
   assert.equal(result.calls, 4);
 });
+
+test('a word that is a value is not a table, and an Investigator that gives up says what it tried', async () => {
+  const { run, requests } = await investigator([
+    response(call('find_tables', { about: 'heart' })),
+    response(call('find_tables', { about: 'heart' })),
+    response(call('find_tables', { about: 'heart' }))
+  ]);
+  const result = await run({ question: 'heart nTPM of every gene' });
+  assert.equal(result.status, 'partial');
+  assert.equal(result.stop_reason, 'no_progress');
+  assert.match(requests[1].messages[1].content, /no table has "heart" in its name, title, description or columns; a value \(a category, a sample, a name\) lives in a column: find the table by a word of its subject, open it, and ask values for the column that could hold it/);
+  assert.match(result.error, /repeated itself without new evidence; it had tried: turn 1: find_tables "heart" → no table has "heart" in its name, title, description or columns; a value/);
+});

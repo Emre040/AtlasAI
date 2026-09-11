@@ -84,7 +84,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
     const findTables = about => {
       const word = String(about || '').trim().toLowerCase();
       const hits = catalog.filter(e => e.key !== 'unreadable' && (!word || e.file.toLowerCase().includes(word) || String(e.title || '').toLowerCase().includes(word) || String(e.description || '').toLowerCase().includes(word) || e.columns.some(c => c.toLowerCase().includes(word))));
-      if (!hits.length) return `no table has "${about}" in its name, title, description or columns`;
+      if (!hits.length) return `no table has "${about}" in its name, title, description or columns; a value (a category, a sample, a name) lives in a column: find the table by a word of its subject, open it, and ask values for the column that could hold it`;
       return hits.map(e => `${e.file} — ${e.title || e.file} [${adapter.access(e)}]: ${e.columns.length > 24 ? `${e.columns.slice(0, 24).join(', ')} … (${e.columns.length} columns)` : e.columns.join(', ')}`).join('\n');
     };
     const openTable = async name => {
@@ -227,7 +227,8 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
         }
       }
       idle = progressed ? 0 : idle + 1;
-      if (idle > 1) throw new AgentStop('no_progress', 'Investigator repeated itself without new evidence');
+      // A stop says what was tried, so the study does not summon the same dead end again.
+      if (idle > 1) throw new AgentStop('no_progress', `Investigator repeated itself without new evidence; it had tried: ${history.slice(-4).map(line => line.replace(/\s*\n\s*/g, ' ').slice(0, 200)).join('; ')}`);
     }
     throw new AgentStop('turn_budget_exhausted', `Investigator used its ${maxTurns} turns without finishing`);
   } catch (error) {

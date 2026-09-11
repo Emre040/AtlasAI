@@ -37,6 +37,7 @@ Backend/
 ├── runtime/                     # generated workspaces; ignored by Git
 ├── scripts/
 │   ├── sync-hpa-data.js         # downloads the active HPA release
+│   ├── build-hpa-duckdb.js      # loads the release into one DuckDB file beside the TSVs
 │   ├── sql/                     # operator SQL
 │   └── manual/                  # explicit manual agent runners
 └── tests/
@@ -187,7 +188,12 @@ selects the release in use; rows of other versions are ignored. `scripts/sync-hp
 the active version, downloads every missing or changed file with curl from `download_url`,
 checks the size against the server, hashes it, unpacks it into `HPA_DATA_LOCAL_DIR` (a single
 TSV keeps its name; multi-file archives become a directory) and records `local_status`,
-`local_path`, `download_bytes`, `download_sha256`, `unpacked_bytes` and the timestamps. The
+`local_path`, `download_bytes`, `download_sha256`, `unpacked_bytes` and the timestamps.
+`scripts/build-hpa-duckdb.js` then loads every ready TSV into one DuckDB file beside them
+(`hpa-<version>-<stamp>.duckdb`, named by the set of files it was built from, with
+`hpa-<version>.duckdb.json` naming the current build and holding each table's column profile);
+the Investigator's reads are queries against it, servers open it read-only, and a server builds
+it at start when the files changed and no build matches. The
 deployment runs it before switching releases (`--check` only reports). To ship a new release the
 HPA team inserts the new rows, sets `active_hpa_version`, and redeploys; the first deployment
 after that downloads the release.

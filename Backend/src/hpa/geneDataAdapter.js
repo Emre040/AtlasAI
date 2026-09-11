@@ -12,6 +12,7 @@
 const fs = require('node:fs');
 const readline = require('node:readline');
 const { localData, FILES, parseHeader, parseCells } = require('./localData');
+const { duckStore } = require('./duckStore');
 const docs = require('./searchDocs');
 const { definition, sourceDefinitions } = require('./sourceDefinitions');
 
@@ -53,6 +54,8 @@ async function catalog() {
     try { head = await peek(localData.filePath(file)); }
     catch (error) { entries.push({ ...base, columns: [], key: 'unreadable', why: `source could not be read: ${error.message}` }); continue; }
     const columns = head.header;
+    // A file the release database could not load is in the release but not readable here.
+    if (!duckStore.has(file)) { entries.push({ ...base, columns, key: 'unreadable', why: `not loaded in the release database: ${duckStore.errorOf(file)}` }); continue; }
     if (file === FILES.master) { entries.push({ ...base, columns, key: 'master' }); continue; }
     const geneColumn = head.first.findIndex(v => HUMAN_GENE_ID.test(v || ''));
     const nameKeyed = /^gene$/i.test(columns[0] || '') && geneColumn === 1;
@@ -115,24 +118,17 @@ async function readMany(genes, file) {
   if (e.key === 'master') {
     const master = await localData.master();
     for (const gene of unique) result.set(gene.ensembl, master.byEnsembl.has(gene.ensembl) ? [master.byEnsembl.get(gene.ensembl)] : []);
-  } else if (e.key === 'scan') {
-    const wanted = new Set(unique.map(gene => gene.ensembl));
-    for (const gene of unique) result.set(gene.ensembl, []);
-    for await (const row of localData.rows(e.file)) {
-      if (wanted.has(row[e.geneColumn])) result.get(row[e.geneColumn]).push(row);
-    }
   } else {
-    await localData.geneIndex(e.file);
-    const queue = [...unique];
-    await Promise.all(Array.from({ length: Math.min(8, unique.length) }, async () => {
-      while (queue.length) {
-        const gene = queue.shift();
-        result.set(gene.ensembl, await localData.geneRows(e.file, e.key === 'ensembl' ? gene.ensembl : gene.gene));
-      }
-    }));
+    // Rows keyed by the gene id in the first column, by its name there, or by an id in a later column.
+    const found = await duckStore.rowsBy(e.file, geneKeyColumn(e), unique.map(gene => geneKey(e, gene)));
+    for (const gene of unique) result.set(gene.ensembl, found.get(geneKey(e, gene)) || []);
   }
   return { entry: e, byGene: result };
 }
+
+const geneKeyColumn = e => (e.key === 'scan' ? e.geneColumn : e.columns[0]);
+const geneKey = (e, gene) => (e.key === 'name' ? gene.gene : gene.ensembl);
+const collect = async iterable => { const out = []; for await (const row of iterable) out.push(row); return out; };
 
 // The gene's rows in one table: a list of rows (each an object column → value); the master
 // table retains its declared columns, including fields with no recorded value.
@@ -147,14 +143,9 @@ async function read(gene, file) {
     if (!row) return { entry: e, rows: [] };
     return { entry: e, rows: [row] };
   }
-  if (e.key === 'lookup') return { entry: e, rows: (await localData.table(e.file)).rows };
-  if (e.key === 'scan') {
-    const rows = [];
-    for await (const row of localData.rows(e.file)) if (row[e.geneColumn] === gene.ensembl) rows.push(row);
-    return { entry: e, rows };
-  }
-  const rows = await localData.geneRows(e.file, e.key === 'ensembl' ? gene.ensembl : gene.gene);
-  return { entry: e, rows };
+  if (e.key === 'lookup') return { entry: e, rows: await collect(duckStore.rows(e.file)) };
+  const key = geneKey(e, gene);
+  return { entry: e, rows: (await duckStore.rowsBy(e.file, geneKeyColumn(e), [key])).get(key) || [] };
 }
 
 // A row filter the plan can attach: { column, op, value } with op one of > >= < <= = != contains.
@@ -255,32 +246,22 @@ function access(e) {
   return e.why || e.key;
 }
 
-const PROFILE_MAX_ROWS = 200000;   // rows a profile scans in one file
-const profiles = new Map();        // release|file|columns → profile, for this process
-let profileClock = 0;
-
 // The values a table's columns take: kind, range, distinct values (listed in full when few),
-// examples, blanks and list grammar, from a scan of the file capped at PROFILE_MAX_ROWS. Cached
-// per file identity, so the first open of a table pays once per process.
+// examples, blanks and list grammar, over every row of the table, as the release database
+// recorded them when the table was loaded.
 async function profile(e, columns = e.columns) {
-  const cols = columns.filter(c => e.columns.includes(c));
-  const key = `${e.hpaVersion}|${e.file}|${cols.join('|')}`;
-  if (profiles.has(key)) return profiles.get(key);
-  const { profileStream } = require('../system/aso/studyTools');
-  const pending = (async () => {
-    const scanned = await profileStream(localData.rows(e.file), cols, PROFILE_MAX_ROWS);
-    return { columns: scanned.profile, rows: scanned.rows, capped: scanned.rows >= PROFILE_MAX_ROWS, at: ++profileClock };
-  })();
-  profiles.set(key, pending);
-  try { return await pending; }
-  catch (error) { profiles.delete(key); throw error; }
+  const wanted = new Set(columns);
+  return { columns: duckStore.profileOf(e.file).filter(c => wanted.has(c.column)), rows: duckStore.rowCount(e.file), capped: false, at: Date.now() };
 }
 
 // The first rows of a table as they are in the file.
 async function sample(e, n = 3) {
-  const rows = [];
-  for await (const row of localData.rows(e.file)) { rows.push(row); if (rows.length >= n) break; }
-  return rows;
+  return duckStore.sample(e.file, n);
+}
+
+// How many rows a table holds.
+async function rowCount(e) {
+  return duckStore.rowCount(e.file);
 }
 
 // The entity keys of a raw row of a table, as the table records them.
@@ -292,12 +273,10 @@ function keysOf(e, row) {
   return { gene: name || null, ensembl: column ? row[column] || null : null };
 }
 
-// Every row of a table, whatever its shape: the master table and small tables from memory,
-// the rest streamed.
-async function* rows(e) {
-  if (e.key === 'master') { for (const row of (await localData.master()).rows) yield row; return; }
-  if (e.key === 'lookup' || e.key === 'scan') { for (const row of (await localData.table(e.file)).rows) yield row; return; }
-  for await (const row of localData.rows(e.file)) yield row;
+// Every row of a table, whatever its shape, or the rows whose named columns hold given values
+// (where: [{ column, values }]), read from the release database.
+async function* rows(e, { where = [] } = {}) {
+  yield* duckStore.rows(e.file, { where });
 }
 
 // Every entity of the database: the universe an overlap test is measured against.
@@ -305,4 +284,4 @@ async function entities() {
   return (await localData.master()).rows.map(row => ({ gene: row.Gene || null, ensembl: row.Ensembl || null }));
 }
 
-module.exports = { name: 'Human Protein Atlas per-gene tables', identity, access, catalog, overview, entry, resolveGene, resolveGenes, read, readMany, keysOf, rows, entities, applyWhere, render, cited, pageUrl, definition, profile, sample, PROFILE_MAX_ROWS, sources: docs.SOURCES };
+module.exports = { name: 'Human Protein Atlas per-gene tables', identity, access, catalog, overview, entry, resolveGene, resolveGenes, read, readMany, keysOf, rows, entities, applyWhere, render, cited, pageUrl, definition, profile, sample, rowCount, sources: docs.SOURCES };

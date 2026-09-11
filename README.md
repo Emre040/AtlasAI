@@ -41,6 +41,7 @@ AtlasAI/
 │   ├── src/http/                    # routes, CORS, authentication, rate limiting
 │   ├── src/database/schema.sql      # the schema, the model catalog, the HPA file catalog
 │   ├── scripts/sync-hpa-data.js     # downloads the active HPA release
+│   ├── scripts/build-hpa-duckdb.js  # loads the release into one DuckDB file beside the TSVs
 │   ├── scripts/manual/              # manual agent runners
 │   └── tests/unit/                  # the backend test suite (node --test)
 ├── Frontend/                        # React app (Create React App); see Frontend/README.md
@@ -65,6 +66,7 @@ mysql < src/database/schema.sql # creates the `atlasai` schema, the model catalo
 npm install
 npm test
 node scripts/sync-hpa-data.js   # downloads the active HPA release into HPA_DATA_LOCAL_DIR; the Investigator and studies read it
+node scripts/build-hpa-duckdb.js   # loads the release into hpa-<version>-<stamp>.duckdb beside the files (the server does it at start if it must)
 npm start                       # listens on HPA_HOST:HPA_PORT from .env
 curl http://127.0.0.1:9000/healthz
 ```

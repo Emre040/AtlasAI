@@ -9,7 +9,7 @@
  * study does that with its own operations. The database's own reader supplies the rows.
  */
 
-const { wherePredicate, withColumns, isMissing } = require('./studyTools');
+const { wherePredicate, withColumns, isMissing, inList } = require('./studyTools');
 const { namedColumns } = require('./desk');
 
 const STATUS = Object.freeze({ ok: 'ok', noRows: 'no rows in table', noMatch: 'no rows match filter', notInRelease: 'not in release' });
@@ -135,9 +135,17 @@ async function fetchAll({ adapter, entry, fields, where = [], keys }) {
   const predicate = wherePredicate(entry.columns, where || []);
   const keyed = !['lookup', 'stream'].includes(entry.key);
   const keyColumns = keyed ? keys.columns : [];
+  // Equality and membership clauses on named columns narrow the read at the source; the predicate
+  // then decides every row it gets, so what is kept is exactly what the filter keeps.
+  const narrowing = (where || []).map(clause => {
+    const column = entry.columns.find(c => c === clause?.column) || entry.columns.find(c => c.toLowerCase() === String(clause?.column || '').toLowerCase());
+    if (!column || !['=', 'in'].includes(clause.op) || clause.value === null || clause.value === undefined) return null;
+    const values = clause.op === 'in' ? inList(clause.value) : [clause.value];
+    return values.length ? { column, values } : null;
+  }).filter(Boolean);
   const selected = [];
   let scanned = 0;
-  for await (const row of adapter.rows(entry)) {
+  for await (const row of adapter.rows(entry, { where: narrowing })) {
     scanned++;
     if (!predicate(row)) continue;
     selected.push(row);
@@ -148,7 +156,9 @@ async function fetchAll({ adapter, entry, fields, where = [], keys }) {
   const wanted = (Array.isArray(fields) && fields.length ? resolveColumns(entry, fields) : entry.columns).filter(c => !identity.includes(c));
   const columns = [...keyColumns, ...wanted.filter(c => !keyColumns.includes(c))];
   const out = selected.map(row => ({ ...(keyed ? adapter.keysOf(entry, row) : {}), ...pick(row, wanted) }));
-  return { rows: withColumns(out, columns), columns, coverage: { rows: out.length, scanned }, fields: wanted };
+  // The table's size is what the selection is measured against, however the read was narrowed.
+  const total = narrowing.length && typeof adapter.rowCount === 'function' ? await adapter.rowCount(entry) : scanned;
+  return { rows: withColumns(out, columns), columns, coverage: { rows: out.length, scanned: total }, fields: wanted };
 }
 
 module.exports = { fetchRows, fetchMatching, fetchAll, STATUS };

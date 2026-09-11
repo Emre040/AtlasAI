@@ -730,45 +730,48 @@ function profiler(columns) {
         if (s.samples.length < 300) s.samples.push(t);
       }
     },
-    result() {
-      return columns.map(c => {
-        const s = st.get(c);
-        const filled = s.n - s.blank;
-        const kind = filled === 0 ? 'empty' : s.nums / filled >= 0.95 ? 'number' : 'text';
-        const top = [...s.distinct.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([v]) => (v.length > 40 ? `${v.slice(0, 39)}…` : v));
-        const fullExamples = [...s.distinct.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([v]) => v);
-        const grammar = kind === 'text' ? listGrammar(s.samples) : null;
-        // Structured cells ("key: number" lists, "label (number)") have a vocabulary of their own:
-        // the distinct keys or labels, which is what a filter or an explode needs spelled right.
-        let parts = null;
-        if (grammar && grammar.shape !== 'item') {
-          const found = new Set();
-          for (const cellValue of s.distinct.keys()) {
-            const items = grammar.sep ? cellValue.split(grammar.sep).map(x => x.trim()).filter(Boolean) : [cellValue];
-            for (const item of items) {
-              const part = grammar.shape === 'key: number' ? item.slice(0, item.indexOf(':')).trim() : (item.match(/^(.+)\s\(([-+]?\d[^)]*)\)$/) || [])[1];
-              if (part && found.size < 1000) found.add(part);
-            }
-          }
-          parts = { kind: grammar.shape === 'key: number' ? 'keys' : 'labels', values: [...found] };
-        } else if (grammar && grammar.sep) {
-          // A list of plain items (protein classes, locations) has a vocabulary too: the distinct
-          // items, when there are few enough to be one; a list of free text (synonyms) has none.
-          const found = new Set();
-          for (const cellValue of s.distinct.keys()) for (const item of cellValue.split(grammar.sep).map(x => x.trim()).filter(Boolean)) { found.add(item); if (found.size > ITEM_VOCAB) break; }
-          if (found.size <= ITEM_VOCAB) parts = { kind: 'items', values: [...found].sort() };
-        }
-        return {
-          column: c, kind, rows: s.n, blank_pct: s.n ? Math.round(100 * s.blank / s.n) : 0,
-          distinct: s.distinct.size >= 1000 ? '1000+' : String(s.distinct.size), examples: top,
-          full_examples: fullExamples,
-          observed_values: kind === 'text' && s.distinct.size < 1000 ? [...s.distinct.keys()] : null,
-          min: kind === 'number' ? s.min : undefined, max: kind === 'number' ? s.max : undefined,
-          list: grammar && grammar.sep ? `list of '${grammar.shape}' items separated by '${grammar.sep}'` : (grammar && grammar.shape !== 'item' ? `'${grammar.shape}'` : undefined),
-          parts
-        };
-      });
+    result() { return columns.map(c => columnCard(c, st.get(c))); }
+  };
+}
+
+// The card of one column from its tallies: rows, blanks, numeric cells, range, the distinct
+// values with their counts (up to the vocabulary the profiler keeps; distinctCount says how many
+// there really are when the tallies came from a query) and sample cells for the list grammar.
+function columnCard(c, s) {
+  const filled = s.n - s.blank;
+  const distinctCount = s.distinctCount ?? s.distinct.size;
+  const kind = filled === 0 ? 'empty' : s.nums / filled >= 0.95 ? 'number' : 'text';
+  const top = [...s.distinct.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([v]) => (v.length > 40 ? `${v.slice(0, 39)}…` : v));
+  const fullExamples = [...s.distinct.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([v]) => v);
+  const grammar = kind === 'text' ? listGrammar(s.samples) : null;
+  // Structured cells ("key: number" lists, "label (number)") have a vocabulary of their own:
+  // the distinct keys or labels, which is what a filter or an explode needs spelled right.
+  let parts = null;
+  if (grammar && grammar.shape !== 'item') {
+    const found = new Set();
+    for (const cellValue of s.distinct.keys()) {
+      const items = grammar.sep ? cellValue.split(grammar.sep).map(x => x.trim()).filter(Boolean) : [cellValue];
+      for (const item of items) {
+        const part = grammar.shape === 'key: number' ? item.slice(0, item.indexOf(':')).trim() : (item.match(/^(.+)\s\(([-+]?\d[^)]*)\)$/) || [])[1];
+        if (part && found.size < 1000) found.add(part);
+      }
     }
+    parts = { kind: grammar.shape === 'key: number' ? 'keys' : 'labels', values: [...found] };
+  } else if (grammar && grammar.sep) {
+    // A list of plain items (protein classes, locations) has a vocabulary too: the distinct
+    // items, when there are few enough to be one; a list of free text (synonyms) has none.
+    const found = new Set();
+    for (const cellValue of s.distinct.keys()) for (const item of cellValue.split(grammar.sep).map(x => x.trim()).filter(Boolean)) { found.add(item); if (found.size > ITEM_VOCAB) break; }
+    if (found.size <= ITEM_VOCAB) parts = { kind: 'items', values: [...found].sort() };
+  }
+  return {
+    column: c, kind, rows: s.n, blank_pct: s.n ? Math.round(100 * s.blank / s.n) : 0,
+    distinct: distinctCount >= 1000 ? '1000+' : String(distinctCount), examples: top,
+    full_examples: fullExamples,
+    observed_values: kind === 'text' && distinctCount < 1000 ? [...s.distinct.keys()] : null,
+    min: kind === 'number' ? s.min : undefined, max: kind === 'number' ? s.max : undefined,
+    list: grammar && grammar.sep ? `list of '${grammar.shape}' items separated by '${grammar.sep}'` : (grammar && grammar.shape !== 'item' ? `'${grammar.shape}'` : undefined),
+    parts
   };
 }
 
@@ -1191,4 +1194,4 @@ function chartSpec(args, input) {
   return { ...base, ...chartDomains(args, axes), data };
 }
 
-module.exports = { grain, widenByCategory, aggregateMany, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, inList, applyWhere, wherePredicate, freshFirst, correlate, overlap, explode, profile, profileStream, listGrammar, setOp, join,select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, columnsOf, withColumns, findColumn, keyOf, num, isMissing };
+module.exports = { grain, widenByCategory, aggregateMany, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, inList, applyWhere, wherePredicate, freshFirst, correlate, overlap, explode, profile, profileStream, columnCard, listGrammar, setOp, join,select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, columnsOf, withColumns, findColumn, keyOf, num, isMissing };

@@ -79,9 +79,11 @@ function optionsNamed(adapter, text) {
   return hits.sort((a, b) => b.option.length - a.option.length).slice(0, 12);
 }
 
-async function planFilters(adapter, goal, context, requirements, study = null) {
-  const schema = adapter.overview();
-  const named = optionsNamed(adapter, `${goal} ${study || ''}`);
+async function planFilters(adapter, goal, context, requirements, study = null, allowed = null) {
+  // Offline, the planner sees only the fields the local release can evaluate.
+  const schema = adapter.overview(allowed ? { only: allowed } : undefined);
+  const usable = name => !allowed || allowed.has(name);
+  const named = optionsNamed(adapter, `${goal} ${study || ''}`).filter(n => usable(n.field));
   const namedText = named.length ? `\n\nOptions whose names appear in the question, each on its field (a requirement that names one of them is a filter on that field, not "cannot"):\n${named.map(n => `- ${n.field}: ${n.option}`).join('\n')}` : '';
   const base = `Question: "${goal}"${study && study !== goal ? `\nThe study this question is one part of: "${study}"` : ''}\n\nSchema:\n${schema}${namedText}`;
   const progress = new RepairProgress();
@@ -94,11 +96,12 @@ async function planFilters(adapter, goal, context, requirements, study = null) {
     feedback = `\n\nThe plan is invalid: ${issues.join(', ')}. Return explicit filters and cannot arrays. Every filter needs its original requirement and exact field, with operator AND or NOT. Unexpressible requirements need their requirement and reason. Do not omit a requested criterion.`;
   }
   for (const item of plan.filters) {
-    const known = text(item.field) && Boolean(adapter.field(item.field));
+    const exists = text(item.field) && Boolean(adapter.field(item.field));
+    const known = exists && usable(item.field);
     const operator = item.operator === undefined ? 'AND' : item.operator;
     const validOperator = ['AND', 'NOT'].includes(operator);
     const issue = !known ? 'unknown_field' : !validOperator ? 'invalid_operator' : null;
-    requirements.push({ id: `r${requirements.length + 1}`, requirement: item.requirement, field: text(item.field) ? item.field : null, operator, why: item.why || '', status: known && validOperator ? 'planned' : 'unresolved', issue, error: !known ? `Unknown field ${JSON.stringify(item.field)}` : !validOperator ? `Invalid operator ${JSON.stringify(operator)}; choose AND or NOT from the requirement` : null });
+    requirements.push({ id: `r${requirements.length + 1}`, requirement: item.requirement, field: text(item.field) ? item.field : null, operator, why: item.why || '', status: known && validOperator ? 'planned' : 'unresolved', issue, error: !known ? (exists ? `Field ${JSON.stringify(item.field)} cannot be evaluated in the local release; choose a field of the schema shown, or say the requirement cannot be expressed` : `Unknown field ${JSON.stringify(item.field)}`) : !validOperator ? `Invalid operator ${JSON.stringify(operator)}; choose AND or NOT from the requirement` : null });
   }
   for (const item of plan.cannot || []) {
     // A requirement that names an option of a field is that field's filter, whatever the planner said.
@@ -136,7 +139,7 @@ async function planFilters(adapter, goal, context, requirements, study = null) {
       const field = repair.field === undefined ? item.field : repair.field;
       const operator = repair.operator === undefined ? item.operator : repair.operator;
       if (['AND', 'NOT'].includes(operator)) item.operator = operator;
-      if (!text(field) || !adapter.field(field)) { item.issue = 'unknown_field'; item.error = `Unknown field ${JSON.stringify(field)}`; continue; }
+      if (!text(field) || !adapter.field(field) || !usable(field)) { item.issue = 'unknown_field'; item.error = !text(field) || !adapter.field(field) ? `Unknown field ${JSON.stringify(field)}` : `Field ${JSON.stringify(field)} cannot be evaluated in the local release; choose a field of the schema shown, or say the requirement cannot be expressed`; continue; }
       item.field = field;
       if (!['AND', 'NOT'].includes(operator)) { item.issue = 'invalid_operator'; item.error = `Invalid operator ${JSON.stringify(operator)}; choose AND or NOT`; continue; }
       item.field = field; item.operator = operator; item.status = 'planned'; item.error = null; delete item.issue;
@@ -190,7 +193,8 @@ async function deepResearchTrail({ goal, mode: requestedMode = 'online', study =
   try {
     const context = { onStep, stats, control: createAgentControl({ ctx, stats, agentKey: 'deep_research_hpa' }) };
     await onStep?.({ stage: 'planning_step', label: 'Plan', message: `Reading the ${adapter.name} schema` });
-    const plan = await planFilters(adapter, goal, context, requirements, typeof study === 'string' && study.trim() ? study.trim() : null);
+    const allowed = requestedMode === 'offline' && typeof adapter.evaluableFields === 'function' ? new Set(await adapter.evaluableFields()) : null;
+    const plan = await planFilters(adapter, goal, context, requirements, typeof study === 'string' && study.trim() ? study.trim() : null, allowed);
     if (plan.understanding) await onStep?.({ stage: 'reasoning_step', label: 'Understood', message: plan.understanding });
     if (requirements.some(item => item.status !== 'planned')) throw new ResearchStop('unexpressible_requirements', 'The requested cohort includes criteria that the source schema cannot express');
 

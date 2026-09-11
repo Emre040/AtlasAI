@@ -51,7 +51,7 @@ How it goes:
 Keep every call small: no fetch of a whole table to look at it; the search says what is there.`;
 }
 
-const GATE_SYSTEM = `You check a question put to a data agent before it runs. The agent reads one origin per run: one field (a measurement, a category, a label) in one context (one tissue, one cell type, one cohort, one condition), for a list of points held elsewhere. Reply with JSON: {"accepted": true|false, "reason": "<one sentence>"}. Reject when the question asks for several different fields to be read together, or for one field in several contexts named together (say which parts, so they can be asked one at a time). Accept a single field with a single filter, a list of points of any size, and a question that names no context.`;
+const GATE_SYSTEM = `You check a question put to a data agent before it runs. The agent reads one origin per run: the rows of one table, for a list of points held elsewhere, in one context. Reply with JSON: {"accepted": true|false, "reason": "<one sentence>"}. Reject when the question names several contexts of one kind to be read together (two tissues, two cell types, two cohorts: say which, so they can be asked one at a time), or asks for things that live in different tables (a measurement and an annotation, an expression and a location). Accept several columns of the same rows (a category with its value, both sides of a pair), a list of points of any size, a filter, and a question that names no context or says any or all.`;
 
 const flat = value => String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 
@@ -228,7 +228,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
           if (ignored.length) history.push(`turn ${turn}: ${name}: ${ignored.slice(0, 5).map(key => key.slice(name.length + 1).slice(0, 40)).join(', ')} ${ignored.length === 1 ? 'is not an argument' : 'are not arguments'} of this tool, ignored`);
           const { title: _title, description: _description, ...bareArgs } = args;
           const key = fingerprint({ name, args: bareArgs });
-          if (name !== 'finish' && seen.has(key)) { history.push(`turn ${turn}: ${name}(${argsLine(bareArgs)}) repeated; ${seen.get(key)}`); continue; }
+          if (name !== 'finish' && seen.has(key)) { history.push(`turn ${turn}: ${name}(${argsLine(bareArgs)}) repeated; ${seen.get(key)}${name === 'fetch' ? ': finish names it, or fetch what else the question needs' : ''}`); continue; }
           if (name === 'search') {
             const words = (args.words || []).map(String).map(w => w.trim()).filter(Boolean);
             if (!words.length) throw new Error('search needs a word');

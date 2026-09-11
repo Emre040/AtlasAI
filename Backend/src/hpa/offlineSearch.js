@@ -424,6 +424,12 @@ class OfflineSearch {
     }
   }
 
+  // Whether the local release can evaluate a filter on the field at all, probed with one option.
+  async supportsField(fieldName, sampleClass) {
+    try { return Boolean(await this.predicate({ field: fieldName, class: sampleClass, subclass: null })); }
+    catch { return false; }
+  }
+
   // Returns { rows, unsupported }: rows mirror the online JSON result (only meaningful when
   // unsupported is empty); unsupported lists the axes the local release cannot evaluate.
   async evaluate(includeAxes = [], excludeAxes = []) {

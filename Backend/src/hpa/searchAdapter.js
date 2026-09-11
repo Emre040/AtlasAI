@@ -88,11 +88,23 @@ function optionsAt(f, path) {
 function definition(option) { return docs.OPTIONS[option] || ''; }
 
 // Text for the plan step: every field with its levels and option counts.
-function overview() {
+// The fields the local release can evaluate, probed once per process with each field's first option.
+let EVALUABLE = null;
+async function evaluableFields() {
+  if (EVALUABLE) return EVALUABLE;
+  const names = [];
+  for (const f of fields()) if (await offlineSearch.supportsField(f.name, f.level0[0])) names.push(f.name);
+  EVALUABLE = names;
+  return names;
+}
+
+// The schema as the planner reads it; only names the fields in `only` when given.
+function overview({ only = null } = {}) {
   const lines = [`Database: Human Protein Atlas search. A query is a set of filters joined by AND, each optionally negated (NOT). A filter is one field with a value chosen at each of its levels; a level left unset means "any".`,
     `Definitions the atlas gives for its categories are listed with the options when a field is filled in.`, ''];
   let category = null;
   for (const f of fields()) {
+    if (only && !only.has(f.name)) continue;
     if (f.category !== category) { category = f.category; lines.push(`[${category}]`); }
     const levels = f.levels.map((l, i) => `${i + 1}: ${l.label}${l.multiSelect ? ' (several allowed)' : ''}`).join(', ');
     lines.push(`- "${f.name}": ${f.doc || ''} Levels ${levels}. ${f.level0.length} options at level 1${f.level0.length <= 12 ? ': ' + f.level0.join(', ') : ''}.`);
@@ -220,4 +232,4 @@ function summarize(rows) {
   return { count: rows.length, top: names.slice(0, 10) };
 }
 
-module.exports = { name: 'Human Protein Atlas search', fields, field, optionIndex, overview, fieldTree, canonicalize, compose, describe, execute, summarize, httpGetJson, sources: docs.SOURCES };
+module.exports = { name: 'Human Protein Atlas search', fields, field, optionIndex, evaluableFields, overview, fieldTree, canonicalize, compose, describe, execute, summarize, httpGetJson, sources: docs.SOURCES };

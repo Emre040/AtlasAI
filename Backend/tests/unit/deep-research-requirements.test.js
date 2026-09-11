@@ -125,6 +125,17 @@ test('a filter that selects everything another filter on the same field already 
   assert.match(result.result.not_expressible[0].why, /selects everything the filter for "the narrow criterion" already selects, so it narrows nothing and does not express this requirement/);
 });
 
+test('offline, a field the local release cannot evaluate is not offered to the planner and is refused if named', async () => {
+  const { result, calls, executions } = await runStudy({
+    extras: { evaluableFields: async () => ['Selection A'], overview({ only } = {}) { return `fields: ${['Selection A', 'Selection B'].filter(n => !only || only.has(n)).join(', ')}`; } },
+    decide: ({ label }) => (label === 'Plan' ? plan(filter('Selection B', 'the criterion')) : { repairs: [{ requirement_id: 'r1', unexpressible_reason: 'no evaluable field' }] })
+  });
+  assert.match(calls[0].user, /fields: Selection A$/m, 'the planner sees only the evaluable fields');
+  assert.equal(executions.length, 0);
+  assert.equal(result.result.requirements[0].status, 'unexpressible');
+  assert.match(calls[1].user, /cannot be evaluated in the local release/);
+});
+
 test('a failed required option path does not execute the filters completed before it', async () => {
   const { result, executions } = await runStudy({ decide: ({ call }) => call === 1
     ? plan(filter('Selection A', 'first criterion'), filter('Selection B', 'second criterion'))

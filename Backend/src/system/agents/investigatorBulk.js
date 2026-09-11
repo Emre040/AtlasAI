@@ -81,11 +81,15 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
     const maxTurns = ctx.maxTurns || platformConfig().asoMaxSteps;
     await emit('start', 'Investigator', `${listed.length ? `${listed.length} points supplied, ${identities.size} resolve as ${db.entity}s` : 'No list'}. Question: ${question}`);
 
-    const findTables = about => {
+    const findTables = async about => {
       const word = String(about || '').trim().toLowerCase();
       const hits = catalog.filter(e => e.key !== 'unreadable' && (!word || e.file.toLowerCase().includes(word) || String(e.title || '').toLowerCase().includes(word) || String(e.description || '').toLowerCase().includes(word) || e.columns.some(c => c.toLowerCase().includes(word))));
-      if (!hits.length) return `no table has "${about}" in its name, title, description or columns; a value (a category, a sample, a name) lives in a column: find the table by a word of its subject, open it, and ask values for the column that could hold it`;
-      return hits.map(e => `${e.file} — ${e.title || e.file} [${adapter.access(e)}]: ${e.columns.length > 24 ? `${e.columns.slice(0, 24).join(', ')} … (${e.columns.length} columns)` : e.columns.join(', ')}`).join('\n');
+      const lines = hits.map(e => `${e.file} — ${e.title || e.file} [${adapter.access(e)}]: ${e.columns.length > 24 ? `${e.columns.slice(0, 24).join(', ')} … (${e.columns.length} columns)` : e.columns.join(', ')}`);
+      // A word may be a value rather than a table: where it lives, spelled as the data spells it.
+      const values = word && typeof adapter.findValues === 'function' ? await adapter.findValues(word) : [];
+      for (const v of values) lines.push(`${v.file} — its column ${v.column} holds${v.inside ? ', inside its list cells,' : ''}: ${v.values.join(' | ')}${v.more ? ` (+${v.more} more)` : ''}`);
+      if (!lines.length) return `no table has "${about}" in its name, title, description, columns or recorded values; a value (a category, a sample, a name) lives in a column: find the table by a word of its subject, open it, and ask values for the column that could hold it`;
+      return lines.join('\n');
     };
     const openTable = async name => {
       const entry = await adapter.entry(String(name || '').trim());
@@ -150,7 +154,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
           const key = fingerprint({ name, args: bareArgs });
           if (name !== 'finish' && done.has(key)) { history.push(`turn ${turn}: ${name}(${argsLine(bareArgs)}) repeated; ${done.get(key)}`); continue; }
           if (name === 'find_tables') {
-            const text = findTables(args.about);
+            const text = await findTables(args.about);
             history.push(`turn ${turn}: find_tables "${args.about}" →\n${text.split('\n').map(l => `    ${l}`).join('\n')}`);
             done.set(key, 'listed above'); progressed = true;
           } else if (name === 'open') {

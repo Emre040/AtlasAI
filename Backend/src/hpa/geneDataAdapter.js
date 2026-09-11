@@ -264,6 +264,28 @@ async function rowCount(e) {
   return duckStore.rowCount(e.file);
 }
 
+// Where a value lives: every column of every readable table whose recorded values, or the items
+// inside its list cells, contain the word (a category, a sample, a name), with the spellings
+// found. A word that is a value is not a table; this is how the table and the spelling are found.
+async function findValues(word) {
+  const flat = s => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const needle = flat(word);
+  if (needle.length < 2) return [];
+  const hits = [];
+  for (const e of await catalog()) {
+    if (e.key === 'unreadable' || !duckStore.has(e.file)) continue;
+    for (const card of duckStore.profileOf(e.file)) {
+      for (const [values, inside] of [[card.observed_values, false], [card.parts?.values, true]]) {
+        if (!Array.isArray(values)) continue;
+        const found = values.filter(v => flat(v).includes(needle));
+        if (found.length) hits.push({ file: e.file, column: card.column, inside, values: found.slice(0, 6), more: Math.max(0, found.length - 6) });
+      }
+      if (hits.length >= 20) return hits;
+    }
+  }
+  return hits;
+}
+
 // The entity keys of a raw row of a table, as the table records them.
 function keysOf(e, row) {
   const isId = v => HUMAN_GENE_ID.test(String(v || ''));
@@ -284,4 +306,4 @@ async function entities() {
   return (await localData.master()).rows.map(row => ({ gene: row.Gene || null, ensembl: row.Ensembl || null }));
 }
 
-module.exports = { name: 'Human Protein Atlas per-gene tables', identity, access, catalog, overview, entry, resolveGene, resolveGenes, read, readMany, keysOf, rows, entities, applyWhere, render, cited, pageUrl, definition, profile, sample, rowCount, sources: docs.SOURCES };
+module.exports = { name: 'Human Protein Atlas per-gene tables', identity, access, catalog, overview, entry, resolveGene, resolveGenes, read, readMany, keysOf, rows, entities, applyWhere, render, cited, pageUrl, definition, profile, sample, rowCount, findValues, sources: docs.SOURCES };

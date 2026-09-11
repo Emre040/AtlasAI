@@ -135,6 +135,17 @@ test('a word that is a value is not a table, and an Investigator that gives up s
   const result = await run({ question: 'heart nTPM of every gene' });
   assert.equal(result.status, 'partial');
   assert.equal(result.stop_reason, 'no_progress');
-  assert.match(requests[1].messages[1].content, /no table has "heart" in its name, title, description or columns; a value \(a category, a sample, a name\) lives in a column: find the table by a word of its subject, open it, and ask values for the column that could hold it/);
-  assert.match(result.error, /repeated itself without new evidence; it had tried: turn 1: find_tables "heart" → no table has "heart" in its name, title, description or columns; a value/);
+  assert.match(requests[1].messages[1].content, /no table has "heart" in its name, title, description, columns or recorded values; a value \(a category, a sample, a name\) lives in a column: find the table by a word of its subject, open it, and ask values for the column that could hold it/);
+  assert.match(result.error, /repeated itself without new evidence; it had tried: turn 1: find_tables "heart" → no table has "heart" in its name, title, description, columns or recorded values; a value/);
+});
+
+test('a table search also finds a word among a column\'s recorded values, with the spelling the data uses', async () => {
+  const { run, requests } = await investigator([
+    response(call('find_tables', { about: 'Heart' })),
+    response(call('fetch', { title: 'Heart rows', description: 'Every gene in heart', table: 'rna_tissue_consensus.tsv', where: [{ column: 'Tissue', op: '=', value: 'heart' }] })),
+    response(call('finish', { results: ['Heart rows'] }))
+  ], { adapter: { async findValues(word) { return word === 'heart' ? [{ file: 'rna_tissue_consensus.tsv', column: 'Tissue', inside: false, values: ['heart'], more: 0 }] : []; } } });
+  const result = await run({ question: 'every gene with its heart nTPM' });
+  assert.equal(result.status, 'ok');
+  assert.match(requests[1].messages[1].content, /turn 1: find_tables "Heart" →\n    rna_tissue_consensus\.tsv — its column Tissue holds: heart\n/);
 });

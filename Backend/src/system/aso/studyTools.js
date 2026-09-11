@@ -218,7 +218,7 @@ function grain(rows, columns, identityKeys = IDENTITY) {
     if (identityKeys.includes(c) || numericColumn(rows, c)) continue;
     const values = [...new Set(rows.map(r => r[c]).filter(v => !isMissing(v)).map(String))];
     if (values.length < 2) continue;
-    const pairs = new Set(rows.map(r => `${r[key]} ${r[c]}`)).size;
+    const pairs = new Set(rows.map(r => `${r[key]} | ${r[c]}`)).size;
     if (pairs === rows.length) return { key, entities, by: c, values: values.length <= GRAIN_VALUES ? values.sort() : null, distinct: values.length };
   }
   return { key, entities, by: null, values: null, distinct: 0 };

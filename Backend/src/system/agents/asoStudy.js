@@ -383,6 +383,14 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       for (const c of a.columns) inputColumns.add(c);
       return tools.withColumns([...a.rows], a.columns);
     };
+    // Matching by a column that is only another name for the entity (the gene symbol) loses the
+    // entities that have no symbol: 378 of the 20,162 genes, and a universe of 19,773 instead of
+    // 20,162. When every input carries the entity key, the key is what matches.
+    if (['combine', 'overlap'].includes(toolName) && args.on) {
+      const key = identity.keys[identity.keys.length - 1];
+      const tables = ['a', 'b', 'universe'].filter(k => args[k] !== undefined).map(k => get(args[k]));
+      if (identity.keys.includes(args.on) && args.on !== key && tables.every(t => (t.columns || []).includes(key))) args = { ...args, on: undefined, matched_on: key };
+    }
     let out;
     switch (toolName) {
       case 'combine': {
@@ -397,7 +405,19 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
         out = { rows: tools.setOp(args.how, tagged(rowsOf('a'), args.a), tagged(rowsOf('b'), args.b), args.on || null) }; break;
       }
       case 'join': out = executeTableOperation(toolName, args, { a: rowsOf('a'), b: rowsOf('b') }); break;
-      case 'filter': case 'select': case 'classify': case 'compute': case 'correlate': case 'rank': case 'aggregate': out = executeTableOperation(toolName, args, { artifact: rowsOf('artifact') }); break;
+      case 'aggregate': {
+        out = executeTableOperation(toolName, args, { artifact: rowsOf('artifact') });
+        // A statistic of a column is named after both (mean_pancreas), so two aggregates joined
+        // side by side stay told apart: a bare "mean" and "mean_2" once had a study report the
+        // pancreas and kidney means the wrong way round. count is rows and keeps its name.
+        if (args.column && out.rows) {
+          const metrics = (Array.isArray(args.metrics) ? args.metrics : [args.metrics]).map(m => String(m).toLowerCase()).filter(m => m !== 'count');
+          const renamed = Object.fromEntries(metrics.map(m => [m, `${m}_${args.column}`]));
+          out.rows = tools.withColumns(out.rows.map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [renamed[k] || k, v]))), tools.columnsOf(out.rows).map(c => renamed[c] || c));
+        }
+        break;
+      }
+      case 'filter': case 'select': case 'classify': case 'compute': case 'correlate': case 'rank': out = executeTableOperation(toolName, args, { artifact: rowsOf('artifact') }); break;
       case 'overlap': {
         // The universe is every entity of the database unless an artifact is named.
         const universe = args.universe ? rowsOf('universe') : tools.withColumns(await geneData.entities(), [...identity.keys]);

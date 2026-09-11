@@ -228,7 +228,17 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
           if (ignored.length) history.push(`turn ${turn}: ${name}: ${ignored.slice(0, 5).map(key => key.slice(name.length + 1).slice(0, 40)).join(', ')} ${ignored.length === 1 ? 'is not an argument' : 'are not arguments'} of this tool, ignored`);
           const { title: _title, description: _description, ...bareArgs } = args;
           const key = fingerprint({ name, args: bareArgs });
-          if (name !== 'finish' && seen.has(key)) { history.push(`turn ${turn}: ${name}(${argsLine(bareArgs)}) repeated; ${seen.get(key)}${name === 'fetch' ? ': finish names it, or fetch what else the question needs' : ''}`); continue; }
+          if (name !== 'finish' && seen.has(key)) {
+            // A fetch asked again after it was made is the agent done without saying so: its
+            // results are returned, the mapping read from the fetches themselves.
+            if (name === 'fetch' && results.size) {
+              const tables = [...results.values()];
+              const mapping = tables.flatMap(t => (t.args.fields || []).map(field => ({ field, table: t.args.table, column: field })));
+              await emit('complete', 'Investigator done', `${tables.length} result${tables.length === 1 ? '' : 's'}, returned when the same fetch was asked again`);
+              return done({ found: true, status: 'ok', tables, retained: [], mapping, note: 'returned when the same fetch was asked again; the mapping is read from the fetches', opened: [] }, turn);
+            }
+            history.push(`turn ${turn}: ${name}(${argsLine(bareArgs)}) repeated; ${seen.get(key)}`); continue;
+          }
           if (name === 'search') {
             const words = (args.words || []).map(String).map(w => w.trim()).filter(Boolean);
             if (!words.length) throw new Error('search needs a word');
@@ -270,11 +280,18 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
               for (const gene of supplyResolved) if (gene && !supplyIdentities.has(gene.ensembl)) supplyIdentities.set(gene.ensembl, gene);
               chained = { from: source.title, column };
             }
-            // A where on the column the list already selects by can only drop points: refused.
+            // A where on the column the list already selects by is refused when it would drop points
+            // of the list (it names fewer than the list); one that names them all changes nothing.
             if (supplied.length && !args.match && args.where?.length) {
               const keyColumns = [entry.geneColumn, ...(['ensembl', 'name', 'master'].includes(entry.key) ? entry.columns.slice(0, entry.key === 'name' ? 2 : 1) : [])].filter(Boolean).map(c => c.toLowerCase());
-              const onKey = args.where.find(clause => keyColumns.includes(String(clause?.column || '').toLowerCase()));
-              if (onKey) throw new Error(`the list already selects the rows by ${onKey.column}; a where on ${onKey.column} can only drop points from it. Leave that clause out`);
+              const keysOfList = new Set([...supplied, ...supplyResolved.filter(Boolean).flatMap(g => [g.gene, g.ensembl])].filter(Boolean).map(v => String(v).trim().toLowerCase()));
+              for (const clause of args.where) {
+                if (!clause || !keyColumns.includes(String(clause.column || '').toLowerCase()) || !['=', 'in'].includes(clause.op)) continue;
+                const named = new Set((clause.op === 'in' ? inList(clause.value) : [clause.value]).map(v => String(v).trim().toLowerCase()));
+                const dropped = supplied.filter((p, i) => { const g = supplyResolved[i]; return ![p, g?.gene, g?.ensembl].filter(Boolean).some(v => named.has(String(v).trim().toLowerCase())); });
+                if (dropped.length) throw new Error(`the list already selects the rows by ${clause.column}; this where names ${named.size} of its ${count(supplied.length)} points and would drop the rest (${dropped.slice(0, 3).join(', ')}${dropped.length > 3 ? ', …' : ''}). Leave that clause out`);
+                if (!keysOfList.size) break;
+              }
             }
             // Points matched against a column are read as the column spells them; points that are
             // none of the database's entities and name no column are matched against the one

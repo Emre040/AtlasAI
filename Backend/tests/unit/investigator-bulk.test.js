@@ -122,10 +122,15 @@ test('a filter value or a point the table spells differently is read as the tabl
   assert.match(points.requests[1].messages[1].content, /turn 1: the points are values of Tissue, not genes: matched against it\nturn 1: read "Liver-" as "liver", the spelling of Tissue/);
   const keyed = await investigator([
     response(call('fetch', { title: 'Rows', description: 'Rows of the points', table: 'rna_tissue_consensus.tsv', where: [{ column: 'Gene', op: 'in', value: 'ENSG1' }] })),
-    response(call('finish', { results: [], note: 'stopped' }))
+    response(call('fetch', { title: 'Rows', description: 'Rows of the points', table: 'rna_tissue_consensus.tsv', where: [{ column: 'Gene', op: 'in', value: 'ENSG1, ENSG2' }] })),
+    response(call('fetch', { title: 'Rows', description: 'Rows of the points', table: 'rna_tissue_consensus.tsv', where: [{ column: 'Gene', op: 'in', value: 'ENSG1, ENSG2' }] }))
   ]);
-  await keyed.run({ points: ['EGFR', 'ERBB2'], question: 'nTPM of these genes' });
-  assert.match(keyed.requests[1].messages[1].content, /failed: the list already selects the rows by Gene; a where on Gene can only drop points from it\. Leave that clause out/);
+  const twice = await keyed.run({ points: ['EGFR', 'ERBB2'], question: 'nTPM of these genes' });
+  assert.match(keyed.requests[1].messages[1].content, /failed: the list already selects the rows by Gene; this where names 1 of its 2 points and would drop the rest \(ERBB2\)\. Leave that clause out/);
+  assert.equal(twice.status, 'ok', 'a where naming every point of the list changes nothing and is allowed');
+  assert.equal(twice.tables[0].rows.length, 5);
+  assert.equal(twice.note, 'returned when the same fetch was asked again; the mapping is read from the fetches', 'a fetch asked again after it was made returns the results');
+  assert.deepEqual(twice.mapping, [{ field: 'Tissue', table: 'rna_tissue_consensus.tsv', column: 'Tissue' }, { field: 'nTPM', table: 'rna_tissue_consensus.tsv', column: 'nTPM' }], 'the mapping is read from the fetch');
 });
 
 test('a search finds a word no vocabulary holds by scanning text columns, and says of a key point that the list reads it', async () => {

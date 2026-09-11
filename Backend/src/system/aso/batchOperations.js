@@ -2,7 +2,7 @@
 
 const { decodeArguments, mapArtifactReferences } = require('./toolArguments');
 
-const ARGUMENTS_SCHEMA = { type: 'object', additionalProperties: {} };
+const ARGUMENTS_SCHEMA = { type: 'object', additionalProperties: {}, description: 'Arguments of the registered operation. Artifact-handle fields may reference another step using @step_id.' };
 
 function object(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`);

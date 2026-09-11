@@ -96,7 +96,12 @@ function withColumns(rows, columns) { Object.defineProperty(rows, 'columns', { v
 function findColumn(rows, name) {
   if (!name) return null;
   const cols = columnsOf(rows);
-  return cols.find(c => c === name) || cols.find(c => lower(c) === lower(name)) || null;
+  const found = cols.find(c => c === name) || cols.find(c => lower(c) === lower(name));
+  if (found) return found;
+  // A statistic named without its column (median for median_nTPM) is that column when the table
+  // holds exactly one column of that statistic.
+  if (METRICS.includes(lower(name))) { const same = cols.filter(c => lower(c).startsWith(`${lower(name)}_`)); if (same.length === 1) return same[0]; }
+  return null;
 }
 
 // ---- table operations ----------------------------------------------------------------------------

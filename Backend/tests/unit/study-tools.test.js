@@ -150,6 +150,16 @@ test('a filter value that nearly matches a value the column holds is refused wit
   assert.doesNotThrow(() => tools.refuseMisspelled([{ column: 'Immune cell', op: '=', value: 'Mars' }, { column: 'nTPM', op: '>', value: 'memory' }], knownOf, 't.tsv'));
 });
 
+test('a statistic named without its column is that column when the table holds one such column; every dash is a minus', () => {
+  const rows = tools.withColumns([{ gene: 'A', median_nTPM: 4, mean_nTPM: 5 }, { gene: 'B', median_nTPM: 2, mean_nTPM: 3 }], ['gene', 'median_nTPM', 'mean_nTPM']);
+  assert.equal(tools.findColumn(rows, 'median'), 'median_nTPM');
+  assert.deepEqual(tools.compute(rows, 'twice', 'median * 2').map(r => r.twice), [8, 4]);
+  const two = tools.withColumns([{ gene: 'A', median_x: 1, median_y: 2 }], ['gene', 'median_x', 'median_y']);
+  assert.equal(tools.findColumn(two, 'median'), null, 'two such columns: name the one meant');
+  const { statedNumbers } = require('../../src/system/aso/numbers');
+  assert.deepEqual(statedNumbers('p = 4.21e‑165, r = −0.5, n = 384').map(n => n.value), [4.21e-165, -0.5, 384]);
+});
+
 test('filter keeps the rows where every clause of where holds and at least one clause of any', () => {
   const rows = tools.withColumns([{ gene: 'A', fav: 'x', unf: null }, { gene: 'B', fav: null, unf: 'y' }, { gene: 'C', fav: null, unf: null }], ['gene', 'fav', 'unf']);
   const either = [{ column: 'fav', op: 'is_present' }, { column: 'unf', op: 'is_present' }];

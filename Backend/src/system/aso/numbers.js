@@ -9,7 +9,8 @@ const NUMBER = /(?<![\w.])[-+−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+
 // binds it, within the same written precision.
 function statedNumbers(text) {
   const out = [];
-  const source = String(text || '');
+  // Every dash a model may write for a minus (hyphens, en and em dashes, the minus sign) is one.
+  const source = String(text || '').replace(/[‐-―−]/g, '-');
   for (const match of source.matchAll(NUMBER)) {
     const clean = match[0].replace(/,/g, '').replaceAll('−', '-');
     const value = Number(clean);

@@ -35,6 +35,38 @@ function num(v) {
   return Number.isFinite(n) ? n : null;
 }
 function lower(s) { return String(s ?? '').toLowerCase().trim(); }
+
+// A filter value that nearly matches a value the column holds (the same letters and digits, or
+// one inside the other) is a misspelling, not an absence: the clause is refused with the column's
+// own spelling. A value with no resemblance to any is left to select nothing.
+const plainText = s => lower(s).replace(/[^a-z0-9]+/g, '');
+function nearMisses(value, known) {
+  const exact = lower(value);
+  if (known.some(k => lower(k) === exact)) return [];
+  const flat = plainText(value);
+  if (flat.length < 3) return [];
+  return known.filter(k => { const f = plainText(k); return f === flat || (f.length >= 3 && (f.includes(flat) || flat.includes(f))); }).slice(0, 6);
+}
+// The =, != and in clauses whose value is a near miss of the column's known values (knownValuesOf
+// gives a column's values, or null when they are not known), with the spellings meant.
+function misspelledClauses(where, knownValuesOf) {
+  const found = [];
+  for (const clause of Array.isArray(where) ? where : []) {
+    if (!clause || !['=', '!=', 'in'].includes(clause.op) || clause.value === null || clause.value === undefined) continue;
+    const known = knownValuesOf(clause.column);
+    if (!Array.isArray(known) || !known.length) continue;
+    for (const value of clause.op === 'in' ? inList(clause.value) : [clause.value]) {
+      if (num(value) !== null) continue;
+      const near = nearMisses(value, known);
+      if (near.length) found.push({ column: clause.column, value: String(value), near });
+    }
+  }
+  return found;
+}
+function refuseMisspelled(where, knownValuesOf, what) {
+  const found = misspelledClauses(where, knownValuesOf);
+  if (found.length) throw new Error(found.map(f => `no row of ${what} has ${f.column} = ${JSON.stringify(f.value)}; the column spells it ${f.near.map(v => JSON.stringify(v)).join(' | ')}`).join('; '));
+}
 function keyOf(row, on = null) {
   if (on) { const v = row[on]; return v === undefined || v === null || String(v).trim() === '' ? null : lower(v); }
   const v = row.ensembl || row.Ensembl || row.gene || row.Gene;
@@ -1194,4 +1226,4 @@ function chartSpec(args, input) {
   return { ...base, ...chartDomains(args, axes), data };
 }
 
-module.exports = { grain, widenByCategory, aggregateMany, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, inList, applyWhere, wherePredicate, freshFirst, correlate, overlap, explode, profile, profileStream, columnCard, listGrammar, setOp, join,select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, columnsOf, withColumns, findColumn, keyOf, num, isMissing };
+module.exports = { grain, widenByCategory, aggregateMany, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, inList, applyWhere, wherePredicate, nearMisses, refuseMisspelled, freshFirst, correlate, overlap, explode, profile, profileStream, columnCard, listGrammar, setOp, join,select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, columnsOf, withColumns, findColumn, keyOf, num, isMissing };

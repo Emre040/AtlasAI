@@ -114,6 +114,18 @@ test('a fetch takes its points from a column of an earlier result: what one tabl
   assert.equal(result.calls, 4);
 });
 
+test('a fetch whose filter value the table spells differently is refused with the table\'s spelling', async () => {
+  const { run, requests } = await investigator([
+    response(call('fetch', { title: 'Heart rows', description: 'Every gene in heart', table: 'rna_tissue_consensus.tsv', where: [{ column: 'Tissue', op: '=', value: 'Heart-' }] })),
+    response(call('fetch', { title: 'Heart rows', description: 'Every gene in heart', table: 'rna_tissue_consensus.tsv', where: [{ column: 'Tissue', op: '=', value: 'heart' }] })),
+    response(call('finish', { results: ['Heart rows'] }))
+  ]);
+  const result = await run({ question: 'every gene with its heart nTPM' });
+  assert.equal(result.status, 'ok');
+  assert.equal(result.tables[0].rows.length, 1);
+  assert.match(requests[1].messages[1].content, /failed: no row of rna_tissue_consensus\.tsv has Tissue = "Heart-"; the column spells it "heart"/);
+});
+
 test('a word that is a value is not a table, and an Investigator that gives up says what it tried', async () => {
   const { run, requests } = await investigator([
     response(call('find_tables', { about: 'heart' })),

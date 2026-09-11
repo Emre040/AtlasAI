@@ -15,7 +15,7 @@ const { resolveAgentMode } = require('../../hpa/agentMode');
 const { FILES } = require('../../hpa/localData');
 const { validate } = require('../aso/batchOperations');
 const { decodeArguments } = require('../aso/toolArguments');
-const { FILTER_OPS } = require('../aso/studyTools');
+const { FILTER_OPS, refuseMisspelled } = require('../aso/studyTools');
 const { fetchRows, fetchMatching, fetchAll } = require('../aso/fetchRows');
 const { tableCard, columnLine, namedColumns, resultLine, historyText, argsLine, section, count } = require('../aso/desk');
 const { AgentStop, createAgentControl, fingerprint } = require('../aso/agentControl');
@@ -177,6 +177,11 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             const entry = await adapter.entry(String(args.table || '').trim());
             if (!entry) throw new Error(`no table named ${JSON.stringify(args.table)}; find_tables lists the tables`);
             await openTable(entry.file);
+            // A filter value the table spells differently is refused with the table's spelling.
+            if (args.where?.length) {
+              const cards = (await adapter.profile(entry)).columns;
+              refuseMisspelled(args.where, column => (cards.find(c => c.column === column) || cards.find(c => c.column.toLowerCase() === String(column).toLowerCase()))?.observed_values || null, entry.file);
+            }
             // The points of a fetch are the list, or the values of a column of an earlier result:
             // what one table lists is read from another without the model carrying a single value.
             let supplied = listed, supplyResolved = resolved, supplyIdentities = identities, chained = null;

@@ -20,9 +20,9 @@ const crypto = require('node:crypto');
 const duckdb = require('duckdb');
 const { columnCard } = require('../system/aso/studyTools');
 
-const MEMORY_LIMIT = process.env.HPA_DUCKDB_MEMORY_LIMIT || '16GB';
+const MEMORY_LIMIT = process.env.HPA_DUCKDB_MEMORY_LIMIT || '32GB';
 const THREADS = Number(process.env.HPA_DUCKDB_THREADS) || 8;
-const LOADER_VERSION = 2;             // part of a build's name: a change in how tables load builds again
+const LOADER_VERSION = 3;             // part of a build's name: a change in how tables load builds again
 const PROFILE_VERSION = 2;            // a table's profile is computed again when this changes
 const PROFILE_BATCH = 64;             // columns tallied per query, so a wide table stays within memory
 const VOCABULARY = 1000;              // distinct values kept for a column, as the row profiler keeps

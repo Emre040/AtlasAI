@@ -32,6 +32,14 @@ function executeTableOperation(name, args, inputs) {
       const clauses = [...(args.where || []), ...(args.any || [])];
       const referenced = clauses.find(clause => typeof clause?.value === 'string' && /^@\w+$/.test(clause.value.trim()));
       if (referenced) throw new Error(`filter: a value is a value, not an artifact (${referenced.value}); to keep the rows of ${args.artifact} whose ${referenced.column} matches a column of another artifact, join them on that column (inner)`);
+      // A value the column spells differently is refused with the column's spelling.
+      tools.refuseMisspelled(clauses, column => {
+        const name = tools.findColumn(rows, column);
+        if (!name) return null;
+        const seen = new Set();
+        for (const row of rows) { const v = row[name]; if (v === null || v === undefined || String(v).trim() === '') continue; seen.add(String(v)); if (seen.size > 5000) return null; }
+        return [...seen];
+      }, args.artifact);
       return { rows: tools.applyWhere(rows, args.where, args.any), meta: { predicate_columns: [...new Set(clauses.flatMap(clause => [clause.column, clause.column_b || clause.other || clause.versus || clause.against]).filter(Boolean).map(column => tools.findColumn(rows, column)))] } };
     }
     case 'select': return { rows: tools.select(rows, args.columns, args.rename, args.add) };

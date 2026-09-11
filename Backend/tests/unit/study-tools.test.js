@@ -139,6 +139,17 @@ test('join takes a key the two sides name differently as left=right', () => {
   assert.throws(() => tools.join(seeds, pairs, 'inner', 'ensembl', ['ensembl_gene_id_1', 'datasets']), /use on or on_columns, not both/);
 });
 
+test('a filter value that nearly matches a value the column holds is refused with the column\'s spelling', () => {
+  const known = ['NK-cell', 'memory CD8 T-cell', 'naive CD8 T-cell', 'total PBMC'];
+  assert.deepEqual(tools.nearMisses('memory CD8 T cell', known), ['memory CD8 T-cell'], 'the same letters and digits');
+  assert.deepEqual(tools.nearMisses('nk-cell', known), [], 'the value itself, case aside');
+  assert.deepEqual(tools.nearMisses('CD8 T-cell', known), ['memory CD8 T-cell', 'naive CD8 T-cell'], 'inside the values meant');
+  assert.deepEqual(tools.nearMisses('Mars', known), [], 'no resemblance: nothing to suggest');
+  const knownOf = column => (column === 'Immune cell' ? known : null);
+  assert.throws(() => tools.refuseMisspelled([{ column: 'Immune cell', op: 'in', value: 'NK-cell, memory CD8 T cell' }], knownOf, 't.tsv'), /no row of t\.tsv has Immune cell = "memory CD8 T cell"; the column spells it "memory CD8 T-cell"/);
+  assert.doesNotThrow(() => tools.refuseMisspelled([{ column: 'Immune cell', op: '=', value: 'Mars' }, { column: 'nTPM', op: '>', value: 'memory' }], knownOf, 't.tsv'));
+});
+
 test('filter keeps the rows where every clause of where holds and at least one clause of any', () => {
   const rows = tools.withColumns([{ gene: 'A', fav: 'x', unf: null }, { gene: 'B', fav: null, unf: 'y' }, { gene: 'C', fav: null, unf: null }], ['gene', 'fav', 'unf']);
   const either = [{ column: 'fav', op: 'is_present' }, { column: 'unf', op: 'is_present' }];

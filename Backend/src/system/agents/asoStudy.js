@@ -162,12 +162,16 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
   // study means instead of following it blind.
   const REVIEW_SYSTEM = `You judge whether an agent's result is what a study asked it for. You see the study's goal, the call that summoned the agent (its goal or question), the agent's own account of how it selected the result (the search query it built, or the source table, fields and filters it read) and the result's shape. Judge the selection only: the right kind of entity, the measurement and source the study means, the filters and categories the call states, the right source table; a search that could not express part of the call, or that served it only in part, is not what was asked. Do not judge the numbers. Reply with JSON: {"accepted": true|false, "reason": "<one sentence: what was asked and what was selected instead, or what matches>"}.`;
   const reviewStats = { promptTokens: 0, completionTokens: 0, totalTokens: 0, perStep: {} };
-  async function reviewResult(toolName, args, a) {
+  async function reviewResult(toolName, args, a, siblings = []) {
+    // The Investigator answers a call that spans source tables with one artifact per table; each
+    // is judged for its own share, with the others named, not against the whole call alone.
+    const others = siblings.filter(x => x !== a);
+    const share = others.length ? `\n\nThis call returned ${siblings.length} artifacts, one per source table; the others are ${others.map(x => `${x.id} "${x.label}" (${x.size}; columns: ${x.columns.join(', ')})`).join('; ')}. Judge ${a.id} for its own share of the call; the rest of the call is theirs.` : '';
     const account = toolName === 'deep_research_hpa'
       ? `Search query built: ${a.meta?.query || '(none)'}${a.meta?.understanding ? `; the search understood the call as: ${a.meta.understanding}` : ''}${a.meta?.trail?.length ? `; its selection, requirement by requirement: ${a.meta.trail.join('; ')}` : ''}${a.meta?.not_expressible?.length ? `; could not express: ${a.meta.not_expressible.join('; ')}` : ''}`
       : `Source lookups: ${JSON.stringify(a.meta?.lookups || []).slice(0, 1200)}${a.meta?.coverage ? `; coverage: ${JSON.stringify(a.meta.coverage).slice(0, 300)}` : ''}`;
     const asked = args.goal ? `goal: ${args.goal}` : `question: ${args.question || ''}`;
-    const user = `Study goal: ${state.goal}\n\nThe call: ${toolName} "${args.title || ''}", ${asked}${Array.isArray(args.points) && args.points.length ? ` (for ${args.points.length} listed points)` : args.from ? ` (for the points of ${args.from})` : ''}\n\nWhat the agent did: ${account}\n\nResult ${a.id}: ${a.size}; columns: ${a.columns.join(', ')}${a.rows?.length ? `; first rows: ${desk.sampleLines(a.rows, a.columns.slice(0, 7), 3).join(' ; ')}` : ''}`;
+    const user = `Study goal: ${state.goal}\n\nThe call: ${toolName} "${args.title || ''}", ${asked}${Array.isArray(args.points) && args.points.length ? ` (for ${args.points.length} listed points)` : args.from ? ` (for the points of ${args.from})` : ''}\n\nWhat the agent did: ${account}\n\nResult ${a.id}: ${a.size}; columns: ${a.columns.join(', ')}${a.rows?.length ? `; first rows: ${desk.sampleLines(a.rows, a.columns.slice(0, 7), 3).join(' ; ')}` : ''}${share}`;
     const before = reviewStats.totalTokens;
     try {
       const verdict = await jsonCall(REVIEW_SYSTEM, user, undefined, `review ${a.id}`, reviewStats);
@@ -389,7 +393,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           const next = toolName === 'deep_research_hpa' && a.rows.length && agentNames.has('investigator_hpa') ? `; its rows: investigator_hpa from=${a.id} with the question` : '';
           remember(`${id} ${toolName} "${title}" done → ${a.id} (${a.size})${extra}${next}`);
         }
-        for (const a of made) await reviewResult(toolName, args, a);
+        for (const a of made) await reviewResult(toolName, args, a, made);
         job.made = [...made, ...repeats].map(a => a.id);
         for (const a of made) await log('tool.done', { id, tool: toolName, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);
       })

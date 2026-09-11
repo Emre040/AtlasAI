@@ -51,7 +51,7 @@ test('plan, delegate, compute a chain, and finish a report bound to the data', a
   assert.equal(requests.length, 4);
   assert.deepEqual(agentCalls.map(c => c.name), ['investigator_hpa']);
   assert.deepEqual(agentCalls[0].args, { points: ['EGFR', 'ERBB2'], question: 'lung and liver nTPM', mode: 'offline' }, 'the agent gets the list and the question; the title stays on the desk');
-  assert.equal(result.tokens.total, 440 + 550 + 110, 'study, specialist and review tokens are all counted');
+  assert.equal(result.tokens.total, 440 + 550, 'study and specialist tokens are counted; no review call on an Investigator artifact');
   assert.equal(result.token_breakdown.investigator_hpa.calls, 3);
   assert.equal(result.agents, 1);
   assert.deepEqual(result.plan.map(p => p.status), ['done', 'done', 'done']);
@@ -287,19 +287,15 @@ test('a call that failed for a reason that does not change is refused when it is
   assert.match(history, /turn 3: filter\([^\n]*\) refused: the same call failed at turn 2 \(/);
 });
 
-test('an agent result that is not what the call asked for is flagged on its line and in the history', async t => {
+test('an Investigator artifact is not reviewed: the study judges it by its own note and mapping', async t => {
   const { run, requests, reviews } = await study(t, [
     response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'RNA nTPM in liver and lung' }))),
     response(call('finish', { tables: [{ artifact: 'a1' }] }))
-  ], { review: user => (/RNA nTPM in liver and lung/.test(user) ? { accepted: false, reason: 'the call asks for RNA, the lookup read the protein table' } : { accepted: true, reason: '' }) });
+  ], { review: () => ({ accepted: false, reason: 'would have flagged it' }) });
   const result = await run({});
   assert.equal(result.outcome, 'completed', result.summary);
-  assert.equal(reviews.length, 1);
-  assert.match(reviews[0].user, /^The call: investigator_hpa "Values", question: RNA nTPM in liver and lung \(for 1 listed points\)[\s\S]*Source lookups: \[\{"table":"rna_tissue_consensus.tsv"/);
-  const desk2 = requests[1].messages[1].content;
-  assert.match(desk2, /a1 "Values"[^\n]*\n  Values, described ⚠ Review: the call asks for RNA, the lookup read the protein table/);
-  assert.match(desk2, /turn 1: review of a1: not what the call asked for: the call asks for RNA, the lookup read the protein table\. Ask again with what the study means, or use it knowing this/);
-  assert.equal(result.token_breakdown.review.calls, 1);
+  assert.equal(reviews.length, 0, 'no review call for an Investigator artifact');
+  assert.doesNotMatch(requests[1].messages[1].content, /⚠ Review/);
 });
 
 test("a search result carries the search's own account of its selection, on its line and in the review", async t => {
@@ -316,18 +312,3 @@ test("a search result carries the search's own account of its selection, on its 
   assert.match(reviews[0].user, /the search understood the call as: genes without protein staining in liver; its selection, requirement by requirement: not detected in liver → Tissue expression \(IHC\)/);
 });
 
-test('an Investigator call that spans two source tables is reviewed one artifact at a time, each for its own share', async t => {
-  const two = { ...BULK, tables: [
-    { ...BULK.tables[0], name: 'liver_lung', title: 'RNA per tissue' },
-    { name: 'locations', title: 'Locations', rows: [{ gene: 'EGFR', ensembl: 'ENSG1', location: 'Plasma membrane' }], columns: ['gene', 'ensembl', 'location'], args: { table: 'subcellular_location.tsv', fields: ['location'] }, coverage: { rows: 1 }, source_file: 'subcellular_location.tsv' }
-  ] };
-  const { run, reviews } = await study(t, [
-    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'RNA per tissue and the main location' }))),
-    response(call('finish', { tables: [{ artifact: 'a1' }, { artifact: 'a2' }] }))
-  ], { agentResult: async () => two });
-  const result = await run({});
-  assert.equal(result.outcome, 'completed', result.summary);
-  assert.equal(reviews.length, 2);
-  assert.match(reviews[0].user, /This call returned 2 artifacts, one per source table; the others are a2 "Values: Locations" \(1 rows; columns: gene, ensembl, location\)\. Judge a1 for its own share of the call/);
-  assert.match(reviews[1].user, /the others are a1 "Values: RNA per tissue"/);
-});

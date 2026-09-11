@@ -31,8 +31,9 @@ function executeTableOperation(name, args, inputs) {
     case 'join': { const rows = tools.join(inputs.a, inputs.b, args.how, args.on || null, args.on_columns); return { rows, meta: rows.naming }; }
     case 'filter': {
       const clauses = [...(args.where || []), ...(args.any || [])];
-      const referenced = clauses.find(clause => typeof clause?.value === 'string' && /^@\w+$/.test(clause.value.trim()));
-      if (referenced) throw new Error(`filter: a value is a value, not an artifact (${referenced.value}); to keep the rows of ${args.artifact} whose ${referenced.column} matches a column of another artifact, join them on that column (inner)`);
+      const isReference = v => typeof v === 'string' && /^@\w+(\.\S+)?$/.test(v.trim());
+      const referenced = clauses.map(clause => ({ clause, value: [clause?.value, ...(clause?.op === 'in' ? tools.inList(clause.value) : [])].find(isReference) })).find(x => x.value);
+      if (referenced) throw new Error(`filter: a value is a value, not an artifact (${referenced.value}); to keep the rows of ${args.artifact} whose ${referenced.clause.column} matches a column of another artifact, join them on that column (inner)`);
       // A value the column spells differently is refused with the column's spelling.
       tools.refuseMisspelled(clauses, column => {
         const name = tools.findColumn(rows, column);

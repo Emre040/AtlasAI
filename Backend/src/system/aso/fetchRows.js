@@ -34,6 +34,17 @@ function identityColumns(entry, sampleRows, keys) {
   return entry.columns.filter(column => sampleRows.length > 0 && sampleRows.every(row => values.has(String(row[column] ?? '').toLowerCase())));
 }
 
+// Which key each identity column repeats: { 'Gene name': 'gene', 'ENSG ID': 'ensembl' }.
+function identityKeysOf(identity, row, keys, keyValues) {
+  const out = {};
+  for (const column of identity) {
+    const value = String(row?.[column] ?? '').toLowerCase();
+    const key = keys.find((k, i) => String(keyValues[i] ?? '').toLowerCase() === value);
+    if (key) out[column] = key;
+  }
+  return out;
+}
+
 const nullFields = wanted => Object.fromEntries(wanted.map(c => [c, null]));
 const pick = (row, wanted) => Object.fromEntries(wanted.map(c => [c, isMissing(row[c]) ? null : row[c]]));
 
@@ -77,7 +88,7 @@ async function fetchRows({ adapter, entry, supplied, resolved, fields, where = [
       out.push({ ...base, ...pick(row, wanted), source_rows: rows.length, source_status: STATUS.ok });
     }
   }
-  return { rows: withColumns(out, columns), columns, coverage, fields: wanted, identity_columns: identity };
+  return { rows: withColumns(out, columns), columns, coverage, fields: wanted, identity_columns: identity, identity_keys: identityKeysOf(identity, firstRows[0], keys.columns, firstGene ? [firstGene.gene, firstGene.ensembl] : []) };
 }
 
 // The rows whose value in one column is one of the points: the points are any values (tissues,
@@ -146,7 +157,7 @@ async function fetchMatching({ adapter, entry, points, fields, where = [], match
       out.push({ ...base, ...(paired ? { other: otherOf(row, key) } : {}), ...Object.fromEntries(keyColumns.map(c => [c, ids[c] ?? null])), ...pick(row, wanted), source_rows: rows.length, source_status: STATUS.ok });
     }
   }
-  return { rows: withColumns(out, columns), columns, coverage, fields: wanted, match: column };
+  return { rows: withColumns(out, columns), columns, coverage, fields: wanted, match: column, identity_columns: identity, identity_keys: identityKeysOf(identity, first, keys.columns, [firstKeys[geneKey], firstKeys[idKey]]) };
 }
 
 // Every row a filter selects, without a list. Rows of an entity-keyed table carry the entity keys.

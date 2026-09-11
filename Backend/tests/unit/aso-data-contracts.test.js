@@ -10,7 +10,7 @@ test('multi-column aggregation retains separate group labels without delimiter c
   const expected = [{ cohort: 'A|B', category: 'C', count: 2, sum: 2, mean: 2, missing: 1 }, { cohort: 'A', category: 'B|C', count: 1, sum: 0, mean: 0, missing: 0 }];
   assert.deepEqual(aggregate(rows, args), expected);
   assert.throws(() => aggregate(rows, { ...args, group_by: 'cohort' }), /not both/);
-  assert.throws(() => aggregate(rows, { ...args, group_by_columns: [] }), /nonempty array/);
+  assert.equal(aggregate(rows, { ...args, group_by_columns: [] }).length, 1, 'an empty group_by_columns is no grouping: the whole table is one group');
   assert.throws(() => aggregate(rows, { ...args, group_by_columns: ['cohort', 'unknown'] }), /no grouping column/);
   assert.deepEqual(aggregate(rows, { group_by: 'cohort', metrics: ['count'] }), [{ cohort: 'A|B', count: 2 }, { cohort: 'A', count: 1 }]);
   const chart = chartSpec({ type: 'grouped_bar', x: 'category', group: 'cohort', y: 'count' }, aggregate(rows, args));

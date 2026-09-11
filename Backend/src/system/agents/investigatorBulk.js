@@ -261,6 +261,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
   const searches = [];
   const found = new Set();   // tables found by any search so far, for what a later search says about a point
   const memo = new Map();    // spellings asked of the source, by column and points
+  const mappingRefused = new Set();   // mapped columns refused once; refused again, they are left out
   const { onStep } = ctx;
   const emit = (stage, label, message) => onStep?.({ stage, label, message });
   let release = null, resolved = [], db = null;
@@ -537,7 +538,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
               fetched = await fetchAll({ adapter, entry, fields: args.fields, where: args.where, keys });
             }
             else throw new Error(`none of the points is a ${db.entity} of the release, and no column of ${entry.file} holds them; search a point to see where such values live, name the column with match, or fetch without the list`);
-            const table = { name: title, title, description, rows: fetched.rows, columns: fetched.columns, args: { table: entry.file, fields: fetched.fields, ...(args.where?.length ? { where: args.where } : {}), ...(fetched.match ? { match: fetched.match } : {}), ...(chained || {}) }, coverage: fetched.coverage, source_file: entry.file, effective, identity: fetched.identity_columns || [] };
+            const table = { name: title, title, description, rows: fetched.rows, columns: fetched.columns, args: { table: entry.file, fields: fetched.fields, ...(args.where?.length ? { where: args.where } : {}), ...(fetched.match ? { match: fetched.match } : {}), ...(chained || {}) }, coverage: fetched.coverage, source_file: entry.file, effective, identity: fetched.identity_columns || [], identityKeys: fetched.identity_keys || {} };
             results.set(title, table);
             const c = fetched.coverage;
             // A filter that matched no row at all: the desk says where its values are recorded.
@@ -576,8 +577,10 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             // reads the field there.
             const held = [...new Set(tables.flatMap(t => t.columns))];
             const astray = [], resolved = [];
+            const folded = Object.assign({}, ...tables.map(t => t.identityKeys || {}));
+            const foldedKey = name => folded[name] || folded[Object.keys(folded).find(k => k.toLowerCase() === String(name).toLowerCase())];
             for (const m of mapping) {
-              const column = held.find(c => c === m.column) || held.find(c => c.toLowerCase() === m.column.toLowerCase());
+              const column = held.find(c => c === m.column) || held.find(c => c.toLowerCase() === m.column.toLowerCase()) || foldedKey(m.column);
               const start = m.column.replace(/[*.\s]+$/, '').toLowerCase();
               const starting = column ? [] : held.filter(c => start && c.toLowerCase().startsWith(start));
               if (column) resolved.push({ ...m, column });
@@ -585,7 +588,11 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
               else astray.push(m);
             }
             mapping.splice(0, mapping.length, ...resolved);
-            if (astray.length) throw new Error(`the mapping names ${astray.map(m => `${m.column} for ${m.field}`).join(', ')}, which no result named has; the columns of ${tables.map(t => `"${t.title}"`).join(', ')}: ${namedColumns(held)}`);
+            if (astray.length) {
+              const names = astray.map(m => m.column).sort().join(', ');
+              if (mappingRefused.has(names)) history.push(`turn ${turn}: the mapping named ${names} again, which no result has: those entries are left out`);
+              else { mappingRefused.add(names); throw new Error(`the mapping names ${astray.map(m => `${m.column} for ${m.field}`).join(', ')}, which no result named has; the columns of ${tables.map(t => `"${t.title}"`).join(', ')}: ${namedColumns(held)}`); }
+            }
             await emit('complete', 'Investigator done', `${tables.length} result${tables.length === 1 ? '' : 's'}: ${names.join(', ')}${mapping.length ? `. Mapped: ${mapping.map(m => `${m.field} → ${m.table}.${m.column}`).join('; ')}` : ''}${note ? `. ${note}` : ''}`);
             return done({ found: tables.length > 0, status: 'ok', tables, retained: [...results.values()].filter(t => !names.includes(t.name)), mapping, note, opened: [] }, turn);
           }

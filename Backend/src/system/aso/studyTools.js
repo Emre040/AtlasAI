@@ -605,7 +605,8 @@ function aggregator({ group_by, group_by_columns, group_domains, column, metrics
   if (column && !col) throw new Error(`aggregate: no column named "${column}" (columns: ${columns.slice(0, 30).join(', ')})`);
   const groupCol = group_by ? resolveIn(columns, group_by) : null;
   if (group_by && !groupCol) throw new Error(`aggregate: no column named "${group_by}" (columns: ${columns.slice(0, 30).join(', ')})`);
-  if (group_by_columns !== undefined && (!Array.isArray(group_by_columns) || !group_by_columns.length)) throw new Error('aggregate: group_by_columns must be a nonempty array');
+  if (Array.isArray(group_by_columns) && !group_by_columns.length) group_by_columns = undefined;
+  if (group_by_columns !== undefined && !Array.isArray(group_by_columns)) throw new Error('aggregate: group_by_columns must be an array of column names');
   if (group_by && group_by_columns !== undefined) throw new Error('aggregate: use group_by or group_by_columns, not both');
   const groupCols = (group_by_columns || []).map(name => {
     const found = resolveIn(columns, name);

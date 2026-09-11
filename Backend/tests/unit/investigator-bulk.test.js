@@ -34,9 +34,8 @@ test('the investigator searches the release, fetches for the whole list and retu
   assert.deepEqual(result.mapping, [{ field: 'nTPM', table: 'rna_tissue_consensus.tsv', column: 'nTPM' }]);
   assert.equal(result.note, 'the consensus table holds one nTPM per tissue');
   assert.deepEqual(result.unresolved, ['NOPE']);
-  assert.equal(result.calls, 4, 'the gate and three turns');
-  assert.equal(gates.length, 1);
-  assert.match(gates[0].user, /Question: liver and lung nTPM\nPoints: 4 \(EGFR, ERBB2, MET, …\)/);
+  assert.equal(result.calls, 3, 'three turns, no gate');
+  assert.equal(gates.length, 0, 'no gate call');
   // The desk of the second turn: the search's findings, compact, and nothing of any table.
   const desk2 = requests[1].messages[1].content;
   assert.match(desk2, /POINTS\n4 points supplied, 3 resolve as genes in the release; not genes of the release: NOPE\. First points: EGFR, ERBB2, MET, NOPE/);
@@ -53,16 +52,6 @@ test('the investigator searches the release, fetches for the whole list and retu
   assert.ok(steps.some(s => s.stage === 'complete' && /Mapped: nTPM → rna_tissue_consensus\.tsv\.nTPM/.test(s.message)));
 });
 
-test('the gate rejects a question that asks for several contexts, and nothing is read', async () => {
-  const { run, requests } = await investigator([], { gate: { accepted: false, reason: 'asks for three contexts (heart, liver, blood); ask for one at a time' } });
-  const result = await run({ points: ['EGFR'], question: 'heart, liver and blood nTPM' });
-  assert.equal(result.status, 'rejected');
-  assert.equal(result.stop_reason, 'rejected');
-  assert.deepEqual(result.tables, []);
-  assert.equal(result.error, 'rejected: asks for three contexts (heart, liver, blood); ask for one at a time');
-  assert.equal(requests.length, 0, 'no turn was spent');
-  assert.equal(result.calls, 1);
-});
 
 test('without a list, fetch returns every row a filter selects; with match, the points are values of a column', async () => {
   const table = await investigator([

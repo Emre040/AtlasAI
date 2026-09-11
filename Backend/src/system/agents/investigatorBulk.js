@@ -437,10 +437,15 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             const tables = names.map(n => results.get(n));
             const note = String(args.note || '').trim();
             const mapping = (args.mapping || []).filter(m => m && m.field && m.table && m.column).map(m => ({ field: String(m.field), table: String(m.table), column: String(m.column) }));
-            // A mapped column is a column of the results named: the study reads the field there.
-            const held = new Set(tables.flatMap(t => t.columns));
-            const astray = mapping.filter(m => !held.has(m.column));
-            if (astray.length) throw new Error(`the mapping names ${astray.map(m => `${m.column} for ${m.field}`).join(', ')}, which no result named has; the columns of ${tables.map(t => `"${t.title}"`).join(', ')}: ${namedColumns([...held])}`);
+            // A mapped column is a column of the results named, as the result spells it: the study
+            // reads the field there.
+            const held = [...new Set(tables.flatMap(t => t.columns))];
+            const astray = [];
+            for (const m of mapping) {
+              const column = held.find(c => c === m.column) || held.find(c => c.toLowerCase() === m.column.toLowerCase());
+              if (column) m.column = column; else astray.push(m);
+            }
+            if (astray.length) throw new Error(`the mapping names ${astray.map(m => `${m.column} for ${m.field}`).join(', ')}, which no result named has; the columns of ${tables.map(t => `"${t.title}"`).join(', ')}: ${namedColumns(held)}`);
             await emit('complete', 'Investigator done', `${tables.length} result${tables.length === 1 ? '' : 's'}: ${names.join(', ')}${mapping.length ? `. Mapped: ${mapping.map(m => `${m.field} → ${m.table}.${m.column}`).join('; ')}` : ''}${note ? `. ${note}` : ''}`);
             return done({ found: tables.length > 0, status: 'ok', tables, retained: [...results.values()].filter(t => !names.includes(t.name)), mapping, note, opened: [] }, turn);
           }

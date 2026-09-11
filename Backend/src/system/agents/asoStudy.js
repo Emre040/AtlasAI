@@ -173,7 +173,13 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       ? `Search query built: ${a.meta?.query || '(none)'}${a.meta?.understanding ? `; the search understood the call as: ${a.meta.understanding}` : ''}${a.meta?.trail?.length ? `; its selection, requirement by requirement: ${a.meta.trail.join('; ')}` : ''}${a.meta?.not_expressible?.length ? `; could not express: ${a.meta.not_expressible.join('; ')}` : ''}`
       : `Source lookups: ${JSON.stringify(a.meta?.lookups || []).slice(0, 1200)}${a.meta?.coverage ? `; coverage: ${JSON.stringify(a.meta.coverage).slice(0, 300)}` : ''}`;
     const asked = args.goal ? `goal: ${args.goal}` : `question: ${args.question || ''}`;
-    const user = `Study goal: ${state.goal}\n\nThe call: ${toolName} "${args.title || ''}", ${asked}${Array.isArray(args.points) && args.points.length ? ` (for ${args.points.length} listed points)` : args.from ? ` (for the points of ${args.from})` : ''}\n\nWhat the agent did: ${account}\n\nResult ${a.id}: ${a.size}; columns: ${a.columns.join(', ')}${a.rows?.length ? `; first rows: ${desk.sampleLines(a.rows, a.columns.slice(0, 7), 3).join(' ; ')}` : ''}${share}`;
+    // The reviewer sees the table the way the desk describes it: how many entities it spans, what
+    // tells its rows apart, and that column's values, so a table of many rows over few entities
+    // or a category the call excluded is judged for what it is.
+    const g = Array.isArray(a.rows) ? tools.grain(a.rows, a.columns, identity.keys) : null;
+    const byValues = g?.by ? [...new Set(a.rows.map(r => r[g.by]).filter(v => v !== null && v !== undefined && v !== '').map(String))] : [];
+    const grain = g && g.entities < a.rows.length ? `; ${a.rows.length} rows over ${g.entities} ${identity.entity}s${g.by ? `, one row per ${identity.entity} and ${g.by} (${byValues.length} values${byValues.length <= 40 ? `: ${byValues.join(', ').slice(0, 900)}` : ''})` : ''}` : '';
+    const user = `Study goal: ${state.goal}\n\nThe call: ${toolName} "${args.title || ''}", ${asked}${Array.isArray(args.points) && args.points.length ? ` (for ${args.points.length} listed points)` : args.from ? ` (for the points of ${args.from})` : ''}\n\nWhat the agent did: ${account}\n\nResult ${a.id}: ${a.size}${grain}; columns: ${a.columns.join(', ')}${a.rows?.length ? `; first rows: ${desk.sampleLines(a.rows, a.columns.slice(0, 7), 3).join(' ; ')}` : ''}${share}`;
     const before = reviewStats.totalTokens;
     try {
       const verdict = effort ? await inference.withContext({ reasoningEffort: effort }, () => jsonCall(REVIEW_SYSTEM, user, undefined, `review ${a.id}`, reviewStats)) : await jsonCall(REVIEW_SYSTEM, user, undefined, `review ${a.id}`, reviewStats);

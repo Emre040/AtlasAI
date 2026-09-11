@@ -24,6 +24,7 @@ const FINISH_SCHEMA = {
 
 // Numbers a text states, with the precision they were written at.
 const { statedNumbers } = require('./numbers');
+const { grain } = require('./studyTools');
 
 function numbersIn(value, out = []) {
   if (typeof value === 'number' && Number.isFinite(value)) out.push(value);
@@ -89,7 +90,9 @@ function bindOne(claim, state) {
   const cells = [...new Set(claim.rows)].map(i => ({ index: i, values: columns.map(c => [c, rows[i][c]]) }));
   const values = numbersIn(cells.map(c => c.values.map(v => v[1])));
   const distinct = columns.map(c => new Set(cells.map(x => String(rows[x.index][c] ?? ''))).size);
-  return { artifact, cells, columns, values, counts: [cells.length, rows.length, ...distinct] };
+  // The entities a table spans (its grain) are a count of it, as its rows are.
+  const g = grain(rows, artifact.columns || []);
+  return { artifact, cells, columns, values, counts: [cells.length, rows.length, ...distinct, ...(g?.entities ? [g.entities] : [])] };
 }
 
 // Where a number lives among all saved artifacts, so a refusal says where to bind instead.
@@ -120,6 +123,20 @@ function claimIssue(claim, state) {
   // threshold, a top n) are part of their evidence.
   const lineage = (a, seen = new Set()) => !a || seen.has(a.id) ? [] : (seen.add(a.id), [...numbersIn(a.args || {}), ...(a.inputs || []).flatMap(id => lineage(state.byId.get(id), seen))]);
   const argNumbers = bound.parts.flatMap(b => lineage(b.artifact));
+  // A count that is the row count of a bound table spanning fewer entities is two numbers, not
+  // one: "114 partners" when the table has 114 rows over 47 genes. A claim that states the row
+  // count without the entity count is sent back with both, to say which it means.
+  const stated = statedNumbers(claim.text);
+  for (const n of stated) {
+    if (!Number.isInteger(n.value) || bound.values.includes(n.value)) continue;
+    for (const part of bound.parts) {
+      const rows = part.artifact.rows || [];
+      if (rows.length < 2 || rows.length !== n.value) continue;
+      const g = grain(rows, part.artifact.columns || []);
+      if (!g || !g.entities || g.entities >= rows.length || stated.some(m => m.value === g.entities)) continue;
+      return `${JSON.stringify(claim.text.length > 160 ? `${claim.text.slice(0, 159)}…` : claim.text)} states ${n.raw}, which is the number of rows of ${part.artifact.id}${g.by ? ` (one row per ${g.key} and ${g.by})` : ''}, not of ${g.key}s: it spans ${g.entities} ${g.key}s. Say which you mean, and bind that count`;
+    }
+  }
   // A whole number that is the row count of any saved artifact is bound: the artifact's size is on
   // the desk and in the report ("the 123 partners", citing the distribution drawn from them).
   const rowCounts = new Set(state.artifacts.map(a => (a.rows || []).length));

@@ -121,3 +121,12 @@ test('a percent that is the ratio of two bound numbers is bound', () => {
   assert.deepEqual(reportIssues({ claims: [{ text: '86 of the 123 partners (69.9%) are nuclear.', artifact: 'a9', rows: [0], columns: ['nuclear', 'partners'] }] }, s), []);
   assert.match(reportIssues({ claims: [{ text: '86 of the 123 partners (75%) are nuclear.', artifact: 'a9', rows: [0], columns: ['nuclear', 'partners'] }] }, s)[0], /states 75/);
 });
+
+test('a row count of a table that spans fewer entities is sent back with both numbers', () => {
+  const rows = []; for (let g = 0; g < 47; g++) for (let c = 0; c < (g < 20 ? 3 : 2); c++) rows.push({ gene: `G${g}`, ensembl: `ENSG${g}`, Cancer: `C${c}`, p: 0.01 });
+  const a9 = { id: 'a9', kind: 'data', label: 'prognostic rows', rows, columns: ['gene', 'ensembl', 'Cancer', 'p'], tool: 'filter', args: {}, inputs: [] };
+  const s = { artifacts: [a9], byId: new Map([['a9', a9]]), plan: [] };
+  assert.equal(rows.length, 114);
+  assert.match(reportIssues({ claims: [{ text: '114 partners have a validated association.', artifact: 'a9', rows: [0, 1], columns: ['gene', 'Cancer'] }] }, s)[0], /states 114, which is the number of rows of a9 \(one row per ensembl and Cancer\), not of ensembls: it spans 47 ensembls\. Say which you mean/);
+  assert.deepEqual(reportIssues({ claims: [{ text: '47 partners carry 114 validated associations.', artifact: 'a9', rows: [0, 1], columns: ['gene', 'Cancer'] }] }, s), []);
+});

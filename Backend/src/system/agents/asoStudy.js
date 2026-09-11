@@ -655,7 +655,17 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       await fs.writeFile(`${stem}.txt`, user, { mode: 0o600 });
       await fs.writeFile(`${stem}.request.json`, JSON.stringify(request), { mode: 0o600 });
       await log('context', { turn, desk_bytes: Buffer.byteLength(user), system_bytes: Buffer.byteLength(system), tool_schema_bytes: Buffer.byteLength(JSON.stringify(offered)) });
-      const res = await inference.chat.completions.create(request);
+      // A provider that fails a turn (a cut stream, a status with no body) is asked again, twice,
+      // before the study gives up: the desk is the same, so the turn is simply resent.
+      let res;
+      for (let attempt = 1; ; attempt++) {
+        try { res = await inference.chat.completions.create(request); break; }
+        catch (error) {
+          if (attempt > 2 || ctx.signal?.aborted) throw error;
+          await log('inference.retry', { turn, attempt, error: error.message });
+          await new Promise(resolve => setTimeout(resolve, 1500 * attempt));
+        }
+      }
       await fs.writeFile(`${stem}.response.json`, JSON.stringify(res), { mode: 0o600 });
       addUsage(res.usage);
       const message = res.choices?.[0]?.message || {};
@@ -675,7 +685,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
         if (!spec) throw new Error(`no tool ${call.name}`);
         call.args = decodeArguments(call.args, spec.function.parameters, call.name);
         const ignored = validate(call.args, spec.function.parameters, call.name);
-        if (ignored.length) remember(`${call.name}: ${ignored.map(key => key.slice(call.name.length + 1)).join(', ')} ${ignored.length === 1 ? 'is not an argument' : 'are not arguments'} of this tool, ignored`);
+        if (ignored.length) remember(`${call.name}: ${ignored.slice(0, 5).map(key => key.slice(call.name.length + 1).slice(0, 40)).join(', ')}${ignored.length > 5 ? ` (+${ignored.length - 5})` : ''} ${ignored.length === 1 ? 'is not an argument' : 'are not arguments'} of this tool, ignored`);
         if (call.name === 'plan') {
           state.plan = (call.args.items || []).map(studyPlan.createItem);
           if (!state.plan.length) throw new Error('plan needs at least one deliverable');

@@ -15,7 +15,7 @@ const { resolveAgentMode } = require('../../hpa/agentMode');
 const { FILES } = require('../../hpa/localData');
 const { validate } = require('../aso/batchOperations');
 const { decodeArguments } = require('../aso/toolArguments');
-const { FILTER_OPS, refuseMisspelled } = require('../aso/studyTools');
+const { FILTER_OPS, refuseMisspelled, nearMisses } = require('../aso/studyTools');
 const { fetchRows, fetchMatching, fetchAll } = require('../aso/fetchRows');
 const { tableCard, columnLine, namedColumns, resultLine, historyText, argsLine, section, count } = require('../aso/desk');
 const { AgentStop, createAgentControl, fingerprint } = require('../aso/agentControl');
@@ -149,7 +149,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
           if (!spec) throw new Error(`no tool ${name}`);
           args = decodeArguments(JSON.parse(call.function.arguments || '{}'), spec.function.parameters, name);
           const ignored = validate(args, spec.function.parameters, name);
-          if (ignored.length) history.push(`turn ${turn}: ${name}: ${ignored.map(key => key.slice(name.length + 1)).join(', ')} ${ignored.length === 1 ? 'is not an argument' : 'are not arguments'} of this tool, ignored`);
+          if (ignored.length) history.push(`turn ${turn}: ${name}: ${ignored.slice(0, 5).map(key => key.slice(name.length + 1).slice(0, 40)).join(', ')}${ignored.length > 5 ? ` (+${ignored.length - 5})` : ''} ${ignored.length === 1 ? 'is not an argument' : 'are not arguments'} of this tool, ignored`);
           // The same fetch under another title is the same fetch.
           const { title: _title, description: _description, ...bareArgs } = args;
           const key = fingerprint({ name, args: bareArgs });
@@ -207,13 +207,28 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
               for (const gene of supplyResolved) if (gene && !supplyIdentities.has(gene.ensembl)) supplyIdentities.set(gene.ensembl, gene);
               chained = { from: source.title, column };
             }
+            // Points that are none of the database's entities are matched against the column that
+            // holds them, when one column of the table does; a point spelled unlike any value of
+            // a column that nearly holds it is refused with the spelling.
+            let match = args.match;
+            if (supplied.length && !match && !supplyIdentities.size) {
+              const cards = (await adapter.profile(entry)).columns.filter(c => Array.isArray(c.observed_values));
+              const wanted = supplied.map(v => String(v).trim().toLowerCase());
+              const holding = cards.filter(c => wanted.every(v => c.observed_values.some(o => String(o).trim().toLowerCase() === v))).map(c => c.column);
+              if (holding.length === 1) { match = holding[0]; history.push(`turn ${turn}: the points are values of ${match}, not ${db.entity}s: matched against it`); }
+              else if (holding.length > 1) throw new Error(`none of the points is a ${db.entity} of the release; they are values of ${holding.join(' and ')}: name the column meant with match`);
+              else {
+                const near = supplied.flatMap(v => cards.flatMap(c => nearMisses(v, c.observed_values).map(o => `no row of ${entry.file} has ${c.column} = ${JSON.stringify(v)}; the column spells it ${JSON.stringify(o)}`))).slice(0, 4);
+                if (near.length) throw new Error(near.join('; '));
+              }
+            }
             const filter = args.where?.length ? ` where ${args.where.map(w => `${w.column} ${w.op} ${w.value ?? ''}`).join(' and ')}` : '';
-            await emit('execution_step', 'Fetch', `${entry.file}${args.fields?.length ? ` fields ${args.fields.join(', ')}` : ''}${filter}${supplied.length ? ` for ${count(supplied.length)} points${chained ? ` from "${chained.from}" ${chained.column}` : ''}` : ''}`);
+            await emit('execution_step', 'Fetch', `${entry.file}${args.fields?.length ? ` fields ${args.fields.join(', ')}` : ''}${filter}${supplied.length ? ` for ${count(supplied.length)} points${chained ? ` from "${chained.from}" ${chained.column}` : ''}${match ? ` matched against ${Array.isArray(match) ? match.join(', ') : match}` : ''}` : ''}`);
             let fetched;
             if (!supplied.length) fetched = await fetchAll({ adapter, entry, fields: args.fields, where: args.where, keys });
-            else if (args.match) fetched = await fetchMatching({ adapter, entry, points: supplied, fields: args.fields, where: args.where, match: args.match, keys });
+            else if (match) fetched = await fetchMatching({ adapter, entry, points: supplied, fields: args.fields, where: args.where, match, keys });
             else if (supplyIdentities.size) fetched = await fetchRows({ adapter, entry, supplied, resolved: supplyResolved, fields: args.fields, where: args.where, keys });
-            else throw new Error(`none of the points is a ${db.entity} of the release; name the column their values are in with match`);
+            else throw new Error(`none of the points is a ${db.entity} of the release, and no column of ${entry.file} holds them; name the column their values are in with match, or fetch without the list`);
             const table = { name: title, title, description, rows: fetched.rows, columns: fetched.columns, args: { table: entry.file, fields: fetched.fields, ...(args.where?.length ? { where: args.where } : {}), ...(fetched.match ? { match: fetched.match } : {}), ...(chained || {}) }, coverage: fetched.coverage, source_file: entry.file };
             results.set(title, table);
             const c = fetched.coverage;

@@ -156,11 +156,18 @@ async function searchRelease(adapter, catalog, words, listed, found = new Set(),
         const places = [];
         const cols = h.columns.filter(c => c.words.includes(n));
         if (cols.length) places.push(cols.length <= 3 ? `column${cols.length > 1 ? 's' : ''} ${cols.map(c => c.column).join(', ')}` : `${count(cols.length)} column names (${cols.slice(0, 3).map(c => c.column).join(', ')}, …)`);
-        for (const v of h.values.filter(v => v.word === n)) {
-          const rows = counted && single(v) && typeof adapter.holds === 'function' ? await adapter.holds(h.e, v.column, v.found).catch(() => null) : null;
-          places.push(single(v) ? `${v.column} = ${v.found[0]}${rows !== null ? ` (${count(rows)} rows)` : ''}` : v.more ? `${v.column} (${count(v.found.length + v.more)} values, e.g. ${v.found[0]})` : `${v.column} = ${v.found.join(' | ')}`);
+        const inValues = h.values.filter(v => v.word === n), inItems = h.items.filter(v => v.word === n);
+        const valueLine = async v => { const rows = counted && single(v) && typeof adapter.holds === 'function' ? await adapter.holds(h.e, v.column, v.found).catch(() => null) : null; return single(v) ? `${v.column} = ${v.found[0]}${rows !== null ? ` (${count(rows)} rows)` : ''}` : v.more ? `${v.column} (${count(v.found.length + v.more)} values, e.g. ${v.found[0]})` : `${v.column} = ${v.found.join(' | ')}`; };
+        const itemLine = v => single(v) ? `${v.column} lists ${v.found[0]}` : `${v.column} lists ${count(v.found.length + v.more)} items, e.g. ${v.found[0]}`;
+        // Found in the values of a few columns: each named; of many: how many, three shown.
+        const hitsHere = inValues.length + inItems.length;
+        if (hitsHere <= 3) { for (const v of inValues) places.push(await valueLine(v)); for (const v of inItems) places.push(itemLine(v)); }
+        else {
+          const shown = [];
+          for (const v of inValues.slice(0, 3)) shown.push(await valueLine(v));
+          for (const v of inItems.slice(0, Math.max(0, 3 - shown.length))) shown.push(itemLine(v));
+          places.push(`values of ${count(hitsHere)} columns (${shown.join(', ')}, …)`);
         }
-        for (const v of h.items.filter(v => v.word === n)) places.push(single(v) ? `${v.column} lists ${v.found[0]}` : `${v.column} lists ${count(v.found.length + v.more)} items, e.g. ${v.found[0]}`);
         if (h.named.has(n) && !places.length) places.push('its name or description');
         if (places.length) parts.push(`${wordOf.get(n)}: ${places.join(', ')}`);
       }

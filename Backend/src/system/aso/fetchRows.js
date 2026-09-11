@@ -13,7 +13,7 @@ const { wherePredicate, withColumns, isMissing, inList, listSeparator } = requir
 const { namedColumns } = require('./desk');
 
 const STATUS = Object.freeze({ ok: 'ok', noRows: 'no rows in table', noMatch: 'no rows match filter', notInRelease: 'not in release' });
-const MAX_HELD_ROWS = 100000;    // rows one result may hold; a larger selection needs a filter or a list of points
+const MAX_HELD_ROWS = 1000000;   // rows one result may hold; a larger selection needs a filter or a list of points
 
 function resolveColumn(entry, name) {
   const found = entry.columns.find(c => c === name) || entry.columns.find(c => c.toLowerCase() === String(name).toLowerCase());

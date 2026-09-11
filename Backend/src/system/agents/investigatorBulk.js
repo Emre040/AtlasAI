@@ -296,7 +296,27 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
     });
     return split.length > 1 ? split : [table];
   };
-  const done = (extra, turns) => ({ bulk: true, mode: 'offline', hpa_version: release?.hpaVersion || null, tokens: { total: { prompt: stats.prompt, completion: stats.completion, total: stats.total } }, calls: stats.calls, turns, seconds: (Date.now() - started) / 1000, unresolved: unresolvedPoints(), ...extra, ...(Array.isArray(extra.tables) ? { tables: extra.tables.flatMap(perValue) } : {}) });
+  // Each artifact explains itself: which table, how the points were read, which column holds
+  // the value, what tells the rows apart, and how many points have rows. Written by code from
+  // what was done, so it is never wrong; the model's note says why, once, for the whole run.
+  const explain = (table, mapping) => {
+    const keyCols = table.columns.filter(c => KEY_COLUMNS.has(c));
+    const others = table.columns.filter(c => !KEY_COLUMNS.has(c));
+    const value = others.length ? others[others.length - 1] : null;
+    const context = others.filter(c => c !== value);
+    const c = table.coverage || {};
+    const args = table.args || {};
+    const read = args.match ? `matched against ${Array.isArray(args.match) ? args.match.join(' and ') : args.match}` : args.from ? `the ${args.column} values of "${args.from}", read by their keys` : c.supplied !== undefined ? 'read by their keys' : 'selected by the filter';
+    const filter = args.where?.length ? ` where ${args.where.map(w => `${w.column} ${w.op} ${Array.isArray(w.value) ? w.value.join('|') : w.value ?? ''}`).join(' and ')}` : '';
+    const contextText = context.length ? ` per ${context.join(' and ')}${context.length === 1 ? ` (${count(new Set(table.rows.map(r => String(r[context[0]] ?? ''))).size)} values)` : ''}` : '';
+    const coverage = c.supplied !== undefined
+      ? `${count(c.with_rows ?? 0)} of ${count(c.supplied)} points have rows${c.no_match ? `, ${count(c.no_match)} match no row of the filter` : ''}${c.no_rows ? `, ${count(c.no_rows)} have no row in the table` : ''}${c.not_in_release ? `, ${count(c.not_in_release)} not in the release` : ''}`
+      : `${count(table.rows.length)} rows selected`;
+    const field = (mapping || []).find(m => m.column === value && m.table === table.source_file)?.field || value;
+    const note = `${value ? `${value}` : 'rows'} from ${table.source_file}${contextText}, points ${read}${filter}; ${coverage}${keyCols.includes('other') ? '; the other side of each pair is in other' : ''}.`;
+    return { ...table, description: note, note, mapping: value ? { field, table: table.source_file, column: value } : null };
+  };
+  const done = (extra, turns) => ({ bulk: true, mode: 'offline', hpa_version: release?.hpaVersion || null, tokens: { total: { prompt: stats.prompt, completion: stats.completion, total: stats.total } }, calls: stats.calls, turns, seconds: (Date.now() - started) / 1000, unresolved: unresolvedPoints(), ...extra, ...(Array.isArray(extra.tables) ? { tables: extra.tables.flatMap(perValue).map(t => explain(t, extra.mapping)) } : {}) });
   try {
     if (points !== null && (!Array.isArray(points) || points.some(p => typeof p !== 'string' || !p.trim()))) throw new Error('Investigator points must be an array of names');
     if (typeof question !== 'string' || !question.trim()) throw new Error('Investigator requires a question');

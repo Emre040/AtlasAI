@@ -33,7 +33,9 @@ test('tables, figures and limitations are checked structurally', () => {
   assert.match(reportIssues({ tables: [{ artifact: 'a2' }] }, state)[0], /a2 is a figure, not a table/);
   assert.match(reportIssues({ figures: ['a3'] }, state)[0], /a3 was not rendered/);
   assert.match(reportIssues({ figures: ['a1'] }, state)[0], /"a1" is not a saved figure/);
-  assert.match(reportIssues({ tables: [{ artifact: 'a1' }], limitations: ['3 genes had no record'] }, state)[0], /limitations\[0\] states 3; numbers belong in a claim/);
+  assert.match(reportIssues({ tables: [{ artifact: 'a1' }], limitations: ['3 genes had no record'] }, state)[0], /limitations\[0\] states 3, which no saved artifact holds/);
+  // a number a saved artifact holds in a cell (a universe size, a threshold) may stand in a limitation
+  assert.equal(reportIssues({ tables: [{ artifact: 'a1' }], limitations: ['Values above 32.2 nTPM were not checked further'] }, state).some(i => /limitations/.test(i)), false);
   assert.match(reportIssues({ tables: [{ artifact: 'a1' }], not_done: [{ item: 4, why: 'x' }] }, state)[0], /between 1 and 1/);
   assert.match(reportIssues({ figures: [] }, state)[0], /needs at least one table, figure or claim/);
 });

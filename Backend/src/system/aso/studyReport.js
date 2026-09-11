@@ -161,8 +161,10 @@ function reportIssues(args, state) {
     if (issue) issues.push(`claims[${i}]: ${issue}`);
   }
   for (const [i, text] of (args.limitations || []).entries()) {
-    const numbers = statedNumbers(text);
-    if (numbers.length) issues.push(`limitations[${i}] states ${numbers.map(n => n.raw).join(', ')}; numbers belong in a claim bound to the rows that hold them`);
+    // A number in a limitation is fine when a saved artifact holds it in a cell (the universe of
+    // a test, a threshold); one that no artifact holds is unverified and does not belong there.
+    const loose = statedNumbers(text).filter(n => !locate(state, n.value, n.tolerance).length);
+    if (loose.length) issues.push(`limitations[${i}] states ${loose.map(n => n.raw).join(', ')}, which no saved artifact holds; write the limitation without the number, or state it as a claim bound to the rows that hold it`);
   }
   for (const [i, item] of (args.not_done || []).entries()) {
     if (!item || !Number.isSafeInteger(item.item) || item.item < 1 || item.item > state.plan.length) issues.push(`not_done[${i}].item must name a plan item between 1 and ${state.plan.length}`);

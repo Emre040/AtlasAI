@@ -28,6 +28,8 @@ function validate(value, schema, label) {
     for (const [key, item] of Object.entries(value)) {
       const declared = schema.properties && Object.hasOwn(schema.properties, key) ? schema.properties[key] : null;
       if (item === null && declared && !(schema.required || []).includes(key) && declared.type !== 'null' && !declared.anyOf) delete value[key];
+      // One value where a list is declared is a list of one (metrics: "count" is metrics: ["count"]).
+      else if (declared?.type === 'array' && (typeof item === 'string' || typeof item === 'number') && (!declared.items?.type || declared.items.type === typeof item)) value[key] = [item];
     }
     for (const name of schema.required || []) if (!Object.hasOwn(value, name)) throw new Error(`${label}.${name} is required`);
     for (const [key, item] of Object.entries(value)) {

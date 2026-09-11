@@ -30,7 +30,7 @@ function tools(db) {
     tool('open', 'Put a table on the desk: what it is and its first column names.', { table: S }, ['table']),
     tool('columns', 'The columns of a table whose name contains the word.', { table: S, about: S }, ['table', 'about']),
     tool('values', 'What a column of a table holds: every value of a category column, the range of a number column, the keys or labels inside list cells, spelled as the data spells them.', { table: S, column: S }, ['table', 'column']),
-    tool('fetch', `Retrieve rows from one table. With the list, or with from and column (the values of a column of an earlier result stand in for the list): one row per source row for each point, with the point, the fields, source_rows and source_status; the points are ${db.entity}s unless match names the column their values are in. Without the list: every row where holds. Omit fields for every column.`, { title: S, description: S, table: S, fields: { type: 'array', items: S }, where: WHERE, from: { type: 'string', description: 'Title of an earlier result whose column supplies the points of this fetch in place of the list, so what one table lists is read from another' }, column: { type: 'string', description: 'The column of from whose values are the points' }, match: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }], description: 'Column whose values the points are; a list of columns when a point may sit in any of them (the two sides of a pair table), the point then named in a column of its own' } }, ['title', 'description', 'table']),
+    tool('fetch', `Retrieve rows from one table. With the list, or with from and column (the values of a column of an earlier result stand in for the list): one row per source row for each point, with the point, the fields, source_rows and source_status; the points are ${db.entity}s unless match names the column their values are in. Without the list: every row where holds. Omit fields for every column.`, { title: S, description: S, table: S, fields: { type: 'array', items: S }, where: WHERE, from: { type: 'string', description: 'Title of an earlier result whose column supplies the points of this fetch in place of the list, so what one table lists is read from another' }, column: { type: 'string', description: 'The column of from whose values are the points' }, match: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }], description: 'Column whose values the points are; a list of columns when a point may sit in any of them (the two sides of a pair table), the point then named in a column of its own' } }, ['table']),
     tool('finish', 'Return the results that answer the question, by title. note states what no table holds and which points did not resolve.', { results: { type: 'array', items: S }, note: S }, ['results'])
   ];
 }
@@ -148,7 +148,8 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
           const spec = offered.find(t => t.function.name === name);
           if (!spec) throw new Error(`no tool ${name}`);
           args = decodeArguments(JSON.parse(call.function.arguments || '{}'), spec.function.parameters, name);
-          validate(args, spec.function.parameters, name);
+          const ignored = validate(args, spec.function.parameters, name);
+          if (ignored.length) history.push(`turn ${turn}: ${name}: ${ignored.map(key => key.slice(name.length + 1)).join(', ')} ${ignored.length === 1 ? 'is not an argument' : 'are not arguments'} of this tool, ignored`);
           // The same fetch under another title is the same fetch.
           const { title: _title, description: _description, ...bareArgs } = args;
           const key = fingerprint({ name, args: bareArgs });
@@ -174,9 +175,9 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             done.set(key, 'on the table card'); progressed = true;
             await emit('execution_step', 'Values', line.slice(0, 200));
           } else if (name === 'fetch') {
-            const title = String(args.title || '').trim();
-            const description = String(args.description || '').trim();
-            if (!title || !description) throw new Error('fetch needs a title and a description for its result');
+            // A result left unnamed is named by its fetch.
+            const title = String(args.title || '').trim() || `fetch(${argsLine(bareArgs, 90)})`;
+            const description = String(args.description || '').trim() || title;
             if (results.has(title)) throw new Error(`a result titled ${JSON.stringify(title)} exists; choose another title`);
             const entry = await adapter.entry(String(args.table || '').trim());
             if (!entry) throw new Error(`no table named ${JSON.stringify(args.table)}; find_tables lists the tables`);

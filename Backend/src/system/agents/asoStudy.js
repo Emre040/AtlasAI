@@ -67,7 +67,8 @@ const N = { type: 'integer' };
 const SCALE = { type: 'string', enum: ['linear', 'log'] };
 const tool = (name, description, properties = {}, required = []) => ({ name, description, parameters: { type: 'object', properties, required } });
 // An operation names its result for a reader: a title and a description.
-const op = (name, description, properties = {}, required = []) => tool(name, description, { title: S, description: S, ...properties }, ['title', 'description', ...required]);
+// Every operation names its result (title, description); one left unnamed is named by its operation.
+const op = (name, description, properties = {}, required = []) => tool(name, description, { title: S, description: S, ...properties }, required);
 const STUDY_TOOLS = [
   tool('plan', 'The deliverables the study owes: one item per requested table, figure (its chart type), cohort (gene_set) or interpretation. Replaces the plan.', { items: { type: 'array', items: { type: 'object', properties: { step: S, kind: { type: 'string', enum: studyPlan.KINDS } }, required: ['step', 'kind'] } } }, ['items']),
   tool('note', 'Keep a decision or open question on the desk; replace overwrites note N.', { text: S, replace: N }, ['text']),
@@ -338,8 +339,9 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
   const agentJobs = new Map();
   function startAgent(toolName, args) {
     if (args.mode !== undefined && args.mode !== mode) throw new Error(`Delegated agents use the study data source: ${mode}`);
-    const title = String(args.title || '').trim(), description = String(args.description || '').trim();
-    if (!title || !description) throw new Error(`${toolName} needs a title and a description for its result`);
+    // A call left unnamed is named by what it asks.
+    const title = String(args.title || '').trim() || `${toolName}: ${String(args.goal || args.question || '').trim().slice(0, 90)}`;
+    const description = String(args.description || '').trim() || title;
     const executionArgs = { ...bare(args), mode };
     // The search sees the whole study: a choice a sub-goal leaves open is settled by the study,
     // not by whichever field the words resemble.
@@ -511,8 +513,9 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     const callKey = callKeyOf(toolName, args);   // as called, before any alias, so a repeat of the same call is recognised
     args = { ...args };
     if (['combine', 'join', 'overlap'].includes(toolName) && args.a === undefined && args.artifact !== undefined) args = { ...args, a: args.artifact };
-    const title = String(args.title || '').trim(), description = String(args.description || '').trim();
-    if (!title || !description) throw new Error(`${toolName} needs a title and a description for its result`);
+    // A result left unnamed is named by its operation.
+    const title = String(args.title || '').trim() || `${toolName}(${desk.argsLine(bare(args), 90)})`;
+    const description = String(args.description || '').trim() || title;
     // The same operation on the same inputs is the same artifact, whatever it is called; it is not made twice.
     const key = JSON.stringify([toolName, bare(args)]);
     if (made.has(key) && state.byId.has(made.get(key))) {
@@ -671,7 +674,8 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
         const spec = offered.find(t => t.function.name === call.name);
         if (!spec) throw new Error(`no tool ${call.name}`);
         call.args = decodeArguments(call.args, spec.function.parameters, call.name);
-        validate(call.args, spec.function.parameters, call.name);
+        const ignored = validate(call.args, spec.function.parameters, call.name);
+        if (ignored.length) remember(`${call.name}: ${ignored.map(key => key.slice(call.name.length + 1)).join(', ')} ${ignored.length === 1 ? 'is not an argument' : 'are not arguments'} of this tool, ignored`);
         if (call.name === 'plan') {
           state.plan = (call.args.items || []).map(studyPlan.createItem);
           if (!state.plan.length) throw new Error('plan needs at least one deliverable');

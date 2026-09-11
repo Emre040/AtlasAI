@@ -129,10 +129,10 @@ test('finish while an agent runs is refused and the loop waits for the agent; a 
   assert.equal(result.failed, 1, 'the failed filter; a refused finish is feedback, not a failure');
 });
 
-test('opening an artifact that is whole on the desk is answered from the desk, without a view; an operation without a title is refused', async t => {
+test('opening an artifact that is whole on the desk is answered from the desk, without a view; an operation without a title is named by its operation; a stray argument is ignored with a note', async t => {
   const { run, requests } = await study(t, [
     response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' }))),
-    response(call('open', { artifact: 'a1' }), call('rank', { artifact: 'a1', by: 'nTPM' })),
+    response(call('open', { artifact: 'a1' }), call('rank', { artifact: 'a1', by: 'nTPM', comment: 'sorted' })),
     response(call('finish', { tables: [{ artifact: 'a1' }] }))
   ]);
   const result = await run({});
@@ -140,7 +140,7 @@ test('opening an artifact that is whole on the desk is answered from the desk, w
   const desk3 = requests[2].messages[1].content;
   // an open of rows already on the desk lists them once in the history, in full cells, and makes no view
   assert.match(desk3, /turn 2: a1 rows \(gene \| ensembl \| Tissue \| nTPM \| source_rows \| source_status\): 0: EGFR \| ENSG1 \| liver \| 32\.2 \| 2 \| ok ; 1: EGFR \| ENSG1 \| lung \| 14\.1 \| 2 \| ok ; 2: ERBB2/);
-  assert.match(desk3, /turn 2: rank\(artifact=a1, by=nTPM\) failed: rank\.title is required/);
+  assert.match(desk3, /turn 2: rank: comment is not an argument of this tool, ignored\nturn 2: rank\(artifact=a1, by=nTPM\) → a2 "rank\(artifact=a1, by=nTPM\)"/);
   assert.doesNotMatch(desk3, /\nVIEWS\n/);
 });
 

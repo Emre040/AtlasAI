@@ -9,17 +9,21 @@ function object(value, label) {
   return value;
 }
 
-function validate(value, schema, label) {
+// Checks a value against a schema, in place: an optional argument sent as null is removed, one
+// value where a list is declared becomes a list of one, and an argument the schema does not
+// declare is removed and named in the returned list, so a stray key never fails a call whose
+// declared arguments are right.
+function validate(value, schema, label, ignored = []) {
   if (schema.enum && !schema.enum.includes(value)) throw new Error(`${label} must be one of ${schema.enum.join(', ')}`);
   if (Array.isArray(schema.anyOf)) {
-    if (!schema.anyOf.some(option => { try { validate(value, option, label); return true; } catch { return false; } })) throw new Error(`${label} must match one of the declared value types`);
-    return;
+    if (!schema.anyOf.some(option => { try { validate(value, option, label, ignored); return true; } catch { return false; } })) throw new Error(`${label} must match one of the declared value types`);
+    return ignored;
   }
   if (schema.type === 'null') {
     if (value !== null) throw new Error(`${label} must be null`);
-    return;
+    return ignored;
   }
-  if (!schema.type) return;
+  if (!schema.type) return ignored;
   if (schema.type === 'object') {
     object(value, label);
     // An optional argument sent as null is absent: small models emit null for every control they
@@ -33,18 +37,19 @@ function validate(value, schema, label) {
     }
     for (const name of schema.required || []) if (!Object.hasOwn(value, name)) throw new Error(`${label}.${name} is required`);
     for (const [key, item] of Object.entries(value)) {
-      if (schema.properties && Object.hasOwn(schema.properties, key)) validate(item, schema.properties[key], `${label}.${key}`);
-      else if (schema.additionalProperties && typeof schema.additionalProperties === 'object') validate(item, schema.additionalProperties, `${label}.${key}`);
-      else if (schema.properties || schema.additionalProperties === false) throw new Error(`${label}.${key} is not a declared argument`);
+      if (schema.properties && Object.hasOwn(schema.properties, key)) validate(item, schema.properties[key], `${label}.${key}`, ignored);
+      else if (schema.additionalProperties && typeof schema.additionalProperties === 'object') validate(item, schema.additionalProperties, `${label}.${key}`, ignored);
+      else if (schema.properties || schema.additionalProperties === false) { ignored.push(`${label}.${key}`); delete value[key]; }
     }
   } else if (schema.type === 'array') {
     if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
-    value.forEach((item, i) => validate(item, schema.items || {}, `${label}[${i}]`));
+    value.forEach((item, i) => validate(item, schema.items || {}, `${label}[${i}]`, ignored));
   } else if (schema.type === 'integer') {
     if (!Number.isSafeInteger(value)) throw new Error(`${label} must be an integer`);
   } else if (schema.type === 'number') {
     if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${label} must be a finite number`);
   } else if (typeof value !== schema.type) throw new Error(`${label} must be ${schema.type}`);
+  return ignored;
 }
 
 function references(value, schema) {

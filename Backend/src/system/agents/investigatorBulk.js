@@ -15,7 +15,7 @@ const { resolveAgentMode } = require('../../hpa/agentMode');
 const { FILES } = require('../../hpa/localData');
 const { validate } = require('../aso/batchOperations');
 const { decodeArguments } = require('../aso/toolArguments');
-const { FILTER_OPS, refuseMisspelled, nearMisses } = require('../aso/studyTools');
+const { FILTER_OPS, correctSpelling, nearMisses, inList } = require('../aso/studyTools');
 const { fetchRows, fetchMatching, fetchAll } = require('../aso/fetchRows');
 const { tableCard, columnLine, namedColumns, resultLine, historyText, argsLine, section, count } = require('../aso/desk');
 const { AgentStop, createAgentControl, fingerprint } = require('../aso/agentControl');
@@ -182,13 +182,24 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             const entry = await adapter.entry(String(args.table || '').trim());
             if (!entry) throw new Error(`no table named ${JSON.stringify(args.table)}; find_tables lists the tables`);
             await openTable(entry.file);
-            // A filter value, or a point matched against a column, that the table spells differently
-            // is refused with the table's spelling.
-            if (args.where?.length || (args.match && listed.length)) {
-              const cards = (await adapter.profile(entry)).columns;
-              const knownValuesOf = column => (cards.find(c => c.column === column) || cards.find(c => c.column.toLowerCase() === String(column).toLowerCase()))?.observed_values || null;
-              refuseMisspelled(args.where || [], knownValuesOf, entry.file);
-              if (args.match && listed.length) refuseMisspelled((Array.isArray(args.match) ? args.match : [args.match]).map(column => ({ column, op: 'in', value: listed })), knownValuesOf, entry.file);
+            // A filter value the table spells differently is read as the table spells it, and the
+            // history says so; a value that could be several is refused with all of them.
+            const cards = (await adapter.profile(entry)).columns;
+            const knownValuesOf = column => (cards.find(c => c.column === column) || cards.find(c => c.column.toLowerCase() === String(column).toLowerCase()))?.observed_values || null;
+            const spelling = [];
+            if (args.where?.length) {
+              for (const clause of args.where) {
+                if (!clause || !['=', '!=', 'in'].includes(clause.op) || clause.value === null || clause.value === undefined) continue;
+                const values = clause.op === 'in' ? inList(clause.value) : [clause.value];
+                const read = correctSpelling(values, knownValuesOf(clause.column), clause.column, entry.file);
+                if (read.notes.length) { clause.value = clause.op === 'in' ? read.values : read.values[0]; spelling.push(...read.notes); }
+              }
+            }
+            // A where on the column the list already selects by can only drop points: it is refused.
+            if (listed.length && !args.match && args.where?.length) {
+              const keyColumns = [entry.geneColumn, ...(['ensembl', 'name', 'master'].includes(entry.key) ? entry.columns.slice(0, entry.key === 'name' ? 2 : 1) : [])].filter(Boolean).map(c => c.toLowerCase());
+              const onKey = args.where.find(clause => keyColumns.includes(String(clause?.column || '').toLowerCase()));
+              if (onKey) throw new Error(`the list already selects the rows by ${onKey.column}; a where on ${onKey.column} can only drop points from it. Leave that clause out`);
             }
             // The points of a fetch are the list, or the values of a column of an earlier result:
             // what one table lists is read from another without the model carrying a single value.
@@ -207,21 +218,28 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
               for (const gene of supplyResolved) if (gene && !supplyIdentities.has(gene.ensembl)) supplyIdentities.set(gene.ensembl, gene);
               chained = { from: source.title, column };
             }
-            // Points that are none of the database's entities are matched against the column that
-            // holds them, when one column of the table does; a point spelled unlike any value of
-            // a column that nearly holds it is refused with the spelling.
+            // Points matched against a column are read as the column spells them. Points that are
+            // none of the database's entities and name no column are matched against the one
+            // column of the table whose recorded values hold them, spelling corrected the same way.
             let match = args.match;
-            if (supplied.length && !match && !supplyIdentities.size) {
-              const cards = (await adapter.profile(entry)).columns.filter(c => Array.isArray(c.observed_values));
-              const wanted = supplied.map(v => String(v).trim().toLowerCase());
-              const holding = cards.filter(c => wanted.every(v => c.observed_values.some(o => String(o).trim().toLowerCase() === v))).map(c => c.column);
-              if (holding.length === 1) { match = holding[0]; history.push(`turn ${turn}: the points are values of ${match}, not ${db.entity}s: matched against it`); }
-              else if (holding.length > 1) throw new Error(`none of the points is a ${db.entity} of the release; they are values of ${holding.join(' and ')}: name the column meant with match`);
-              else {
-                const near = supplied.flatMap(v => cards.flatMap(c => nearMisses(v, c.observed_values).map(o => `no row of ${entry.file} has ${c.column} = ${JSON.stringify(v)}; the column spells it ${JSON.stringify(o)}`))).slice(0, 4);
-                if (near.length) throw new Error(near.join('; '));
+            if (supplied.length && match) {
+              for (const column of Array.isArray(match) ? match : [match]) {
+                const read = correctSpelling(supplied, knownValuesOf(column), column, entry.file);
+                if (read.notes.length) { supplied = read.values; spelling.push(...read.notes); }
               }
+            } else if (supplied.length && !supplyIdentities.size) {
+              const valued = cards.filter(c => Array.isArray(c.observed_values) && c.observed_values.length);
+              const wanted = supplied.map(v => String(v).trim().toLowerCase());
+              const holds = c => v => c.observed_values.some(o => String(o).trim().toLowerCase() === v) || nearMisses(v, c.observed_values).length === 1;
+              const holding = valued.filter(c => wanted.every(holds(c)));
+              if (holding.length === 1) {
+                match = holding[0].column;
+                const read = correctSpelling(supplied, holding[0].observed_values, match, entry.file);
+                supplied = read.values; spelling.push(...read.notes);
+                history.push(`turn ${turn}: the points are values of ${match}, not ${db.entity}s: matched against it`);
+              } else if (holding.length > 1) throw new Error(`none of the points is a ${db.entity} of the release; they are values of ${holding.map(c => c.column).join(' and ')}: name the column meant with match`);
             }
+            if (spelling.length) history.push(`turn ${turn}: ${[...new Set(spelling)].join('; ')}`);
             const filter = args.where?.length ? ` where ${args.where.map(w => `${w.column} ${w.op} ${w.value ?? ''}`).join(' and ')}` : '';
             await emit('execution_step', 'Fetch', `${entry.file}${args.fields?.length ? ` fields ${args.fields.join(', ')}` : ''}${filter}${supplied.length ? ` for ${count(supplied.length)} points${chained ? ` from "${chained.from}" ${chained.column}` : ''}${match ? ` matched against ${Array.isArray(match) ? match.join(', ') : match}` : ''}` : ''}`);
             let fetched;

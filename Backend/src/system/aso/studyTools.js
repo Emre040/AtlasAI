@@ -67,6 +67,19 @@ function refuseMisspelled(where, knownValuesOf, what) {
   const found = misspelledClauses(where, knownValuesOf);
   if (found.length) throw new Error(found.map(f => `no row of ${what} has ${f.column} = ${JSON.stringify(f.value)}; the column spells it ${f.near.map(v => JSON.stringify(v)).join(' | ')}`).join('; '));
 }
+// The values as the column spells them: a value with exactly one near miss among the known values
+// is read as that value (a note says so); one with several is refused with all of them; one with
+// none, or a number, is left as it is.
+function correctSpelling(values, known, column, what) {
+  const out = [], notes = [];
+  for (const value of values) {
+    const near = num(value) !== null || !Array.isArray(known) || !known.length ? [] : nearMisses(value, known);
+    if (near.length > 1) throw new Error(`no row of ${what} has ${column} = ${JSON.stringify(String(value))}; the column spells it ${near.map(v => JSON.stringify(v)).join(' | ')}: say which`);
+    if (near.length === 1) { out.push(near[0]); notes.push(`read ${JSON.stringify(String(value))} as ${JSON.stringify(near[0])}, the spelling of ${column}`); }
+    else out.push(value);
+  }
+  return { values: out, notes };
+}
 function keyOf(row, on = null) {
   if (on) { const v = row[on]; return v === undefined || v === null || String(v).trim() === '' ? null : lower(v); }
   const v = row.ensembl || row.Ensembl || row.gene || row.Gene;
@@ -287,6 +300,8 @@ function widenByCategory(rows, columns, identityKeys = IDENTITY, { only = null }
   for (const r of rows) {
     const id = r[g.key];
     if (!byEntity.has(id)) { const base = {}; for (const c of carried) base[c] = r[c]; for (const v of values) base[v] = null; byEntity.set(id, base); }
+    // A row without a category (a point with no matching row) leaves every category empty.
+    if (isMissing(r[g.by])) continue;
     byEntity.get(id)[String(r[g.by])] = isMissing(r[measure]) ? null : r[measure];
   }
   const out = withColumns([...byEntity.values()], [...carried, ...values]);
@@ -1233,4 +1248,4 @@ function chartSpec(args, input) {
   return { ...base, ...chartDomains(args, axes), data };
 }
 
-module.exports = { grain, widenByCategory, aggregateMany, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, inList, applyWhere, wherePredicate, nearMisses, refuseMisspelled, freshFirst, correlate, overlap, explode, profile, profileStream, columnCard, listGrammar, setOp, join,select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, columnsOf, withColumns, findColumn, keyOf, num, isMissing };
+module.exports = { grain, widenByCategory, aggregateMany, CLASSIFY_SCHEMA, CLASSIFY_DESCRIPTION, classify, AGGREGATE_METRICS: METRICS, FILTER_OPS: OPS, inList, applyWhere, wherePredicate, nearMisses, refuseMisspelled, correctSpelling, freshFirst, correlate, overlap, explode, profile, profileStream, columnCard, listGrammar, setOp, join,select, rank, topPerGroup, aggregate, compute, pivot, chartSpec, columnsOf, withColumns, findColumn, keyOf, num, isMissing };

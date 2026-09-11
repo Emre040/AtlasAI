@@ -114,45 +114,46 @@ test('a fetch takes its points from a column of an earlier result: what one tabl
   assert.equal(result.calls, 4);
 });
 
-test('a fetch whose filter value the table spells differently is refused with the table\'s spelling', async () => {
+test('a filter value the table spells differently is read as the table spells it, and the history says so', async () => {
   const { run, requests } = await investigator([
     response(call('fetch', { title: 'Heart rows', description: 'Every gene in heart', table: 'rna_tissue_consensus.tsv', where: [{ column: 'Tissue', op: '=', value: 'Heart-' }] })),
-    response(call('fetch', { title: 'Heart rows', description: 'Every gene in heart', table: 'rna_tissue_consensus.tsv', where: [{ column: 'Tissue', op: '=', value: 'heart' }] })),
     response(call('finish', { results: ['Heart rows'] }))
   ]);
   const result = await run({ question: 'every gene with its heart nTPM' });
   assert.equal(result.status, 'ok');
   assert.equal(result.tables[0].rows.length, 1);
-  assert.match(requests[1].messages[1].content, /failed: no row of rna_tissue_consensus\.tsv has Tissue = "Heart-"; the column spells it "heart"/);
+  assert.deepEqual(result.tables[0].args.where, [{ column: 'Tissue', op: '=', value: 'heart' }]);
+  assert.match(requests[1].messages[1].content, /turn 1: read "Heart-" as "heart", the spelling of Tissue\nturn 1: fetch → "Heart rows" \(1 rows/);
 });
 
-test('a point matched against a column that the table spells differently is refused with the table\'s spelling', async () => {
+test('a point matched against a column is read as the column spells it', async () => {
   const { run, requests } = await investigator([
     response(call('fetch', { title: 'Heart rows', description: 'Rows of the points', table: 'rna_tissue_consensus.tsv', match: 'Tissue' })),
-    response(call('finish', { results: [], note: 'stopped' }))
+    response(call('finish', { results: ['Heart rows'] }))
   ]);
   const result = await run({ points: ['Heart-'], question: 'rows of these tissues' });
   assert.equal(result.status, 'ok');
-  assert.match(requests[1].messages[1].content, /failed: no row of rna_tissue_consensus\.tsv has Tissue = "Heart-"; the column spells it "heart"/);
+  assert.deepEqual(result.tables[0].rows.map(r => [r.Tissue, r.gene]), [['heart', 'EGFR']]);
+  assert.match(requests[1].messages[1].content, /turn 1: read "Heart-" as "heart", the spelling of Tissue/);
 });
 
-test('points that are not entities are matched against the one column that holds them; a near miss is refused with the spelling', async () => {
+test('points that are not entities are matched against the one column that holds them, spelling corrected; a where on the key column beside a list is refused', async () => {
   const { run, requests } = await investigator([
     response(call('fetch', { title: 'Rows', description: 'Rows of the points', table: 'rna_tissue_consensus.tsv', fields: ['nTPM'] })),
     response(call('finish', { results: ['Rows'] }))
   ]);
-  const result = await run({ points: ['liver', 'heart'], question: 'nTPM of every gene in these tissues' });
+  const result = await run({ points: ['Liver-', 'heart'], question: 'nTPM of every gene in these tissues' });
   assert.equal(result.status, 'ok');
   assert.equal(result.tables[0].args.match, 'Tissue');
   assert.deepEqual(result.tables[0].rows.map(r => [r.Tissue, r.gene]), [['liver', 'EGFR'], ['liver', 'ERBB2'], ['liver', 'MET'], ['heart', 'EGFR']]);
-  assert.match(requests[1].messages[1].content, /turn 1: the points are values of Tissue, not genes: matched against it/);
-  const near = await investigator([
-    response(call('fetch', { title: 'Rows', description: 'Rows of the points', table: 'rna_tissue_consensus.tsv' })),
+  assert.match(requests[1].messages[1].content, /turn 1: the points are values of Tissue, not genes: matched against it\nturn 1: read "Liver-" as "liver", the spelling of Tissue/);
+  const keyed = await investigator([
+    response(call('fetch', { title: 'Rows', description: 'Rows of the points', table: 'rna_tissue_consensus.tsv', where: [{ column: 'Gene', op: 'in', value: 'ENSG1' }] })),
     response(call('finish', { results: [], note: 'stopped' }))
   ]);
-  const refused = await near.run({ points: ['Liver-'], question: 'rows of these tissues' });
+  const refused = await keyed.run({ points: ['EGFR', 'ERBB2'], question: 'nTPM of these genes' });
   assert.equal(refused.status, 'ok');
-  assert.match(near.requests[1].messages[1].content, /failed: no row of rna_tissue_consensus\.tsv has Tissue = "Liver-"; the column spells it "liver"/);
+  assert.match(keyed.requests[1].messages[1].content, /failed: the list already selects the rows by Gene; a where on Gene can only drop points from it\. Leave that clause out/);
 });
 
 test('a word that is a value is not a table, and an Investigator that gives up says what it tried', async () => {

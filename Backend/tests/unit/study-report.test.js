@@ -23,6 +23,8 @@ test('a claim is accepted only when every number it states is among its bound ce
   assert.deepEqual(reportIssues({ claims: [{ text: 'EGFR is among the top 5', artifact: 'a4', rows: [0] }] }, state), [], 'a number the artifact was made with counts as bound');
   assert.deepEqual(reportIssues({ claims: [{ text: '2 of the 3 rows have a value', artifact: 'a1', rows: [0, 1], columns: ['nTPM'] }] }, state), [], 'whole numbers may be counts of bound rows or of the artifact');
   assert.match(reportIssues({ claims: [{ text: 'liver is higher', artifact: 'a1', rows: [] }] }, state)[0], /must name the rows it rests on/);
+  // tables and figures have no numbers: a claim that says "Table 2" is told to name the artifact
+  assert.match(reportIssues({ claims: [{ text: 'The ten genes are listed in Table 2.', artifact: 'a1', rows: [0], columns: ['gene'] }] }, state)[0], /says "Table 2", which names nothing: tables and figures are artifacts, name them by id \(a1\)/);
   assert.match(reportIssues({ claims: [{ text: 'x', artifact: 'a9', rows: [0] }] }, state)[0], /a9.*not a saved artifact/);
   assert.match(reportIssues({ claims: [{ text: 'x', artifact: 'a1', rows: [7] }] }, state)[0], /between 0 and 2/);
   assert.match(reportIssues({ claims: [{ text: 'x', artifact: 'a1', rows: [0], columns: ['expression'] }] }, state)[0], /no column "expression"/);

@@ -78,7 +78,7 @@ const bare = args => { const { title, description, ...rest } = args || {}; retur
 function systemPrompt(db, agentNames) {
   const entity = db.entity;
   const search = agentNames.includes('deep_research_hpa') ? 'deep_research_hpa' : 'the search agent';
-  return `You run a study over the ${db.database} for a scientist. The agents and the operations produce every value; you choose what to ask and how to combine the results, and you never read a file. ${search} finds the ${entity}s matching a description in words, the way the ${db.database} search would, and returns them as a table. investigator_hpa answers a question with rows: for a list of points (points=[…], one or hundreds, ${entity}s or any values such as tissues; or from=<artifact id> and column) it returns every point with the fields asked for, and without a list every row the question selects; fields that live in different source tables come back as one artifact each, and join combines them. The operations compute over artifacts. Every result is an artifact with an id (a1, a2, …), a title and a description; the artifacts are the evidence of the study, and the report cites them by id.
+  return `You run a study over the ${db.database} for a scientist. The agents and the operations produce every value; you choose what to ask and how to combine the results, and you never read a file. ${search} finds the ${entity}s matching a description in words, the way the ${db.database} search would, and returns them as a table. investigator_hpa answers a question with rows: for a list of points (points=[…], one or hundreds, ${entity}s or any values such as tissues; or from=<artifact id> and column) it returns every point with the fields asked for, and without a list every row the question selects; fields that live in different source tables come back as one artifact each, and join combines them. The search selects by the atlas's categories; anything that is a row of a table (a partner, a sample, a measurement, a p-value) is the Investigator's, and a set the search cannot express is asked of the Investigator in plain language. The operations compute over artifacts. Every result is an artifact with an id (a1, a2, …), a title and a description; the artifacts are the evidence of the study, and the report cites them by id.
 
 The desk in the message is your whole working set and stays in front of you every turn: the plan, every artifact as one line (id, title, columns, rows, what made it; a result of a few rows whole, with row indices), the rows you asked to see, what is running, your history and your notes. open shows rows of an artifact when a decision or a claim needs them; select narrows columns.
 
@@ -184,8 +184,8 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     const properties = { ...t.function.parameters.properties };
     delete properties.mode;
     const entity = identity.entity;
-    if (t.function.name === 'deep_research_hpa') return { ...t, function: { ...t.function, description: `Finds the ${entity}s matching a description in words, the way the ${identity.database} search would; returns them as a table.`, parameters: { ...t.function.parameters, required: ['goal', 'title', 'description'], properties: { ...properties, goal: { type: 'string', description: 'the set described, with every stated requirement' }, title: S, description: S } } } };
-    if (t.function.name === 'investigator_hpa') return { ...t, function: { ...t.function, description: `Rows that answer a question: for a list of points (points=[...], or from=<artifact id> and column) every point with the fields asked for; without a list every row the question selects. Fields from different source tables come back as one artifact each; join combines them. The question says which fields, rows and units.`, parameters: { ...t.function.parameters, required: ['question', 'title', 'description'], properties: {
+    if (t.function.name === 'deep_research_hpa') return { ...t, function: { ...t.function, description: `The ${identity.database} search: the ${entity}s selected by the atlas's own annotation categories (tissue specificity and enrichment, protein class, secretome and subcellular location, prognostic category, evidence level), as the search page would; returns them as a table. It reads no table: partners, samples, per-tissue values, p-values and measurements are rows, and rows are investigator_hpa's.`, parameters: { ...t.function.parameters, required: ['goal', 'title', 'description'], properties: { ...properties, goal: { type: 'string', description: 'the set described, with every stated requirement, and the assay it means (RNA or protein) when the study names one' }, title: S, description: S } } } };
+    if (t.function.name === 'investigator_hpa') return { ...t, function: { ...t.function, description: `Rows from any source table of the ${identity.database} (interaction partners, per-sample or per-tissue expression, CPTAC, blood concentrations, prognostic p-values, annotations): for a list of points (points=[...], or from=<artifact id> and column) every point with the fields asked for; without a list, every row the question selects (the partners of one ${entity}, the samples of a cell type). Ask in plain language: it finds the table and the columns itself. Fields from different source tables come back as one artifact each; join combines them. The question says which fields, rows and units.`, parameters: { ...t.function.parameters, required: ['question', 'title', 'description'], properties: {
       points: { type: 'array', items: S, description: `${entity}s, or any values (tissues, cell lines, categories)` },
       from: { type: 'string', description: 'artifact id whose rows supply the points' },
       column: { type: 'string', description: `column of from that holds the points; its ${entity} keys by default` },
@@ -280,6 +280,9 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     const title = String(args.title || '').trim(), description = String(args.description || '').trim();
     if (!title || !description) throw new Error(`${toolName} needs a title and a description for its result`);
     const executionArgs = { ...bare(args), mode };
+    // The search sees the whole study: a sub-goal that says "not detected in liver" means the
+    // assay the study names (RNA here), not whichever field the words resemble.
+    if (toolName === 'deep_research_hpa') executionArgs.study = state.goal;
     const inputs = [];
     if (toolName === 'investigator_hpa') {
       // The points come as a list, or from an artifact's column (its entity keys by default);
@@ -361,10 +364,11 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
         agentJobs.delete(fingerprint);
         state.failed++;
         state.failedCalls.set(job.callKey, { turn: job.turn, error: err.message });
-        // A search for "all genes" cannot be expressed and is never needed: the operations that
-        // need every entity of the database have it already. The failure line says so.
-        const hint = toolName === 'deep_research_hpa' && err.details?.stop_reason === 'unexpressible_requirements' && /\b(all|every|entire|whole)\b[^"]{0,40}\b(genes?|proteins?|entities|atlas|database)\b/i.test(JSON.stringify(err.details))
-          ? ` (no list of every ${identity.entity} is needed: overlap tests against every ${identity.entity} of the database unless universe names an artifact, and investigator_hpa without points returns every row its question selects)` : '';
+        // A set the search cannot express is not the end of the road: what is a row of a table
+        // (partners, samples, measurements) is the Investigator's, and every entity of the
+        // database is what overlap tests against by itself. The failure line says so.
+        const hint = toolName === 'deep_research_hpa' && err.details?.stop_reason === 'unexpressible_requirements'
+          ? ` (the search selects ${identity.entity}s by the atlas's annotation categories; a table's rows, partners, samples, measurements, p-values, come from investigator_hpa, without points when the question itself selects the rows; no list of every ${identity.entity} is needed, overlap tests against the whole database by itself)` : '';
         remember(`${id} ${toolName} "${title}" failed: ${err.message}${err.details ? ` ${JSON.stringify(err.details)}` : ''}${hint}`);
         await log('tool.failed', { id, tool: toolName, kind: 'agent', error: err.message, details: err.details, ms: Date.now() - job.startedAt }, id);
       })

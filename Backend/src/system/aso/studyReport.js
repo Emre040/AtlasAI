@@ -107,6 +107,10 @@ function claimIssue(claim, state) {
   let bound;
   try { bound = binding(claim, state); }
   catch (error) { return error.message; }
+  // The report has no numbered tables or figures: they are artifacts, named by id. A claim that
+  // says "Table 2" points at nothing, and its 2 would be read as a number the data must hold.
+  const ordinal = /\b(Table|Figure|Fig\.?|Chart|Plot|Panel)\s+\d+\b/i.exec(claim.text || '');
+  if (ordinal) return `${JSON.stringify(claim.text.length > 160 ? `${claim.text.slice(0, 159)}…` : claim.text)} says "${ordinal[0]}", which names nothing: tables and figures are artifacts, name them by id (${bound.parts.map(b => b.artifact.id).join(', ')})`;
   // Numbers the bound artifacts or the artifacts they were made from were made with (a
   // threshold, a top n) are part of their evidence.
   const lineage = (a, seen = new Set()) => !a || seen.has(a.id) ? [] : (seen.add(a.id), [...numbersIn(a.args || {}), ...(a.inputs || []).flatMap(id => lineage(state.byId.get(id), seen))]);

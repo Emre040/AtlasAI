@@ -23,7 +23,8 @@ Rules:
 - A requirement is "cannot" only when no field expresses it; if a field's definition covers it, it is a filter, not "cannot".
 - Operator NOT only when the question excludes what the field describes; a requirement phrased with "not" is often a value inside a field (a "not detected" category), which stays AND.
 - When the schema has no field for a requirement, put the requirement in "cannot" with the reason; do not approximate it with a different field.
-- Prefer the field whose definition matches what the question means over the field whose name resembles the question's words.`;
+- Prefer the field whose definition matches what the question means over the field whose name resembles the question's words.
+- The question may be one part of a study given with it. When the study names the assay (RNA, or protein by immunohistochemistry) and the requirement does not, take the study's assay. When the schema has both an RNA field and a protein field for a requirement and neither the requirement nor the study names the assay, put the requirement in "cannot", naming both fields.`;
 
 const TRAIL_SYSTEM = `You are filling in one filter of a database query. You are given the question, the requirement this filter serves, and the field: its levels and every option at each level, with the database's own definitions where it gives them.
 
@@ -58,9 +59,9 @@ function planIssues(plan) {
 
 const PLAN_REPAIR_SYSTEM = `Repair only the unresolved requirements below using the exact database schema. Known requirements remain fixed. Return JSON { "repairs": [ { "requirement_id": "<original ID>", "field": "<exact schema field>" } ] }. Include operator AND or NOT only if the original operator was invalid. Known fields and valid operators cannot change. If no field expresses a requirement, instead provide "unexpressible_reason": "<source-schema reason>". Include each unresolved ID; do not drop, merge or rewrite requirements. Do not invent requirement IDs.`;
 
-async function planFilters(adapter, goal, context, requirements) {
+async function planFilters(adapter, goal, context, requirements, study = null) {
   const schema = adapter.overview();
-  const base = `Question: "${goal}"\n\nSchema:\n${schema}`;
+  const base = `Question: "${goal}"${study && study !== goal ? `\nThe study this question is one part of: "${study}"` : ''}\n\nSchema:\n${schema}`;
   const progress = new RepairProgress();
   let feedback = '', plan;
   for (;;) {
@@ -151,7 +152,7 @@ async function walkField(adapter, goal, requirement, context) {
   }
 }
 
-async function deepResearchTrail({ goal, mode: requestedMode = 'online' }, ctx = {}, adapter = require('../../hpa/searchAdapter')) {
+async function deepResearchTrail({ goal, mode: requestedMode = 'online', study = null }, ctx = {}, adapter = require('../../hpa/searchAdapter')) {
   const { onStep, includeRows = false } = ctx;
   const startedAt = Date.now();
   const stats = { promptTokens: 0, completionTokens: 0, totalTokens: 0, perStep: {} };
@@ -161,7 +162,7 @@ async function deepResearchTrail({ goal, mode: requestedMode = 'online' }, ctx =
   try {
     const context = { onStep, stats, control: createAgentControl({ ctx, stats, agentKey: 'deep_research_hpa' }) };
     await onStep?.({ stage: 'planning_step', label: 'Plan', message: `Reading the ${adapter.name} schema` });
-    const plan = await planFilters(adapter, goal, context, requirements);
+    const plan = await planFilters(adapter, goal, context, requirements, typeof study === 'string' && study.trim() ? study.trim() : null);
     if (plan.understanding) await onStep?.({ stage: 'reasoning_step', label: 'Understood', message: plan.understanding });
     if (requirements.some(item => item.status !== 'planned')) throw new ResearchStop('unexpressible_requirements', 'The requested cohort includes criteria that the source schema cannot express');
 

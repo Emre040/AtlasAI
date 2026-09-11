@@ -90,6 +90,10 @@ const defs = [
           type: 'string',
           description: 'The description of the genes to find, with every stated requirement.'
         },
+        study: {
+          type: 'string',
+          description: 'The whole study this goal is one part of, when a study loop asks; it settles the assay a requirement means.'
+        },
         mode: MODE_PARAMETER
       },
       required: ['goal'],

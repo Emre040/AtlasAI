@@ -49,6 +49,8 @@ function resolveColumns(artifact, columns) {
 
 // What a claim rests on: the cells it names, as numbers and as text for the reader. A claim binds
 // one table (artifact, rows, columns) or several (evidence: a list of such bindings).
+const SMALL_TABLE = 30;   // rows a claim may rest on whole without naming them
+
 function binding(claim, state) {
   if (Array.isArray(claim.evidence) || claim.artifact === undefined) {
     const parts = Array.isArray(claim.evidence) ? claim.evidence : [];
@@ -78,6 +80,9 @@ function bindOne(claim, state) {
     if (Array.isArray(claim.rows) && claim.rows.length) throw new Error(`${artifact.id} has no rows; a claim about it takes rows: []`);
     return { artifact, cells: [], columns: artifact.columns, values: [], counts: [0] };
   }
+  // A claim on a small table that names no rows rests on all of them (a distribution, a summary);
+  // a large table still needs the rows named.
+  if ((!Array.isArray(claim.rows) || !claim.rows.length) && rows.length <= SMALL_TABLE) claim.rows = rows.map((_, i) => i);
   if (!Array.isArray(claim.rows) || !claim.rows.length) throw new Error(`claim on ${artifact.id} must name the rows it rests on (zero-based indices, as numbered on the desk)`);
   if (claim.rows.some(i => !Number.isSafeInteger(i) || i < 0 || i >= rows.length)) throw new Error(`claim rows for ${artifact.id} must be between 0 and ${rows.length - 1}`);
   const columns = resolveColumns(artifact, claim.columns);
@@ -115,21 +120,33 @@ function claimIssue(claim, state) {
   // threshold, a top n) are part of their evidence.
   const lineage = (a, seen = new Set()) => !a || seen.has(a.id) ? [] : (seen.add(a.id), [...numbersIn(a.args || {}), ...(a.inputs || []).flatMap(id => lineage(state.byId.get(id), seen))]);
   const argNumbers = bound.parts.flatMap(b => lineage(b.artifact));
-  const unmatched = statedNumbers(claim.text).filter(({ value, tolerance, percent }) => !near(bound.values, value, tolerance) && !near(argNumbers, value, tolerance) && !(Number.isInteger(value) && bound.counts.includes(value)) && !(percent && near(bound.values, value / 100, tolerance / 100)));
+  // A whole number that is the row count of any saved artifact is bound: the artifact's size is on
+  // the desk and in the report ("the 123 partners", citing the distribution drawn from them).
+  const rowCounts = new Set(state.artifacts.map(a => (a.rows || []).length));
+  let unmatched = statedNumbers(claim.text).filter(({ value, tolerance, percent }) => !near(bound.values, value, tolerance) && !near(argNumbers, value, tolerance) && !(Number.isInteger(value) && (bound.counts.includes(value) || rowCounts.has(value))) && !(percent && near(bound.values, value / 100, tolerance / 100)));
   if (!unmatched.length) return null;
-  // A number that sits in a bound row, in a column the claim did not name, only needs the column.
+  // A number that sits in a bound row, in a column the claim did not name, is bound by naming the
+  // column: the binder does that itself, so the evidence prints the cell.
   const inBoundRows = u => {
-    for (const part of bound.parts) {
+    for (const [p, part] of bound.parts.entries()) {
       const rows = part.artifact.rows || [], named = new Set(part.columns || []);
       for (const cell of part.cells) for (const c of part.artifact.columns) {
         if (named.has(c)) continue;
         const n = typeof rows[cell.index][c] === 'number' ? rows[cell.index][c] : typeof rows[cell.index][c] === 'string' && /\d/.test(rows[cell.index][c]) ? Number(String(rows[cell.index][c]).replace(/,/g, '')) : NaN;
-        if (Number.isFinite(n) && Math.abs(n - u.value) <= u.tolerance + 1e-9 * Math.abs(u.value)) return `${u.raw} is at ${part.artifact.id} row ${cell.index} column ${c}; add the column to the claim`;
+        if (Number.isFinite(n) && Math.abs(n - u.value) <= u.tolerance + 1e-9 * Math.abs(u.value)) return { part: p, column: c };
       }
     }
     return null;
   };
-  const where = unmatched.map(u => { const inRows = inBoundRows(u); if (inRows) return inRows; const hits = locate(state, u.value, u.tolerance); return `${u.raw}${hits.length ? ` is at ${hits.join(', ')}` : ' is in no saved artifact'}`; });
+  for (const u of [...unmatched]) {
+    const hit = inBoundRows(u);
+    if (!hit) continue;
+    const owner = Array.isArray(claim.evidence) ? (claim.artifact !== undefined ? (hit.part === 0 ? claim : claim.evidence[hit.part - 1]) : claim.evidence[hit.part]) : claim;
+    owner.columns = [...(bound.parts[hit.part].columns || []), hit.column];
+    unmatched = unmatched.filter(x => x !== u);
+  }
+  if (!unmatched.length) return null;
+  const where = unmatched.map(u => { const hits = locate(state, u.value, u.tolerance); return `${u.raw}${hits.length ? ` is at ${hits.join(', ')}` : ' is in no saved artifact'}`; });
   const boundTo = bound.parts.map(b => `${b.artifact.id} rows ${[...new Set(b.cells.map(c => c.index))].join(', ') || '(none)'}${b.columns ? ` columns ${b.columns.join(', ')}` : ''}`).join('; ');
   return `${JSON.stringify(claim.text.length > 160 ? `${claim.text.slice(0, 159)}…` : claim.text)} states ${unmatched.map(u => u.raw).join(', ')}, not among the cells it is bound to (${boundTo}): ${where.join('; ')}. Add those rows to the claim's evidence, or compute the number with an operation and cite that result.`;
 }

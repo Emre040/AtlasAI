@@ -16,13 +16,16 @@ test('a claim is accepted only when every number it states is among its bound ce
   assert.match(wrong[0], /states 40\.1, not among the cells it is bound to \(a1 rows 0 columns nTPM\): 40\.1 is in no saved artifact/);
   const elsewhere = reportIssues({ claims: [{ text: 'EGFR lung is 14.1 nTPM', artifact: 'a1', rows: [0], columns: ['nTPM'] }] }, state);
   assert.match(elsewhere[0], /14\.1 is at a1 row 1 nTPM/, 'a refusal says where the number lives');
-  const unnamed = reportIssues({ claims: [{ text: 'EGFR liver is 32.2 nTPM', artifact: 'a1', rows: [0], columns: ['gene', 'Tissue'] }] }, state);
-  assert.match(unnamed[0], /32\.2 is at a1 row 0 column nTPM; add the column to the claim/, 'a number in a bound row but an unnamed column asks for the column');
+  const unnamed = { text: 'EGFR liver is 32.2 nTPM', artifact: 'a1', rows: [0], columns: ['gene', 'Tissue'] };
+  assert.deepEqual(reportIssues({ claims: [unnamed] }, state), [], 'a number in a bound row but an unnamed column gets the column named by the binder');
+  assert.deepEqual(unnamed.columns, ['gene', 'Tissue', 'nTPM']);
   const a4 = { id: 'a4', kind: 'data', label: 'top', rows: [{ gene: 'EGFR', rank: 1 }], columns: ['gene', 'rank'], tool: 'rank', args: { artifact: 'a1', by: 'nTPM', top: 5 }, inputs: ['a1'] };
   state.byId.set('a4', a4); state.artifacts.push(a4);
   assert.deepEqual(reportIssues({ claims: [{ text: 'EGFR is among the top 5', artifact: 'a4', rows: [0] }] }, state), [], 'a number the artifact was made with counts as bound');
   assert.deepEqual(reportIssues({ claims: [{ text: '2 of the 3 rows have a value', artifact: 'a1', rows: [0, 1], columns: ['nTPM'] }] }, state), [], 'whole numbers may be counts of bound rows or of the artifact');
-  assert.match(reportIssues({ claims: [{ text: 'liver is higher', artifact: 'a1', rows: [] }] }, state)[0], /must name the rows it rests on/);
+  const wholeSmall = { text: 'liver is higher', artifact: 'a1', rows: [] };
+  assert.deepEqual(reportIssues({ claims: [wholeSmall] }, state), [], 'a claim on a small table that names no rows rests on all of them');
+  assert.deepEqual(wholeSmall.rows, [0, 1, 2]);
   // tables and figures have no numbers: a claim that says "Table 2" is told to name the artifact
   assert.match(reportIssues({ claims: [{ text: 'The ten genes are listed in Table 2.', artifact: 'a1', rows: [0], columns: ['gene'] }] }, state)[0], /says "Table 2", which names nothing: tables and figures are artifacts, name them by id \(a1\)/);
   assert.match(reportIssues({ claims: [{ text: 'x', artifact: 'a9', rows: [0] }] }, state)[0], /a9.*not a saved artifact/);
@@ -91,4 +94,22 @@ test('a percent in a claim binds to the cell that holds the fraction, within its
   assert.deepEqual(reportIssues({ claims: [{ text: '69.9 percent are nuclear.', artifact: 'a6', rows: [0], columns: ['fraction'] }] }, s), []);
   assert.match(reportIssues({ claims: [{ text: '75% are nuclear.', artifact: 'a6', rows: [0], columns: ['fraction'] }] }, s)[0], /states 75, not among the cells/);
   assert.equal(reportIssues({ tables: [{ artifact: 'a6' }], limitations: ['The nuclear share of 70% depends on the main-location field'] }, s).some(i => /limitations/.test(i)), false);
+});
+
+test('the binder does the naming it can do itself: a column it locates, all rows of a small table, the row count of any artifact', () => {
+  const a7 = { id: 'a7', kind: 'data', label: 'nuclear', rows: [{ nuclear_count: 86, nuclear_fraction: 0.699187 }], columns: ['nuclear_count', 'nuclear_fraction'], tool: 'compute', args: {}, inputs: ['a1'] };
+  const a8 = { id: 'a8', kind: 'data', label: 'partners', rows: Array.from({ length: 123 }, (_, i) => ({ gene: `G${i}` })), columns: ['gene'], tool: 'investigator_hpa', args: {}, inputs: [] };
+  const s = { artifacts: [a7, a8], byId: new Map([['a7', a7], ['a8', a8]]), plan: [] };
+  // a number in a bound row but an unnamed column: the column is added and the claim stands
+  const claim = { text: '86 partners (70%) are nuclear.', artifact: 'a7', rows: [0], columns: ['nuclear_fraction'] };
+  assert.deepEqual(reportIssues({ claims: [claim] }, s), []);
+  assert.deepEqual(claim.columns, ['nuclear_fraction', 'nuclear_count']);
+  // a small table needs no row indices: all its rows are the evidence
+  const whole = { text: 'The nuclear share is 0.699187.', artifact: 'a7', columns: ['nuclear_fraction'] };
+  assert.deepEqual(reportIssues({ claims: [whole] }, s), []);
+  assert.deepEqual(whole.rows, [0]);
+  // the row count of another saved artifact is a bound number
+  assert.deepEqual(reportIssues({ claims: [{ text: 'Of the 123 partners, 86 are nuclear.', artifact: 'a7', rows: [0], columns: ['nuclear_count'] }] }, s), []);
+  assert.match(reportIssues({ claims: [{ text: 'Of the 124 partners, 86 are nuclear.', artifact: 'a7', rows: [0], columns: ['nuclear_count'] }] }, s)[0], /states 124/);
+  assert.match(reportIssues({ claims: [{ text: 'all of them', artifact: 'a8' }] }, s)[0], /must name the rows/);
 });

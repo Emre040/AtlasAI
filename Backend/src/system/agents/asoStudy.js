@@ -113,7 +113,11 @@ function agentArtifact(toolName, args, result) {
       throw error;
     }
     const r = result.result || {};
-    return { kind: 'data', label: String(args.goal || 'search').slice(0, 80), rows: (r.rows || []).map(normalizeSearchRow), meta: { search_url: r.search_urls?.[0] || null, query: r.plan || null, not_expressible: (r.not_expressible || []).map(c => c.requirement), mode: r.mode || null, hpa_version: r.hpa_version, source_files: r.source_files } };
+    // The search's own account of its selection travels with the result: each requirement, the
+    // field and value it chose, and why. The controller and the review read it; a choice of assay
+    // or of a narrower category than asked is visible instead of buried in the agent's log.
+    const trail = (r.trail || []).map(f => `${f.requirement} → ${f.field}${Array.isArray(f.path) && f.path.length ? `: ${f.path.join(' / ')}` : ''}${f.operator === 'NOT' ? ' (excluded)' : ''}${f.why ? ` — ${String(f.why).replace(/\s+/g, ' ').trim().slice(0, 200)}` : ''}`);
+    return { kind: 'data', label: String(args.goal || 'search').slice(0, 80), rows: (r.rows || []).map(normalizeSearchRow), meta: { search_url: r.search_urls?.[0] || null, query: r.plan || null, trail, understanding: r.understanding || null, not_expressible: (r.not_expressible || []).map(c => c.requirement), mode: r.mode || null, hpa_version: r.hpa_version, source_files: r.source_files } };
   }
   if (toolName === 'investigator_hpa') {
     if (result?.error && result.found !== true) throw new Error(result.error);
@@ -160,7 +164,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
   const reviewStats = { promptTokens: 0, completionTokens: 0, totalTokens: 0, perStep: {} };
   async function reviewResult(toolName, args, a) {
     const account = toolName === 'deep_research_hpa'
-      ? `Search query built: ${a.meta?.query || '(none)'}${a.meta?.not_expressible?.length ? `; could not express: ${a.meta.not_expressible.join('; ')}` : ''}`
+      ? `Search query built: ${a.meta?.query || '(none)'}${a.meta?.understanding ? `; the search understood the call as: ${a.meta.understanding}` : ''}${a.meta?.trail?.length ? `; its selection, requirement by requirement: ${a.meta.trail.join('; ')}` : ''}${a.meta?.not_expressible?.length ? `; could not express: ${a.meta.not_expressible.join('; ')}` : ''}`
       : `Source lookups: ${JSON.stringify(a.meta?.lookups || []).slice(0, 1200)}${a.meta?.coverage ? `; coverage: ${JSON.stringify(a.meta.coverage).slice(0, 300)}` : ''}`;
     const asked = args.goal ? `goal: ${args.goal}` : `question: ${args.question || ''}`;
     const user = `Study goal: ${state.goal}\n\nThe call: ${toolName} "${args.title || ''}", ${asked}${Array.isArray(args.points) && args.points.length ? ` (for ${args.points.length} listed points)` : args.from ? ` (for the points of ${args.from})` : ''}\n\nWhat the agent did: ${account}\n\nResult ${a.id}: ${a.size}; columns: ${a.columns.join(', ')}${a.rows?.length ? `; first rows: ${desk.sampleLines(a.rows, a.columns.slice(0, 7), 3).join(' ; ')}` : ''}`;
@@ -378,7 +382,9 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           made.push(a);
           // A search that ran the same query as an earlier one says so: rewording the goal changed nothing.
           const twin = a.meta.query ? state.artifacts.find(x => x !== a && x.meta?.query === a.meta.query) : null;
-          const extra = toolName === 'deep_research_hpa' ? ` query: ${String(a.meta.query || '').slice(0, 160)}${a.meta.not_expressible?.length ? `; could not express: ${a.meta.not_expressible.join('; ')}` : ''}${twin ? `; the same query as ${twin.id}${(twin.rows?.length || 0) === a.rows.length ? ', the same set' : ''}` : ''}` : a.kind === 'answer' ? ` answer: ${String(a.rows[0]?.answer || '').slice(0, 200)}` : '';
+          const extra = toolName === 'deep_research_hpa' ? ` query: ${String(a.meta.query || '').slice(0, 160)}${a.meta.trail?.length ? `; chosen: ${a.meta.trail.join('; ')}` : ''}${a.meta.not_expressible?.length ? `; could not express: ${a.meta.not_expressible.join('; ')}` : ''}${twin ? `; the same query as ${twin.id}${(twin.rows?.length || 0) === a.rows.length ? ', the same set' : ''}` : ''}` : a.kind === 'answer' ? ` answer: ${String(a.rows[0]?.answer || '').slice(0, 200)}` : '';
+          // The selection stays on the artifact's line every turn, not only in the history.
+          if (toolName === 'deep_research_hpa' && a.meta.trail?.length) a.description = `${a.description} Selected by: ${a.meta.trail.join('; ')}`;
           // A set's rows are one Investigator call away; the history says so as it lands.
           const next = toolName === 'deep_research_hpa' && a.rows.length && agentNames.has('investigator_hpa') ? `; its rows: investigator_hpa from=${a.id} with the question` : '';
           remember(`${id} ${toolName} "${title}" done → ${a.id} (${a.size})${extra}${next}`);

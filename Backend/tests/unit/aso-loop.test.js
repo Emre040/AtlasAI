@@ -300,3 +300,17 @@ test('an agent result that is not what the call asked for is flagged on its line
   assert.match(desk2, /turn 1: review of a1: not what the call asked for: the call asks for RNA, the lookup read the protein table\. Ask again with what the study means, or use it knowing this/);
   assert.equal(result.token_breakdown.review.calls, 1);
 });
+
+test("a search result carries the search's own account of its selection, on its line and in the review", async t => {
+  const search = { status: 'ok', outcome: 'completed', result: { rows: [{ Gene: 'ALB', Ensembl: 'ENSG1' }], plan: 'Tissue expression (IHC): Liver / hepatocytes / Not detected', understanding: 'genes without protein staining in liver', search_urls: ['u'], trail: [{ requirement_id: 'r1', requirement: 'not detected in liver', field: 'Tissue expression (IHC)', path: ['Liver', 'hepatocytes', 'Not detected'], operator: 'AND', why: 'protein level per tissue; the RNA field has no per-tissue detection' }], not_expressible: [] }, tokens: { prompt: 10, completion: 5, total: 15 } };
+  const { run, requests, reviews } = await study(t, [
+    response(call('plan', { items: [{ step: 'set', kind: 'gene_set' }] }), call('deep_research_hpa', named('Liver set', { goal: 'not detected in liver' }))),
+    response(call('finish', { tables: [{ artifact: 'a1' }] }))
+  ], { agentResult: async name => (name === 'deep_research_hpa' ? search : BULK) });
+  const result = await run({});
+  assert.equal(result.outcome, 'completed', result.summary);
+  const desk2 = requests[1].messages[1].content;
+  assert.match(desk2, /a1 "Liver set"[^\n]*\n  Liver set, described Selected by: not detected in liver → Tissue expression \(IHC\): Liver \/ hepatocytes \/ Not detected — protein level per tissue; the RNA field has no per-tissue detection/);
+  assert.match(desk2, /turn 1: t1 deep_research_hpa "Liver set" done → a1 \(1 rows\) query: Tissue expression \(IHC\): Liver \/ hepatocytes \/ Not detected; chosen: not detected in liver → Tissue expression \(IHC\)/);
+  assert.match(reviews[0].user, /the search understood the call as: genes without protein staining in liver; its selection, requirement by requirement: not detected in liver → Tissue expression \(IHC\)/);
+});

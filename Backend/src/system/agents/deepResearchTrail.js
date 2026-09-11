@@ -24,7 +24,8 @@ Rules:
 - Operator NOT only when the question excludes what the field describes; a requirement phrased with "not" is often a value inside a field (a "not detected" category), which stays AND.
 - When the schema has no field for a requirement, put the requirement in "cannot" with the reason; do not approximate it with a different field.
 - Prefer the field whose definition matches what the question means over the field whose name resembles the question's words.
-- The question may be one part of a study given with it. When the study names the assay (RNA, or protein by immunohistochemistry) and the requirement does not, take the study's assay. When the schema has both an RNA field and a protein field for a requirement and neither the requirement nor the study names the assay, put the requirement in "cannot", naming both fields.`;
+- The question may be one part of a study given with it. When the study names the assay (RNA, or protein by immunohistochemistry) and the requirement does not, take the study's assay. When the schema has both an RNA field and a protein field for a requirement and neither the requirement nor the study names the assay, put the requirement in "cannot", naming both fields.
+- "why" is read by the study that asked: when the schema holds the same kind of requirement under more than one field (an RNA field and a protein field, a category and a per-tissue level), say which you chose, which you did not, and why; when a field expresses the requirement only in part (a cell type where a tissue was asked, a category where a threshold was asked), say what it does not cover.`;
 
 const TRAIL_SYSTEM = `You are filling in one filter of a database query. You are given the question, the requirement this filter serves, and the field: its levels and every option at each level, with the database's own definitions where it gives them.
 

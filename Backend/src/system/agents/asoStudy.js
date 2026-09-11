@@ -166,7 +166,13 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
   let registrations = Promise.resolve();
   const register = args => { const next = registrations.then(() => registerArtifact(db, args)); registrations = next.catch(() => {}); return next; };
 
-  const state = { goal, plan: [], artifacts: [], byId: new Map(), running: new Map(), notes: [], history: [], views: new Map(), turn: 0, toolCalls: 0, failed: 0, ids: { a: 0, t: 0 } };
+  const state = { goal, plan: [], artifacts: [], byId: new Map(), running: new Map(), notes: [], history: [], views: new Map(), turn: 0, toolCalls: 0, failed: 0, ids: { a: 0, t: 0 }, failedCalls: new Map() };
+  // A call that failed for a reason that does not change (a requirement the search cannot
+  // express, a column that is not there, an argument of the wrong shape) is refused when it is
+  // made again exactly the same way, before it costs another agent run or another turn.
+  const TRANSIENT = /timed? ?out|rate limit|429|50\d|ECONN|network|temporar|overloaded/i;
+  const callKeyOf = (name, args) => `${name} ${JSON.stringify(bare(args))}`;
+  const repeatOf = (name, args) => { const f = state.failedCalls.get(callKeyOf(name, args)); return f && !TRANSIENT.test(f.error) ? f : null; };
   const remember = text => state.history.push(`turn ${state.turn}: ${text}`);
 
   // The study's agents are the two that return data: a set of entities (deep research) and rows
@@ -279,7 +285,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       // The points come as a list, or from an artifact's column (its entity keys by default);
       // without either, the question itself selects the rows.
       if (args.from !== undefined) {
-        if (args.points !== undefined) throw new Error('Use points or from, not both');
+        if (Array.isArray(args.points) && args.points.length) throw new Error('Use points or from, not both');
         const input = get(args.from);
         if (!Array.isArray(input.rows) || !input.rows.length) throw new Error(`${args.from} has no rows to investigate`);
         const column = args.column ? (input.columns.find(c => c === args.column) || input.columns.find(c => c.toLowerCase() === String(args.column).toLowerCase())) : null;
@@ -292,10 +298,8 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
         inputs.push(input.id);
         delete executionArgs.from; delete executionArgs.column;
         executionArgs.points = points;
-      } else if (args.points !== undefined) {
-        if (!Array.isArray(args.points) || !args.points.length) throw new Error('points must be a nonempty list');
-        executionArgs.points = args.points.map(String);
-      } else executionArgs.points = [];
+      } else if (Array.isArray(args.points) && args.points.length) executionArgs.points = args.points.map(String);
+      else executionArgs.points = [];   // no list, or an empty one: the question itself selects the rows
       delete executionArgs.gene; delete executionArgs.genes;
     }
     const fingerprint = JSON.stringify([toolName, executionArgs]).toLowerCase();
@@ -305,7 +309,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       return false;
     }
     const id = `t${++state.ids.t}`;
-    const job = { id, tool: toolName, args, startedAt: Date.now(), kind: 'agent', made: null };
+    const job = { id, tool: toolName, args, startedAt: Date.now(), kind: 'agent', made: null, turn: state.turn, callKey: callKeyOf(toolName, args) };
     agentJobs.set(fingerprint, job);
     state.running.set(id, job);
     state.toolCalls++;
@@ -353,7 +357,12 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       .catch(async err => {
         agentJobs.delete(fingerprint);
         state.failed++;
-        remember(`${id} ${toolName} "${title}" failed: ${err.message}${err.details ? ` ${JSON.stringify(err.details)}` : ''}`);
+        state.failedCalls.set(job.callKey, { turn: job.turn, error: err.message });
+        // A search for "all genes" cannot be expressed and is never needed: the operations that
+        // need every entity of the database have it already. The failure line says so.
+        const hint = toolName === 'deep_research_hpa' && err.details?.stop_reason === 'unexpressible_requirements' && /\b(all|every|entire|whole)\b[^"]{0,40}\b(genes?|proteins?|entities|atlas|database)\b/i.test(JSON.stringify(err.details))
+          ? ` (no list of every ${identity.entity} is needed: overlap tests against every ${identity.entity} of the database unless universe names an artifact, and investigator_hpa without points returns every row its question selects)` : '';
+        remember(`${id} ${toolName} "${title}" failed: ${err.message}${err.details ? ` ${JSON.stringify(err.details)}` : ''}${hint}`);
         await log('tool.failed', { id, tool: toolName, kind: 'agent', error: err.message, details: err.details, ms: Date.now() - job.startedAt }, id);
       })
       .finally(() => { state.running.delete(id); wakeUp(); });
@@ -398,6 +407,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
 
   const made = new Map();   // fingerprint of an operation → the artifact it made
   async function runTableTool(toolName, args) {
+    const callKey = callKeyOf(toolName, args);   // as called, before any alias, so a repeat of the same call is recognised
     args = { ...args };
     if (['combine', 'join', 'overlap'].includes(toolName) && args.a === undefined && args.artifact !== undefined) args = { ...args, a: args.artifact };
     const title = String(args.title || '').trim(), description = String(args.description || '').trim();
@@ -425,6 +435,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       return { ok: true, artifact: a };
     } catch (err) {
       state.failed++;
+      state.failedCalls.set(callKey, { turn: state.turn, error: err.message });
       remember(`${toolName}(${desk.argsLine(bare(args), 140)}) failed: ${err.message}`);
       await log('tool.failed', { id, tool: toolName, kind: toolName === 'chart' ? 'chart' : 'tool', error: err.message, ms: Date.now() - t0 }, id);
       return { ok: false, error: err.message };
@@ -565,9 +576,31 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
         if (call.name === 'open') { if (await openWhat(call.args)) sync++; return; }
         if (call.name === 'run') {
           const specifications = new Map(toolSpecs.filter(t => TABLE_TOOLS.has(t.function.name)).map(t => [t.function.name, t.function]));
-          const steps = call.args.steps || [];
-          const batch = await executeBatch({ steps, outputs: steps.map(s => s?.id).filter(id => typeof id === 'string') }, { specifications, concurrency: parallel, execute: runTableTool, external: id => (state.byId.has(id) ? id : null) });
-          if (batch.status !== 'completed') remember(`run: ${batch.steps.filter(s => s.status !== 'done').map(s => `${s.id} ${s.status}${s.error ? `: ${s.error}` : ''}`).join('; ')}`);
+          const all = Array.isArray(call.args.steps) ? call.args.steps : [];
+          // An agent named as a run step starts on its own (it returns in the background) and the
+          // steps that use its result wait for the artifact: the run is not lost to that mistake.
+          const lifted = new Map();
+          for (const s of all) {
+            if (!s || !agentNames.has(s.tool)) continue;
+            const repeat = repeatOf(s.tool, s.args || {});
+            try {
+              if (repeat) throw new Error(`the same call failed at turn ${repeat.turn} (${repeat.error.slice(0, 160)}); it would fail the same way, change it`);
+              if (startAgent(s.tool, s.args || {})) { started++; lifted.set(String(s.id), `t${state.ids.t}`); } else { sync++; lifted.set(String(s.id), 'already asked'); }
+            } catch (error) { state.failed++; state.failedCalls.set(callKeyOf(s.tool, s.args || {}), { turn, error: error.message }); lifted.set(String(s.id), null); remember(`run step ${s.id} ${s.tool}(${desk.argsLine(bare(s.args), 120)}) failed: ${error.message}`); }
+          }
+          const waits = [], steps = [];
+          for (const s of all) {
+            if (!s || agentNames.has(s.tool)) continue;
+            const text = JSON.stringify(s.args || {});
+            const dep = [...lifted.keys()].find(stepId => text.includes(`@${stepId}`));
+            if (dep) waits.push(`${s.id} uses @${dep}${lifted.get(dep) ? `, which ${lifted.get(dep) === 'already asked' ? 'an earlier call' : lifted.get(dep)} is producing: run it again with that artifact's id when it is on the desk` : ', which failed'}`);
+            else steps.push(s);
+          }
+          if (lifted.size) remember(`run: ${[...lifted].map(([stepId, t]) => `${stepId} ${t ? (t === 'already asked' ? 'already asked' : `started as ${t}`) : 'failed'}`).join(', ')}${waits.length ? `; ${waits.join('; ')}` : ''}`);
+          if (steps.length) {
+            const batch = await executeBatch({ steps, outputs: steps.map(s => s?.id).filter(id => typeof id === 'string') }, { specifications, concurrency: parallel, execute: runTableTool, external: id => (state.byId.has(id) ? id : null) });
+            if (batch.status !== 'completed') remember(`run: ${batch.steps.filter(s => s.status !== 'done').map(s => `${s.id} ${s.status}${s.error ? `: ${s.error}` : ''}`).join('; ')}`);
+          }
           sync++; return;
         }
         if (call.name === 'finish') {
@@ -600,8 +633,10 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
         throw new Error(`no tool ${call.name}`);
       }
       const guarded = async call => {
+        const repeat = repeatOf(call.name, call.args);
+        if (repeat) { state.failed++; remember(`${call.name}(${desk.argsLine(bare(call.args), 140)}) refused: the same call failed at turn ${repeat.turn} (${repeat.error.slice(0, 160)}); it would fail the same way, change it`); await log('call.refused', { tool: call.name, turn, earlier: repeat.turn }); sync++; return; }
         try { await executeCall(call); }
-        catch (error) { state.failed++; remember(`${call.name}(${desk.argsLine(bare(call.args), 140)}) failed: ${error.message}`); await log('call.failed', { tool: call.name, error: error.message, turn }); sync++; }
+        catch (error) { state.failed++; state.failedCalls.set(callKeyOf(call.name, call.args), { turn, error: error.message }); remember(`${call.name}(${desk.argsLine(bare(call.args), 140)}) failed: ${error.message}`); await log('call.failed', { tool: call.name, error: error.message, turn }); sync++; }
       };
       // Sync tools are ordered barriers; operations and agents run together up to the parallel limit.
       let batch = [];

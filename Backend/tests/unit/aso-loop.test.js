@@ -241,3 +241,44 @@ test('the Investigator takes points from an artifact column, or no list at all; 
   assert.deepEqual(agentCalls[1].args.question, 'every gene measured in each tissue');
   assert.match(requests[3].messages[1].content, /turn 3: filter\(artifact=rna_tissue_consensus\.tsv, where=[^)]*\) failed: no artifact "rna_tissue_consensus\.tsv" \(have a1, a2, a3\)/);
 });
+
+test('an optional argument sent as null is absent: from with points null takes the artifact column', async t => {
+  const { run, requests, agentCalls } = await study(t, [
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR', 'ERBB2'], question: 'nTPM' }))),
+    response(call('investigator_hpa', named('Again', { points: null, from: 'a1', column: 'gene', question: 'kidney nTPM' }))),
+    response(call('finish', { tables: [{ artifact: 'a1' }] }))
+  ]);
+  const result = await run({});
+  assert.equal(result.outcome, 'completed', result.summary);
+  assert.deepEqual(agentCalls[1].args.points, ['EGFR', 'ERBB2']);
+  assert.doesNotMatch(requests[2].messages[1].content, /must be an array|not both/);
+});
+
+test('an agent named as a run step starts on its own and the steps that use it wait', async t => {
+  const { run, requests, agentCalls } = await study(t, [
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' }))),
+    response(call('run', { steps: [
+      { id: 'e', tool: 'investigator_hpa', args: named('Kidney', { points: ['ERBB2'], question: 'kidney nTPM' }) },
+      { id: 'f', tool: 'filter', args: named('Liver', { artifact: '@e', where: [{ column: 'Tissue', op: '=', value: 'liver' }] }) }
+    ] })),
+    response(call('finish', { tables: [{ artifact: 'a1' }] }))
+  ]);
+  const result = await run({});
+  assert.equal(result.outcome, 'completed', result.summary);
+  assert.deepEqual(agentCalls.map(c => c.args.points), [['EGFR'], ['ERBB2']], 'the agent step ran on its own');
+  assert.match(requests[2].messages[1].content, /turn 2: run: e started as t2; f uses @e, which t2 is producing: run it again with that artifact's id when it is on the desk/);
+});
+
+test('a call that failed for a reason that does not change is refused when it is repeated', async t => {
+  const { run, requests } = await study(t, [
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' }))),
+    response(call('filter', named('Nothing', { artifact: 'a9', where: [{ column: 'Tissue', op: '=', value: 'liver' }] }))),
+    response(call('filter', named('Nothing', { artifact: 'a9', where: [{ column: 'Tissue', op: '=', value: 'liver' }] }))),
+    response(call('finish', { tables: [{ artifact: 'a1' }] }))
+  ]);
+  const result = await run({});
+  assert.equal(result.outcome, 'completed', result.summary);
+  const history = requests[3].messages[1].content;
+  assert.match(history, /turn 2: filter\([^\n]*\) failed: /);
+  assert.match(history, /turn 3: filter\([^\n]*\) refused: the same call failed at turn 2 \(/);
+});

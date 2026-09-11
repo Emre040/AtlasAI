@@ -22,6 +22,13 @@ function validate(value, schema, label) {
   if (!schema.type) return;
   if (schema.type === 'object') {
     object(value, label);
+    // An optional argument sent as null is absent: small models emit null for every control they
+    // do not use, and a study lost a dozen turns to "points must be an array". The field is
+    // removed so the operation never sees it; a required field stays and is checked as sent.
+    for (const [key, item] of Object.entries(value)) {
+      const declared = schema.properties && Object.hasOwn(schema.properties, key) ? schema.properties[key] : null;
+      if (item === null && declared && !(schema.required || []).includes(key) && declared.type !== 'null' && !declared.anyOf) delete value[key];
+    }
     for (const name of schema.required || []) if (!Object.hasOwn(value, name)) throw new Error(`${label}.${name} is required`);
     for (const [key, item] of Object.entries(value)) {
       if (schema.properties && Object.hasOwn(schema.properties, key)) validate(item, schema.properties[key], `${label}.${key}`);

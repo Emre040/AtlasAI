@@ -335,7 +335,10 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
             const named = (table.args?.where || []).map(w => w?.column).filter(Boolean);
             const wide = named.length ? tools.widenByCategory(table.rows, table.columns, identity.keys, { only: named }) : null;
             const shape = wide ? ` One row per ${identity.entity}; ${wide.measure} by ${wide.by} in the columns ${wide.values.join(', ')}.` : '';
-            const a = await addArtifact({ kind: 'data', label: table.title || title, description: `${table.description || description}${shape}`, rows: wide ? wide.rows : table.rows, columns: wide ? wide.columns : table.columns, tool: toolName, args, inputs, toolId: id, meta: { lookups: [table.args], points: executionArgs.points, coverage: table.coverage, source_file: table.source_file, source_files: [table.source_file], status: result.status, hpa_version: result.hpa_version, source_rows: table.rows.length, ...(wide ? { shape: { wide_by: wide.by, measure: wide.measure, values: wide.values } } : {}) } });
+            // The study's own title names the result (it is what the controller will look for and
+            // what a concat label carries); the Investigator's title tells several tables apart.
+            const label = result.tables.length === 1 ? (title || table.title) : (table.title && table.title !== title ? `${title}: ${table.title}` : title);
+            const a = await addArtifact({ kind: 'data', label, description: `${table.description || description}${shape}`, rows: wide ? wide.rows : table.rows, columns: wide ? wide.columns : table.columns, tool: toolName, args, inputs, toolId: id, meta: { lookups: [table.args], points: executionArgs.points, coverage: table.coverage, source_file: table.source_file, source_files: [table.source_file], status: result.status, hpa_version: result.hpa_version, source_rows: table.rows.length, ...(wide ? { shape: { wide_by: wide.by, measure: wide.measure, values: wide.values } } : {}) } });
             made.push(a);
             lines.push(`${a.id} "${a.label}" (${a.size})`);
           }
@@ -387,7 +390,10 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
         const label = typeof args.label === 'string' && args.label.trim() ? args.label.trim() : null;
         if (label && args.how !== 'concat') throw new Error('combine: label goes with concat, which keeps every row of both inputs');
         // With a label, each row says which input it came from, by that input's title.
-        const tagged = (rows, id) => label ? tools.withColumns(rows.map(r => ({ [label]: state.byId.get(id)?.label || id, ...r })), [label, ...tools.columnsOf(rows).filter(c => c !== label)]) : rows;
+        // The label is each input's title; two inputs with the same title are told apart by their ids.
+        const names = { [args.a]: state.byId.get(args.a)?.label || args.a, [args.b]: state.byId.get(args.b)?.label || args.b };
+        if (args.a !== args.b && names[args.a] === names[args.b]) { names[args.a] = `${names[args.a]} (${args.a})`; names[args.b] = `${names[args.b]} (${args.b})`; }
+        const tagged = (rows, id) => label ? tools.withColumns(rows.map(r => ({ [label]: names[id], ...r })), [label, ...tools.columnsOf(rows).filter(c => c !== label)]) : rows;
         out = { rows: tools.setOp(args.how, tagged(rowsOf('a'), args.a), tagged(rowsOf('b'), args.b), args.on || null) }; break;
       }
       case 'join': out = executeTableOperation(toolName, args, { a: rowsOf('a'), b: rowsOf('b') }); break;

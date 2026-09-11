@@ -55,7 +55,7 @@ test('the investigator searches the release, fetches for the whole list and retu
 
 test('without a list, fetch returns every row a filter selects; with match, the points are values of a column', async () => {
   const table = await investigator([
-    response(call('fetch', { title: 'Liver rows', description: 'Every gene in liver', table: 'rna_tissue_consensus.tsv', where: [{ column: 'Tissue', op: '=', value: 'liver' }] })),
+    response(call('fetch', { title: 'Liver rows', description: 'Every gene in liver', table: 'rna_tissue_consensus.tsv', fields: ['Tissue', 'nTPM'], where: [{ column: 'Tissue', op: '=', value: 'liver' }] })),
     response(call('finish', { results: ['Liver rows'] }))
   ]);
   const whole = await table.run({ question: 'every gene with its liver nTPM' });
@@ -94,7 +94,7 @@ test('a fetch takes its points from a column of an earlier result: what one tabl
 
 test('a filter value or a point the table spells differently is read as the table spells it; a where on the key column beside a list is refused', async () => {
   const { run, requests } = await investigator([
-    response(call('fetch', { title: 'Heart rows', description: 'Every gene in heart', table: 'rna_tissue_consensus.tsv', where: [{ column: 'Tissue', op: '=', value: 'Heart-' }] })),
+    response(call('fetch', { title: 'Heart rows', description: 'Every gene in heart', table: 'rna_tissue_consensus.tsv', fields: ['Tissue', 'nTPM'], where: [{ column: 'Tissue', op: '=', value: 'Heart-' }] })),
     response(call('finish', { results: ['Heart rows'] }))
   ]);
   const result = await run({ question: 'every gene with its heart nTPM' });
@@ -109,8 +109,8 @@ test('a filter value or a point the table spells differently is read as the tabl
   assert.equal(matched.tables[0].args.match, 'Tissue');
   assert.match(points.requests[1].messages[1].content, /turn 1: the points are values of Tissue, not genes: matched against it\nturn 1: read "Liver-" as "liver", the spelling of Tissue/);
   const keyed = await investigator([
-    response(call('fetch', { title: 'Rows', description: 'Rows of the points', table: 'rna_tissue_consensus.tsv', where: [{ column: 'Gene', op: 'in', value: 'ENSG1' }] })),
-    response(call('fetch', { title: 'Rows', description: 'Rows of the points', table: 'rna_tissue_consensus.tsv', where: [{ column: 'Gene', op: 'in', value: 'ENSG1' }] }))
+    response(call('fetch', { title: 'Rows', description: 'Rows of the points', table: 'rna_tissue_consensus.tsv', fields: ['Tissue', 'nTPM'], where: [{ column: 'Gene', op: 'in', value: 'ENSG1' }] })),
+    response(call('fetch', { title: 'Rows', description: 'Rows of the points', table: 'rna_tissue_consensus.tsv', fields: ['Tissue', 'nTPM'], where: [{ column: 'Gene', op: 'in', value: 'ENSG1' }] }))
   ]);
   const twice = await keyed.run({ points: ['EGFR', 'ERBB2'], question: 'nTPM of these genes' });
   assert.match(keyed.requests[1].messages[1].content, /turn 1: the where on Gene names 1 of the list's 2 points; the list selects the rows, so it is set aside\nturn 1: fetch → "Rows" \(5 rows/);

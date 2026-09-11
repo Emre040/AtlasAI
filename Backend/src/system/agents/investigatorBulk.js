@@ -37,7 +37,7 @@ function tools(db) {
   const where = { type: 'array', items: { type: 'object', properties: { column: S, op: { type: 'string', enum: FILTER_OPS }, value: {} }, required: ['column', 'op'] } };
   return [
     tool('search', 'Where words live in the release: tables by name or description, columns by name, recorded values with row counts. The field asked, the context named, or a point that is not a gene; one word or several.', { words: { type: 'array', items: S } }, ['words']),
-    tool('fetch', `Rows of one table for the points: the fields asked (every column when omitted), where clauses that must all hold, match = the column the points are values of (the other side of a pair table comes back as other). Points that are ${db.entity}s need no match. from + column: the values of a column of an earlier result are the points.`, { title: S, table: S, fields: { type: 'array', items: S }, where, from: S, column: S, match: { type: 'array', items: S, description: 'the column the points are values of; two columns for a pair table' } }, ['table']),
+    tool('fetch', `Rows of one table for the points: the fields asked (name them; the search shows the columns), where clauses that must all hold, match = the column the points are values of (the other side of a pair table comes back as other). Points that are ${db.entity}s need no match. from + column: the values of a column of an earlier result are the points.`, { title: S, table: S, fields: { type: 'array', items: S }, where, from: S, column: S, match: { type: 'array', items: S, description: 'the column the points are values of; two columns for a pair table' } }, ['table', 'fields']),
     tool('finish', 'Done: the results that answer the question, the mapping (field → table, column of the result) and a note: what was chosen over what, what no table holds, which points did not resolve.', { results: { type: 'array', items: S, description: 'titles of the results, as listed under RESULTS' }, mapping: { type: 'array', items: { type: 'object', properties: { field: S, table: S, column: S }, required: ['field', 'table', 'column'] } }, note: S }, ['results'])
   ];
 }
@@ -272,7 +272,31 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
   const emit = (stage, label, message) => onStep?.({ stage, label, message });
   let release = null, resolved = [], db = null;
   const unresolvedPoints = () => (points || []).filter((_, i) => !resolved[i]);
-  const done = (extra, turns) => ({ bulk: true, mode: 'offline', hpa_version: release?.hpaVersion || null, tokens: { total: { prompt: stats.prompt, completion: stats.completion, total: stats.total } }, calls: stats.calls, turns, seconds: (Date.now() - started) / 1000, unresolved: unresolvedPoints(), ...extra });
+  // Every artifact returned is one value for the points: their keys, the columns that tell a
+  // point's rows apart (a cohort, a tissue), and that one value column. A fetch of several
+  // fields is several artifacts, one per field, so the study sees what is what.
+  const KEY_COLUMNS = new Set(['gene', 'ensembl', 'point', 'other', 'source_rows', 'source_status']);
+  const isNumber = v => v !== null && v !== undefined && String(v).trim() !== '' && Number.isFinite(Number(String(v).replace(/,/g, '')));
+  const perValue = table => {
+    const keyCols = table.columns.filter(c => KEY_COLUMNS.has(c));
+    const others = table.columns.filter(c => !KEY_COLUMNS.has(c));
+    if (others.length <= 1) return [table];
+    // Measured columns are the values; text columns beside them (a cohort, a tissue) are the
+    // context that tells a point's rows apart. Without a measured column, each text column that
+    // varies is a value of its own and a constant one echoes the filter.
+    const missing = v => v === null || v === undefined || String(v).trim() === '';
+    const numeric = c => table.rows.some(r => !missing(r[c])) && table.rows.every(r => missing(r[c]) || isNumber(r[c]));
+    const constant = c => new Set(table.rows.map(r => String(r[c] ?? ''))).size <= 1;
+    const measured = others.filter(numeric);
+    const values = measured.length ? measured : others.filter(c => !constant(c));
+    const context = others.filter(c => !values.includes(c));
+    const split = (values.length ? values : context).map(v => {
+      const columns = [...keyCols.filter(c => !['source_rows', 'source_status'].includes(c)), ...context.filter(c => c !== v), v, ...keyCols.filter(c => ['source_rows', 'source_status'].includes(c))];
+      return { ...table, name: `${table.name} · ${v}`, title: `${table.title} · ${v}`, columns, rows: table.rows.map(r => Object.fromEntries(columns.map(c => [c, r[c] ?? null]))) };
+    });
+    return split.length > 1 ? split : [table];
+  };
+  const done = (extra, turns) => ({ bulk: true, mode: 'offline', hpa_version: release?.hpaVersion || null, tokens: { total: { prompt: stats.prompt, completion: stats.completion, total: stats.total } }, calls: stats.calls, turns, seconds: (Date.now() - started) / 1000, unresolved: unresolvedPoints(), ...extra, ...(Array.isArray(extra.tables) ? { tables: extra.tables.flatMap(perValue) } : {}) });
   try {
     if (points !== null && (!Array.isArray(points) || points.some(p => typeof p !== 'string' || !p.trim()))) throw new Error('Investigator points must be an array of names');
     if (typeof question !== 'string' || !question.trim()) throw new Error('Investigator requires a question');
@@ -371,6 +395,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             const description = title;
             const spelling = [];
             if (results.has(title)) { let n = 2; while (results.has(`${title} (${n})`)) n++; spelling.push(`a result titled ${JSON.stringify(title)} exists: this one is titled "${title} (${n})"`); title = `${title} (${n})`; }
+            if (!Array.isArray(args.fields) || !args.fields.length) throw new Error('fetch names the fields asked (the columns to read); the search shows the columns of a table');
             const entry = await adapter.entry(String(args.table || '').trim());
             if (!entry || entry.key === 'unreadable') throw new Error(`no table named ${JSON.stringify(args.table)}${entry?.why ? `: ${entry.why}` : ''}; search names the tables`);
             const cards = (await adapter.profile(entry)).columns;

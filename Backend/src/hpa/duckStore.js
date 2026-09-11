@@ -20,8 +20,11 @@ const crypto = require('node:crypto');
 const duckdb = require('duckdb');
 const { columnCard } = require('../system/aso/studyTools');
 
-const MEMORY_LIMIT = process.env.HPA_DUCKDB_MEMORY_LIMIT || '8GB';
+const MEMORY_LIMIT = process.env.HPA_DUCKDB_MEMORY_LIMIT || '16GB';
 const THREADS = Number(process.env.HPA_DUCKDB_THREADS) || 8;
+const LOADER_VERSION = 2;             // part of a build's name: a change in how tables load builds again
+const PROFILE_VERSION = 2;            // a table's profile is computed again when this changes
+const PROFILE_BATCH = 64;             // columns tallied per query, so a wide table stays within memory
 const VOCABULARY = 1000;              // distinct values kept for a column, as the row profiler keeps
 const SAMPLES = 300;                  // cell values read for a text column's list grammar
 const CHUNK = 2000;                   // values per IN list
@@ -54,7 +57,8 @@ async function sourcesOf(root, datasets) {
   }
   return sources.sort((a, b) => a.file.localeCompare(b.file));
 }
-const stampOf = sources => crypto.createHash('sha256').update(JSON.stringify(sources.map(s => [s.file, s.size, s.mtime, s.unpacked_bytes, s.downloaded_unix_ms]))).digest('hex').slice(0, 12);
+const stampOf = sources => crypto.createHash('sha256').update(JSON.stringify([LOADER_VERSION, sources.map(s => [s.file, s.size, s.mtime, s.unpacked_bytes, s.downloaded_unix_ms])])).digest('hex').slice(0, 12);
+const sameSource = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
 
 class DuckStore {
   constructor() { this.db = null; this.root = null; this.version = null; this.file = null; this.meta = null; }
@@ -104,20 +108,31 @@ class DuckStore {
       const building = path.join(root, `${file}.building`);
       await fsp.rm(building, { force: true });
       await fsp.rm(`${building}.wal`, { force: true });
-      log(`building ${file} from ${sources.length} files`);
+      // A table whose file is unchanged since the previous build is copied from it, not loaded again.
+      const previous = await readJson(this.metaPath(root, version));
+      const previousFile = previous?.file && previous.file !== file && await exists(path.join(root, previous.file)) ? path.join(root, previous.file) : null;
+      log(`building ${file} from ${sources.length} files${previousFile ? `, unchanged tables copied from ${previous.file}` : ''}`);
       const db = await openDatabase(building, false);
       const tables = {};
       try {
         await configure(db);
+        if (previousFile) await run(db, `ATTACH ${literal(previousFile)} AS previous (READ_ONLY)`);
         for (const source of sources) {
           const t0 = Date.now();
           const t = quoted(source.table);
+          const kept = previousFile ? previous.tables[source.file] : null;
           try {
+            if (kept && !kept.error && kept.table === source.table && sameSource(kept.source, source) && kept.profile_version === PROFILE_VERSION && kept.profile) {
+              await run(db, `CREATE TABLE ${t} AS SELECT * FROM previous.${t}`);
+              tables[source.file] = { ...kept, seconds: Math.round((Date.now() - t0) / 100) / 10 };
+              log(`copied ${source.file}: ${Number(kept.rows).toLocaleString('en-US')} rows, ${tables[source.file].seconds} s`);
+              continue;
+            }
             await run(db, `CREATE TABLE ${t} AS SELECT * FROM read_csv(${literal(path.join(root, source.file))}, delim='\t', header=true, all_varchar=true, quote='"', escape='"', null_padding=true, ignore_errors=false)`);
             const columns = (await all(db, `DESCRIBE ${t}`)).map(r => r.column_name);
             const [{ n }] = await all(db, `SELECT count(*)::DOUBLE AS n FROM ${t}`);
             const profile = await profileTable(db, source.table, columns);
-            tables[source.file] = { table: source.table, source, rows: Number(n), columns, profile, seconds: Math.round((Date.now() - t0) / 100) / 10 };
+            tables[source.file] = { table: source.table, source, rows: Number(n), columns, profile, profile_version: PROFILE_VERSION, seconds: Math.round((Date.now() - t0) / 100) / 10 };
             log(`loaded ${source.file}: ${Number(n).toLocaleString('en-US')} rows, ${columns.length} columns, ${tables[source.file].seconds} s`);
           } catch (error) {
             await run(db, `DROP TABLE IF EXISTS ${t}`).catch(() => {});
@@ -125,6 +140,7 @@ class DuckStore {
             log(`failed ${source.file}: ${error.message}`);
           }
         }
+        if (previousFile) await run(db, 'DETACH previous').catch(() => {});
         await run(db, 'CHECKPOINT');
       } finally { await closeDatabase(db); }
       await fsp.rename(building, path.join(root, file));
@@ -224,14 +240,22 @@ class DuckStore {
 async function profileTable(db, table, columns) {
   const q = columns.map(quoted);
   const t = quoted(table);
-  const tallies = columns.flatMap((c, i) => [
-    `count(*) FILTER (WHERE ${blank(q[i])})::DOUBLE AS ${quoted(`b${i}`)}`,
-    `count(*) FILTER (WHERE NOT ${blank(q[i])} AND TRY_CAST(replace(${q[i]}, ',', '') AS DOUBLE) IS NOT NULL)::DOUBLE AS ${quoted(`u${i}`)}`,
-    `min(TRY_CAST(replace(${q[i]}, ',', '') AS DOUBLE))::DOUBLE AS ${quoted(`mn${i}`)}`,
-    `max(TRY_CAST(replace(${q[i]}, ',', '') AS DOUBLE))::DOUBLE AS ${quoted(`mx${i}`)}`,
-    `approx_count_distinct(trim(${q[i]}))::DOUBLE AS ${quoted(`d${i}`)}`
-  ]);
-  const [agg] = await all(db, `SELECT count(*)::DOUBLE AS n${tallies.length ? `, ${tallies.join(', ')}` : ''} FROM ${t}`);
+  const [{ n }] = await all(db, `SELECT count(*)::DOUBLE AS n FROM ${t}`);
+  const agg = { n };
+  // Tallies a batch of columns at a time: a table of a thousand columns stays within memory.
+  for (let start = 0; start < columns.length; start += PROFILE_BATCH) {
+    const tallies = [];
+    for (let i = start; i < Math.min(columns.length, start + PROFILE_BATCH); i++) {
+      tallies.push(
+        `count(*) FILTER (WHERE ${blank(q[i])})::DOUBLE AS ${quoted(`b${i}`)}`,
+        `count(*) FILTER (WHERE NOT ${blank(q[i])} AND TRY_CAST(replace(${q[i]}, ',', '') AS DOUBLE) IS NOT NULL)::DOUBLE AS ${quoted(`u${i}`)}`,
+        `min(TRY_CAST(replace(${q[i]}, ',', '') AS DOUBLE))::DOUBLE AS ${quoted(`mn${i}`)}`,
+        `max(TRY_CAST(replace(${q[i]}, ',', '') AS DOUBLE))::DOUBLE AS ${quoted(`mx${i}`)}`,
+        `approx_count_distinct(trim(${q[i]}))::DOUBLE AS ${quoted(`d${i}`)}`
+      );
+    }
+    Object.assign(agg, (await all(db, `SELECT ${tallies.join(', ')} FROM ${t}`))[0]);
+  }
   const cards = [];
   for (const [i, c] of columns.entries()) {
     const s = { n: agg.n, blank: agg[`b${i}`], nums: agg[`u${i}`], min: agg[`mn${i}`] ?? Infinity, max: agg[`mx${i}`] ?? -Infinity, distinct: new Map(), samples: [] };

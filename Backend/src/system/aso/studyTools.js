@@ -174,7 +174,7 @@ function freshFirst(rows, inputColumns = []) {
 
 // The ways two tables combine. There is no union: a union kept one row per entity and silently
 // dropped the rest, which on a table with one row per gene and tissue threw away every second
-// measurement (a study lost all its pancreas rows that way). Stacking is concat, which keeps every
+// measurement (a study lost one tissue's rows that way). Stacking is concat, which keeps every
 // row; one row per entity across both is concat followed by distinct, two steps the study can see.
 function setOp(kind, left, right, on = null) {
   const columns = [...new Set([...columnsOf(left), ...columnsOf(right)])];

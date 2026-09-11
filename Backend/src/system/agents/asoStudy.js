@@ -18,6 +18,7 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { inference, getActiveModel } = require('../../inference/gateway');
+const { jsonCall } = require('../../inference/jsonCall');
 const { platformConfig } = require('../../policy/config');
 const tools = require('../aso/studyTools');
 const { TABLE_OPERATIONS, executeTableOperation, A } = require('../aso/tableOperations');
@@ -150,6 +151,31 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     for (const key of ['prompt', 'completion', 'total']) { sum[key] += stats[key]; tokens[key] += stats[key]; }
     sum.calls += Number(calls) || (usage.steps ? Object.keys(usage.steps).length : 0);
   };
+  // What an agent brings back is judged against the call that summoned it, in the sense of the
+  // study, before the controller builds on it: the selection (the kind of entity, the assay, the
+  // filters, the table), never the numbers. A result that is not what was asked stays on the
+  // desk, flagged on its line and in the history, so the controller asks again with what the
+  // study means instead of following it blind.
+  const REVIEW_SYSTEM = `You judge whether an agent's result is what a study asked it for. You see the study's goal, the call that summoned the agent (its goal or question), the agent's own account of how it selected the result (the search query it built, or the source table, fields and filters it read) and the result's shape. Judge the selection only: the right kind of entity, the assay the study means (RNA or protein) when it names one, the filters and categories the call states, the right source table; a search that could not express part of the call is not what was asked. Do not judge the numbers. Reply with JSON: {"accepted": true|false, "reason": "<one sentence: what was asked and what was selected instead, or what matches>"}.`;
+  const reviewStats = { promptTokens: 0, completionTokens: 0, totalTokens: 0, perStep: {} };
+  async function reviewResult(toolName, args, a) {
+    const account = toolName === 'deep_research_hpa'
+      ? `Search query built: ${a.meta?.query || '(none)'}${a.meta?.not_expressible?.length ? `; could not express: ${a.meta.not_expressible.join('; ')}` : ''}`
+      : `Source lookups: ${JSON.stringify(a.meta?.lookups || []).slice(0, 1200)}${a.meta?.coverage ? `; coverage: ${JSON.stringify(a.meta.coverage).slice(0, 300)}` : ''}`;
+    const asked = args.goal ? `goal: ${args.goal}` : `question: ${args.question || ''}`;
+    const user = `Study goal: ${state.goal}\n\nThe call: ${toolName} "${args.title || ''}", ${asked}${Array.isArray(args.points) && args.points.length ? ` (for ${args.points.length} listed points)` : args.from ? ` (for the points of ${args.from})` : ''}\n\nWhat the agent did: ${account}\n\nResult ${a.id}: ${a.size}; columns: ${a.columns.join(', ')}${a.rows?.length ? `; first rows: ${desk.sampleLines(a.rows, a.columns.slice(0, 7), 3).join(' ; ')}` : ''}`;
+    const before = reviewStats.totalTokens;
+    try {
+      const verdict = await jsonCall(REVIEW_SYSTEM, user, undefined, `review ${a.id}`, reviewStats);
+      const accepted = verdict?.accepted !== false;
+      const reason = String(verdict?.reason || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+      a.meta.review = { accepted, reason };
+      if (!accepted) { a.description = `${a.description} ⚠ Review: ${reason}`; remember(`review of ${a.id}: not what the call asked for: ${reason}. Ask again with what the study means, or use it knowing this`); }
+      await log('agent.review', { id: a.id, accepted, reason });
+    } catch (error) { await log('agent.review', { id: a.id, error: error.message }); }
+    const spent = reviewStats.totalTokens - before;
+    if (spent) addSpecialistUsage('review', { prompt: reviewStats.promptTokens, completion: reviewStats.completionTokens, total: reviewStats.totalTokens }, 1), reviewStats.promptTokens = reviewStats.completionTokens = reviewStats.totalTokens = 0;
+  }
   const addUsage = usage => {
     const p = usage?.prompt_tokens || 0, c = usage?.completion_tokens || 0;
     mainTokens.prompt += p; mainTokens.completion += c; mainTokens.total += p + c; mainTokens.calls++;
@@ -280,8 +306,8 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     const title = String(args.title || '').trim(), description = String(args.description || '').trim();
     if (!title || !description) throw new Error(`${toolName} needs a title and a description for its result`);
     const executionArgs = { ...bare(args), mode };
-    // The search sees the whole study: a sub-goal that says "not detected in liver" means the
-    // assay the study names (RNA here), not whichever field the words resemble.
+    // The search sees the whole study: a sub-goal that names a measurement without its assay
+    // means the assay the study names, not whichever field the words resemble.
     if (toolName === 'deep_research_hpa') executionArgs.study = state.goal;
     const inputs = [];
     if (toolName === 'investigator_hpa') {
@@ -357,6 +383,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           const next = toolName === 'deep_research_hpa' && a.rows.length && agentNames.has('investigator_hpa') ? `; its rows: investigator_hpa from=${a.id} with the question` : '';
           remember(`${id} ${toolName} "${title}" done → ${a.id} (${a.size})${extra}${next}`);
         }
+        for (const a of made) await reviewResult(toolName, args, a);
         job.made = [...made, ...repeats].map(a => a.id);
         for (const a of made) await log('tool.done', { id, tool: toolName, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);
       })
@@ -411,9 +438,9 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       case 'join': out = executeTableOperation(toolName, args, { a: rowsOf('a'), b: rowsOf('b') }); break;
       case 'aggregate': {
         out = executeTableOperation(toolName, args, { artifact: rowsOf('artifact') });
-        // A statistic of a column is named after both (mean_pancreas), so two aggregates joined
-        // side by side stay told apart: a bare "mean" and "mean_2" once had a study report the
-        // pancreas and kidney means the wrong way round. count is rows and keeps its name.
+        // A statistic of a column is named after both (mean_value), so two aggregates joined
+        // side by side stay told apart: a bare "mean" and "mean_2" once had a study report two
+        // tissues' means the wrong way round. count is rows and keeps its name.
         if (args.column && out.rows) {
           const metrics = (Array.isArray(args.metrics) ? args.metrics : [args.metrics]).map(m => String(m).toLowerCase()).filter(m => m !== 'count');
           const renamed = Object.fromEntries(metrics.map(m => [m, `${m}_${args.column}`]));

@@ -14,11 +14,13 @@ const named = (title, args) => ({ title, description: `${title}, described`, ...
 
 async function study(t, script, options = {}) {
   const directory = await tempWorkspace(t);
-  const requests = [], events = [], agentCalls = [];
+  const requests = [], events = [], agentCalls = [], reviews = [];
   let artifact = 0;
   const stubs = {
     '../../inference/gateway': { getActiveModel: () => ({ id: 1, configKey: 'test-model' }), inference: { assignContext() {}, chat: { completions: { async create(request) { requests.push(request); const next = script.shift(); if (!next) throw new Error('script exhausted'); return typeof next === 'function' ? next(request) : next; } } } } },
     '../../policy/config': { platformConfig: () => ({ asoMaxSteps: options.maxTurns || 12, asoParallelLimit: 3 }) },
+    // The review of an agent's result against the goal that summoned it is its own model call; tests script it.
+    '../../inference/jsonCall': { jsonCall: async (system, user, onStep, label, stats) => { reviews.push({ label, user }); if (stats) { stats.promptTokens += 100; stats.completionTokens += 10; stats.totalTokens += 110; } return options.review ? options.review(user) : { accepted: true, reason: '' }; } },
     '../../hpa/geneDataAdapter': fakeAdapter(),
     '../../hpa/agentMode': { async resolveAgentMode() { return { mode: 'offline', hpaVersion: 'test' }; } },
     '../../hpa/localData': { FILES: { master: 'proteinatlas.tsv' } },
@@ -32,7 +34,7 @@ async function study(t, script, options = {}) {
   };
   const asoStudy = await loadWithStubs('src/system/agents/asoStudy.js', stubs);
   const run = args => asoStudy({ goal: 'Lung and liver nTPM for EGFR and ERBB2, a heatmap and a grouped bar chart', ...args }, { db: {}, visitorId: 1, async onStep(event) { events.push(event); } });
-  return { run, requests, events, agentCalls, directory };
+  return { run, requests, events, agentCalls, reviews, directory };
 }
 
 test('plan, delegate, compute a chain, and finish a report bound to the data', async t => {
@@ -49,7 +51,7 @@ test('plan, delegate, compute a chain, and finish a report bound to the data', a
   assert.equal(requests.length, 4);
   assert.deepEqual(agentCalls.map(c => c.name), ['investigator_hpa']);
   assert.deepEqual(agentCalls[0].args, { points: ['EGFR', 'ERBB2'], question: 'lung and liver nTPM', mode: 'offline' }, 'the agent gets the list and the question; the title stays on the desk');
-  assert.equal(result.tokens.total, 440 + 550, 'study and specialist tokens are both counted');
+  assert.equal(result.tokens.total, 440 + 550 + 110, 'study, specialist and review tokens are all counted');
   assert.equal(result.token_breakdown.investigator_hpa.calls, 3);
   assert.equal(result.agents, 1);
   assert.deepEqual(result.plan.map(p => p.status), ['done', 'done', 'done']);
@@ -282,4 +284,19 @@ test('a call that failed for a reason that does not change is refused when it is
   const history = requests[3].messages[1].content;
   assert.match(history, /turn 2: filter\([^\n]*\) failed: /);
   assert.match(history, /turn 3: filter\([^\n]*\) refused: the same call failed at turn 2 \(/);
+});
+
+test('an agent result that is not what the call asked for is flagged on its line and in the history', async t => {
+  const { run, requests, reviews } = await study(t, [
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'RNA nTPM in liver and lung' }))),
+    response(call('finish', { tables: [{ artifact: 'a1' }] }))
+  ], { review: user => (/RNA nTPM in liver and lung/.test(user) ? { accepted: false, reason: 'the call asks for RNA, the lookup read the protein table' } : { accepted: true, reason: '' }) });
+  const result = await run({});
+  assert.equal(result.outcome, 'completed', result.summary);
+  assert.equal(reviews.length, 1);
+  assert.match(reviews[0].user, /Study goal: Lung and liver nTPM for EGFR and ERBB2[\s\S]*The call: investigator_hpa "Values", question: RNA nTPM in liver and lung \(for 1 listed points\)[\s\S]*Source lookups: \[\{"table":"rna_tissue_consensus.tsv"/);
+  const desk2 = requests[1].messages[1].content;
+  assert.match(desk2, /a1 "Values"[^\n]*\n  Values, described ⚠ Review: the call asks for RNA, the lookup read the protein table/);
+  assert.match(desk2, /turn 1: review of a1: not what the call asked for: the call asks for RNA, the lookup read the protein table\. Ask again with what the study means, or use it knowing this/);
+  assert.equal(result.token_breakdown.review.calls, 1);
 });

@@ -8,10 +8,13 @@ const LOG_LLM_IO = requireBoolean('HPA_LOG_LLM_IO');
 
 async function jsonCall(system, user, onStep, label, stats) {
   if (LOG_LLM_IO && onStep) await onStep({ stage: 'planning_step', label: `LLM Request: ${label}`, message: `SYSTEM:\n${system}\n\nUSER:\n${user}` });
+  // A study's reasoning effort reaches every call made on its behalf through the call context.
+  const effort = inference.getContext?.()?.reasoningEffort || null;
   const res = await inference.chat.completions.create({
     messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
     temperature: 0,
-    response_format: { type: 'json_object' }
+    response_format: { type: 'json_object' },
+    ...(effort ? { reasoning_effort: effort } : {})
   });
   const content = res.choices?.[0]?.message?.content || '{}';
   let parsed = {};

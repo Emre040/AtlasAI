@@ -24,6 +24,7 @@ Rules:
 - Operator NOT only when the question excludes what the field describes; a requirement phrased with "not" is often a value inside a field (a "not detected" category), which stays AND.
 - When the schema has no field for a requirement, put the requirement in "cannot" with the reason; do not approximate it with a different field.
 - Prefer the field whose definition matches what the question means over the field whose name resembles the question's words.
+- Read the question as one whole: what it says about how a thing is measured, in which cohort, scope or release, holds for every requirement unless the question says otherwise.
 - The question may be one part of a study given with it. When the study settles a choice the question leaves open, follow the study. When more than one field could serve a requirement and neither the question nor the study settles which, put the requirement in "cannot", naming the fields.
 - "why" is read by the study that asked. When more than one field could serve a requirement, say which you chose, which you did not, and why. When a field expresses a requirement only in part, say what it does not cover.`;
 

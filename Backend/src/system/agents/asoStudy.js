@@ -83,6 +83,8 @@ function systemPrompt(db, agentNames) {
 
 The desk in the message is your whole working set and stays in front of you every turn: the plan, every artifact as one line (id, title, columns, rows, what made it; a result of a few rows whole, with row indices), the rows you asked to see, what is running, your history and your notes. open shows rows of an artifact when a decision or a claim needs them; select narrows columns.
 
+Read the question as one study: what it says about how a thing is measured, in which cohort, scope or release, holds for every part of the question unless the question says otherwise.
+
 How a study goes:
 1. plan lists the deliverables, one item per requested table, figure of a given type, cohort or interpretation; independent work starts in the same turn.
 2. A set of ${entity}s comes from ${search}; its rows come from investigator_hpa with from=<that artifact's id> and the question. Both run in the background and return tables that are used as they are.
@@ -174,7 +176,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     const user = `Study goal: ${state.goal}\n\nThe call: ${toolName} "${args.title || ''}", ${asked}${Array.isArray(args.points) && args.points.length ? ` (for ${args.points.length} listed points)` : args.from ? ` (for the points of ${args.from})` : ''}\n\nWhat the agent did: ${account}\n\nResult ${a.id}: ${a.size}; columns: ${a.columns.join(', ')}${a.rows?.length ? `; first rows: ${desk.sampleLines(a.rows, a.columns.slice(0, 7), 3).join(' ; ')}` : ''}${share}`;
     const before = reviewStats.totalTokens;
     try {
-      const verdict = await jsonCall(REVIEW_SYSTEM, user, undefined, `review ${a.id}`, reviewStats);
+      const verdict = effort ? await inference.withContext({ reasoningEffort: effort }, () => jsonCall(REVIEW_SYSTEM, user, undefined, `review ${a.id}`, reviewStats)) : await jsonCall(REVIEW_SYSTEM, user, undefined, `review ${a.id}`, reviewStats);
       const accepted = verdict?.accepted !== false;
       const reason = String(verdict?.reason || '').replace(/\s+/g, ' ').trim().slice(0, 240);
       a.meta.review = { accepted, reason };

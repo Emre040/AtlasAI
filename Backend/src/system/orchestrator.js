@@ -188,7 +188,7 @@ async function execute(name, args, ctx = {}) {
   if ((name === 'deep_research_hpa' || name === 'aso_hpa') && !parsed.goal && rawQuery) parsed.goal = rawQuery;
   if (name === 'clarify_hpa') { parsed.query = rawQuery; parsed.context = ctx.history || null; }
 
-  const result = await inference.withContext({ agentKey: name }, () => handler(parsed, { ...ctx, onStep }));
+  const result = await inference.withContext({ agentKey: name, ...(ctx.reasoningEffort ? { reasoningEffort: ctx.reasoningEffort } : {}) }, () => handler(parsed, { ...ctx, onStep }));
   return { result, steps };
 }
 

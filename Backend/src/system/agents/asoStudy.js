@@ -23,6 +23,25 @@ const { platformConfig } = require('../../policy/config');
 const tools = require('../aso/studyTools');
 const { TABLE_OPERATIONS, executeTableOperation, A } = require('../aso/tableOperations');
 const geneData = require('../../hpa/geneDataAdapter');
+
+// The recorded values whose names contain a word of the text (four letters or more, the longest
+// words first), as "column: value (table)", at most eight: what the atlas calls the thing the
+// text names.
+async function atlasValuesFor(text) {
+  if (typeof geneData.findValues !== 'function') return [];
+  const words = [...new Set(String(text).toLowerCase().match(/[a-z][a-z0-9-]{3,}/g) || [])].sort((a, b) => b.length - a.length).slice(0, 8);
+  const lines = [];
+  for (const word of words) {
+    for (const hit of await geneData.findValues(word)) {
+      for (const value of hit.values) {
+        const line = `${hit.column}: ${value} (${hit.file})`;
+        if (!lines.includes(line)) lines.push(line);
+        if (lines.length >= 8) return lines;
+      }
+    }
+  }
+  return lines;
+}
 const { createWorkspace, updateWorkspace } = require('../aso/workspaceStore');
 const { registerArtifact } = require('../aso/artifactStore');
 const { createLogger } = require('../aso/logger');
@@ -414,9 +433,14 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
         // A set the search cannot express is not the end of the road: what is a row of a table
         // (partners, samples, measurements) is the Investigator's, and every entity of the
         // database is what overlap tests against by itself. The failure line says so.
-        const hint = toolName === 'deep_research_hpa' && err.details?.stop_reason === 'unexpressible_requirements'
+        const refused = toolName === 'deep_research_hpa' && err.details?.stop_reason === 'unexpressible_requirements';
+        const hint = refused
           ? ` (the search selects ${identity.entity}s by the atlas's annotation categories; a table's rows, partners, samples, measurements, p-values, come from investigator_hpa, without points when the question itself selects the rows; no list of every ${identity.entity} is needed, overlap tests against the whole database by itself)` : '';
-        remember(`${id} ${toolName} "${title}" failed: ${err.message}${err.details ? ` ${JSON.stringify(err.details)}` : ''}${hint}`);
+        // What the atlas calls the thing the call names: recorded values whose names contain a
+        // word of the call, so a set the search could not express as worded may exist under its
+        // atlas name.
+        const called = refused ? await atlasValuesFor(String(args.goal || args.question || '')) : [];
+        remember(`${id} ${toolName} "${title}" failed: ${err.message}${err.details ? ` ${JSON.stringify(err.details)}` : ''}${hint}${called.length ? `; the atlas records, under words of the call: ${called.join('; ')}` : ''}`);
         await log('tool.failed', { id, tool: toolName, kind: 'agent', error: err.message, details: err.details, ms: Date.now() - job.startedAt }, id);
       })
       .finally(() => { state.running.delete(id); wakeUp(); });

@@ -158,6 +158,9 @@ test('a statistic named without its column is that column when the table holds o
   assert.equal(tools.findColumn(two, 'median'), null, 'two such columns: name the one meant');
   const { statedNumbers } = require('../../src/system/aso/numbers');
   assert.deepEqual(statedNumbers('p = 4.21e‑165, r = −0.5, n = 384').map(n => n.value), [4.21e-165, -0.5, 384]);
+  assert.deepEqual(statedNumbers('p = 5.3 × 10⁻⁷ and q = 2 x 10^3 and 5 x 100 genes').map(n => n.value), [5.3e-7, 2000, 5, 100], 'a power of ten written with a superscript or a caret is one number; a plain product is not');
+  const grouped = tools.aggregate(tools.withColumns([{ gene: 'A', Tissue: 'liver', nTPM: 1 }, { gene: 'A', Tissue: 'lung', nTPM: 3 }, { gene: 'B', Tissue: 'liver', nTPM: 5 }], ['gene', 'Tissue', 'nTPM']), { column: 'nTPM', metrics: ['sum'], group_by: 'gene, Tissue' });
+  assert.deepEqual(grouped.map(r => [r.gene, r.Tissue, r.sum]), [['A', 'liver', 1], ['A', 'lung', 3], ['B', 'liver', 5]], 'a group_by of several names separated by commas groups by all of them');
 });
 
 test('filter keeps the rows where every clause of where holds and at least one clause of any', () => {

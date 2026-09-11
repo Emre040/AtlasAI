@@ -26,8 +26,12 @@ test('a claim is accepted only when every number it states is among its bound ce
   const wholeSmall = { text: 'liver is higher', artifact: 'a1', rows: [] };
   assert.deepEqual(reportIssues({ claims: [wholeSmall] }, state), [], 'a claim on a small table that names no rows rests on all of them');
   assert.deepEqual(wholeSmall.rows, [0, 1, 2]);
-  // tables and figures have no numbers: a claim that says "Table 2" is told to name the artifact
-  assert.match(reportIssues({ claims: [{ text: 'The ten genes are listed in Table 2.', artifact: 'a1', rows: [0], columns: ['gene'] }] }, state)[0], /says "Table 2", which names nothing: tables and figures are artifacts, name them by id \(a1\)/);
+  // tables are numbered in the order the report gives them: "Table 2" names the second, or nothing
+  assert.match(reportIssues({ claims: [{ text: 'The ten genes are listed in Table 2.', artifact: 'a1', rows: [0], columns: ['gene'] }] }, state)[0], /says "Table 2", but the report lists 0 tables: tables and figures are numbered in the order the report gives them; or name the artifact by id \(a1\)/);
+  const byOrdinal = { text: 'The genes are listed in Table 1.' };
+  assert.deepEqual(reportIssues({ tables: [{ artifact: 'a1' }], claims: [byOrdinal] }, state), [], 'an ordinal within the report binds the claim to that table, and its number is not a number the data must hold');
+  assert.equal(byOrdinal.artifact, 'a1');
+  assert.deepEqual(reportIssues({ tables: [{ artifact: 'a1' }], claims: [{ text: 'EGFR liver is 32.2 nTPM, see Table 1.', artifact: 'a1', rows: [0], columns: ['nTPM'] }] }, state), []);
   assert.match(reportIssues({ claims: [{ text: 'x', artifact: 'a9', rows: [0] }] }, state)[0], /a9.*not a saved artifact/);
   assert.match(reportIssues({ claims: [{ text: 'x', artifact: 'a1', rows: [7] }] }, state)[0], /between 0 and 2/);
   assert.match(reportIssues({ claims: [{ text: 'x', artifact: 'a1', rows: [0], columns: ['expression'] }] }, state)[0], /no column "expression"/);
@@ -51,14 +55,14 @@ test('a pivot matrix is a report table: row labels down the side, column labels 
   assert.deepEqual(reportIssues({ tables: [{ artifact: 'a5', columns: ['lung'] }] }, withMatrix), []);
   assert.match(reportIssues({ tables: [{ artifact: 'a5', columns: ['lung', 'skin'] }] }, withMatrix)[0], /a5 has no column "skin"; its columns: liver, lung/);
   const md = renderReport({ tables: [{ artifact: 'a5', title: 'Heat' }] }, withMatrix, []);
-  assert.match(md, /\*\*Heat\*\* \(a5, 2 × 2\)\n\n\|  \| liver \| lung \|\n\| --- \| --- \| --- \|\n\| EGFR \| 32\.2 \| 14\.1 \|\n\| MET \| — \| 3 \|/);
+  assert.match(md, /\*\*Table 1\. Heat\*\* \(a5, 2 × 2\)\n\n\|  \| liver \| lung \|\n\| --- \| --- \| --- \|\n\| EGFR \| 32\.2 \| 14\.1 \|\n\| MET \| — \| 3 \|/);
 });
 
 test('the rendered report prints tables from the data and the bound cells beside every claim', () => {
   const md = renderReport({ tables: [{ artifact: 'a1', columns: ['gene', 'Tissue', 'nTPM'], title: 'Consensus' }], claims: [{ text: 'EGFR is higher in liver (32.2) than lung (14.1).', artifact: 'a1', rows: [0, 1], columns: ['Tissue', 'nTPM'] }], limitations: ['MET has no recorded liver value.'], not_done: [{ item: 1, why: 'no source' }] }, state, [a2]);
-  assert.match(md, /\*\*Consensus\*\* \(a1, 3 rows\)\n\n\| gene \| Tissue \| nTPM \|\n\| --- \| --- \| --- \|\n\| EGFR \| liver \| 32\.2 \|/);
+  assert.match(md, /\*\*Table 1\. Consensus\*\* \(a1, 3 rows\)\n\n\| gene \| Tissue \| nTPM \|\n\| --- \| --- \| --- \|\n\| EGFR \| liver \| 32\.2 \|/);
   assert.match(md, /\| MET \| liver \| — \|/, 'a missing value prints as a dash, not zero');
-  assert.match(md, /Figure a2: grouped_bar "Lung vs liver" from a1/);
+  assert.match(md, /Figure 1 \(a2\): grouped_bar "Lung vs liver" from a1/);
   assert.match(md, /- EGFR is higher in liver \(32\.2\) than lung \(14\.1\)\. \(evidence: a1 row 0: Tissue=liver, nTPM=32\.2; row 1: Tissue=lung, nTPM=14\.1\)/);
   assert.match(md, /\*\*Limitations\*\*\n\n- MET has no recorded liver value\./);
   assert.match(md, /\*\*Not done\*\*\n\n- Plan item 1: no source/);

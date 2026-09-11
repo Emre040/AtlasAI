@@ -351,7 +351,8 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       // The points come as a list, or from an artifact's column (its entity keys by default);
       // without either, the question itself selects the rows.
       if (args.from !== undefined) {
-        if (Array.isArray(args.points) && args.points.length) throw new Error('Use points or from, not both');
+        // from names the points; a list sent beside it is set aside, and the history says so.
+        if (Array.isArray(args.points) && args.points.length) remember(`${toolName}: the points listed are set aside, from=${args.from} names the points`);
         const input = get(args.from);
         if (!Array.isArray(input.rows) || !input.rows.length) throw new Error(`${args.from} has no rows to investigate`);
         const column = args.column ? (input.columns.find(c => c === args.column) || input.columns.find(c => c.toLowerCase() === String(args.column).toLowerCase())) : null;

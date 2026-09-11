@@ -691,6 +691,8 @@ function aggregator({ group_by, group_by_columns, group_domains, column, metrics
 }
 
 function aggregate(rows, args = {}) {
+  // A group_by written as several names separated by commas is group_by_columns.
+  if (typeof args.group_by === 'string' && args.group_by.includes(',') && args.group_by_columns === undefined && !findColumn(rows, args.group_by)) args = { ...args, group_by: undefined, group_by_columns: args.group_by.split(',').map(s => s.trim()).filter(Boolean) };
   const acc = aggregator(args, columnsOf(rows));
   for (const r of rows) acc.add(r);
   return acc.result();

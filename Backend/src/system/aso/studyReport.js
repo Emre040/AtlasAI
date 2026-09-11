@@ -111,14 +111,22 @@ function locate(state, value, tolerance, limit = 3) {
   return hits;
 }
 
-function claimIssue(claim, state) {
+const ORDINAL = /\b(Table|Figure|Fig\.?|Chart|Plot|Panel)\s+(\d+)\b/gi;
+
+function claimIssue(claim, state, args = {}) {
   let bound;
   try { bound = binding(claim, state); }
   catch (error) { return error.message; }
-  // The report has no numbered tables or figures: they are artifacts, named by id. A claim that
-  // says "Table 2" points at nothing, and its 2 would be read as a number the data must hold.
-  const ordinal = /\b(Table|Figure|Fig\.?|Chart|Plot|Panel)\s+\d+\b/i.exec(claim.text || '');
-  if (ordinal) return `${JSON.stringify(claim.text.length > 160 ? `${claim.text.slice(0, 159)}…` : claim.text)} says "${ordinal[0]}", which names nothing: tables and figures are artifacts, name them by id (${bound.parts.map(b => b.artifact.id).join(', ')})`;
+  // "Table 2" and "Figure 1" name the report's own tables and figures, numbered in the order the
+  // report gives them; an ordinal beyond that order names nothing. The ordinal's number is not a
+  // number the data must hold.
+  const text = String(claim.text || '');
+  for (const m of text.matchAll(ORDINAL)) {
+    const table = /^table$/i.test(m[1]);
+    const count = table ? (args.tables || []).length : Array.isArray(args.figures) ? args.figures.length : null;
+    if (count !== null && !(Number(m[2]) >= 1 && Number(m[2]) <= count)) return `${JSON.stringify(text.length > 160 ? `${text.slice(0, 159)}…` : text)} says "${m[0]}", but the report lists ${count} ${table ? 'table' : 'figure'}${count === 1 ? '' : 's'}: tables and figures are numbered in the order the report gives them; or name the artifact by id (${bound.parts.map(b => b.artifact.id).join(', ')})`;
+  }
+  const spoken = text.replace(ORDINAL, m => m.replace(/\d+/, ''));
   // Numbers the bound artifacts or the artifacts they were made from were made with (a
   // threshold, a top n) are part of their evidence.
   const lineage = (a, seen = new Set()) => !a || seen.has(a.id) ? [] : (seen.add(a.id), [...numbersIn(a.args || {}), ...(a.inputs || []).flatMap(id => lineage(state.byId.get(id), seen))]);
@@ -126,7 +134,7 @@ function claimIssue(claim, state) {
   // A count that is the row count of a bound table spanning fewer entities is two numbers, not
   // one: "114 partners" when the table has 114 rows over 47 genes. A claim that states the row
   // count without the entity count is sent back with both, to say which it means.
-  const stated = statedNumbers(claim.text);
+  const stated = statedNumbers(spoken);
   for (const n of stated) {
     if (!Number.isInteger(n.value) || bound.values.includes(n.value)) continue;
     for (const part of bound.parts) {
@@ -144,7 +152,7 @@ function claimIssue(claim, state) {
   // the reader can redo from the cells beside the claim.
   const basis = [...new Set([...bound.values, ...bound.counts, ...[...rowCounts]])].filter(v => Number.isFinite(v));
   const ratioOfBound = (value, tolerance) => basis.some(x => basis.some(y => y > 0 && x <= y && Math.abs((x / y) * 100 - value) <= tolerance + 1e-9 * value));
-  let unmatched = statedNumbers(claim.text).filter(({ value, tolerance, percent }) => !near(bound.values, value, tolerance) && !near(argNumbers, value, tolerance) && !(Number.isInteger(value) && (bound.counts.includes(value) || rowCounts.has(value))) && !(percent && (near(bound.values, value / 100, tolerance / 100) || ratioOfBound(value, tolerance))));
+  let unmatched = statedNumbers(spoken).filter(({ value, tolerance, percent }) => !near(bound.values, value, tolerance) && !near(argNumbers, value, tolerance) && !(Number.isInteger(value) && (bound.counts.includes(value) || rowCounts.has(value))) && !(percent && (near(bound.values, value / 100, tolerance / 100) || ratioOfBound(value, tolerance))));
   if (!unmatched.length) return null;
   // A number that sits in a bound row, in a column the claim did not name, is bound by naming the
   // column: the binder does that itself, so the evidence prints the cell.
@@ -197,9 +205,16 @@ function reportIssues(args, state) {
       else if (!artifact.images?.length) issues.push(`figures: ${artifact.id} was not rendered`);
     }
   }
+  // A claim that says "Table 2" without naming an artifact rests on the report's second table.
+  for (const claim of args.claims || []) {
+    if (!claim || typeof claim.text !== 'string' || claim.artifact !== undefined || Array.isArray(claim.evidence)) continue;
+    const m = /\bTable\s+(\d+)\b/i.exec(claim.text);
+    const id = m ? (args.tables || [])[Number(m[1]) - 1]?.artifact : undefined;
+    if (id !== undefined) claim.artifact = id;
+  }
   for (const [i, claim] of (args.claims || []).entries()) {
     if (!claim || typeof claim.text !== 'string' || !claim.text.trim()) { issues.push(`claims[${i}] needs text`); continue; }
-    const issue = claimIssue(claim, state);
+    const issue = claimIssue(claim, state, args);
     if (issue) issues.push(`claims[${i}]: ${issue}`);
   }
   for (const [i, text] of (args.limitations || []).entries()) {
@@ -216,11 +231,12 @@ function reportIssues(args, state) {
   return issues;
 }
 
-function figureLine(artifact) {
+// Figures are numbered in the order the report gives them, beside their artifact id.
+function figureLine(artifact, number) {
   const f = artifact.figure || {};
   const axis = (label, scale) => label ? `${label}${scale === 'log' ? ' (log)' : ''}` : '';
   const axes = [axis(f.x_label, f.x_scale), axis(f.y_label, f.y_scale)].filter(Boolean);
-  return `Figure ${artifact.id}: ${f.type}${f.title ? ` "${f.title}"` : ''}${axes.length ? ` (${axes.join(' vs ')})` : ''}${f.scale === 'log' ? ' (log colour scale)' : ''}${artifact.inputs?.length ? ` from ${artifact.inputs.join(', ')}` : ''}${desk.labelsFit(f)}`;
+  return `Figure ${number} (${artifact.id}): ${f.type}${f.title ? ` "${f.title}"` : ''}${axes.length ? ` (${axes.join(' vs ')})` : ''}${f.scale === 'log' ? ' (log colour scale)' : ''}${artifact.inputs?.length ? ` from ${artifact.inputs.join(', ')}` : ''}${desk.labelsFit(f)}`;
 }
 
 function evidenceText(bound) {
@@ -232,24 +248,27 @@ function evidenceText(bound) {
 }
 
 // Markdown from the accepted finish arguments and the saved artifacts.
+// Tables and figures are numbered in the order the report gives them, so "Table 2" in a claim
+// names the second table; every heading keeps the artifact id beside the number.
 function renderReport(args, state, figures) {
   const sections = [];
-  for (const table of args.tables || []) {
+  for (const [i, table] of (args.tables || []).entries()) {
     const artifact = state.byId.get(String(table.artifact).trim());
+    const heading = `**Table ${i + 1}. ${table.title || artifact.label || artifact.id}**`;
     if (artifact.matrix) {
       const m = artifact.matrix;
       const columns = (table.columns || []).length ? table.columns : m.col_labels;
       const shown = m.row_labels.slice(0, table.rows > 0 ? table.rows : m.row_labels.length);
       const body = [`|  | ${columns.map(escapeCell).join(' | ')} |`, `| --- | ${columns.map(() => '---').join(' | ')} |`, ...shown.map((label, i) => `| ${escapeCell(label)} | ${columns.map(c => escapeCell(m.matrix[i][m.col_labels.indexOf(c)])).join(' | ')} |`)].join('\n');
-      sections.push(`**${table.title || artifact.label || artifact.id}** (${artifact.id}, ${m.row_labels.length} × ${m.col_labels.length})\n\n${body}${shown.length < m.row_labels.length ? `\n\nShowing ${shown.length} of ${m.row_labels.length} rows; the full matrix is saved as ${artifact.id}.` : ''}`);
+      sections.push(`${heading} (${artifact.id}, ${m.row_labels.length} × ${m.col_labels.length})\n\n${body}${shown.length < m.row_labels.length ? `\n\nShowing ${shown.length} of ${m.row_labels.length} rows; the full matrix is saved as ${artifact.id}.` : ''}`);
       continue;
     }
     const columns = resolveColumns(artifact, table.columns);
     const shown = artifact.rows.slice(0, table.rows > 0 ? table.rows : artifact.rows.length);
     const body = shown.length ? [`| ${columns.map(escapeCell).join(' | ')} |`, `| ${columns.map(() => '---').join(' | ')} |`, ...shown.map(row => `| ${columns.map(c => escapeCell(row[c])).join(' | ')} |`)].join('\n') : `No rows (${artifact.id}).`;
-    sections.push(`**${table.title || artifact.label || artifact.id}** (${artifact.id}, ${artifact.rows.length} rows)\n\n${body}${shown.length < artifact.rows.length ? `\n\nShowing ${shown.length} of ${artifact.rows.length} rows; the full table is saved as ${artifact.id}.` : ''}`);
+    sections.push(`${heading} (${artifact.id}, ${artifact.rows.length} rows)\n\n${body}${shown.length < artifact.rows.length ? `\n\nShowing ${shown.length} of ${artifact.rows.length} rows; the full table is saved as ${artifact.id}.` : ''}`);
   }
-  if (figures.length) sections.push(figures.map(figureLine).join('\n'));
+  if (figures.length) sections.push(figures.map((artifact, i) => figureLine(artifact, i + 1)).join('\n'));
   if ((args.claims || []).length) sections.push(`**Findings**\n\n${args.claims.map(claim => { const bound = binding(claim, state); return `- ${claim.text.trim()} (evidence: ${evidenceText(bound)})`; }).join('\n')}`);
   if ((args.limitations || []).length) sections.push(`**Limitations**\n\n${args.limitations.map(text => `- ${String(text).trim()}`).join('\n')}`);
   if ((args.not_done || []).length) sections.push(`**Not done**\n\n${args.not_done.map(item => `- Plan item ${item.item}: ${String(item.why).trim()}`).join('\n')}`);

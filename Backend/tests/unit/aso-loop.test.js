@@ -55,9 +55,9 @@ test('plan, delegate, compute a chain, and finish a report bound to the data', a
   assert.equal(result.token_breakdown.investigator_hpa.calls, 3);
   assert.equal(result.agents, 1);
   assert.deepEqual(result.plan.map(p => p.status), ['done', 'done', 'done']);
-  assert.match(result.summary, /\*\*Consensus\*\* \(a1, 4 rows\)/);
+  assert.match(result.summary, /\*\*Table 1\. Consensus\*\* \(a1, 4 rows\)/);
   assert.match(result.summary, /\| EGFR \| liver \| 32\.2 \|/);
-  assert.match(result.summary, /Figure a3: heatmap "Heat" from a2\nFigure a4: grouped_bar "Bars" from a1/);
+  assert.match(result.summary, /Figure 1 \(a3\): heatmap "Heat" from a2\nFigure 2 \(a4\): grouped_bar "Bars" from a1/);
   assert.match(result.summary, /- EGFR is higher in liver \(32\.2\) than in lung \(14\.1\)\. \(evidence: a1 row 0: gene=EGFR, Tissue=liver, nTPM=32\.2; row 1: gene=EGFR, Tissue=lung, nTPM=14\.1\)/);
   // The desk of turn 2: the artifact as one line with its title and description, its few rows whole.
   const desk2 = requests[1].messages[1].content;

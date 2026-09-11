@@ -9,8 +9,12 @@ const NUMBER = /(?<![\w.])[-+−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+
 // binds it, within the same written precision.
 function statedNumbers(text) {
   const out = [];
-  // Every dash a model may write for a minus (hyphens, en and em dashes, the minus sign) is one.
-  const source = String(text || '').replace(/[‐-―−]/g, '-');
+  // Every dash a model may write for a minus (hyphens, en and em dashes, the minus sign) is one,
+  // and a power of ten written as 5.3 × 10⁻⁷ or 5.3 x 10^-7 is the number 5.3e-7.
+  const superscript = ch => '⁰¹²³⁴⁵⁶⁷⁸⁹'.indexOf(ch);
+  const source = String(text || '').replace(/[‐-―−]/g, '-')
+    .replace(/(\d(?:\.\d+)?)\s*[×x·*]\s*10\s*([⁻⁺]?)([⁰¹²³⁴⁵⁶⁷⁸⁹]+)/g, (m, mantissa, sign, digits) => `${mantissa}e${sign === '⁻' ? '-' : ''}${[...digits].map(superscript).join('')}`)
+    .replace(/(\d(?:\.\d+)?)\s*[×x·*]\s*10\s*(?:\^|\*\*)\s*([-+]?\d+)/g, (m, mantissa, exponent) => `${mantissa}e${exponent}`);
   for (const match of source.matchAll(NUMBER)) {
     const clean = match[0].replace(/,/g, '').replaceAll('−', '-');
     const value = Number(clean);

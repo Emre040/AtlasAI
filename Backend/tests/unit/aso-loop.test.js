@@ -295,7 +295,7 @@ test('an agent result that is not what the call asked for is flagged on its line
   const result = await run({});
   assert.equal(result.outcome, 'completed', result.summary);
   assert.equal(reviews.length, 1);
-  assert.match(reviews[0].user, /Study goal: Lung and liver nTPM for EGFR and ERBB2[\s\S]*The call: investigator_hpa "Values", question: RNA nTPM in liver and lung \(for 1 listed points\)[\s\S]*Source lookups: \[\{"table":"rna_tissue_consensus.tsv"/);
+  assert.match(reviews[0].user, /^The call: investigator_hpa "Values", question: RNA nTPM in liver and lung \(for 1 listed points\)[\s\S]*Source lookups: \[\{"table":"rna_tissue_consensus.tsv"/);
   const desk2 = requests[1].messages[1].content;
   assert.match(desk2, /a1 "Values"[^\n]*\n  Values, described ⚠ Review: the call asks for RNA, the lookup read the protein table/);
   assert.match(desk2, /turn 1: review of a1: not what the call asked for: the call asks for RNA, the lookup read the protein table\. Ask again with what the study means, or use it knowing this/);

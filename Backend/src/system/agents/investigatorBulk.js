@@ -279,7 +279,11 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
   const isNumber = v => v !== null && v !== undefined && String(v).trim() !== '' && Number.isFinite(Number(String(v).replace(/,/g, '')));
   const perValue = table => {
     const keyCols = table.columns.filter(c => KEY_COLUMNS.has(c));
-    const others = table.columns.filter(c => !KEY_COLUMNS.has(c));
+    // A column that only repeats a key column row for row (an id column beside ensembl) is no
+    // value: it is left out before the values are told apart.
+    const echoes = table.columns.filter(c => !KEY_COLUMNS.has(c) && keyCols.some(k => table.rows.length && table.rows.every(r => String(r[c] ?? '').toLowerCase() === String(r[k] ?? '').toLowerCase())));
+    const others = table.columns.filter(c => !KEY_COLUMNS.has(c) && !echoes.includes(c));
+    if (echoes.length && others.length) { const columns = table.columns.filter(c => !echoes.includes(c)); table = { ...table, columns, rows: table.rows.map(r => Object.fromEntries(columns.map(c => [c, r[c] ?? null]))) }; }
     if (others.length <= 1) return [table];
     // Measured columns are the values; text columns beside them (a cohort, a tissue) are the
     // context that tells a point's rows apart. Without a measured column, each text column that

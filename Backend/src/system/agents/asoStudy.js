@@ -429,7 +429,8 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           const next = toolName === 'deep_research_hpa' && a.rows.length && agentNames.has('investigator_hpa') ? `; its rows: investigator_hpa from=${a.id} with the question` : '';
           remember(`${id} ${toolName} "${title}" done → ${a.id} (${a.size})${extra}${next}`);
         }
-        for (const a of made) await reviewResult(toolName, args, a, made);
+        // The study judges the Investigator's artifacts itself: each carries its note and mapping.
+        if (toolName !== 'investigator_hpa') for (const a of made) await reviewResult(toolName, args, a, made);
         job.made = [...made, ...repeats].map(a => a.id);
         for (const a of made) await log('tool.done', { id, tool: toolName, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);
       })

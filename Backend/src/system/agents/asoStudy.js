@@ -467,7 +467,19 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     if (a.text) { view(a.id, `${a.id}: ${a.text.slice(0, 1500)}`, `${a.id} text (opened at turn ${state.turn})`); remember(`opened ${a.id}`); return true; }
     const named = Array.isArray(args.columns) && args.columns.length > 0;
     // Rows already on the desk are not opened again; a cell cut short there is read in full by naming its column.
-    if (!named && state.wholeOnDesk?.has(a.id)) { remember(`${a.id}'s ${a.rows.length} rows are on the desk under ARTIFACTS (rows 0–${a.rows.length - 1}), cells cut at ${desk.CELL} characters; open ${a.id} with columns to read chosen columns in full`); return false; }
+    if (!named && state.wholeOnDesk?.has(a.id)) {
+      // The rows are already on the desk. Asked for anyway, they go into the history once, in
+      // full cells: a model that wants to read a value before it writes a claim gets it, instead
+      // of an idle turn (gpt-oss stalled a finished study asking to see its two-row tables). A
+      // second identical open is idle.
+      state.shownWhole = state.shownWhole || new Map();
+      const earlier = state.shownWhole.get(a.id);
+      if (earlier) { remember(`${a.id}'s ${a.rows.length} rows are on the desk under ARTIFACTS and were listed in full at turn ${earlier}; open ${a.id} with columns for chosen columns, or use the values`); return false; }
+      state.shownWhole.set(a.id, state.turn);
+      const line = `${a.id} rows (${a.columns.join(' | ')}): ${a.rows.map((r, i) => `${i}: ${desk.rowLine(r, a.columns, desk.FULL_CELL)}`).join(' ; ')}`;
+      remember(line.length > 2000 ? `${line.slice(0, 1999)}…` : line);
+      return true;
+    }
     const rows = Number.isSafeInteger(args.rows) && args.rows > 0 ? args.rows : VIEW_ROWS;
     const offset = Number.isSafeInteger(args.offset) && args.offset >= 0 ? args.offset : 0;
     const columns = named ? args.columns.map(c => { const found = a.columns.find(x => x === c) || a.columns.find(x => x.toLowerCase() === String(c).toLowerCase()); if (!found) throw new Error(`${a.id} has no column ${JSON.stringify(c)}; its columns: ${desk.namedColumns(a.columns)}`); return found; }) : a.columns;

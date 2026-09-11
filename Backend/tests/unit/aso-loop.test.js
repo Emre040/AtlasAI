@@ -136,7 +136,8 @@ test('opening an artifact that is whole on the desk is answered from the desk, w
   const result = await run({});
   assert.equal(result.outcome, 'completed', result.summary);
   const desk3 = requests[2].messages[1].content;
-  assert.match(desk3, /turn 2: a1's 4 rows are on the desk under ARTIFACTS \(rows 0–3\), cells cut at 48 characters; open a1 with columns to read chosen columns in full/);
+  // an open of rows already on the desk lists them once in the history, in full cells, and makes no view
+  assert.match(desk3, /turn 2: a1 rows \(gene \| ensembl \| Tissue \| nTPM \| source_rows \| source_status\): 0: EGFR \| ENSG1 \| liver \| 32\.2 \| 2 \| ok ; 1: EGFR \| ENSG1 \| lung \| 14\.1 \| 2 \| ok ; 2: ERBB2/);
   assert.match(desk3, /turn 2: rank\(artifact=a1, by=nTPM\) failed: rank\.title is required/);
   assert.doesNotMatch(desk3, /\nVIEWS\n/);
 });

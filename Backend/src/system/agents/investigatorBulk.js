@@ -281,7 +281,8 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
     const keyCols = table.columns.filter(c => KEY_COLUMNS.has(c));
     // A column that only repeats a key column row for row (an id column beside ensembl) is no
     // value: it is left out before the values are told apart.
-    const echoes = table.columns.filter(c => !KEY_COLUMNS.has(c) && keyCols.some(k => table.rows.length && table.rows.every(r => String(r[c] ?? '').toLowerCase() === String(r[k] ?? '').toLowerCase())));
+    const filled = c => table.rows.filter(r => r[c] !== null && r[c] !== undefined && String(r[c]).trim() !== '');
+    const echoes = table.columns.filter(c => !KEY_COLUMNS.has(c) && keyCols.some(k => filled(c).length && filled(c).every(r => String(r[c]).trim().toLowerCase() === String(r[k] ?? '').trim().toLowerCase())));
     const others = table.columns.filter(c => !KEY_COLUMNS.has(c) && !echoes.includes(c));
     if (echoes.length && others.length) { const columns = table.columns.filter(c => !echoes.includes(c)); table = { ...table, columns, rows: table.rows.map(r => Object.fromEntries(columns.map(c => [c, r[c] ?? null]))) }; }
     if (others.length <= 1) return [table];

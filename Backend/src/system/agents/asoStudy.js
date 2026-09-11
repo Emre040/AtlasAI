@@ -393,7 +393,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           if (!result.tables?.length) throw new Error(result.error || result.note || 'Investigator returned no table');
           // A table that reads the same source table, fields, filter and points as an earlier artifact
           // is that artifact: it is not registered twice, and the earlier id stands for it.
-          const twinOf = table => state.artifacts.find(x => x.tool === toolName && (x.meta?.source_rows ?? x.rows?.length) === table.rows.length && JSON.stringify(x.meta?.lookups) === JSON.stringify([table.args]) && JSON.stringify(x.meta?.points) === JSON.stringify(executionArgs.points));
+          const twinOf = table => state.artifacts.find(x => x.tool === toolName && (x.meta?.source_rows ?? x.rows?.length) === table.rows.length && JSON.stringify(x.columns) === JSON.stringify(table.columns) && JSON.stringify(x.meta?.lookups) === JSON.stringify([table.args]) && JSON.stringify(x.meta?.points) === JSON.stringify(executionArgs.points));
           const lines = [];
           for (const table of result.tables) {
             const twin = twinOf(table);

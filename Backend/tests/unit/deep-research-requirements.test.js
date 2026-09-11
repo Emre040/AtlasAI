@@ -111,6 +111,20 @@ test('an unexpressible criterion prevents a partial query from masquerading as t
   assert.equal(result.result.not_expressible[0].requirement, 'unavailable requested evidence');
 });
 
+test('a filter that selects everything another filter on the same field already selects narrows nothing and does not express its requirement', async () => {
+  const { result, executions } = await runStudy({
+    decide: ({ label, user }) => {
+      if (label === 'Plan') return plan(filter('Selection A', 'the narrow criterion'), filter('Selection A', 'the criterion meant to narrow further'));
+      return /the narrow criterion/.test(user) ? choose('A1') : { choices: [{ level: 1, values: ['A1', 'A2'] }] };
+    }
+  });
+  assert.equal(executions.length, 0, 'no query runs on a filter set that does not express every requirement');
+  assert.equal(result.stop_reason, 'unexpressible_requirements');
+  assert.equal(result.result.not_expressible.length, 1);
+  assert.equal(result.result.not_expressible[0].requirement, 'the criterion meant to narrow further');
+  assert.match(result.result.not_expressible[0].why, /selects everything the filter for "the narrow criterion" already selects, so it narrows nothing and does not express this requirement/);
+});
+
 test('a failed required option path does not execute the filters completed before it', async () => {
   const { result, executions } = await runStudy({ decide: ({ call }) => call === 1
     ? plan(filter('Selection A', 'first criterion'), filter('Selection B', 'second criterion'))

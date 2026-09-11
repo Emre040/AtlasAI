@@ -200,6 +200,28 @@ async function deepResearchTrail({ goal, mode: requestedMode = 'online', study =
       await onStep?.({ stage: 'selection_step', label: 'Chosen', message: `${adapter.describe([filled])}${filled.why ? ' — ' + filled.why : ''}` });
       filters.push(filled); item.status = 'validated'; item.error = null;
     }
+    // A filter that selects at least everything another filter on the same field already selects
+    // narrows the query by nothing, so it does not express the requirement it was chosen for:
+    // that requirement is unexpressible by this search, and the caller is told why.
+    const valuesAt = (path, level) => { const v = path[level]; return v === null || v === undefined ? null : new Set((Array.isArray(v) ? v : [v]).map(x => String(x).toLowerCase())); };
+    const covers = (wide, narrow) => {
+      if (wide === narrow || wide.field !== narrow.field || wide.operator !== 'AND' || narrow.operator !== 'AND') return false;
+      for (let level = 0; level < Math.max(wide.path.length, narrow.path.length); level++) {
+        const w = valuesAt(wide.path, level), n = valuesAt(narrow.path, level);
+        if (w === null) continue;
+        if (n === null) return false;
+        for (const v of n) if (!w.has(v)) return false;
+      }
+      return true;
+    };
+    for (const [i, f] of [...filters].entries()) {
+      const other = filters.find((o, j) => o !== f && covers(f, o) && !(covers(o, f) && j > i));
+      if (!other) continue;
+      const item = requirements.find(r => r.id === f.requirement_id);
+      if (item) { item.status = 'unexpressible'; item.error = `the filter chosen for it (${adapter.describe([f])}) selects everything the filter for "${other.requirement}" already selects, so it narrows nothing and does not express this requirement`; }
+      filters.splice(filters.indexOf(f), 1);
+    }
+    if (requirements.some(item => item.status === 'unexpressible')) throw new ResearchStop('unexpressible_requirements', 'The requested cohort includes criteria that the source schema cannot express');
     if (!filters.length || requirements.some(item => item.status !== 'validated')) throw new ResearchStop('unresolved_requirements', 'Every required criterion must be validated before running the requested cohort query');
 
     const url = adapter.compose(filters);

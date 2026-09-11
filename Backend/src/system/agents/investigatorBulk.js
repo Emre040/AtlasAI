@@ -181,10 +181,13 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             const entry = await adapter.entry(String(args.table || '').trim());
             if (!entry) throw new Error(`no table named ${JSON.stringify(args.table)}; find_tables lists the tables`);
             await openTable(entry.file);
-            // A filter value the table spells differently is refused with the table's spelling.
-            if (args.where?.length) {
+            // A filter value, or a point matched against a column, that the table spells differently
+            // is refused with the table's spelling.
+            if (args.where?.length || (args.match && listed.length)) {
               const cards = (await adapter.profile(entry)).columns;
-              refuseMisspelled(args.where, column => (cards.find(c => c.column === column) || cards.find(c => c.column.toLowerCase() === String(column).toLowerCase()))?.observed_values || null, entry.file);
+              const knownValuesOf = column => (cards.find(c => c.column === column) || cards.find(c => c.column.toLowerCase() === String(column).toLowerCase()))?.observed_values || null;
+              refuseMisspelled(args.where || [], knownValuesOf, entry.file);
+              if (args.match && listed.length) refuseMisspelled((Array.isArray(args.match) ? args.match : [args.match]).map(column => ({ column, op: 'in', value: listed })), knownValuesOf, entry.file);
             }
             // The points of a fetch are the list, or the values of a column of an earlier result:
             // what one table lists is read from another without the model carrying a single value.

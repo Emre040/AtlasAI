@@ -91,7 +91,9 @@ async function fetchMatching({ adapter, entry, points, fields, where = [], match
   const keyColumns = keyed ? [geneKey, idKey].filter(c => c !== column) : [];
   const unique = [...new Map(points.map(p => [String(p).trim().toLowerCase(), String(p).trim()])).entries()];
   const byPoint = new Map(unique.map(([key]) => [key, []]));
-  for await (const row of adapter.rows(entry)) {
+  // The read is narrowed at the source to rows where any match column holds a point; the rows
+  // are then matched here as before, so what is kept is exactly what matches.
+  for await (const row of adapter.rows(entry, { where: [{ columns: matchColumns, values: unique.map(([, point]) => point) }] })) {
     const seen = new Set();
     for (const c of matchColumns) {
       const key = String(row[c] ?? '').trim().toLowerCase();

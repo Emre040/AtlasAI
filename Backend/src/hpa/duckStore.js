@@ -206,13 +206,15 @@ class DuckStore {
 
   // Every row of a table, or those whose column holds one of the values: as the file spells it,
   // case and surrounding space aside, or the same number, which is how the row filter matches.
+  // A clause names one column, or several (columns) of which any may hold the value; clauses
+  // must all hold.
   rows(file, { where = [] } = {}) {
     const t = this.tableOf(file);
-    const clauses = where.map(({ column, values }) => {
-      const q = quoted(column);
+    const clauses = where.map(({ column, columns, values }) => {
       const texts = [...new Set(values.map(v => String(v).trim().toLowerCase()))].map(literal);
       const numbers = [...new Set(values.map(v => Number(String(v).replace(/,/g, '').trim())).filter(Number.isFinite))];
-      return `(lower(trim(${q})) IN (${texts.join(', ')})${numbers.length ? ` OR TRY_CAST(replace(${q}, ',', '') AS DOUBLE) IN (${numbers.join(', ')})` : ''})`;
+      const holds = name => { const q = quoted(name); return `lower(trim(${q})) IN (${texts.join(', ')})${numbers.length ? ` OR TRY_CAST(replace(${q}, ',', '') AS DOUBLE) IN (${numbers.join(', ')})` : ''}`; };
+      return `(${(columns || [column]).map(holds).join(' OR ')})`;
     });
     return this.stream(`SELECT * FROM ${quoted(t.table)}${clauses.length ? ` WHERE ${clauses.join(' AND ')}` : ''}`);
   }

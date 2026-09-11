@@ -126,6 +126,16 @@ test('a fetch whose filter value the table spells differently is refused with th
   assert.match(requests[1].messages[1].content, /failed: no row of rna_tissue_consensus\.tsv has Tissue = "Heart-"; the column spells it "heart"/);
 });
 
+test('a point matched against a column that the table spells differently is refused with the table\'s spelling', async () => {
+  const { run, requests } = await investigator([
+    response(call('fetch', { title: 'Heart rows', description: 'Rows of the points', table: 'rna_tissue_consensus.tsv', match: 'Tissue' })),
+    response(call('finish', { results: [], note: 'stopped' }))
+  ]);
+  const result = await run({ points: ['Heart-'], question: 'rows of these tissues' });
+  assert.equal(result.status, 'ok');
+  assert.match(requests[1].messages[1].content, /failed: no row of rna_tissue_consensus\.tsv has Tissue = "Heart-"; the column spells it "heart"/);
+});
+
 test('a word that is a value is not a table, and an Investigator that gives up says what it tried', async () => {
   const { run, requests } = await investigator([
     response(call('find_tables', { about: 'heart' })),

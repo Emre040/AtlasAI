@@ -43,6 +43,9 @@ test('the release database is built from the files, kept in step with them, and 
   const half = [];
   for await (const row of store.rows('a.tsv', { where: [{ column: 'nTPM', values: ['0.50'] }] })) half.push(row['Gene name']);
   assert.deepEqual(half, ['MET'], 'the same number, as the row filter matches');
+  const either = [];
+  for await (const row of store.rows('a.tsv', { where: [{ columns: ['Gene name', 'Tissue'], values: ['heart', 'ERBB2'] }] })) either.push(row['Gene name']);
+  assert.deepEqual(either, ['ERBB2', 'MET'], 'any of several columns may hold the value');
   assert.deepEqual(await store.sample('b.tsv', 1), [{ Tissue: 'liver', Organ: 'Liver & Gallbladder' }]);
   assert.equal(store.rowCount('b.tsv'), 2);
   // The same files are the same build: nothing is built again, and the file is opened read-only.

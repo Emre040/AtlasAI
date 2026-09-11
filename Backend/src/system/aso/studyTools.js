@@ -935,7 +935,7 @@ const COMPARISONS = ['<', '<=', '>', '>=', '=', '!='];
 function parseExpression(text) {
   const tokens = [];
   // Column names with spaces or symbols go in double, single or back quotes.
-  const re = /\s*(?:(\d+\.?\d*(?:[eE][-+]?\d+)?)|("[^"]*"|'[^']*'|`[^`]*`)|([A-Za-z_][\w.]*)|(<=|>=|!=|==|[-+*/(),<>=]))/y;
+  const re = /\s*(?:(\d+\.?\d*(?:[eE][-+]?\d+)?)|("[^"]*"|'[^']*'|`[^`]*`)|([A-Za-z_][\w.]*)|(<=|>=|!=|==|&&|\|\||[-+*/(),<>=!]))/y;
   let i = 0;
   while (i < text.length) {
     re.lastIndex = i;
@@ -952,7 +952,13 @@ function parseExpression(text) {
   const peek = () => tokens[pos];
   const take = () => tokens[pos++];
   const expect = v => { const tok = take(); if (!tok || tok.v !== v) throw new Error(`compute: expected "${v}" in "${text}"`); };
-  // A comparison (< <= > >= = !=) is a condition for if(condition, then, else).
+  // A condition for if(condition, then, else): comparisons (< <= > >= = !=) and contains(...),
+  // joined with and, or, not (also && || !), not binding tightest, or loosest.
+  const isWord = (tok, w) => tok && tok.t === 'id' && !tok.quoted && tok.v.toLowerCase() === w;
+  const isOp = (tok, v) => tok && tok.t === 'op' && tok.v === v;
+  const parseOr = () => { let node = parseAnd(); while (isWord(peek(), 'or') || isOp(peek(), '||')) { take(); node = { bool: 'or', a: node, b: parseAnd() }; } return node; };
+  const parseAnd = () => { let node = parseNot(); while (isWord(peek(), 'and') || isOp(peek(), '&&')) { take(); node = { bool: 'and', a: node, b: parseNot() }; } return node; };
+  const parseNot = () => { if (isWord(peek(), 'not') || isOp(peek(), '!')) { take(); return { bool: 'not', a: parseNot() }; } return parseComparison(); };
   const parseComparison = () => { let node = parseSum(); if (peek() && COMPARISONS.includes(peek().v)) { const cmp = take().v; node = { cmp, a: node, b: parseSum() }; } return node; };
   const parseSum = () => { let node = parseProduct(); while (peek() && (peek().v === '+' || peek().v === '-')) { const op = take().v; node = { op, a: node, b: parseProduct() }; } return node; };
   const parseProduct = () => { let node = parseUnary(); while (peek() && (peek().v === '*' || peek().v === '/')) { const op = take().v; node = { op, a: node, b: parseUnary() }; } return node; };
@@ -961,13 +967,13 @@ function parseExpression(text) {
     const tok = take();
     if (!tok) throw new Error(`compute: unexpected end of "${text}"`);
     if (tok.t === 'num') return { num: tok.v };
-    if (tok.t === 'op' && tok.v === '(') { const node = parseComparison(); expect(')'); return node; }
+    if (tok.t === 'op' && tok.v === '(') { const node = parseOr(); expect(')'); return node; }
     if (tok.t === 'id') {
       const name = tok.v.toLowerCase();
       if (peek() && peek().v === '(' && (FUNCTIONS[name] || name === 'if' || name === 'contains')) {
         take();
-        const args = [parseComparison()];
-        while (peek() && peek().v === ',') { take(); args.push(parseComparison()); }
+        const args = [parseOr()];
+        while (peek() && peek().v === ',') { take(); args.push(parseOr()); }
         expect(')');
         if (name === 'if' && args.length !== 3) throw new Error(`compute: if takes a condition, a then value and an else value in "${text}"`);
         if (name === 'contains' && args.length !== 2) throw new Error(`compute: contains takes a column and a text in "${text}"`);
@@ -977,8 +983,8 @@ function parseExpression(text) {
     }
     throw new Error(`compute: unexpected "${tok.v}" in "${text}"`);
   };
-  const tree = parseComparison();
-  if (tree.cmp || tree.fn === 'contains') throw new Error(`compute: a comparison goes inside if(condition, then, else) in "${text}"; classify makes category columns`);
+  const tree = parseOr();
+  if (tree.cmp || tree.bool || tree.fn === 'contains') throw new Error(`compute: a comparison goes inside if(condition, then, else) in "${text}"; classify makes category columns`);
   if (pos < tokens.length) throw new Error(`compute: unexpected "${tokens[pos].v}" in "${text}"`);
   return tree;
 }
@@ -1019,6 +1025,16 @@ function evaluate(tree, row, resolved) {
     return String(cell).toLowerCase().includes(String(needle).toLowerCase());
   }
   if (tree.fn) { const vals = tree.args.map(a => evaluate(a, row, resolved)); return vals.some(v => typeof v !== 'number') ? null : FUNCTIONS[tree.fn](...vals); }
+  // and, or, not over conditions: a condition that cannot be decided (a missing value) is null,
+  // and null decides nothing (null or true is true, null and false is false, not null is null).
+  if (tree.bool) {
+    const truth = v => (v === true || v === false ? v : typeof v === 'number' ? v !== 0 : null);
+    const x = truth(evaluate(tree.a, row, resolved));
+    if (tree.bool === 'not') return x === null ? null : !x;
+    const y = truth(evaluate(tree.b, row, resolved));
+    if (tree.bool === 'and') return x === false || y === false ? false : x === true && y === true ? true : null;
+    return x === true || y === true ? true : x === false && y === false ? false : null;
+  }
   const a = evaluate(tree.a, row, resolved);
   if (tree.op === 'neg') return typeof a === 'number' ? -a : null;
   const b = evaluate(tree.b, row, resolved);

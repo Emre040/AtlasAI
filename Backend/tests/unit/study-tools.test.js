@@ -187,3 +187,13 @@ test('a measurement in a few named categories widens to one row per entity with 
   const many = tools.withColumns(Array.from({ length: 9 }, (_, i) => ({ gene: 'ALB', ensembl: 'E1', Tissue: `T${i}`, nTPM: i })), ['gene', 'ensembl', 'Tissue', 'nTPM']);
   assert.equal(tools.widenByCategory(many, many.columns), null);
 });
+
+test('conditions combine with and, or and not, and a missing value decides nothing', () => {
+  const rows = [{ gene: 'A', loc: 'Nucleoplasm;Cytosol', n: 5 }, { gene: 'B', loc: 'Vesicles', n: 0 }, { gene: 'C', loc: null, n: 2 }];
+  const flag = (expr) => tools.compute(rows, 'f', expr).map(r => r.f);
+  assert.deepEqual(flag('if(contains(loc, "nucleo") or contains(loc, "nuclear"), 1, 0)'), [1, 0, 0]);
+  assert.deepEqual(flag('if(contains(loc, "cytosol") and n > 1, 1, 0)'), [1, 0, 0]);
+  assert.deepEqual(flag('if(not contains(loc, "vesicle") && n >= 2, 1, 0)'), [1, 0, 0], 'not binds tightest; && is and');
+  assert.deepEqual(flag('if(n = 0 || contains(loc, "cytosol"), 1, 0)'), [1, 1, 0], '|| is or; a missing cell decides nothing, so the else branch');
+  assert.throws(() => tools.compute(rows, 'f', 'contains(loc, "x") or n > 1'), /a comparison goes inside if/);
+});

@@ -6,7 +6,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const Module = require('node:module');
 
-async function runStudy({ decide, ctx = {}, rows = [{ gene: 'RESULT', ensembl: 'ID_RESULT' }], executeError = null }) {
+async function runStudy({ decide, ctx = {}, rows = [{ gene: 'RESULT', ensembl: 'ID_RESULT' }], executeError = null, goal = 'Apply both exact requested criteria.', extras = {} }) {
   const filename = require.resolve('../../src/system/agents/deepResearchTrail');
   const loaded = new Module(filename, module); loaded.filename = filename; loaded.paths = Module._nodeModulePaths(path.dirname(filename));
   const realRequire = loaded.require.bind(loaded);
@@ -39,15 +39,28 @@ async function runStudy({ decide, ctx = {}, rows = [{ gene: 'RESULT', ensembl: '
     compose(filters) { return `https://example.invalid/search?filters=${encodeURIComponent(JSON.stringify(filters))}`; },
     describe(filters) { return filters.map(filter => `${filter.operator} ${filter.field} ${JSON.stringify(filter.path)}`).join('; '); },
     async execute(filters, url, mode) { executions.push({ filters: structuredClone(filters), mode }); if (executeError) throw new Error(executeError); return { rows, mode, version: 'fixture-release' }; },
-    summarize(values) { return { count: values.length, top: values }; }
+    summarize(values) { return { count: values.length, top: values }; },
+    ...extras
   };
-  const result = await loaded.exports({ goal: 'Apply both exact requested criteria.', mode: 'offline' }, { includeRows: true, ...ctx }, adapter);
+  const result = await loaded.exports({ goal, mode: 'offline' }, { includeRows: true, ...ctx }, adapter);
   return { result, calls, executions };
 }
 
 const filter = (field, requirement, operator = 'AND') => ({ field, requirement, operator });
 const plan = (...filters) => ({ understanding: 'Exact requested cohort', filters, cannot: [] });
 const choose = (...values) => ({ choices: values.map((value, index) => ({ level: index + 1, values: [value] })) });
+
+test('an option the question names is shown to the planner, and a requirement naming it is that field\'s filter even when the planner says cannot', async () => {
+  const { result, calls } = await runStudy({
+    goal: 'genes in the B2 markers class, please',
+    extras: { optionIndex: () => [{ field: 'Selection A', level: 1, option: 'A1' }, { field: 'Selection B', level: 2, option: 'B2 markers' }] },
+    decide: ({ label }) => (label === 'Plan' ? { understanding: 'x', filters: [], cannot: [{ requirement: 'B2 markers class', why: 'no such field' }] } : choose('A1', 'B2'))
+  });
+  assert.match(calls[0].user, /Options whose names appear in the question, each on its field \(a requirement that names one of them is a filter on that field, not "cannot"\):\n- Selection B: B2 markers/);
+  assert.doesNotMatch(calls[0].user, /Selection A: A1/, 'an option the question does not name is not listed');
+  assert.equal(result.result.validation_passed, true, JSON.stringify(result.result.requirements));
+  assert.deepEqual(result.result.requirements.map(r => [r.field, r.status, r.why]), [['Selection B', 'validated', 'the field\'s option "B2 markers" names what the requirement names']]);
+});
 
 test('an unresolved original field cannot disappear when repair omits its requirement ID', async () => {
   const { result, executions, calls } = await runStudy({ decide: ({ call }) => call === 1

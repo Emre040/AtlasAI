@@ -50,6 +50,23 @@ function fields() {
 
 function field(name) { return fields().find(f => lower(f.name) === lower(name)) || null; }
 
+// Every option of every field at its first two levels, as { field, level, option }: what the
+// atlas calls things, for a planner that otherwise sees only how many options a field has.
+let OPTION_INDEX = null;
+function optionIndex() {
+  if (OPTION_INDEX) return OPTION_INDEX;
+  const out = [];
+  for (const f of fields()) {
+    for (const option of f.level0) out.push({ field: f.name, level: 1, option });
+    if (f.levels.length > 1) {
+      const seen = new Set();
+      for (const c of f.level0) for (const option of optionsAt(f, [c])) if (!seen.has(option)) { seen.add(option); out.push({ field: f.name, level: 2, option }); }
+    }
+  }
+  OPTION_INDEX = out;
+  return out;
+}
+
 // Options one level below a partial path (level 0 → the classes; level 1 given a class; …).
 function optionsAt(f, path) {
   if (!path.length) return f.level0;
@@ -203,4 +220,4 @@ function summarize(rows) {
   return { count: rows.length, top: names.slice(0, 10) };
 }
 
-module.exports = { name: 'Human Protein Atlas search', fields, field, overview, fieldTree, canonicalize, compose, describe, execute, summarize, httpGetJson, sources: docs.SOURCES };
+module.exports = { name: 'Human Protein Atlas search', fields, field, optionIndex, overview, fieldTree, canonicalize, compose, describe, execute, summarize, httpGetJson, sources: docs.SOURCES };

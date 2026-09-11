@@ -61,9 +61,29 @@ function planIssues(plan) {
 
 const PLAN_REPAIR_SYSTEM = `Repair only the unresolved requirements below using the exact database schema. Known requirements remain fixed. Return JSON { "repairs": [ { "requirement_id": "<original ID>", "field": "<exact schema field>" } ] }. Include operator AND or NOT only if the original operator was invalid. Known fields and valid operators cannot change. If no field expresses a requirement, instead provide "unexpressible_reason": "<source-schema reason>". Include each unresolved ID; do not drop, merge or rewrite requirements. Do not invent requirement IDs.`;
 
+// The words of a text, lowercased, letters and digits only, a trailing s dropped.
+const wordsOf = value => new Set((String(value ?? '').toLowerCase().match(/[a-z0-9]+/g) || []).map(w => w.replace(/s$/, '')));
+
+// The schema's options whose every word appears in the text: what the database calls the things
+// the question names. The planner sees only how many options a field has, so these are listed
+// for it, and a requirement that names one of them is that field's filter whatever it decided.
+function optionsNamed(adapter, text) {
+  if (typeof adapter.optionIndex !== 'function') return [];
+  const have = wordsOf(text);
+  const hits = [];
+  for (const entry of adapter.optionIndex()) {
+    const need = [...wordsOf(entry.option)];
+    if (!need.length || !need.some(w => w.length >= 3) || !need.every(w => have.has(w))) continue;
+    if (!hits.some(h => h.field === entry.field && h.option === entry.option)) hits.push(entry);
+  }
+  return hits.sort((a, b) => b.option.length - a.option.length).slice(0, 12);
+}
+
 async function planFilters(adapter, goal, context, requirements, study = null) {
   const schema = adapter.overview();
-  const base = `Question: "${goal}"${study && study !== goal ? `\nThe study this question is one part of: "${study}"` : ''}\n\nSchema:\n${schema}`;
+  const named = optionsNamed(adapter, `${goal} ${study || ''}`);
+  const namedText = named.length ? `\n\nOptions whose names appear in the question, each on its field (a requirement that names one of them is a filter on that field, not "cannot"):\n${named.map(n => `- ${n.field}: ${n.option}`).join('\n')}` : '';
+  const base = `Question: "${goal}"${study && study !== goal ? `\nThe study this question is one part of: "${study}"` : ''}\n\nSchema:\n${schema}${namedText}`;
   const progress = new RepairProgress();
   let feedback = '', plan;
   for (;;) {
@@ -80,7 +100,13 @@ async function planFilters(adapter, goal, context, requirements, study = null) {
     const issue = !known ? 'unknown_field' : !validOperator ? 'invalid_operator' : null;
     requirements.push({ id: `r${requirements.length + 1}`, requirement: item.requirement, field: text(item.field) ? item.field : null, operator, why: item.why || '', status: known && validOperator ? 'planned' : 'unresolved', issue, error: !known ? `Unknown field ${JSON.stringify(item.field)}` : !validOperator ? `Invalid operator ${JSON.stringify(operator)}; choose AND or NOT from the requirement` : null });
   }
-  for (const item of plan.cannot || []) requirements.push({ id: `r${requirements.length + 1}`, requirement: item.requirement, status: 'unexpressible', error: item.why });
+  for (const item of plan.cannot || []) {
+    // A requirement that names an option of a field is that field's filter, whatever the planner said.
+    const have = wordsOf(item.requirement);
+    const hit = named.find(n => [...wordsOf(n.option)].every(w => have.has(w)) && adapter.field(n.field));
+    if (hit) { requirements.push({ id: `r${requirements.length + 1}`, requirement: item.requirement, field: hit.field, operator: 'AND', why: `the field's option "${hit.option}" names what the requirement names`, status: 'planned' }); continue; }
+    requirements.push({ id: `r${requirements.length + 1}`, requirement: item.requirement, status: 'unexpressible', error: item.why });
+  }
 
   const repairs = new RepairProgress();
   for (;;) {

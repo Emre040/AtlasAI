@@ -218,8 +218,13 @@ async function deepResearchTrail({ goal, mode: requestedMode = 'online', study =
       }
       return true;
     };
+    // Two requirements answered by the same filter are both expressed by it: the duplicate goes,
+    // the requirements stay validated. Only a filter strictly wider than another on its field
+    // narrows nothing and leaves its requirement unexpressed.
     for (const [i, f] of [...filters].entries()) {
-      const other = filters.find((o, j) => o !== f && covers(f, o) && !(covers(o, f) && j > i));
+      const same = filters.find((o, j) => o !== f && j < i && covers(f, o) && covers(o, f));
+      if (same) { filters.splice(filters.indexOf(f), 1); await onStep?.({ stage: 'selection_step', label: 'Chosen', message: `"${f.requirement}" is expressed by the same filter as "${same.requirement}"` }); continue; }
+      const other = filters.find(o => o !== f && covers(f, o) && !covers(o, f));
       if (!other) continue;
       const item = requirements.find(r => r.id === f.requirement_id);
       if (item) { item.status = 'unexpressible'; item.error = `the filter chosen for it (${adapter.describe([f])}) selects everything the filter for "${other.requirement}" already selects, so it narrows nothing and does not express this requirement`; }

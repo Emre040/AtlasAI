@@ -13,7 +13,7 @@ const { wherePredicate, withColumns, isMissing, inList } = require('./studyTools
 const { namedColumns } = require('./desk');
 
 const STATUS = Object.freeze({ ok: 'ok', noRows: 'no rows in table', noMatch: 'no rows match filter', notInRelease: 'not in release' });
-const MAX_HELD_ROWS = 5000000;   // rows one result may hold in memory; a larger selection needs a filter
+const MAX_HELD_ROWS = 100000;    // rows one result may hold; a larger selection needs a filter or a list of points
 
 function resolveColumn(entry, name) {
   const found = entry.columns.find(c => c === name) || entry.columns.find(c => c.toLowerCase() === String(name).toLowerCase());
@@ -78,7 +78,7 @@ async function fetchRows({ adapter, entry, supplied, resolved, fields, where = [
 // The rows whose value in one column is one of the points: the points are any values (tissues,
 // cell lines, categories), matched case-insensitively. Rows of an entity-keyed table also carry
 // the entity keys.
-async function fetchMatching({ adapter, entry, points, fields, where = [], match, keys }) {
+async function fetchMatching({ adapter, entry, points, fields, where = [], match, keys, aliases = null }) {
   if (!entry) throw new Error('fetch needs a table');
   if (entry.key === 'unreadable') throw new Error(`${entry.file} is in the release but not readable here`);
   // One column, or several when a point may sit in any of them (the two sides of a pair table);
@@ -91,16 +91,20 @@ async function fetchMatching({ adapter, entry, points, fields, where = [], match
   const keyColumns = keyed ? [geneKey, idKey].filter(c => c !== column) : [];
   const unique = [...new Map(points.map(p => [String(p).trim().toLowerCase(), String(p).trim()])).entries()];
   const byPoint = new Map(unique.map(([key]) => [key, []]));
+  // A point may be spelled otherwise in the column (an entity by its id where the point is its
+  // name): every alias of a point finds the point's rows.
+  const keyOfValue = new Map(unique.map(([key]) => [key, key]));
+  for (const [key, point] of unique) for (const alias of (aliases?.get(point) || [])) keyOfValue.set(String(alias).trim().toLowerCase(), key);
+  const spellings = [...keyOfValue.keys()];
   // The read is narrowed at the source to rows where any match column holds a point; the rows
   // are then matched here as before, so what is kept is exactly what matches.
-  for await (const row of adapter.rows(entry, { where: [{ columns: matchColumns, values: unique.map(([, point]) => point) }] })) {
+  for await (const row of adapter.rows(entry, { where: [{ columns: matchColumns, values: spellings }] })) {
     const seen = new Set();
     for (const c of matchColumns) {
-      const key = String(row[c] ?? '').trim().toLowerCase();
-      if (seen.has(key)) continue;
+      const key = keyOfValue.get(String(row[c] ?? '').trim().toLowerCase());
+      if (key === undefined || seen.has(key)) continue;
       seen.add(key);
-      const hit = byPoint.get(key);
-      if (hit) hit.push(row);
+      byPoint.get(key).push(row);
     }
   }
   const first = [...byPoint.values()].find(rows => rows.length)?.[0];
@@ -112,7 +116,7 @@ async function fetchMatching({ adapter, entry, points, fields, where = [], match
   // that column and never the point itself.
   const paired = matchColumns.length > 1;
   const columns = [column, ...(paired ? ['other'] : []), ...keyColumns, ...wanted.filter(c => !keyColumns.includes(c)), 'source_rows', 'source_status'];
-  const otherOf = (row, key) => matchColumns.map(c => row[c]).find(v => String(v ?? '').trim().toLowerCase() !== key) ?? null;
+  const otherOf = (row, key) => matchColumns.map(c => row[c]).find(v => keyOfValue.get(String(v ?? '').trim().toLowerCase()) !== key) ?? null;
   const out = [];
   const coverage = { supplied: points.length, entities: unique.length, with_rows: 0, no_rows: 0, no_match: 0, rows: 0 };
   for (const [key, point] of unique) {
@@ -156,7 +160,7 @@ async function fetchAll({ adapter, entry, fields, where = [], keys }) {
     scanned++;
     if (!predicate(row)) continue;
     selected.push(row);
-    if (selected.length > MAX_HELD_ROWS) throw new Error(`${entry.file}: more than ${MAX_HELD_ROWS.toLocaleString('en-US')} rows selected, more than a result can hold; add a where filter`);
+    if (selected.length > MAX_HELD_ROWS) throw new Error(`${entry.file}: more than ${MAX_HELD_ROWS.toLocaleString('en-US')} rows selected, more than a result can hold; add a where filter, or a list of points`);
   }
   const firstKeys = keyed && selected.length ? adapter.keysOf(entry, selected[0]) : {};
   const identity = keyed && selected.length ? identityColumns(entry, [selected[0]], keyColumns.map(c => firstKeys[c])) : [];

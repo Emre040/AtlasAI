@@ -93,7 +93,8 @@ async function searchRelease(adapter, catalog, words, listed, found = new Set())
       const ids = e ? await idColumns(adapter, e) : [];
       if (ids.length) holders.push(`${file} · ${ids.join(', ')}${ids.length > 1 ? ' (a pair table: match against both)' : ''}`);
     }
-    lines.push(`${entities.map(x => `${JSON.stringify(x.word)} is a ${adapter.identity().entity} of the release (${x.gene.ensembl})`).join('; ')}: fetch reads its rows for the list by its keys, no search of the point is needed${holders.length ? `; columns holding ${adapter.identity().entity} ids in the tables found: ${holders.slice(0, SEARCH_HITS).join('; ')}` : '; search a word of the subject to find the table, then fetch with the list'}`);
+    const master = catalog.find(e => e.key === 'master');
+    lines.push(`${entities.map(x => `${JSON.stringify(x.word)} is a ${adapter.identity().entity} of the release (${x.gene.gene} = ${x.gene.ensembl})`).join('; ')}: fetch reads its rows for the list by its keys, no search of the point is needed${master ? `; its own row (name, id, annotations) is in ${master.file}` : ''}${holders.length ? `; columns holding ${adapter.identity().entity} ids in the tables found: ${holders.slice(0, SEARCH_HITS).join('; ')}` : '; search a word of the subject to find the table, then fetch with the list'}`);
   }
   if (tables.length) lines.push(`tables named by the words: ${tables.slice(0, SEARCH_HITS).map(({ e }) => `${e.file} — ${e.title || e.file}${e.description ? `: ${String(e.description).slice(0, 90)}` : ''} (${e.columns.length > 10 ? `${e.columns.slice(0, 10).join(', ')} … ${e.columns.length} columns` : e.columns.join(', ')})`).join('\n  ')}`);
   if (columns.length) lines.push(`columns named by the words: ${columns.slice(0, SEARCH_HITS).map(({ e, column }) => `${e.file} · ${column}`).join('; ')}${columns.length > SEARCH_HITS ? ` (+${columns.length - SEARCH_HITS})` : ''}`);
@@ -248,7 +249,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             seen.set(key, 'under SEARCHES'); progressed = true;
             await emit('execution_step', 'Search', `${words.join(', ')}: ${text.split('\n')[0].slice(0, 160)}`);
           } else if (name === 'fetch') {
-            const title = String(args.title || '').trim() || `fetch(${argsLine(bareArgs, 90)})`;
+            const title = String(args.title || '').trim() || `${String(args.table || '').replace(/\.tsv$/i, '')}: ${(args.fields || []).join(', ') || 'every column'}${args.where?.length ? ` where ${args.where.map(w => `${w.column} ${w.op} ${Array.isArray(w.value) ? w.value.join('|') : w.value ?? ''}`).join(' and ')}` : ''}`.slice(0, 120);
             const description = String(args.description || '').trim() || title;
             if (results.has(title)) throw new Error(`a result titled ${JSON.stringify(title)} exists; choose another title`);
             const entry = await adapter.entry(String(args.table || '').trim());
@@ -285,12 +286,15 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             if (supplied.length && !args.match && args.where?.length) {
               const keyColumns = [entry.geneColumn, ...(['ensembl', 'name', 'master'].includes(entry.key) ? entry.columns.slice(0, entry.key === 'name' ? 2 : 1) : [])].filter(Boolean).map(c => c.toLowerCase());
               const keysOfList = new Set([...supplied, ...supplyResolved.filter(Boolean).flatMap(g => [g.gene, g.ensembl])].filter(Boolean).map(v => String(v).trim().toLowerCase()));
-              for (const clause of args.where) {
+              for (const clause of [...args.where]) {
                 if (!clause || !keyColumns.includes(String(clause.column || '').toLowerCase()) || !['=', 'in'].includes(clause.op)) continue;
                 const named = new Set((clause.op === 'in' ? inList(clause.value) : [clause.value]).map(v => String(v).trim().toLowerCase()));
                 const dropped = supplied.filter((p, i) => { const g = supplyResolved[i]; return ![p, g?.gene, g?.ensembl].filter(Boolean).some(v => named.has(String(v).trim().toLowerCase())); });
                 if (dropped.length) throw new Error(`the list already selects the rows by ${clause.column}; this where names ${named.size} of its ${count(supplied.length)} points and would drop the rest (${dropped.slice(0, 3).join(', ')}${dropped.length > 3 ? ', …' : ''}). Leave that clause out`);
-                if (!keysOfList.size) break;
+                // The clause names the very points of the list: the list already selects them, by
+                // whichever spelling the column holds, so the clause is set aside.
+                args.where = args.where.filter(c => c !== clause);
+                spelling.push(`the where on ${clause.column} names the points of the list, which already selects them: set aside`);
               }
             }
             // Points matched against a column are read as the column spells them; points that are
@@ -319,7 +323,12 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             await emit('execution_step', 'Fetch', `${entry.file}${args.fields?.length ? ` fields ${args.fields.join(', ')}` : ''}${filter}${supplied.length ? ` for ${count(supplied.length)} points${chained ? ` from "${chained.from}" ${chained.column}` : ''}${match ? ` matched against ${Array.isArray(match) ? match.join(', ') : match}` : ''}` : ''}`);
             let fetched;
             if (!supplied.length) fetched = await fetchAll({ adapter, entry, fields: args.fields, where: args.where, keys });
-            else if (match) fetched = await fetchMatching({ adapter, entry, points: supplied, fields: args.fields, where: args.where, match, keys });
+            else if (match) {
+              // A point that is an entity is found in a column under any of its names (its id, its symbol).
+              const aliases = new Map();
+              supplied.forEach((p, i) => { const g = supplyResolved[i]; if (g) aliases.set(String(p).trim(), [g.gene, g.ensembl].filter(Boolean)); });
+              fetched = await fetchMatching({ adapter, entry, points: supplied, fields: args.fields, where: args.where, match, keys, aliases });
+            }
             else if (supplyIdentities.size) fetched = await fetchRows({ adapter, entry, supplied, resolved: supplyResolved, fields: args.fields, where: args.where, keys });
             else throw new Error(`none of the points is a ${db.entity} of the release, and no column of ${entry.file} holds them; search a point to see where such values live, name the column with match, or fetch without the list`);
             const table = { name: title, title, description, rows: fetched.rows, columns: fetched.columns, args: { table: entry.file, fields: fetched.fields, ...(args.where?.length ? { where: args.where } : {}), ...(fetched.match ? { match: fetched.match } : {}), ...(chained || {}) }, coverage: fetched.coverage, source_file: entry.file };
@@ -332,9 +341,12 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
             seen.set(key, `it made "${title}"`); progressed = true;
             await emit('selection_step', 'Result', `${title}: ${count(table.rows.length)} rows`);
           } else {
-            const names = [...new Set((args.results || []).map(String))];
-            const unknown = names.filter(n => !results.has(n));
+            // A result is named by its title, exactly, case aside, or by a start of it that names one.
+            const titleOf = name => { const want = String(name).trim(); const keys = [...results.keys()]; return keys.find(k => k === want) || keys.find(k => k.toLowerCase() === want.toLowerCase()) || (keys.filter(k => k.toLowerCase().startsWith(want.toLowerCase())).length === 1 ? keys.find(k => k.toLowerCase().startsWith(want.toLowerCase())) : null); };
+            const named = (args.results || []).map(n => [String(n), titleOf(n)]);
+            const unknown = named.filter(([, k]) => !k).map(([n]) => n);
             if (unknown.length) throw new Error(`no result titled ${unknown.join(', ')}; results so far: ${[...results.keys()].join(', ') || 'none'}`);
+            const names = [...new Set(named.map(([, k]) => k))];
             if (!names.length && !String(args.note || '').trim()) throw new Error('finish needs result titles, or a note saying what no table holds');
             const tables = names.map(n => results.get(n));
             const note = String(args.note || '').trim();

@@ -142,7 +142,7 @@ test('a search finds a word no vocabulary holds by scanning text columns, and sa
   const result = await run({ points: ['EGFR'], question: 'nTPM per tissue' });
   assert.equal(result.status, 'ok');
   const desk2 = requests[1].messages[1].content;
-  assert.match(desk2, /"EGFR" is a gene of the release \(ENSG1\); "ERBB2" is a gene of the release \(ENSG2\): fetch reads its rows for the list by its keys, no search of the point is needed; columns holding gene ids in the tables found: rna_tissue_consensus\.tsv · Gene/);
+  assert.match(desk2, /"EGFR" is a gene of the release \(EGFR = ENSG1\); "ERBB2" is a gene of the release \(ERBB2 = ENSG2\): fetch reads its rows for the list by its keys, no search of the point is needed; columns holding gene ids in the tables found: rna_tissue_consensus\.tsv · Gene/);
   assert.match(desk2, /tables named by the words: rna_tissue_consensus\.tsv — Consensus tissue RNA/);
   assert.doesNotMatch(desk2, /text columns holding the words/, 'a key point is not scanned for');
   const scan = await investigator([

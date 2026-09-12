@@ -73,7 +73,7 @@ const STUDY_TOOLS = [
   tool('plan', 'The deliverables the study owes: one item per requested table, figure (its chart type), cohort (gene_set) or interpretation. Replaces the plan.', { items: { type: 'array', items: { type: 'object', properties: { step: S, kind: { type: 'string', enum: studyPlan.KINDS } }, required: ['step', 'kind'] } } }, ['items']),
   tool('note', 'Keep a decision or open question on the desk; replace overwrites note N.', { text: S, replace: N }, ['text']),
   tool('open', 'Show rows of an artifact: rows and offset page it, columns narrow it.', { artifact: A, rows: N, offset: N, columns: { type: 'array', items: S } }, ['artifact']),
-  tool('run', 'The way operations are called: a chain of steps, each an operation with its args, later steps naming earlier ones as @id (an existing artifact by its own id); one turn, one artifact per step, every step in the trail.',{ steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
+  tool('run', 'Runs operations: a chain of steps, each {id, tool: an operation from the list, args}, later steps naming earlier ones as @id (an existing artifact by its own id); one artifact per step, every step in the trail.',{ steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
   op('combine', 'Rows of a and b as one table: concat (every row of a, then every row of b; label names a column that says which input each row came from, by its title, so stacked cohorts stay told apart), intersect (rows of a whose entity is in b) or difference (rows of a whose entity is not in b). on matches by a column instead of the entity. One row per entity across both tables is concat then distinct.', { a: A, b: A, how: { type: 'string', enum: ['concat', 'intersect', 'difference'] }, on: S, label: S }, ['a', 'b', 'how']),
   TABLE_OPERATIONS.get('join'),
   TABLE_OPERATIONS.get('filter'),
@@ -91,6 +91,31 @@ const STUDY_TOOLS = [
   tool('finish', 'Deliver the report: tables and figures by id, findings as claims bound to their cells, limitations, not_done.', FINISH_SCHEMA)
 ];
 const TABLE_TOOLS = new Set(['combine', 'join', 'filter', 'select', 'rank', 'aggregate', 'classify', 'compute', 'pivot', 'chart', 'correlate', 'overlap', 'explode']);
+
+// The operations as one line each, read off their own schemas: name, arguments (a list as
+// name[], a choice as name=a|b, an object by its keys), then what the operation does. This is
+// what the study reads instead of one JSON schema per operation on every turn; a step of run
+// is still checked against the full schema, and a wrong argument is answered with the schema's
+// own message.
+function argumentLine(name, schema) {
+  if (!schema || typeof schema !== 'object') return name;
+  if (schema.enum) return `${name}=${schema.enum.join('|')}`;
+  if (schema.type === 'array') {
+    const item = schema.items || {};
+    if (item.enum) return `${name}[]=${item.enum.join('|')}`;
+    if (item.type === 'object' && item.properties) return `${name}[{${Object.entries(item.properties).map(([k, v]) => argumentLine(k, v)).join(', ')}}]`;
+    return `${name}[]`;
+  }
+  if (schema.type === 'object' && schema.properties) return `${name}{${Object.entries(schema.properties).map(([k, v]) => argumentLine(k, v)).join(', ')}}`;
+  return name;
+}
+function operationsReference(tools) {
+  return tools.filter(t => TABLE_TOOLS.has(t.name)).map(t => {
+    const props = Object.entries(t.parameters.properties).filter(([k]) => !['title', 'description'].includes(k));
+    const required = new Set(t.parameters.required || []);
+    return `${t.name}(${props.map(([k, v]) => `${argumentLine(k, v)}${required.has(k) ? '' : '?'}`).join(', ')}): ${t.description}`;
+  }).join('\n');
+}
 const SYNC_TOOLS = new Set(['plan', 'note', 'open', 'skip', 'finish']);
 
 // The arguments of a call without the name it gives its result.
@@ -108,7 +133,7 @@ Read the question as one study: what it says about how a thing is measured, in w
 How a study goes:
 1. plan lists the deliverables, one item per requested table, figure of a given type, cohort or interpretation; independent work starts in the same turn.
 2. A set of ${entity}s comes from ${search}; its rows come from investigator_hpa with from=<that artifact's id> and the question. Both run in the background and return tables that are used as they are.
-3. Operations are written as chains: every step whose inputs are known goes in one run call, later steps naming earlier ones as @id (explode, then aggregate the counts, then the chart; filter, then rank, then the table), each step named with a title and a description a reader understands. One run per analysis, one turn; a single operation alone in a turn is only for a step whose next step needs its result seen first. Independent chains go in the same turn.
+3. Operations run as steps of run, written as chains: every step whose inputs are known goes in one run call, later steps naming earlier ones as @id (explode, then aggregate the counts, then the chart; filter, then rank, then the table), each step named with a title and a description a reader understands. One run per analysis, one turn; a run of one step is only for a step whose next step needs its result seen first. Independent chains go in the same turn. The operations and their arguments are listed below.
 4. finish delivers the report from the data: tables and figures by id, and findings as claims, each bound to the rows and columns it rests on. The report prints those cells beside the claim, so every number a claim states is among them or was computed into an artifact the claim cites. Limitations state what the evidence cannot establish, in words. A plan item that cannot be delivered goes in not_done with the reason.
 Values are reported as recorded: units, zeros, blanks, repeated rows and ties. A missing record is absence from this source.`;
 }
@@ -259,7 +284,9 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
   });
   const agentNames = new Set(agentSpecs.map(t => t.function.name));
   const toolSpecs = [...agentSpecs, ...STUDY_TOOLS.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }))];
-  const system = systemPrompt(identity, [...agentNames]);
+  // The model is offered run and the study's own tools; the operations run as steps of run.
+  const offeredSpecs = toolSpecs.filter(t => !TABLE_TOOLS.has(t.function.name));
+  const system = `${systemPrompt(identity, [...agentNames])}\n\nOperations, as steps of run (every step has title and description; a step's args are checked against the operation's full schema):\n${operationsReference(STUDY_TOOLS)}`;
 
   const get = id => {
     const key = String(id || '').trim();
@@ -651,8 +678,8 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       // The last turn can only report; skip exists only while an agent is running.
       // Only what can act is offered: before any artifact exists, the plan, notes and the agents;
       // the operations, open and finish once there is something to work on.
-      const offered = turn === maxTurns ? toolSpecs.filter(t => ['finish', 'note'].includes(t.function.name))
-        : toolSpecs.filter(t => (t.function.name !== 'skip' || state.running.size) && (state.artifacts.length || ['plan', 'note', 'skip'].includes(t.function.name) || agentNames.has(t.function.name)));
+      const offered = turn === maxTurns ? offeredSpecs.filter(t => ['finish', 'note'].includes(t.function.name))
+        : offeredSpecs.filter(t => (t.function.name !== 'skip' || state.running.size) && (state.artifacts.length || ['plan', 'note', 'skip'].includes(t.function.name) || agentNames.has(t.function.name)));
       const user = deskText(turn);
       const request = { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], tools: offered, temperature: 0, prompt_cache: { key: `study ${workspace.uuid}` }, ...(effort ? { reasoning_effort: effort } : {}) };
       const contextDir = path.join(workspace.workspaceDir, 'context');
@@ -687,7 +714,8 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       let waiting = false, sync = 0, started = 0, repeated = 0;
       async function executeCall(call) {
         if (call.error) throw new Error(`invalid arguments: ${call.error}`);
-        const spec = offered.find(t => t.function.name === call.name);
+        // An operation called by name, though only run is offered, is the operation: it runs.
+        const spec = offered.find(t => t.function.name === call.name) || toolSpecs.find(t => t.function.name === call.name && TABLE_TOOLS.has(call.name));
         if (!spec) throw new Error(`no tool ${call.name}`);
         call.args = decodeArguments(call.args, spec.function.parameters, call.name);
         const ignored = validate(call.args, spec.function.parameters, call.name);

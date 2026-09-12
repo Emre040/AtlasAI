@@ -319,7 +319,12 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
       : `${count(table.rows.length)} rows selected`;
     const field = (mapping || []).find(m => m.column === value && m.table === table.source_file)?.field || value;
     const note = `${value ? `${value}` : 'rows'} from ${table.source_file}${contextText}, points ${read}${filter}; ${coverage}${keyCols.includes('other') ? '; the other side of each pair is in other' : ''}.`;
-    return { ...table, description: note, note, mapping: value ? { field, table: table.source_file, column: value } : null };
+    // A title the model gave stays; a default title (the fetch spelled out) becomes the value and
+    // its source.
+    const source = String(table.source_file).replace(/\.tsv$/i, '');
+    const auto = String(table.title).startsWith(`${source}: `);
+    const short = auto && value ? `${field}${context.length ? ` per ${context.join(' and ')}` : ''} (${source})` : table.title;
+    return { ...table, name: short, title: short, description: note, note, mapping: value ? { field, table: table.source_file, column: value } : null };
   };
   const done = (extra, turns) => ({ bulk: true, mode: 'offline', hpa_version: release?.hpaVersion || null, tokens: { total: { prompt: stats.prompt, completion: stats.completion, total: stats.total } }, calls: stats.calls, turns, seconds: (Date.now() - started) / 1000, unresolved: unresolvedPoints(), ...extra, ...(Array.isArray(extra.tables) ? { tables: extra.tables.flatMap(perValue).map(t => explain(t, extra.mapping)) } : {}) });
   try {

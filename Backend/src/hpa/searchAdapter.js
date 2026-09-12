@@ -251,11 +251,16 @@ async function execute(filters, url, requestedMode) {
       const f = field(axis.field);
       const column = f.levels?.[1]?.label ? `${axis.field}: ${f.levels[1].label}` : `${axis.field} value`;
       const rows = [];
+      const keyOf = row => row.Ensembl || row.ensembl || row.Gene || row.gene;
+      const covered = new Set();
       for (const option of secondLevel(f, axis.class)) {
         const part = await offlineSearch.evaluate(include.map(x => x === axis ? { ...x, subclass: option } : x), exclude);
         if (part.unsupported.length) continue;
-        for (const row of part.rows) rows.push({ ...row, [column]: option });
+        for (const row of part.rows) { rows.push({ ...row, [column]: option }); covered.add(keyOf(row)); }
       }
+      // A gene the class holds under no second-level value (a transporter of no listed kind) is
+      // in the set the first level names: it stays, its second-level column blank.
+      for (const row of local.rows) if (!covered.has(keyOf(row))) rows.push({ ...row, [column]: null });
       return { rows, mode: 'offline', version: agentMode.hpaVersion, source_files: local.source_files, context_columns: [column] };
     }
     return { rows: local.rows, mode: 'offline', version: agentMode.hpaVersion, source_files: local.source_files };

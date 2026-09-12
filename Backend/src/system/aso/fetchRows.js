@@ -151,10 +151,13 @@ async function fetchMatching({ adapter, entry, points, fields, where = [], match
       continue;
     }
     coverage.with_rows++;
-    for (const row of rows) {
+    // A pair table lists a pair from both sides; the pair is one row, whichever side held the point.
+    const seenOther = new Set();
+    const kept = paired ? rows.filter(row => { const o = String(otherOf(row, key) ?? '').trim().toLowerCase(); if (seenOther.has(o)) return false; seenOther.add(o); return true; }) : rows;
+    for (const row of kept) {
       coverage.rows++;
       const ids = keyed ? adapter.keysOf(entry, row) : {};
-      out.push({ ...base, ...(paired ? { other: otherOf(row, key) } : {}), ...Object.fromEntries(keyColumns.map(c => [c, ids[c] ?? null])), ...pick(row, wanted), source_rows: rows.length, source_status: STATUS.ok });
+      out.push({ ...base, ...(paired ? { other: otherOf(row, key) } : {}), ...Object.fromEntries(keyColumns.map(c => [c, ids[c] ?? null])), ...pick(row, wanted), source_rows: kept.length, source_status: STATUS.ok });
     }
   }
   return { rows: withColumns(out, columns), columns, coverage, fields: wanted, match: column, identity_columns: identity, identity_keys: identityKeysOf(identity, first, keys.columns, [firstKeys[geneKey], firstKeys[idKey]]) };

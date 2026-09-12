@@ -156,7 +156,7 @@ How a study goes:
 2. A set of ${entity}s comes from ${search}; its rows come from investigator_hpa with from=<that artifact's id> and the question. Both run in the background and return tables that are used as they are.
 3. Operations run as steps of run, written as chains: every step whose inputs are known goes in one run call, later steps naming earlier ones as @id (explode, then aggregate the counts, then the chart; filter, then rank, then the table), each step named with a title and a description a reader understands. One run per analysis, one turn; a run of one step is only for a step whose next step needs its result seen first. Independent chains go in the same turn. The operations and their arguments are listed below.
 4. finish delivers the report from the data: tables and figures by id, and findings as claims, each bound to the rows and columns it rests on. The report prints those cells beside the claim, so every number a claim states is among them or was computed into an artifact the claim cites. Limitations state what the evidence cannot establish, in words. A plan item that cannot be delivered goes in not_done with the reason.
-Values are reported as recorded: units, zeros, blanks, repeated rows and ties. A missing record is absence from this source.`;
+Values are reported as recorded: units, zeros, blanks, repeated rows and ties. A blank is a record the source lacks: not a zero, and not an absence of the thing measured.`;
 }
 
 // ---- what agents return -----------------------------------------------------------------------------

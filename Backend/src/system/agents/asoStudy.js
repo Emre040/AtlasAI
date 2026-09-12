@@ -385,9 +385,11 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
   // An agent runs in the background through the orchestrator, exactly as a chat message would.
   // The same question is asked once: an identical call points at the earlier job instead.
   const agentJobs = new Map();
+  // Up to the parallel limit, an agent starts at once, as it always did; beyond it, the agent
+  // waits for a slot, so a turn that summons one set per tissue does not start a dozen together.
   let agentsActive = 0;
   const agentQueue = [];
-  const agentSlot = () => new Promise(resolve => { if (agentsActive < parallel) { agentsActive++; resolve(); } else agentQueue.push(resolve); });
+  const withSlot = start => { if (agentsActive < parallel) { agentsActive++; return start(); } return new Promise(resolve => agentQueue.push(resolve)).then(start); };
   const releaseSlot = () => { const next = agentQueue.shift(); if (next) next(); else agentsActive--; };
   function startAgent(toolName, args) {
     if (args.mode !== undefined && args.mode !== mode) throw new Error(`Delegated agents use the study data source: ${mode}`);
@@ -439,7 +441,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     const forward = async s => log(`agent.${s.stage}`, { id, label: s.label, message: s.message }, id);
     // Agents run a few at a time, as operations do: each carries its own working set, and a turn
     // that summons one set per tissue would start a dozen at once.
-    job.promise = agentSlot().then(() => orchestrator.execute(toolName, executionArgs, { db, visitorId: ctx.visitorId, rawQuery: '', includeRows: true, onStep: forward, reasoningEffort: effort, runControl: ctx.runControl, signal: ctx.signal, cacheKey: workspace.uuid, maxTurns }).finally(releaseSlot))
+    job.promise = withSlot(() => orchestrator.execute(toolName, executionArgs, { db, visitorId: ctx.visitorId, rawQuery: '', includeRows: true, onStep: forward, reasoningEffort: effort, runControl: ctx.runControl, signal: ctx.signal, cacheKey: workspace.uuid, maxTurns }).finally(releaseSlot))
       .then(async ({ result }) => {
         addSpecialistUsage(toolName, result?.tokens, result?.calls);
         const made = [], repeats = [];

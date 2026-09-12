@@ -19,6 +19,20 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 const { inference, getActiveModel } = require('../../inference/gateway');
 const { jsonCall } = require('../../inference/jsonCall');
+
+// A report's findings are read once more, by a narrow call, against three rules of the data
+// they rest on: a missing record is not an absence, a quantity the source does not record is not
+// derived from one it does, and an association is not a cause or a choice.
+const CLAIMS_RULES = {
+  1: 'reads a missing record as a zero or an absence',
+  2: 'states a quantity the source does not record, derived from one it does',
+  3: 'presents an association as a cause, a benefit or a best choice'
+};
+const CLAIMS_SYSTEM = `You check a report's findings against three rules of the data they rest on, and nothing else. Flag a finding that
+1. reads a missing record (a blank, an unrecorded value) as a zero, an absence, a non-detection or a non-expression, or computes a count, a fraction, a median or a mean that treats blanks that way;
+2. states a quantity in a unit or of a kind the source tables do not record, derived from one they do (an absolute amount from a relative level, a ratio of things not measured together, any stand-in);
+3. presents an association as a cause, an effect, a benefit, a treatment, or a best or recommended choice.
+A finding that reports what was recorded, with blanks counted as missing records, is not flagged, whatever the question asked for. Answer as JSON: {"issues": [{"claim": <index of the finding>, "rule": 1|2|3, "why": "<one sentence>"}]}; issues is [] when nothing is flagged.`;
 const { platformConfig } = require('../../policy/config');
 const tools = require('../aso/studyTools');
 const { TABLE_OPERATIONS, executeTableOperation, A } = require('../aso/tableOperations');
@@ -89,7 +103,7 @@ const STUDY_TOOLS = [
   op('overlap', 'Entities a and b share, against every entity of the database or a universe artifact: shared, expected, fold, hypergeometric p; group_by tests each group of a.', { a: A, b: A, universe: A, on: S, group_by: S }, ['a', 'b']),
   op('explode', 'One row per item of a list cell; "key: number" items become <as>_key and <as>_value, "label (number)" <as>_label and <as>_value, others <as>_item.', { artifact: A, column: S, as: S }, ['artifact', 'column']),
   tool('skip', 'Nothing to do until a running agent returns.', { reason: S }, ['reason']),
-  tool('finish', 'Deliver the report: tables and figures by id, findings as claims bound to their cells, limitations, not_done.', FINISH_SCHEMA)
+  tool('finish', 'Deliver the report: tables and figures by id, findings as claims bound to their cells, limitations, not_done. Before a claim or a deliverable states a number, ask whether the atlas measured it: a blank is a missing record, never a zero or an absence; a value is reported in the unit and the kind of quantity the atlas records, never converted into a quantity it does not measure; an association is reported as an association, never as a cause, a benefit or a best choice. What would need such a step is a not_done item, with the reason, and a limitation.', FINISH_SCHEMA)
 ];
 const TABLE_TOOLS = new Set(['combine', 'join', 'filter', 'select', 'rank', 'aggregate', 'classify', 'compute', 'pivot', 'chart', 'correlate', 'overlap', 'explode']);
 
@@ -156,7 +170,7 @@ How a study goes:
 1. plan lists the deliverables, one item per requested table, figure of a given type, cohort or interpretation, and with each item the data it needs from the agents (needs: the agent, its question or goal, and its points, or from_item: the number of the item whose set it reads); every summon the plan needs starts at once, on the plan's turn, a need on another item's set the moment that set exists, and the study goes on when all are back.
 2. A set of ${entity}s comes from ${search}; its rows come from investigator_hpa with from=<that artifact's id> and the question. Both run in the background and return tables that are used as they are.
 3. Operations run as steps of run, written as chains: every step whose inputs are known goes in one run call, later steps naming earlier ones as @id (explode, then aggregate the counts, then the chart; filter, then rank, then the table), each step named with a title and a description a reader understands. One run per analysis, one turn; a run of one step is only for a step whose next step needs its result seen first. Independent chains go in the same turn. The operations and their arguments are listed below.
-4. finish delivers the report from the data: tables and figures by id, and findings as claims, each bound to the rows and columns it rests on. The report prints those cells beside the claim, so every number a claim states is among them or was computed into an artifact the claim cites. Limitations state what the evidence cannot establish, in words. A plan item that cannot be delivered goes in not_done with the reason.
+4. finish delivers the report from the data: tables and figures by id, and findings as claims, each bound to the rows and columns it rests on. The report prints those cells beside the claim, so every number a claim states is among them or was computed into an artifact the claim cites. Limitations state what the evidence cannot establish, in words. A plan item that cannot be delivered goes in not_done with the reason. Three things are never computed, whatever the question asks: a blank read as a zero or an absence (it is a missing record), a quantity in a unit or of a kind the atlas does not measure derived from one it does (a stand-in), and a cause, a benefit or a best choice read from an association. Each is a not_done item with the reason and a limitation, and the descriptive results are delivered.
 Values are reported as recorded: units, zeros, blanks, repeated rows and ties. A blank is a record the source lacks: not a zero, and not an absence of the thing measured. The report states what the atlas records and what the operations computed from it; a quantity the atlas does not measure is not derived from a stand-in, it is named in limitations as not identified by this data.`;
 }
 
@@ -891,6 +905,19 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           const inGoal = t => new RegExp(`(^|[^A-Za-z0-9-])${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9-])`, 'i').test(goal);
           const entityNames = new Set(tokens.filter((t, i) => known[i] && !inGoal(t) && (String(known[i].gene || '').toUpperCase() === t.toUpperCase() || String(known[i].ensembl || '').toUpperCase() === t.toUpperCase())));
           const issues = reportIssues(args, state, { entityNames });
+          // The findings, once bound, are read against the three rules by a narrow call; a
+          // finding that breaks one is refused with the rule, like a number no cell holds.
+          if (!issues.length && Array.isArray(args.claims) && args.claims.length) {
+            const user = `FINDINGS\n${args.claims.map((c, i) => `${i}: ${String(c?.text || '').replace(/\s+/g, ' ').trim()}`).join('\n')}`;
+            try {
+              const verdict = effort ? await inference.withContext({ reasoningEffort: effort }, () => jsonCall(CLAIMS_SYSTEM, user, undefined, 'claims review', reviewStats)) : await jsonCall(CLAIMS_SYSTEM, user, undefined, 'claims review', reviewStats);
+              for (const j of Array.isArray(verdict?.issues) ? verdict.issues : []) {
+                const i = Number(j?.claim); const rule = CLAIMS_RULES[Number(j?.rule)];
+                if (!Number.isInteger(i) || !args.claims[i] || !rule) continue;
+                issues.push(`claims[${i}]: "${String(args.claims[i].text || '').slice(0, 100)}${String(args.claims[i].text || '').length > 100 ? '…' : ''}" ${rule}: ${String(j.why || '').replace(/\s+/g, ' ').trim().slice(0, 240)}. Report what is recorded; what this would need goes in not_done with the reason and in limitations`);
+              }
+            } catch (error) { remember(`claims review failed: ${error.message}`); }
+          }
           let figures = [];
           if (!issues.length) {
             figures = selectFigures(state.artifacts, args.figures).filter(a => a.images?.length);

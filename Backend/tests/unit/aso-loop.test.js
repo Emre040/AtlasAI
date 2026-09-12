@@ -78,6 +78,20 @@ test('plan, delegate, compute a chain, and finish a report bound to the data', a
   assert.ok(requests[0].tools.every(tool => !['union', 'intersect'].includes(tool.function.name)));
 });
 
+test('a finding that reads a blank as an absence is refused by the claims review with the rule, then accepted once it reports what is recorded', async t => {
+  let judged = 0;
+  const { run, requests, reviews } = await study(t, [
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' }))),
+    response(call('finish', { claims: [{ text: 'EGFR is absent from heart (blank nTPM).', artifact: 'a1', rows: [0], columns: ['nTPM'] }] })),
+    response(call('finish', { claims: [{ text: 'EGFR has no recorded heart nTPM; liver nTPM is 32.2.', artifact: 'a1', rows: [0], columns: ['nTPM'] }], limitations: ['a blank is a missing record, not an absence'] }))
+  ], { review: user => user.startsWith('FINDINGS') && ++judged === 1 ? { issues: [{ claim: 0, rule: 1, why: 'a blank nTPM is a missing record, not an absence' }] } : { issues: [] } });
+  const result = await run({});
+  assert.equal(result.outcome, 'completed', result.summary);
+  assert.match(requests[2].messages[1].content, /turn 2: finish refused:\n    - claims\[0\]: "EGFR is absent from heart \(blank nTPM\)\." reads a missing record as a zero or an absence: a blank nTPM is a missing record, not an absence\. Report what is recorded; what this would need goes in not_done with the reason and in limitations/);
+  assert.equal(reviews.filter(r => r.label === 'claims review').length, 2, 'the findings are reviewed at each finish');
+  assert.match(reviews.find(r => r.label === 'claims review').user, /^FINDINGS\n0: EGFR is absent from heart \(blank nTPM\)\.$/);
+});
+
 test('a claim with a number its rows do not hold is refused with the reason, then accepted once bound correctly', async t => {
   const { run, requests } = await study(t, [
     response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' }))),

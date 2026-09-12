@@ -53,6 +53,34 @@ Never fetch a whole table to look at it; the search says what is there.`;
 // One field in one context per question is the study's rule: it asks that way, and this agent reads what it is asked.
 
 const flat = value => String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+// What a fetch's rows carry into a result: the points, their keys and the fields read. The
+// read's bookkeeping columns (source rows per point, match status) are summed in the coverage
+// and left out: as columns they collide on every join and read as data. A point matched against
+// a column and found in no row has its spelling in that column and no keys; when it is an entity
+// of the release, its keys are filled in and the column spells it as the column does (its id in
+// an id column), so every row names its point.
+const BOOKKEEPING = ['source_rows', 'source_status'];
+function carried(fetched, supplied = [], supplyResolved = [], keyColumns = []) {
+  const columns = fetched.columns.filter(c => !BOOKKEEPING.includes(c));
+  const [geneKey, idKey] = keyColumns;
+  const match = fetched.match;
+  const keyed = match && columns.includes(geneKey) && columns.includes(idKey);
+  const byPoint = new Map();
+  if (keyed) supplied.forEach((p, i) => { const g = supplyResolved[i]; if (g) for (const s of [p, g.gene, g.ensembl]) if (s) byPoint.set(String(s).trim().toLowerCase(), g); });
+  const spelledKey = keyed ? (fetched.identity_keys || {})[match] : null;   // the key column the match column spells
+  const empty = v => v === null || v === undefined || String(v).trim() === '';
+  const rows = fetched.rows.map(row => {
+    const r = Object.fromEntries(columns.map(c => [c, row[c] ?? null]));
+    if (!keyed || !empty(r[geneKey]) || !empty(r[idKey])) return r;
+    const g = byPoint.get(String(r[match] ?? '').trim().toLowerCase());
+    if (!g) return r;
+    r[geneKey] = g.gene ?? null; r[idKey] = g.ensembl ?? null;
+    if (spelledKey && g[spelledKey] !== undefined) r[match] = g[spelledKey];
+    return r;
+  });
+  return { rows, columns };
+}
 // A recorded value holds a word when either contains the other, the shorter being a word's length.
 const holdsWord = (value, needle) => { const f = flat(value); return f.includes(needle) || (f.length >= 4 && needle.includes(f)); };
 
@@ -604,7 +632,8 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
               fetched = await fetchAll({ adapter, entry, fields: args.fields, where: args.where, keys });
             }
             else throw new Error(`none of the points is a ${db.entity} of the release, and no column of ${entry.file} holds them; search a point to see where such values live, name the column with match, or fetch without the list`);
-            const table = { name: title, title, description, rows: fetched.rows, columns: fetched.columns, args: { table: entry.file, fields: fetched.fields, ...(args.where?.length ? { where: args.where } : {}), ...(fetched.match ? { match: fetched.match } : {}), ...(chained || {}) }, coverage: fetched.coverage, source_file: entry.file, effective, identity: fetched.identity_columns || [], identityKeys: fetched.identity_keys || {} };
+            const { rows, columns } = carried(fetched, supplied, supplyResolved, keys.columns);
+            const table = { name: title, title, description, rows, columns, args: { table: entry.file, fields: fetched.fields, ...(args.where?.length ? { where: args.where } : {}), ...(fetched.match ? { match: fetched.match } : {}), ...(chained || {}) }, coverage: fetched.coverage, source_file: entry.file, effective, identity: fetched.identity_columns || [], identityKeys: fetched.identity_keys || {} };
             results.set(title, table);
             const c = fetched.coverage;
             // A filter that matched no row at all: the desk says where its values are recorded.

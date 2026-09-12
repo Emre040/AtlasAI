@@ -659,6 +659,9 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     const key = `${a.id}|${offset}`, existing = state.views.get(key);
     const consumedAt = Math.max(-Infinity, ...state.artifacts.filter(x => (x.inputs || []).includes(a.id)).map(x => x.turn));
     if (existing && existing.text === text && !(consumedAt > existing.turn) && state.turn <= existing.turn + 1) { remember(`${a.id} ${range} is already on the desk under VIEWS`); return false; }
+    // The same page asked for again after it folded is a page the study keeps needing: it stays
+    // on the desk until an operation reads the artifact, instead of costing a turn each time.
+    if (existing && existing.text === text && !(consumedAt > existing.turn)) { state.views.set(key, { ...existing, turn: state.turn, pinned: true }); remember(`opened ${a.id} ${range} again: it stays on the desk until an operation reads ${a.id}`); return true; }
     view(key, text, `${a.id} ${range} (opened at turn ${state.turn}; open again to see them)`);
     remember(`opened ${a.id} ${range} (view on the desk)`);
     return true;
@@ -686,7 +689,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     for (const a of state.artifacts) for (const input of a.inputs || []) consumedAfter.set(input, Math.max(consumedAfter.get(input) ?? -Infinity, a.turn));
     // A view is read on the turn after it was opened; from then on it is its receipt, and open
     // brings it back. Rows the study keeps looking at do not ride along on every turn.
-    const views = [...state.views.entries()].map(([key, v]) => ((consumedAfter.get(key.split('|')[0]) ?? -Infinity) > v.turn || state.turn > v.turn + 1) ? v.receipt : v.text);
+    const views = [...state.views.entries()].map(([key, v]) => ((consumedAfter.get(key.split('|')[0]) ?? -Infinity) > v.turn || (!v.pinned && state.turn > v.turn + 1)) ? v.receipt : v.text);
     const sections = [
       desk.section('STUDY', goal),
       desk.section('PLAN', studyPlan.planText(state.plan, agentNames.has('deep_research_hpa') ? { gene_set: 'gene_set ← deep_research_hpa' } : {})),

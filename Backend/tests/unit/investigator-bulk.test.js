@@ -29,7 +29,7 @@ test('the investigator searches the release, fetches for the whole list and retu
   assert.equal(result.status, 'ok');
   assert.equal(result.tables.length, 1);
   assert.equal(result.tables[0].title, 'Liver and lung nTPM');
-  assert.deepEqual(result.tables[0].columns, ['gene', 'ensembl', 'Tissue', 'nTPM', 'source_rows', 'source_status']);
+  assert.deepEqual(result.tables[0].columns, ['gene', 'ensembl', 'Tissue', 'nTPM'], 'the read\'s bookkeeping is in the coverage, not in columns');
   assert.equal(result.tables[0].rows.length, 6, 'EGFR 2 + ERBB2 2 + MET 1 (blank nTPM) + NOPE 1 empty');
   assert.deepEqual(result.mapping, [{ field: 'nTPM', table: 'rna_tissue_consensus.tsv', column: 'nTPM' }]);
   assert.equal(result.note, 'the consensus table holds one nTPM per tissue');
@@ -45,7 +45,7 @@ test('the investigator searches the release, fetches for the whole list and retu
   assert.ok(Buffer.byteLength(desk2) < 2500, `a turn's desk stays small: ${Buffer.byteLength(desk2)} bytes`);
   // The desk of the third turn: the result as one line.
   const desk3 = requests[2].messages[1].content;
-  assert.match(desk3, /RESULTS\nLiver and lung nTPM \(6 rows: gene, ensembl, Tissue, nTPM, source_rows, source_status\) ← fetch table=rna_tissue_consensus\.tsv, fields=\["Tissue","nTPM"\]/);
+  assert.match(desk3, /RESULTS\nLiver and lung nTPM \(6 rows: gene, ensembl, Tissue, nTPM\) ← fetch table=rna_tissue_consensus\.tsv, fields=\["Tissue","nTPM"\]/);
   assert.match(desk3, /turn 2: fetch → "Liver and lung nTPM" \(6 rows; 3 points with rows, 1 not in the release\)/);
   assert.match(requests[0].messages[0].content, /You are the Investigator in a study over the Test Atlas/);
   assert.equal(requests[0].tools.length, 3);
@@ -70,7 +70,7 @@ test('without a list, fetch returns every row a filter selects; with match, the 
   ]);
   const values = await matched.run({ points: ['liver', 'heart'], question: 'nTPM of every gene in these tissues' });
   assert.equal(values.status, 'ok');
-  assert.deepEqual(values.tables[0].columns, ['Tissue', 'gene', 'ensembl', 'nTPM', 'source_rows', 'source_status']);
+  assert.deepEqual(values.tables[0].columns, ['Tissue', 'gene', 'ensembl', 'nTPM']);
   assert.deepEqual(values.tables[0].rows.map(r => [r.Tissue, r.gene]), [['liver', 'EGFR'], ['liver', 'ERBB2'], ['liver', 'MET'], ['heart', 'EGFR']]);
 });
 

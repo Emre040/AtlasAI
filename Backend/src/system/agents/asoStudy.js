@@ -72,7 +72,7 @@ const tool = (name, description, properties = {}, required = []) => ({ name, des
 // Every operation names its result (title, description); one left unnamed is named by its operation.
 const op = (name, description, properties = {}, required = []) => tool(name, description, { title: S, description: S, ...properties }, required);
 const STUDY_TOOLS = [
-  tool('plan', 'The deliverables the study owes: one item per requested table, figure (its chart type), cohort (gene_set) or interpretation, each with the data it needs from the agents (needs), which start at once. Replaces the plan.', { items: { type: 'array', items: { type: 'object', properties: { step: S, kind: { type: 'string', enum: studyPlan.KINDS }, description: S, not_done: { type: 'string', description: 'the reason this deliverable is not computed from this data (a blank read as absence, a stand-in quantity, a cause from an association); it is delivered as a limitation' }, needs: { type: 'array', description: 'the agent calls this deliverable needs: agent (investigator_hpa or deep_research_hpa), its question or goal, and its points, or from_item (the number of the plan item whose set it reads; it starts when that set exists)', items: { type: 'object', properties: { agent: S, question: S, goal: S, points: { type: 'array', items: S }, from_item: N, from: S, column: S, title: S, description: S }, required: ['agent'] } } }, required: ['step', 'kind'] } } }, ['items']),
+  tool('plan', 'The deliverables the study owes: one item per requested table, figure (its chart type), cohort (gene_set) or interpretation, each with the data it needs from the agents (needs), which start at once. Replaces the plan.', { items: { type: 'array', items: { type: 'object', properties: { step: S, kind: { type: 'string', enum: studyPlan.KINDS }, description: S, not_done: { type: 'string', description: 'the reason this deliverable is not computed from this data (a blank read as absence, a stand-in quantity, a cause from an association); it is delivered as a limitation' } }, required: ['step', 'kind'] } } }, ['items']),
   tool('note', 'Keep a decision or open question on the desk; replace overwrites note N.', { text: S, replace: N }, ['text']),
   tool('open', 'Show rows of an artifact: rows and offset page it, columns narrow it.', { artifact: A, rows: N, offset: N, columns: { type: 'array', items: S } }, ['artifact']),
   tool('run', 'Runs operations: a chain of steps, each {id, tool: an operation from the list, args}, later steps naming earlier ones as @id (an existing artifact by its own id); one artifact per step, every step in the trail.',{ steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
@@ -154,7 +154,7 @@ The desk in the message is your whole working set and stays in front of you ever
 Read the question as one study: what it says about how a thing is measured, in which cohort, scope or release, holds for every part of the question unless the question says otherwise.
 
 How a study goes:
-1. plan lists the deliverables, one item per requested table, figure of a given type, cohort or interpretation. Three things are never computed, whatever the question asks and whatever formula it gives: a blank read as a zero or an absence (it is a missing record); a quantity of a kind the atlas does not measure made from one it does (an absolute amount or count of molecules, copies or cells, a concentration, a mass, or a ratio of levels from different assays, from an expression level, an intensity or a fold change: the atlas records relative levels, and a formula does not turn them into amounts); and a cause, a benefit or a best choice read from an association. A deliverable that would need one is planned with not_done: the reason, delivered as a limitation, and the descriptive results around it (the levels as recorded) are delivered in full. With each other item, the data it needs from the agents (needs: the agent, its question or goal, and its points, or from_item: the number of the item whose set it reads); every summon the plan needs starts at once, on the plan's turn, a need on another item's set the moment that set exists, and the study goes on when all are back.
+1. plan lists the deliverables, one item per requested table, figure of a given type, cohort or interpretation. Three things are never computed, whatever the question asks and whatever formula it gives: a blank read as a zero or an absence (it is a missing record); a quantity of a kind the atlas does not measure made from one it does (an absolute amount or count of molecules, copies or cells, a concentration, a mass, or a ratio of levels from different assays, from an expression level, an intensity or a fold change: the atlas records relative levels, and a formula does not turn them into amounts); and a cause, a benefit or a best choice read from an association. A deliverable that would need one is planned with not_done: the reason, delivered as a limitation, and the descriptive results around it (the levels as recorded) are delivered in full.
 2. A set of ${entity}s comes from ${search}; its rows come from investigator_hpa with from=<that artifact's id> and the question. Both run in the background and return tables that are used as they are.
 3. Operations run as steps of run, written as chains: every step whose inputs are known goes in one run call, later steps naming earlier ones as @id (explode, then aggregate the counts, then the chart; filter, then rank, then the table), each step named with a title and a description a reader understands. One run per analysis, one turn; a run of one step is only for a step whose next step needs its result seen first. Independent chains go in the same turn. The operations and their arguments are listed below.
 4. finish delivers the report from the data: tables and figures by id, and findings as claims, each bound to the rows and columns it rests on. The report prints those cells beside the claim, so every number a claim states is among them or was computed into an artifact the claim cites. Limitations state what the evidence cannot establish, in words. A plan item that cannot be delivered goes in not_done with the reason. Three things are never computed, whatever the question asks and whatever formula it gives: a blank read as a zero or an absence (it is a missing record); a quantity of a kind the atlas does not measure made from one it does (an absolute amount or count of molecules, copies or cells, a concentration, a mass, a ratio of levels from different assays); and a cause, a benefit or a best choice read from an association. Each is a not_done item with the reason and a limitation, and the descriptive results are delivered.
@@ -386,35 +386,11 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
   // the loop waits for all of them, and for any a returning set starts in turn, so no turn is
   // spent watching one of three come back.
   const waitForAll = async () => {
-    while (state.running.size) {
-      await Promise.allSettled([...state.running.values()].map(job => job.promise));
-      await new Promise(resolve => setTimeout(resolve, WAKE_DEBOUNCE_MS));
-    }
+    await Promise.allSettled([...state.running.values()].map(job => job.promise));
+    await new Promise(resolve => setTimeout(resolve, WAKE_DEBOUNCE_MS));
   };
-  // A plan item's need, started: the summon carries the item's text as its description and is
-  // tied to the item, so what it makes is the item's set, which later needs read (from_item).
-  const startNeed = (i, need, extra) => {
-    const item = state.plan[i];
-    const args = Object.fromEntries(Object.entries({ title: need.title || item.text, description: need.description || item.description || item.text, question: need.question, goal: need.goal, points: need.points, from: need.from, column: need.column, ...extra }).filter(([, v]) => v !== undefined && v !== null && v !== ''));
-    try {
-      if (!startAgent(need.agent, args)) return false;
-      const job = [...state.running.values()].pop();
-      if (job) job.planItem = i;
-      return true;
-    } catch (error) { state.failed++; remember(`plan item ${i + 1} ${need.agent}(${desk.argsLine(bare(args), 120)}) failed: ${error.message}`); return false; }
-  };
-  const startPendingNeeds = () => {
-    let any = false;
-    for (const p of [...(state.pendingNeeds || [])]) {
-      const source = state.plan[Number(p.need.from_item) - 1];
-      if (!source) { remember(`plan item ${p.item + 1}: from_item ${p.need.from_item} is no plan item`); state.pendingNeeds = state.pendingNeeds.filter(x => x !== p); continue; }
-      const made = source.artifacts?.[0];
-      if (!made) continue;
-      state.pendingNeeds = state.pendingNeeds.filter(x => x !== p);
-      if (startNeed(p.item, p.need, { from: made })) { remember(`plan item ${p.item + 1}: ${p.need.agent} started on item ${p.need.from_item}'s set ${made}`); any = true; }
-    }
-    return any;
-  };
+  // waits for a slot, so a turn that summons one set per tissue does not start a dozen together.
+
   const waitForCompletion = () => new Promise(resolve => {
     const timer = setTimeout(resolve, JOB_WAIT_MS);
     wake.resolve = () => { clearTimeout(timer); setTimeout(resolve, WAKE_DEBOUNCE_MS); };
@@ -526,8 +502,6 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
         // The study judges the Investigator's artifacts itself: each carries its note and mapping.
         if (toolName !== 'investigator_hpa') for (const a of made) await reviewResult(toolName, args, a, made);
         job.made = [...made, ...repeats].map(a => a.id);
-        // What a plan item's summon made is the item's set; a need waiting on that item starts now.
-        if (job.planItem !== undefined && state.plan[job.planItem]) { state.plan[job.planItem].artifacts.push(...job.made); startPendingNeeds(); }
         for (const a of made) await log('tool.done', { id, tool: toolName, kind: 'agent', artifact: artifactEvent(a), ms: Date.now() - job.startedAt }, id);
       })
       .catch(async err => {
@@ -807,20 +781,6 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           if (!state.plan.length) throw new Error('plan needs at least one deliverable');
           sync++; remember(`plan: ${state.plan.length} deliverables`);
           await log('plan', { items: state.plan });
-          // The data the plan needs is asked for now, every summon at once: a deliverable's
-          // needs name the agent and its question or goal. A need that reads another
-          // deliverable's set (from_item) starts the moment that set exists; one naming an
-          // artifact that does not exist yet waits for the study to ask when it does.
-          state.pendingNeeds = [];
-          for (const [i, item] of state.plan.entries()) {
-            for (const need of item.needs || []) {
-              if (!agentNames.has(need.agent)) { remember(`plan item ${i + 1} needs ${JSON.stringify(need.agent)}, which is not an agent (${[...agentNames].join(', ')})`); continue; }
-              if (need.from_item !== undefined) { state.pendingNeeds.push({ item: i, need }); continue; }
-              if (need.from !== undefined && !state.byId.has(String(need.from).trim())) { remember(`plan item ${i + 1}: ${need.agent} from=${need.from} waits for that artifact; ask when it exists`); continue; }
-              if (startNeed(i, need, {})) started++;
-            }
-          }
-          if (startPendingNeeds()) started++;
           return;
         }
         if (call.name === 'note') {

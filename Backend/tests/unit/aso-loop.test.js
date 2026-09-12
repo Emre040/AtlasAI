@@ -86,8 +86,9 @@ test('a claim with a number its rows do not hold is refused with the reason, the
   ]);
   const result = await run({});
   assert.equal(result.outcome, 'completed', result.summary);
-  assert.match(requests[2].messages[1].content, /turn 2: finish refused:\n    - claims\[0\]: "EGFR liver nTPM is 40\.1" states 40\.1, not among the cells it is bound to \(a1 rows 0 columns nTPM\): 40\.1 is in no saved artifact/);
-  assert.match(result.summary, /\*\*Findings\*\*\n\n- EGFR liver nTPM is 32\.2 \(evidence: a1 row 0: nTPM=32\.2\)/);
+  // The claim names EGFR, which sits in the bound row's gene column: the binder names that column too.
+  assert.match(requests[2].messages[1].content, /turn 2: finish refused:\n    - claims\[0\]: "EGFR liver nTPM is 40\.1" states 40\.1, not among the cells it is bound to \(a1 rows 0 columns nTPM, gene\): 40\.1 is in no saved artifact/);
+  assert.match(result.summary, /\*\*Findings\*\*\n\n- EGFR liver nTPM is 32\.2 \(evidence: a1 row 0: nTPM=32\.2, gene=EGFR\)/);
 });
 
 test('a plan item without a deliverable blocks finish unless it is listed in not_done; a second identical refusal stops the study', async t => {

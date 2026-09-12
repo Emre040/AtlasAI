@@ -810,7 +810,12 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           if (!state.plan.length) throw new Error('finish needs a plan first: record the deliverables with plan');
           if (state.running.size) { remember(`finish refused: ${[...state.running.keys()].join(', ')} still running; wait for them (skip) or finish after they return`); await log('finish.refused', { reason: 'agents_running', running: [...state.running.keys()] }); sync++; return; }
           const args = call.args;
-          const issues = reportIssues(args, state);
+          // Names a claim states are read like its numbers: a gene of the release named in a
+          // claim must be among the cells the claim is bound to.
+          const tokens = [...new Set((args.claims || []).flatMap(c => String(c?.text || '').match(/\bENSG\d{11}\b|\b[A-Z][A-Z0-9]{1,9}(?:-[A-Z0-9]{1,4})?\b/g) || []))];
+          const known = tokens.length ? await geneData.resolveGenes(tokens).catch(() => []) : [];
+          const entityNames = new Set(tokens.filter((t, i) => known[i]));
+          const issues = reportIssues(args, state, { entityNames });
           let figures = [];
           if (!issues.length) {
             figures = selectFigures(state.artifacts, args.figures).filter(a => a.images?.length);

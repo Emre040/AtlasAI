@@ -119,6 +119,23 @@ test('the binder does the naming it can do itself: a column it locates, all rows
   assert.match(reportIssues({ claims: [{ text: 'all of them', artifact: 'a8' }] }, s)[0], /must name the rows/);
 });
 
+test('a gene a claim names is read like a number: among its cells, in a bound row (the column is then named), or refused with where it lives', () => {
+  const top = { id: 'a7', kind: 'data', label: 'top', rows: [{ gene: 'ACTA1', ensembl: 'E1', nTPM: 123974.2 }, { gene: 'MYH1', ensembl: 'E2', nTPM: 7384.5 }, { gene: 'CA3', ensembl: 'E3', nTPM: 4941.5 }], columns: ['gene', 'ensembl', 'nTPM'], tool: 'rank', args: {}, inputs: [] };
+  const other = { id: 'a8', kind: 'data', label: 'other', rows: [{ gene: 'TTN', ensembl: 'E9', nTPM: 2 }], columns: ['gene', 'ensembl', 'nTPM'], tool: 'filter', args: {}, inputs: [] };
+  const s = { artifacts: [top, other], byId: new Map([['a7', top], ['a8', other]]), plan: [] };
+  const names = new Set(['ACTA1', 'MYH1', 'CA3', 'TTN', 'MYH7']);
+  assert.deepEqual(reportIssues({ claims: [{ text: 'ACTA1 leads at 123974.2, then MYH1.', artifact: 'a7', rows: [0, 1], columns: ['gene', 'nTPM'] }] }, s, { entityNames: names }), []);
+  // named in a bound row but an unnamed column: the binder names the column
+  const claim = { text: 'The top three are ACTA1, MYH1 and CA3.', artifact: 'a7', rows: [0, 1, 2], columns: ['nTPM'] };
+  assert.deepEqual(reportIssues({ claims: [claim] }, s, { entityNames: names }), []);
+  assert.deepEqual(claim.columns, ['nTPM', 'gene']);
+  // a gene the cells do not hold is refused, with where it lives
+  const wrong = reportIssues({ claims: [{ text: 'The top three are TTN, MYH7 and ACTA1.', artifact: 'a7', rows: [0, 1, 2], columns: ['gene', 'nTPM'] }] }, s, { entityNames: names });
+  assert.match(wrong[0], /names TTN, MYH7, not among the cells it is bound to \(a7 rows 0, 1, 2 columns gene, nTPM\): TTN is at a8 row 0 gene; MYH7 is in no saved artifact\. Bind the rows that hold them, or name what the cells hold\./);
+  // words that are not genes of the release are not names
+  assert.deepEqual(reportIssues({ claims: [{ text: 'RNA nTPM from HPA for ACTA1.', artifact: 'a7', rows: [0], columns: ['gene', 'nTPM'] }] }, s, { entityNames: names }), []);
+});
+
 test('a percent that is the ratio of two bound numbers is bound', () => {
   const a9 = { id: 'a9', kind: 'data', label: 'counts', rows: [{ nuclear: 86, partners: 123 }], columns: ['nuclear', 'partners'], tool: 'aggregate', args: {}, inputs: [] };
   const s = { artifacts: [a9], byId: new Map([['a9', a9]]), plan: [] };

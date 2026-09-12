@@ -111,9 +111,22 @@ function locate(state, value, tolerance, limit = 3) {
   return hits;
 }
 
+// Where a name lives among all saved artifacts, so a refusal says where to bind instead.
+function locateText(state, name, limit = 3) {
+  const hits = [];
+  const wanted = String(name).trim().toLowerCase();
+  for (const a of state.artifacts) {
+    if (!Array.isArray(a.rows)) continue;
+    for (const [i, row] of a.rows.entries()) {
+      for (const c of a.columns) if (String(row[c] ?? '').trim().toLowerCase() === wanted) { hits.push(`${a.id} row ${i} ${c}`); if (hits.length >= limit) return hits; }
+    }
+  }
+  return hits;
+}
+
 const ORDINAL = /\b(Table|Figure|Fig\.?|Chart|Plot|Panel)\s+(\d+)\b/gi;
 
-function claimIssue(claim, state, args = {}) {
+function claimIssue(claim, state, args = {}, options = {}) {
   let bound;
   try { bound = binding(claim, state); }
   catch (error) { return error.message; }
@@ -125,6 +138,38 @@ function claimIssue(claim, state, args = {}) {
     const table = /^table$/i.test(m[1]);
     const count = table ? (args.tables || []).length : Array.isArray(args.figures) ? args.figures.length : null;
     if (count !== null && !(Number(m[2]) >= 1 && Number(m[2]) <= count)) return `${JSON.stringify(text.length > 160 ? `${text.slice(0, 159)}…` : text)} says "${m[0]}", but the report lists ${count} ${table ? 'table' : 'figure'}${count === 1 ? '' : 's'}: tables and figures are numbered in the order the report gives them; or name the artifact by id (${bound.parts.map(b => b.artifact.id).join(', ')})`;
+  }
+  // Names the claim states that are entities of the release are read like its numbers: each is
+  // among the cells the claim is bound to, or sits in a bound row in a column the binder then
+  // names. A claim cannot name a gene its evidence does not hold.
+  const entityNames = [...(options.entityNames || [])].filter(n => new RegExp(`(^|[^A-Za-z0-9-])${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9-])`).test(text));
+  if (entityNames.length) {
+    const sameText = (v, name) => String(v ?? '').trim().toLowerCase() === name.toLowerCase();
+    const inCells = name => bound.parts.some(part => part.cells.some(cell => cell.values.some(([, v]) => sameText(v, name))));
+    const missing = [];
+    for (const name of entityNames) {
+      if (inCells(name)) continue;
+      let found = null;
+      for (const [p, part] of bound.parts.entries()) {
+        const rows = part.artifact.rows || [], named = new Set(part.columns || []);
+        for (const cell of part.cells) for (const c of part.artifact.columns || []) if (!named.has(c) && sameText(rows[cell.index]?.[c], name)) { found = { part: p, column: c }; break; }
+        if (found) break;
+      }
+      if (found) {
+        const owner = Array.isArray(claim.evidence) ? (claim.artifact !== undefined ? (found.part === 0 ? claim : claim.evidence[found.part - 1]) : claim.evidence[found.part]) : claim;
+        owner.columns = [...(bound.parts[found.part].columns || []), found.column];
+        const part = bound.parts[found.part];
+        part.columns = owner.columns;
+        part.cells = part.cells.map(cell => ({ ...cell, values: part.columns.map(c => [c, (part.artifact.rows || [])[cell.index]?.[c]]) }));
+        continue;
+      }
+      missing.push(name);
+    }
+    if (missing.length) {
+      const boundTo = bound.parts.map(b => `${b.artifact.id} rows ${[...new Set(b.cells.map(c => c.index))].join(', ') || '(none)'}${b.columns ? ` columns ${b.columns.join(', ')}` : ''}`).join('; ');
+      const where = missing.map(n => { const hits = locateText(state, n); return `${n}${hits.length ? ` is at ${hits.join(', ')}` : ' is in no saved artifact'}`; });
+      return `${JSON.stringify(text.length > 160 ? `${text.slice(0, 159)}…` : text)} names ${missing.join(', ')}, not among the cells it is bound to (${boundTo}): ${where.join('; ')}. Bind the rows that hold them, or name what the cells hold.`;
+    }
   }
   const spoken = text.replace(ORDINAL, m => m.replace(/\d+/, ''));
   // Numbers the bound artifacts or the artifacts they were made from were made with (a
@@ -181,7 +226,7 @@ function claimIssue(claim, state, args = {}) {
 }
 
 // Every problem with a finish call, in words the model can act on. Empty means accepted.
-function reportIssues(args, state) {
+function reportIssues(args, state, options = {}) {
   const issues = [];
   for (const [i, table] of (args.tables || []).entries()) {
     const artifact = state.byId.get(String(table?.artifact || '').trim());
@@ -214,7 +259,7 @@ function reportIssues(args, state) {
   }
   for (const [i, claim] of (args.claims || []).entries()) {
     if (!claim || typeof claim.text !== 'string' || !claim.text.trim()) { issues.push(`claims[${i}] needs text`); continue; }
-    const issue = claimIssue(claim, state, args);
+    const issue = claimIssue(claim, state, args, options);
     if (issue) issues.push(`claims[${i}]: ${issue}`);
   }
   for (const [i, text] of (args.limitations || []).entries()) {

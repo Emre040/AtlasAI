@@ -708,9 +708,10 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       // Only what can act is offered: before any artifact exists, the plan, notes and the agents;
       // the operations, open and finish once there is something to work on.
       const offered = turn === maxTurns ? offeredSpecs.filter(t => ['finish', 'note'].includes(t.function.name))
-        // finish is offered once there is something to report, or once an agent has come back
-        // with nothing: a study whose data does not exist finishes with what it could not do.
-        : offeredSpecs.filter(t => (t.function.name !== 'skip' || state.running.size) && (state.artifacts.length || (t.function.name === 'finish' && state.agentsReturned) || ['plan', 'note', 'skip'].includes(t.function.name) || agentNames.has(t.function.name)));
+        // finish is offered once there is something to report, or once every agent that came
+        // back came back with nothing: a study whose data does not exist finishes with what it
+        // could not do.
+        : offeredSpecs.filter(t => (t.function.name !== 'skip' || state.running.size) && (state.artifacts.length || (t.function.name === 'finish' && state.agentsReturned && !state.running.size) || ['plan', 'note', 'skip'].includes(t.function.name) || agentNames.has(t.function.name)));
       const user = deskText(turn);
       const request = { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], tools: offered, temperature: 0, prompt_cache: { key: `study ${workspace.uuid}` }, ...(effort ? { reasoning_effort: effort } : {}) };
       const contextDir = path.join(workspace.workspaceDir, 'context');

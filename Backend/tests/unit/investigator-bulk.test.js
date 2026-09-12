@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadWithStubs, call, response, fakeAdapter } = require('../helpers/deskStudyFixture');
+const { loadWithStubs, call, response, fakeAdapter, CONSENSUS, TISSUES, ROWS, GENES } = require('../helpers/deskStudyFixture');
 
 async function investigator(script, options = {}) {
   const requests = [], gates = [];
@@ -192,18 +192,66 @@ test('finish naming no result title returns every result made', async () => {
   assert.equal(result.note, 'MET has no recorded liver value');
 });
 
-test('a search that places no table not already found is nothing new, and two in a row end the run; a table name searched is that table', async () => {
+test('a search that places no table not already found is nothing new, and two in a row end the run; a table name searched shows that table\'s card once', async () => {
   const { run, requests } = await investigator([
     response(call('search', { words: ['liver'] })),
     response(call('search', { words: ['nTPM', 'rna_tissue_consensus.tsv'] })),
     response(call('search', { words: ['Tissue', 'rna_tissue_consensus'] })),
+    response(call('search', { words: ['Gene'] })),
     response(call('finish', { results: [] }))
   ]);
   const result = await run({ points: ['EGFR'], question: 'liver nTPM' });
   assert.equal(result.status, 'partial');
   assert.equal(result.stop_reason, 'no_progress');
   const desk3 = requests[2].messages[1].content;
-  assert.match(desk3, /search "nTPM", "rna_tissue_consensus\.tsv" →\n  nTPM \+ rna_tissue_consensus:\n    rna_tissue_consensus\.tsv \(Gene, Gene name, Tissue, nTPM\) — Consensus tissue RNA: nTPM: column nTPM; rna_tissue_consensus: its name\n  \(nothing new: every table here was found already; fetch from one, or search other words\)/);
-  assert.match(desk3, /turn 2: searched "nTPM", "rna_tissue_consensus\.tsv": nothing new \(under SEARCHES\)/);
-  assert.equal(requests.length, 3, 'the third fruitless search ends the run before a fourth call');
+  assert.match(desk3, /search "nTPM", "rna_tissue_consensus\.tsv" →\n  nTPM \+ rna_tissue_consensus:\n    rna_tissue_consensus\.tsv \(Gene, Gene name, Tissue, nTPM\) — Consensus tissue RNA: nTPM: column nTPM; rna_tissue_consensus: its name\n  rna_tissue_consensus\.tsv — Consensus tissue RNA \(4 columns; rows per gene\):\n    Gene = 3 values, e\.g\. ENSG1 \| ENSG2\n    Gene name = 3 values, e\.g\. x\n    Tissue = liver \| lung \| heart\n    nTPM: number 0–34\.1 \(blank 17%\)/, 'the table named is shown whole: every column with what it records');
+  assert.match(desk3, /turn 2: searched "nTPM", "rna_tissue_consensus\.tsv" \(under SEARCHES\)/);
+  const desk4 = requests[3].messages[1].content;
+  assert.match(desk4, /search "Tissue", "rna_tissue_consensus" →\n[^]*\(nothing new: every table here was found already; fetch from one, search a table's name for its columns and values, or search other words\)/, 'the card is shown once');
+  assert.match(desk4, /turn 3: searched "Tissue", "rna_tissue_consensus": nothing new \(under SEARCHES\)/);
+  assert.equal(requests.length, 4, 'the second fruitless search in a row ends the run before a fifth call');
+});
+
+const PAIRS = { file: 'interaction_consensus.tsv', key: 'stream', title: 'Interactions', description: 'Gene pairs', columns: ['ensembl_gene_id_1', 'ensembl_gene_id_2', 'datasets'], hpaVersion: 'test' };
+const PAIR_ROWS = [{ ensembl_gene_id_1: 'ENSG1', ensembl_gene_id_2: 'ENSG2', datasets: 'a' }, { ensembl_gene_id_1: 'ENSG3', ensembl_gene_id_2: 'ENSG1', datasets: 'b' }, { ensembl_gene_id_1: 'ENSG2', ensembl_gene_id_2: 'ENSG3', datasets: 'c' }];
+const withPairs = () => ({
+  catalog: async () => [CONSENSUS, TISSUES, PAIRS],
+  entry: async name => [CONSENSUS, TISSUES, PAIRS].find(e => e.file === name || e.file === `${name}.tsv`) || null,
+  async *rows(e) { if (e === PAIRS) { for (const r of PAIR_ROWS) yield r; } else if (e === CONSENSUS) { for (const g of GENES) for (const r of ROWS[g.ensembl]) yield r; } else { yield { Tissue: 'liver', Organ: 'Liver & Gallbladder' }; } },
+  async profile(e) { return e === PAIRS ? { rows: 3, capped: false, columns: PAIRS.columns.map(c => ({ column: c, kind: 'text', blank_pct: 0, distinct: '3', observed_values: c === 'datasets' ? ['a', 'b', 'c'] : null, full_examples: c === 'datasets' ? ['a'] : ['ENSG1', 'ENSG2'], examples: c === 'datasets' ? ['a'] : ['ENSG1', 'ENSG2'] })) } : fakeAdapter().profile(e); }
+});
+
+test('a where naming one gene in both id columns of a pair table reads the gene on either side, as a point', async () => {
+  const { run, requests } = await investigator([
+    response(call('fetch', { title: 'EGFR pairs', description: 'Pairs of EGFR', table: 'interaction_consensus.tsv', fields: ['datasets'], where: [{ column: 'ensembl_gene_id_1', op: '=', value: 'EGFR' }, { column: 'ensembl_gene_id_2', op: '=', value: 'EGFR' }] })),
+    response(call('finish', { results: ['EGFR pairs'] }))
+  ], { adapter: withPairs() });
+  const result = await run({ question: 'interaction partners of EGFR' });
+  assert.equal(result.status, 'ok');
+  assert.deepEqual(result.tables[0].rows.map(r => [r.other, r.datasets]).sort(), [['ENSG2', 'a'], ['ENSG3', 'b']], 'both sides are read; the partner is other');
+  assert.match(requests[1].messages[1].content, /interaction_consensus\.tsv holds gene ids on both sides: ENSG1 is read as the point, matched against ensembl_gene_id_1 and ensembl_gene_id_2; the other side is other/);
+});
+
+test('a where that matches no row names a gene of the release as a point, and says when its clauses hold on no row together', async () => {
+  const { run, requests } = await investigator([
+    response(call('fetch', { title: 'Heart', description: 'ERBB2 in heart', table: 'rna_tissue_consensus.tsv', fields: ['nTPM'], where: [{ column: 'Gene', op: '=', value: 'ENSG2' }, { column: 'Tissue', op: '=', value: 'heart' }] })),
+    response(call('finish', { results: ['Heart'] }))
+  ]);
+  const result = await run({ question: 'ERBB2 nTPM in heart' });
+  assert.equal(result.status, 'ok');
+  assert.equal(result.tables[0].rows.length, 0);
+  assert.match(requests[1].messages[1].content, /no row of rna_tissue_consensus\.tsv matched the where \(all 2 clauses at once\): "ENSG2" is a gene of the release \(ERBB2 = ENSG2\): sent as a point it is read by its keys\. "heart" is recorded in tissues\.tsv · Tissue = heart/);
+  assert.doesNotMatch(requests[1].messages[1].content, /recorded nowhere/);
+});
+
+test('points taken from a column of an earlier result are matched against an id column under their ids', async () => {
+  const { run, requests } = await investigator([
+    response(call('fetch', { title: 'Liver rows', description: 'Every gene in liver', table: 'rna_tissue_consensus.tsv', fields: ['Tissue', 'nTPM'], where: [{ column: 'Tissue', op: '=', value: 'liver' }] })),
+    response(call('fetch', { title: 'Lung by name', description: 'Lung nTPM of the liver genes', table: 'rna_tissue_consensus.tsv', fields: ['Tissue', 'nTPM'], from: 'Liver rows', column: 'gene', match: 'Gene', where: [{ column: 'Tissue', op: '=', value: 'lung' }] })),
+    response(call('finish', { results: ['Lung by name'] }))
+  ]);
+  const result = await run({ question: 'lung nTPM of every gene expressed in liver' });
+  assert.equal(result.status, 'ok');
+  assert.equal(result.tables[0].coverage.with_rows, 2, 'EGFR and ERBB2 have lung rows; the symbols found the id column');
+  assert.match(requests[2].messages[1].content, /turn 2: fetch for the 3 values of "Liver rows" gene → "Lung by name" \(3 rows; 2 points with rows, 1 with no row matching the filter\)/);
 });

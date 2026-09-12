@@ -36,7 +36,12 @@ function numbersIn(value, out = []) {
   return out;
 }
 
-const near = (values, x, tol) => values.some(v => Math.abs(v - x) <= tol + 1e-9 * Math.abs(x));
+// A stated number matches a cell within half a unit of its last digit, or when the cell rounds
+// to it at the digits it was written with: 2,155,490 states the cell 2,155,492.3 rounded to six
+// figures, the trailing zero not being a claim of precision.
+const significant = x => { const m = String(Math.abs(x)).replace(/e.*$/i, '').replace('.', '').replace(/^0+/, '').replace(/0+$/, ''); return Math.max(1, m.length); };
+const roundsTo = (v, x) => x !== 0 && Number.isFinite(v) && Number(v.toPrecision(significant(x))) === Number(x.toPrecision(significant(x)));
+const near = (values, x, tol) => values.some(v => Math.abs(v - x) <= tol + 1e-9 * Math.abs(x) || roundsTo(v, x));
 
 function resolveColumns(artifact, columns) {
   if (columns === undefined) return artifact.columns;
@@ -207,7 +212,7 @@ function claimIssue(claim, state, args = {}, options = {}) {
       for (const cell of part.cells) for (const c of part.artifact.columns) {
         if (named.has(c)) continue;
         const n = typeof rows[cell.index][c] === 'number' ? rows[cell.index][c] : typeof rows[cell.index][c] === 'string' && /\d/.test(rows[cell.index][c]) ? Number(String(rows[cell.index][c]).replace(/,/g, '')) : NaN;
-        if (Number.isFinite(n) && Math.abs(n - u.value) <= u.tolerance + 1e-9 * Math.abs(u.value)) return { part: p, column: c };
+        if (Number.isFinite(n) && (Math.abs(n - u.value) <= u.tolerance + 1e-9 * Math.abs(u.value) || roundsTo(n, u.value))) return { part: p, column: c };
       }
     }
     return null;

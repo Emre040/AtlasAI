@@ -551,8 +551,16 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
                 const notes = values.map((v, i) => byId[i] !== v ? `${v} read as ${byId[i]}` : null).filter(Boolean);
                 if (notes.length) { values = byId; changed = true; spelling.push(`${column} holds ids: ${notes.join(', ')}`); }
               }
-              const read = correctSpelling(values, knownValuesOf(column), column, entry.file);
+              const known = knownValuesOf(column);
+              const read = correctSpelling(values, known, column, entry.file);
               if (read.notes.length) { values = read.values; changed = true; spelling.push(...read.notes); }
+              // A where naming some of a column's values says which it leaves out, so a list
+              // written from memory ("every region": eight of thirteen) is seen for what it is.
+              if (clause.op === 'in' && Array.isArray(known) && known.length && known.length <= CARD_VOCABULARY && values.length > 1 && values.length < known.length) {
+                const named = new Set(values.map(v => flat(v)));
+                const rest = known.filter(k => !named.has(flat(k)));
+                if (rest.length) spelling.push(`${column} has ${known.length} values; the where names ${values.length}, left out: ${rest.join(', ')}`);
+              }
               if (changed) clause.value = clause.op === 'in' ? values : values[0];
             }
             // The points of a fetch are the list, or the values of a column of an earlier result.

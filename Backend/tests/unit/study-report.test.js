@@ -152,3 +152,14 @@ test('a row count of a table that spans fewer entities is sent back with both nu
   assert.match(reportIssues({ claims: [{ text: '114 partners have a validated association.', artifact: 'a9', rows: [0, 1], columns: ['gene', 'Cancer'] }] }, s)[0], /states 114, which is the number of rows of a9 \(one row per ensembl and Cancer\), not of ensembls: it spans 47 ensembls\. Say which you mean/);
   assert.deepEqual(reportIssues({ claims: [{ text: '47 partners carry 114 validated associations.', artifact: 'a9', rows: [0, 1], columns: ['gene', 'Cancer'] }] }, s), []);
 });
+
+test('a stated number matches a cell that rounds to it at the digits written', () => {
+  const report = require('../../src/system/aso/studyReport');
+  const state = { artifacts: [], byId: new Map(), plan: [] };
+  const a = { id: 'a1', label: 'Stats', kind: 'data', rows: [{ median_mean_Intensity: 2155492.3311411017, n: 4 }], columns: ['median_mean_Intensity', 'n'], size: '1 rows', inputs: [], args: {}, tool: 'aggregate', meta: {} };
+  state.artifacts.push(a); state.byId.set('a1', a);
+  const ok = report.reportIssues({ claims: [{ text: 'The median intensity is 2,155,490 over 4 genes.', artifact: 'a1', rows: [0], columns: ['median_mean_Intensity', 'n'] }] }, state, {});
+  assert.deepEqual(ok, [], 'the trailing zero is not a claim of precision');
+  const wrong = report.reportIssues({ claims: [{ text: 'The median intensity is 2,155,400 over 4 genes.', artifact: 'a1', rows: [0], columns: ['median_mean_Intensity', 'n'] }] }, state, {});
+  assert.match(wrong[0] || '', /states 2,155,400, not among the cells/);
+});

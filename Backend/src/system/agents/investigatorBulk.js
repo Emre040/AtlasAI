@@ -317,13 +317,15 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
     const coverage = c.supplied !== undefined
       ? `${count(c.with_rows ?? 0)} of ${count(c.supplied)} points have rows${c.no_match ? `, ${count(c.no_match)} match no row of the filter` : ''}${c.no_rows ? `, ${count(c.no_rows)} have no row in the table` : ''}${c.not_in_release ? `, ${count(c.not_in_release)} not in the release` : ''}`
       : `${count(table.rows.length)} rows selected`;
-    const field = (mapping || []).find(m => m.column === value && m.table === table.source_file)?.field || value;
+    // In a pair table's result the value is the other side of the pair; a further column rides along.
+    const partner = keyCols.includes('other') ? ((mapping || []).find(m => m.column === 'other' && m.table === table.source_file)?.field || 'other') : null;
+    const field = partner || (mapping || []).find(m => m.column === value && m.table === table.source_file)?.field || value;
     const note = `${value ? `${value}` : 'rows'} from ${table.source_file}${contextText}, points ${read}${filter}; ${coverage}${keyCols.includes('other') ? '; the other side of each pair is in other' : ''}.`;
     // A title the model gave stays; a default title (the fetch spelled out) becomes the value and
     // its source.
     const source = String(table.source_file).replace(/\.tsv$/i, '');
     const auto = String(table.title).startsWith(`${source}: `);
-    const short = auto && value ? `${field}${context.length ? ` per ${context.join(' and ')}` : ''} (${source})` : table.title;
+    const short = auto && (value || partner) ? `${field}${context.length ? ` per ${context.join(' and ')}` : ''}${partner && value ? ` with ${value}` : ''} (${source})` : table.title;
     return { ...table, name: short, title: short, description: note, note, mapping: value ? { field, table: table.source_file, column: value } : null };
   };
   const done = (extra, turns) => ({ bulk: true, mode: 'offline', hpa_version: release?.hpaVersion || null, tokens: { total: { prompt: stats.prompt, completion: stats.completion, total: stats.total } }, calls: stats.calls, turns, seconds: (Date.now() - started) / 1000, unresolved: unresolvedPoints(), ...extra, ...(Array.isArray(extra.tables) ? { tables: extra.tables.flatMap(perValue).map(t => explain(t, extra.mapping)) } : {}) });

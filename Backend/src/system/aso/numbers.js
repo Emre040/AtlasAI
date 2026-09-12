@@ -23,7 +23,11 @@ function statedNumbers(text) {
     const exponent = /[eE]/.test(clean) ? Number(clean.split(/[eE]/)[1]) : 0;
     const decimals = mantissa.includes('.') ? mantissa.split('.')[1].length : 0;
     const percent = /^\s*(%|percent\b|per cent\b)/i.test(source.slice(match.index + match[0].length));
-    out.push({ raw: match[0], value, tolerance: 0.5 * 10 ** (exponent - decimals), percent });
+    // A number written after a comparison sign (p < 0.05, ≥ 4-fold, at least 3) is a threshold
+    // the text applies, not a value it reports: it is not bound to a cell.
+    const before = source.slice(Math.max(0, match.index - 24), match.index);
+    const threshold = /(<=|>=|≤|≥|<|>|\bless than|\bgreater than|\bat least|\bat most|\bthreshold(?: of)?|\bcut-?off(?: of)?)\s*(?:[a-zA-Z]\s*[=:]?\s*)?$/i.test(before);
+    out.push({ raw: match[0], value, tolerance: 0.5 * 10 ** (exponent - decimals), percent, threshold });
   }
   return out;
 }

@@ -179,7 +179,7 @@ function claimIssue(claim, state, args = {}, options = {}) {
   // A count that is the row count of a bound table spanning fewer entities is two numbers, not
   // one: "114 partners" when the table has 114 rows over 47 genes. A claim that states the row
   // count without the entity count is sent back with both, to say which it means.
-  const stated = statedNumbers(spoken);
+  const stated = statedNumbers(spoken).filter(n => !n.threshold);
   for (const n of stated) {
     if (!Number.isInteger(n.value) || bound.values.includes(n.value)) continue;
     for (const part of bound.parts) {
@@ -197,7 +197,7 @@ function claimIssue(claim, state, args = {}, options = {}) {
   // the reader can redo from the cells beside the claim.
   const basis = [...new Set([...bound.values, ...bound.counts, ...[...rowCounts]])].filter(v => Number.isFinite(v));
   const ratioOfBound = (value, tolerance) => basis.some(x => basis.some(y => y > 0 && x <= y && Math.abs((x / y) * 100 - value) <= tolerance + 1e-9 * value));
-  let unmatched = statedNumbers(spoken).filter(({ value, tolerance, percent }) => !near(bound.values, value, tolerance) && !near(argNumbers, value, tolerance) && !(Number.isInteger(value) && (bound.counts.includes(value) || rowCounts.has(value))) && !(percent && (near(bound.values, value / 100, tolerance / 100) || ratioOfBound(value, tolerance))));
+  let unmatched = statedNumbers(spoken).filter(({ value, tolerance, percent, threshold }) => !threshold && !near(bound.values, value, tolerance) && !near(argNumbers, value, tolerance) && !(Number.isInteger(value) && (bound.counts.includes(value) || rowCounts.has(value))) && !(percent && (near(bound.values, value / 100, tolerance / 100) || ratioOfBound(value, tolerance))));
   if (!unmatched.length) return null;
   // A number that sits in a bound row, in a column the claim did not name, is bound by naming the
   // column: the binder does that itself, so the evidence prints the cell.

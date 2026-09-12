@@ -25,7 +25,7 @@ Rules:
 - When the schema has no field for a requirement, put the requirement in "cannot" with the reason; do not approximate it with a different field.
 - Prefer the field whose definition matches what the question means over the field whose name resembles the question's words.
 - Read the question as one whole: what it says about how a thing is measured, in which cohort, scope or release, holds for every requirement unless the question says otherwise.
-- The question may be one part of a study given with it. When the study settles a choice the question leaves open, follow the study. When more than one field could serve a requirement and neither the question nor the study settles which, put the requirement in "cannot", naming the fields.
+- The question may be one part of a study given with it. The study adds no requirement: plan only what the question itself states; use the study only to choose between fields that both fit a stated requirement (a cohort, a release, a level of measurement). When more than one field could serve a requirement and neither the question nor the study settles which, put the requirement in "cannot", naming the fields.
 - "why" is read by the study that asked. When more than one field could serve a requirement, say which you chose, which you did not, and why. When a field expresses a requirement only in part, say what it does not cover.`;
 
 const TRAIL_SYSTEM = `You are filling in one filter of a database query. You are given the question, the requirement this filter serves, and the field: its levels and every option at each level, with the database's own definitions where it gives them.
@@ -83,7 +83,7 @@ async function planFilters(adapter, goal, context, requirements, study = null, a
   // Offline, the planner sees only the fields the local release can evaluate.
   const schema = adapter.overview(allowed ? { only: allowed } : undefined);
   const usable = name => !allowed || allowed.has(name);
-  const named = optionsNamed(adapter, `${goal} ${study || ''}`).filter(n => usable(n.field));
+  const named = optionsNamed(adapter, goal).filter(n => usable(n.field));
   const namedText = named.length ? `\n\nOptions whose names appear in the question, each on its field (a requirement that names one of them is a filter on that field, not "cannot"):\n${named.map(n => `- ${n.field}: ${n.option}`).join('\n')}` : '';
   const base = `Question: "${goal}"${study && study !== goal ? `\nThe study this question is one part of: "${study}"` : ''}\n\nSchema:\n${schema}${namedText}`;
   const progress = new RepairProgress();

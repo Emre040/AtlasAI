@@ -333,10 +333,10 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     }
     return parts.length ? ` (${parts.join('; ')})` : '';
   };
-  const origin = a => `${a.tool}${a.toolId ? ` ${a.toolId}` : ''}${a.tool === 'chart' ? `(${desk.argsLine(bare(a.args), 120)})` : agentNames.has(a.tool) ? ` "${String(a.args.question || a.args.goal || a.args.topic || '').slice(0, 90)}"` : a.inputs?.length ? ` of ${a.inputs.join(', ')}${renames(a)}` : ''}`;
+  const origin = a => a.unnamed && !agentNames.has(a.tool) ? `${a.label}${a.toolId ? ` ${a.toolId}` : ''}${renames(a)}` : `${a.tool}${a.toolId ? ` ${a.toolId}` : ''}${a.tool === 'chart' ? `(${desk.argsLine(bare(a.args), 120)})` : agentNames.has(a.tool) ? ` "${String(a.args.question || a.args.goal || a.args.topic || '').slice(0, 90)}"` : a.inputs?.length ? ` of ${a.inputs.join(', ')}${renames(a)}` : ''}`;
 
   // Stores a tool's output as an artifact, linked to the artifacts it read.
-  async function addArtifact({ kind, label, description = '', rows, matrix, text, tool: toolName, args, inputs, meta, figure, toolId, columns: suppliedColumns }) {
+  async function addArtifact({ kind, label, description = '', rows, matrix, text, tool: toolName, args, inputs, meta, figure, toolId, columns: suppliedColumns, unnamed = false }) {
     const id = `a${++state.ids.a}`;
     const sources = inputs.map(i => state.byId.get(i)?.uuid).filter(Boolean);
     const base = { workspaceId: workspace.id, artifactsDir: workspace.artifactsDir };
@@ -369,7 +369,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     }
     const columns = suppliedColumns || (rows ? tools.columnsOf(rows) : []);
     const size = kind === 'figure' ? 'figure' : matrix ? `${matrix.row_labels.length} × ${matrix.col_labels.length} matrix` : kind === 'note' ? 'note' : `${rows.length} rows`;
-    const a = { id, uuid: reg.artifactUuid, storageUri: reg.storageUri, kind, label, description, size, rows: rows || null, matrix: matrix || null, figure: figure || null, text: text || null, columns, tool: toolName, args, inputs, meta: meta || {}, images, toolId, turn: state.turn };
+    const a = { id, uuid: reg.artifactUuid, storageUri: reg.storageUri, kind, label, description, size, rows: rows || null, matrix: matrix || null, figure: figure || null, text: text || null, columns, tool: toolName, args, inputs, meta: meta || {}, images, toolId, turn: state.turn, unnamed };
     state.artifacts.push(a);
     state.byId.set(id, a);
     return a;
@@ -613,8 +613,9 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     const callKey = callKeyOf(toolName, args);   // as called, before any alias, so a repeat of the same call is recognised
     args = { ...args };
     if (['combine', 'join', 'overlap'].includes(toolName) && args.a === undefined && args.artifact !== undefined) args = { ...args, a: args.artifact };
-    // A result left unnamed is named by its operation.
-    const title = String(args.title || '').trim() || `${toolName}(${desk.argsLine(bare(args), 90)})`;
+    // A result left unnamed is named by its operation, and the desk says the operation once.
+    const named = Boolean(String(args.title || '').trim());
+    const title = named ? String(args.title).trim() : `${toolName}(${desk.argsLine(bare(args), 90)})`;
     const description = String(args.description || '').trim() || title;
     // The same operation on the same inputs is the same artifact, whatever it is called; it is not made twice.
     const key = JSON.stringify([toolName, bare(args)]);
@@ -632,9 +633,9 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       const { out, inputColumns, inputs: resolvedInputs } = await computeOut(toolName, args);
       inputs = resolvedInputs;
       if (out.rows) out.rows = tools.freshFirst(out.rows, [...inputColumns]);
-      const a = await addArtifact({ kind: out.figure ? 'figure' : 'data', label: title, description, rows: out.rows, matrix: out.matrix, figure: out.figure, meta: out.figure ? { omitted_rows: out.figure.omitted_rows || 0 } : out.meta, tool: toolName, args, inputs, toolId: id });
+      const a = await addArtifact({ kind: out.figure ? 'figure' : 'data', label: title, description, rows: out.rows, matrix: out.matrix, figure: out.figure, meta: out.figure ? { omitted_rows: out.figure.omitted_rows || 0 } : out.meta, tool: toolName, args, inputs, toolId: id, unnamed: !named });
       made.set(key, a.id);
-      remember(`${toolName}(${desk.argsLine(bare(args), 140)}) → ${a.id} "${title}" (${a.size}${a.kind === 'figure' && !a.images.length ? ', not rendered' : ''})${renames(a)}`);
+      remember(`${toolName}(${desk.argsLine(bare(args), 140)}) → ${a.id}${named ? ` "${title}"` : ''} (${a.size}${a.kind === 'figure' && !a.images.length ? ', not rendered' : ''})${renames(a)}`);
       await log('tool.done', { id, tool: toolName, kind: out.figure ? 'chart' : 'tool', artifact: artifactEvent(a), ms: Date.now() - t0 }, id);
       return { ok: true, artifact: a };
     } catch (err) {
@@ -717,7 +718,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       const by = g.by ? `, one row per ${identity.entity} and ${g.by}${g.values ? ` (${g.by}: ${g.values.join(', ')})` : ` (${desk.count(g.distinct)} values)`}` : '';
       return ` over ${desk.count(g.entities)} ${identity.entity}s${by}`;
     };
-    const lines = state.artifacts.map(a => desk.resultLine({ id: a.id, title: a.label, description: a.description, origin: origin(a), rows: a.rows || [], columns: a.columns, spread: spread(a), matrix: a.matrix, figure: a.figure, images: a.images, text: a.text, consumed: consumed.has(a.id) }));
+    const lines = state.artifacts.map(a => desk.resultLine({ id: a.id, title: a.unnamed ? '' : a.label, description: a.unnamed || a.description === a.label ? '' : a.description, origin: origin(a), rows: a.rows || [], columns: a.columns, spread: spread(a), matrix: a.matrix, figure: a.figure, images: a.images, text: a.text, consumed: consumed.has(a.id) }));
     // A view stays whole until a later turn's operation consumes its artifact; then it folds to
     // its receipt, since the rows live on in the successor and open shows them again.
     const consumedAfter = new Map();
@@ -867,7 +868,9 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           // A token is a name when it is a gene's own symbol or id, not one of its synonyms: an
           // acronym that happens to be listed as some gene's synonym is not a claim about that gene.
           const known = tokens.length ? await geneData.resolveGenes(tokens).catch(() => []) : [];
-          const entityNames = new Set(tokens.filter((t, i) => known[i] && (String(known[i].gene || '').toUpperCase() === t.toUpperCase() || String(known[i].ensembl || '').toUpperCase() === t.toUpperCase())));
+          // A gene the goal itself names is the subject of the study, not a finding: a claim may name it.
+          const inGoal = t => new RegExp(`(^|[^A-Za-z0-9-])${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9-])`, 'i').test(goal);
+          const entityNames = new Set(tokens.filter((t, i) => known[i] && !inGoal(t) && (String(known[i].gene || '').toUpperCase() === t.toUpperCase() || String(known[i].ensembl || '').toUpperCase() === t.toUpperCase())));
           const issues = reportIssues(args, state, { entityNames });
           let figures = [];
           if (!issues.length) {

@@ -286,7 +286,7 @@ async function tableCard(adapter, entry) {
     if (!card) return column;
     const blank = Number(card.blank_pct) > 0 ? ` (blank ${Math.round(Number(card.blank_pct))}%)` : '';
     if (card.kind === 'number') return `${column}: number${card.min !== undefined && card.max !== undefined ? ` ${card.min}–${card.max}` : ''}${blank}`;
-    const vocabulary = vocabularyShown(card);
+    const vocabulary = Array.isArray(card.observed_values) && card.observed_values.length && card.observed_values.length <= CARD_VOCABULARY ? card.observed_values.join(' | ') : vocabularyShown(card);
     if (vocabulary) return `${column} = ${vocabulary}${blank}`;
     if (card.parts?.kind === 'items' && Array.isArray(card.parts.values)) return `${column}: lists ${count(card.parts.values.length)} items, e.g. ${card.parts.values.slice(0, 3).join(' | ')}${blank}`;
     const examples = (card.full_examples || card.examples || []).filter(Boolean);
@@ -324,6 +324,7 @@ function vocabularyShown(card) {
 
 const SEARCH_RULE = 'A point that is an entity of the release is read by the list: fetch the table found, without searching the point itself.';
 const TABLE_CARD_COLUMNS = 40;
+const CARD_VOCABULARY = 40;   // a column's values are listed whole on a table's card up to this many
 
 async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/geneDataAdapter')) {
   const { question, mode = 'offline' } = args;

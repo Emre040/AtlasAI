@@ -86,9 +86,9 @@ test('a claim with a number its rows do not hold is refused with the reason, the
   ]);
   const result = await run({});
   assert.equal(result.outcome, 'completed', result.summary);
-  // The claim names EGFR, which sits in the bound row's gene column: the binder names that column too.
-  assert.match(requests[2].messages[1].content, /turn 2: finish refused:\n    - claims\[0\]: "EGFR liver nTPM is 40\.1" states 40\.1, not among the cells it is bound to \(a1 rows 0 columns nTPM, gene\): 40\.1 is in no saved artifact/);
-  assert.match(result.summary, /\*\*Findings\*\*\n\n- EGFR liver nTPM is 32\.2 \(evidence: a1 row 0: nTPM=32\.2, gene=EGFR\)/);
+  // The claim names EGFR, which the goal itself names: the subject of the study needs no bound cell.
+  assert.match(requests[2].messages[1].content, /turn 2: finish refused:\n    - claims\[0\]: "EGFR liver nTPM is 40\.1" states 40\.1, not among the cells it is bound to \(a1 rows 0 columns nTPM\): 40\.1 is in no saved artifact/);
+  assert.match(result.summary, /\*\*Findings\*\*\n\n- EGFR liver nTPM is 32\.2 \(evidence: a1 row 0: nTPM=32\.2\)/);
 });
 
 test('a plan item without a deliverable blocks finish unless it is listed in not_done; a second identical refusal stops the study', async t => {
@@ -141,7 +141,8 @@ test('opening an artifact that is whole on the desk is answered from the desk, w
   const desk3 = requests[2].messages[1].content;
   // an open of rows already on the desk lists them once in the history, in full cells, and makes no view
   assert.match(desk3, /turn 2: a1 rows \(gene \| ensembl \| Tissue \| nTPM \| source_rows \| source_status\): 0: EGFR \| ENSG1 \| liver \| 32\.2 \| 2 \| ok ; 1: EGFR \| ENSG1 \| lung \| 14\.1 \| 2 \| ok ; 2: ERBB2/);
-  assert.match(desk3, /turn 2: rank: comment is not an argument of this tool, ignored\nturn 2: rank\(artifact=a1, by=nTPM\) → a2 "rank\(artifact=a1, by=nTPM\)"/);
+  assert.match(desk3, /turn 2: rank: comment is not an argument of this tool, ignored\nturn 2: rank\(artifact=a1, by=nTPM\) → a2 \(4 rows\)/, 'an unnamed result is its operation, said once');
+  assert.match(desk3, /\na2 \(4 rows[^\n]*: gene, ensembl, rank, Tissue, nTPM[^\n]*\) ← rank\(artifact=a1, by=nTPM\) t2\n  0: ERBB2/, 'the desk line of an unnamed result carries no quoted title and no description');
   assert.doesNotMatch(desk3, /\nVIEWS\n/);
 });
 

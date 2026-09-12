@@ -28,11 +28,11 @@ const CLAIMS_RULES = {
   2: 'states a quantity the source does not record, derived from one it does',
   3: 'presents an association as a cause, a benefit or a best choice'
 };
-const CLAIMS_SYSTEM = `You check a report's findings against three rules of the data they rest on, and nothing else. Flag a finding that
-1. reads a missing record (a blank, an unrecorded value) as a zero, an absence, a non-detection or a non-expression, or computes a count, a fraction, a median or a mean that treats blanks that way;
-2. states a quantity in a unit or of a kind the source tables do not record, derived from one they do (an absolute amount from a relative level, a ratio of things not measured together, any stand-in);
-3. presents an association as a cause, an effect, a benefit, a treatment, or a best or recommended choice.
-A finding that reports what was recorded, with blanks counted as missing records, is not flagged, whatever the question asked for. Answer as JSON: {"issues": [{"claim": <index of the finding>, "rule": 1|2|3, "why": "<one sentence>"}]}; issues is [] when nothing is flagged.`;
+const CLAIMS_SYSTEM = `You check a report against three rules of the data it rests on, and nothing else. The source columns the report was built from are listed first, with their tables: those are the quantities the source records, in their own units. Go through every finding, every column of every table delivered and every figure, and for each quantity ask: is it a source column, or a count, a share, a rank, a mean, a median, a range, a correlation or a fold of source values in their own unit? If not, it is derived, and it is flagged under rule 2. Flag:
+1. a missing record (a blank, an unrecorded value) read as a zero, an absence, a non-detection or a non-expression, or a count, a fraction, a median or a mean that treats blanks that way;
+2. a quantity whose unit or kind is not a source column's (an absolute amount or count of anything from a relative level, a product or a ratio of levels from different assays, any stand-in), however it is labelled;
+3. an association presented as a cause, an effect, a benefit, a treatment, or a best or recommended choice.
+What reports a recorded quantity, with blanks counted as missing records, is not flagged, whatever the question asked for. Answer as JSON: {"issues": [{"claim": <index of the finding>, "rule": 1|2|3, "why": "<one sentence>"}, {"table": <index>, "column": "<name>", "rule": 1|2|3, "why": "..."}, {"figure": <index>, "rule": 1|2|3, "why": "..."}]}; issues is [] when nothing is flagged.`;
 const { platformConfig } = require('../../policy/config');
 const tools = require('../aso/studyTools');
 const { TABLE_OPERATIONS, executeTableOperation, A } = require('../aso/tableOperations');
@@ -907,14 +907,24 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           const issues = reportIssues(args, state, { entityNames });
           // The findings, once bound, are read against the three rules by a narrow call; a
           // finding that breaks one is refused with the rule, like a number no cell holds.
-          if (!issues.length && Array.isArray(args.claims) && args.claims.length) {
-            const user = `FINDINGS\n${args.claims.map((c, i) => `${i}: ${String(c?.text || '').replace(/\s+/g, ' ').trim()}`).join('\n')}`;
+          const deliveredTables = (Array.isArray(args.tables) ? args.tables : []).map(t => { const a = state.byId.get(String(t?.artifact || '').trim()); return a ? { title: String(t.title || a.label || ''), columns: Array.isArray(t.columns) && t.columns.length ? t.columns.map(String) : a.columns } : null; });
+          const deliveredFigures = (Array.isArray(args.figures) ? args.figures : []).map(id => { const a = state.byId.get(String(id).trim()); return a?.figure ? { title: String(a.figure.title || a.label || ''), x: a.figure.x_label || a.figure.x || '', y: a.figure.y_label || a.figure.y || '', type: a.figure.type || '' } : null; });
+          if (!issues.length && ((Array.isArray(args.claims) && args.claims.length) || deliveredTables.some(Boolean) || deliveredFigures.some(Boolean))) {
+            // The quantities the source recorded: the fields every agent read, with their tables.
+            const sourceColumns = [...new Map(state.artifacts.filter(a => agentNames.has(a.tool)).flatMap(a => (a.meta?.lookups || []).flatMap(l => (l?.fields || []).map(f => [`${f}@${l.table}`, `${f} (${String(l.table || '').replace(/\.tsv$/, '')})`]))).concat(state.artifacts.filter(a => a.tool === 'deep_research_hpa').map(a => [`set@${a.id}`, `a gene set from the atlas search (${a.label})`]))).values()];
+            const user = [`SOURCE COLUMNS READ\n${sourceColumns.join('\n') || '(none)'}`,
+              `FINDINGS\n${(args.claims || []).map((c, i) => `${i}: ${String(c?.text || '').replace(/\s+/g, ' ').trim()}`).join('\n') || '(none)'}`,
+              `TABLES DELIVERED\n${deliveredTables.map((t, i) => t ? `${i}: "${t.title}": ${t.columns.join(', ')}` : `${i}: (unknown artifact)`).join('\n') || '(none)'}`,
+              `FIGURES DELIVERED\n${deliveredFigures.map((f, i) => f ? `${i}: ${f.type} "${f.title}"${f.x || f.y ? ` (${f.x || '?'} vs ${f.y || '?'})` : ''}` : `${i}: (unknown artifact)`).join('\n') || '(none)'}`].join('\n\n');
             try {
               const verdict = effort ? await inference.withContext({ reasoningEffort: effort }, () => jsonCall(CLAIMS_SYSTEM, user, undefined, 'claims review', reviewStats)) : await jsonCall(CLAIMS_SYSTEM, user, undefined, 'claims review', reviewStats);
               for (const j of Array.isArray(verdict?.issues) ? verdict.issues : []) {
-                const i = Number(j?.claim); const rule = CLAIMS_RULES[Number(j?.rule)];
-                if (!Number.isInteger(i) || !args.claims[i] || !rule) continue;
-                issues.push(`claims[${i}]: "${String(args.claims[i].text || '').slice(0, 100)}${String(args.claims[i].text || '').length > 100 ? '…' : ''}" ${rule}: ${String(j.why || '').replace(/\s+/g, ' ').trim().slice(0, 240)}. Report what is recorded; what this would need goes in not_done with the reason and in limitations`);
+                const rule = CLAIMS_RULES[Number(j?.rule)]; if (!rule) continue;
+                const why = String(j.why || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+                const tail = 'Report what is recorded; what this would need goes in not_done with the reason and in limitations';
+                if (j.claim !== undefined) { const i = Number(j.claim); if (Number.isInteger(i) && args.claims?.[i]) issues.push(`claims[${i}]: "${String(args.claims[i].text || '').slice(0, 100)}${String(args.claims[i].text || '').length > 100 ? '…' : ''}" ${rule}: ${why}. ${tail}`); }
+                else if (j.table !== undefined) { const i = Number(j.table); if (Number.isInteger(i) && deliveredTables[i]) issues.push(`tables[${i}] "${deliveredTables[i].title}"${j.column ? ` column ${j.column}` : ''} ${rule}: ${why}. Deliver the table without that column, or not at all; ${tail.charAt(0).toLowerCase()}${tail.slice(1)}`); }
+                else if (j.figure !== undefined) { const i = Number(j.figure); if (Number.isInteger(i) && deliveredFigures[i]) issues.push(`figures[${i}] "${deliveredFigures[i].title}" ${rule}: ${why}. Leave the figure out; ${tail.charAt(0).toLowerCase()}${tail.slice(1)}`); }
               }
             } catch (error) { remember(`claims review failed: ${error.message}`); }
           }

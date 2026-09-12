@@ -17,7 +17,7 @@ async function study(t, script, options = {}) {
   const requests = [], events = [], agentCalls = [], reviews = [];
   let artifact = 0;
   const stubs = {
-    '../../inference/gateway': { getActiveModel: () => ({ id: 1, configKey: 'test-model' }), inference: { assignContext() {}, chat: { completions: { async create(request) { requests.push(request); const next = script.shift(); if (!next) throw new Error('script exhausted'); return typeof next === 'function' ? next(request) : next; } } } } },
+    '../../inference/gateway': { getActiveModel: () => ({ id: 1, configKey: 'test-model' }), inference: { assignContext() {}, withContext: (context, fn) => fn(), chat: { completions: { async create(request) { requests.push(request); const next = script.shift(); if (!next) throw new Error('script exhausted'); return typeof next === 'function' ? next(request) : next; } } } } },
     '../../policy/config': { platformConfig: () => ({ asoMaxSteps: options.maxTurns || 12, asoParallelLimit: 3 }) },
     // The review of an agent's result against the goal that summoned it is its own model call; tests script it.
     '../../inference/jsonCall': { jsonCall: async (system, user, onStep, label, stats) => { reviews.push({ label, user }); if (stats) { stats.promptTokens += 100; stats.completionTokens += 10; stats.totalTokens += 110; } return options.review ? options.review(user) : { accepted: true, reason: '' }; } },
@@ -84,12 +84,12 @@ test('a finding that reads a blank as an absence is refused by the claims review
     response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' }))),
     response(call('finish', { claims: [{ text: 'EGFR is absent from heart (blank nTPM).', artifact: 'a1', rows: [0], columns: ['nTPM'] }] })),
     response(call('finish', { claims: [{ text: 'EGFR has no recorded heart nTPM; liver nTPM is 32.2.', artifact: 'a1', rows: [0], columns: ['nTPM'] }], limitations: ['a blank is a missing record, not an absence'] }))
-  ], { review: user => user.startsWith('FINDINGS') && ++judged === 1 ? { issues: [{ claim: 0, rule: 1, why: 'a blank nTPM is a missing record, not an absence' }] } : { issues: [] } });
+  ], { review: user => user.includes('\nFINDINGS\n') && ++judged === 1 ? { issues: [{ claim: 0, rule: 1, why: 'a blank nTPM is a missing record, not an absence' }] } : { issues: [] } });
   const result = await run({});
   assert.equal(result.outcome, 'completed', result.summary);
   assert.match(requests[2].messages[1].content, /turn 2: finish refused:\n    - claims\[0\]: "EGFR is absent from heart \(blank nTPM\)\." reads a missing record as a zero or an absence: a blank nTPM is a missing record, not an absence\. Report what is recorded; what this would need goes in not_done with the reason and in limitations/);
   assert.equal(reviews.filter(r => r.label === 'claims review').length, 2, 'the findings are reviewed at each finish');
-  assert.match(reviews.find(r => r.label === 'claims review').user, /^FINDINGS\n0: EGFR is absent from heart \(blank nTPM\)\.$/);
+  assert.match(reviews.find(r => r.label === 'claims review').user, /^SOURCE COLUMNS READ\nTissue \(rna_tissue_consensus\)\nnTPM \(rna_tissue_consensus\)\n\nFINDINGS\n0: EGFR is absent from heart \(blank nTPM\)\.\n\nTABLES DELIVERED\n\(none\)\n\nFIGURES DELIVERED\n\(none\)$/, 'the judge reads the source columns, the findings and the deliverables');
 });
 
 test('a claim with a number its rows do not hold is refused with the reason, then accepted once bound correctly', async t => {
@@ -337,7 +337,7 @@ test('an Investigator artifact is not reviewed: the study judges it by its own n
   ], { review: () => ({ accepted: false, reason: 'would have flagged it' }) });
   const result = await run({});
   assert.equal(result.outcome, 'completed', result.summary);
-  assert.equal(reviews.length, 0, 'no review call for an Investigator artifact');
+  assert.equal(reviews.filter(r => r.label !== 'claims review').length, 0, 'no review call for an Investigator artifact');
   assert.doesNotMatch(requests[1].messages[1].content, /⚠ Review/);
 });
 

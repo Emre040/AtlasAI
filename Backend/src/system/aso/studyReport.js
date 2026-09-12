@@ -224,7 +224,9 @@ function reportIssues(args, state) {
     if (!item || !Number.isSafeInteger(item.item) || item.item < 1 || item.item > state.plan.length) issues.push(`not_done[${i}].item must name a plan item between 1 and ${state.plan.length}`);
     else if (!String(item.why || '').trim()) issues.push(`not_done[${i}] needs a reason`);
   }
-  if (!(args.tables || []).length && !(args.claims || []).length && (args.figures === undefined ? !state.artifacts.some(a => a.figure && a.images?.length) : !args.figures.length)) issues.push('a report needs at least one table, figure or claim');
+  // A report is tables, figures or claims; a study that could deliver nothing reports every plan
+  // item in not_done, with the reason, and its limitations.
+  if (!(args.tables || []).length && !(args.claims || []).length && !(args.not_done || []).length && (args.figures === undefined ? !state.artifacts.some(a => a.figure && a.images?.length) : !args.figures.length)) issues.push('a report needs at least one table, figure or claim, or every plan item in not_done with its reason');
   return issues;
 }
 

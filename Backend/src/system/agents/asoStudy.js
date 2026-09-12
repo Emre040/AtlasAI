@@ -385,6 +385,10 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
   // An agent runs in the background through the orchestrator, exactly as a chat message would.
   // The same question is asked once: an identical call points at the earlier job instead.
   const agentJobs = new Map();
+  let agentsActive = 0;
+  const agentQueue = [];
+  const agentSlot = () => new Promise(resolve => { if (agentsActive < parallel) { agentsActive++; resolve(); } else agentQueue.push(resolve); });
+  const releaseSlot = () => { const next = agentQueue.shift(); if (next) next(); else agentsActive--; };
   function startAgent(toolName, args) {
     if (args.mode !== undefined && args.mode !== mode) throw new Error(`Delegated agents use the study data source: ${mode}`);
     // A call left unnamed is named by what it asks.
@@ -433,7 +437,9 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     state.agentStarts = (state.agentStarts || 0) + 1;
     log('tool.start', { id, tool: toolName, kind: 'agent', label: title, args, inputs }, id);
     const forward = async s => log(`agent.${s.stage}`, { id, label: s.label, message: s.message }, id);
-    job.promise = orchestrator.execute(toolName, executionArgs, { db, visitorId: ctx.visitorId, rawQuery: '', includeRows: true, onStep: forward, reasoningEffort: effort, runControl: ctx.runControl, signal: ctx.signal, cacheKey: workspace.uuid, maxTurns })
+    // Agents run a few at a time, as operations do: each carries its own working set, and a turn
+    // that summons one set per tissue would start a dozen at once.
+    job.promise = agentSlot().then(() => orchestrator.execute(toolName, executionArgs, { db, visitorId: ctx.visitorId, rawQuery: '', includeRows: true, onStep: forward, reasoningEffort: effort, runControl: ctx.runControl, signal: ctx.signal, cacheKey: workspace.uuid, maxTurns }).finally(releaseSlot))
       .then(async ({ result }) => {
         addSpecialistUsage(toolName, result?.tokens, result?.calls);
         const made = [], repeats = [];
@@ -499,7 +505,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
         remember(`${id} ${toolName} "${title}" failed: ${err.message}${err.details ? ` ${JSON.stringify(err.details)}` : ''}${hint}${called.length ? `; the atlas records, under words of the call: ${called.join('; ')}` : ''}`);
         await log('tool.failed', { id, tool: toolName, kind: 'agent', error: err.message, details: err.details, ms: Date.now() - job.startedAt }, id);
       })
-      .finally(() => { state.running.delete(id); wakeUp(); });
+      .finally(() => { state.running.delete(id); state.agentsReturned = (state.agentsReturned || 0) + 1; wakeUp(); });
     return true;
   }
 
@@ -702,7 +708,9 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       // Only what can act is offered: before any artifact exists, the plan, notes and the agents;
       // the operations, open and finish once there is something to work on.
       const offered = turn === maxTurns ? offeredSpecs.filter(t => ['finish', 'note'].includes(t.function.name))
-        : offeredSpecs.filter(t => (t.function.name !== 'skip' || state.running.size) && (state.artifacts.length || ['plan', 'note', 'skip'].includes(t.function.name) || agentNames.has(t.function.name)));
+        // finish is offered once there is something to report, or once an agent has come back
+        // with nothing: a study whose data does not exist finishes with what it could not do.
+        : offeredSpecs.filter(t => (t.function.name !== 'skip' || state.running.size) && (state.artifacts.length || (t.function.name === 'finish' && state.agentsReturned) || ['plan', 'note', 'skip'].includes(t.function.name) || agentNames.has(t.function.name)));
       const user = deskText(turn);
       const request = { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], tools: offered, temperature: 0, prompt_cache: { key: `study ${workspace.uuid}` }, ...(effort ? { reasoning_effort: effort } : {}) };
       const contextDir = path.join(workspace.workspaceDir, 'context');

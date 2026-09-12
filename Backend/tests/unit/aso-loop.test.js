@@ -312,3 +312,29 @@ test("a search result carries the search's own account of its selection, on its 
   assert.match(reviews[0].user, /the search understood the call as: genes without protein staining in liver; its selection, requirement by requirement: not detected in liver → Tissue expression \(IHC\)/);
 });
 
+test('a study whose data does not exist finishes: finish is offered once an agent has come back, and a report of not_done items with reasons is accepted', async t => {
+  const { run, requests } = await study(t, [
+    response(call('plan', { items: [{ step: 'half-life of ALB', kind: 'table' }] }), call('investigator_hpa', named('ALB half-life', { points: ['ALB'], question: 'protein half-life' }))),
+    response(call('finish', { not_done: [{ item: 1, why: 'no table of the release holds a protein half-life' }], limitations: ['The atlas records no protein half-life.'] }))
+  ], { agentResult: async () => { throw new Error('No table in this release holds a protein half-life value'); } });
+  const result = await run({});
+  assert.ok(!requests[0].tools.some(tool => tool.function.name === 'finish'), 'nothing to report yet on turn 1');
+  assert.ok(requests[1].tools.some(tool => tool.function.name === 'finish'), 'the agent came back empty: finish is offered');
+  assert.equal(result.outcome, 'incomplete');
+  assert.equal(result.incomplete_reason, 'undelivered_items');
+  assert.match(result.summary, /\*\*Not done\*\*\n\n- Plan item 1: no table of the release holds a protein half-life/);
+  assert.match(result.summary, /The atlas records no protein half-life\./);
+});
+
+test('agents summoned together run a few at a time', async t => {
+  let active = 0, peak = 0;
+  const { run } = await study(t, [
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), ...['a', 'b', 'c', 'd', 'e', 'f'].map(x => call('investigator_hpa', named(`Values ${x}`, { points: [x.toUpperCase()], question: `nTPM ${x}` })))),
+    response(call('finish', { tables: [{ artifact: 'a1' }] }))
+  ], { agentResult: async () => { active++; peak = Math.max(peak, active); await new Promise(resolve => setTimeout(resolve, 20)); active--; return BULK; } });
+  const result = await run({});
+  assert.equal(result.outcome, 'completed', result.summary);
+  assert.equal(result.agents, 6);
+  assert.ok(peak <= 3 && peak >= 2, `at most the parallel limit ran at once: peak ${peak}`);
+});
+

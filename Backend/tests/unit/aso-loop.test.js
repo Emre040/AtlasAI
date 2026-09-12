@@ -331,8 +331,8 @@ test('a study whose data does not exist finishes: finish is offered once an agen
 test('the plan carries the data each deliverable needs, and every summon starts on the plan\'s turn; the next turn sees them all back', async t => {
   const { run, requests, agentCalls } = await study(t, [
     response(call('plan', { items: [
-      { step: 'liver values', kind: 'table', needs: [{ agent: 'investigator_hpa', question: 'liver nTPM', points: ['EGFR'] }] },
-      { step: 'lung values', kind: 'table', needs: [{ agent: 'investigator_hpa', question: 'lung nTPM', points: ['ERBB2'], title: 'Lung' }] },
+      { step: 'liver values', kind: 'table', description: 'the liver column of the table', needs: [{ agent: 'investigator_hpa', question: 'liver nTPM', points: ['EGFR'] }] },
+      { step: 'lung values', kind: 'table', needs: [{ agent: 'investigator_hpa', question: 'lung nTPM', points: ['ERBB2'], title: 'Lung', description: 'lung nTPM of ERBB2, described' }] },
       { step: 'later', kind: 'table', needs: [{ agent: 'investigator_hpa', question: 'more', from: 'a9' }] }
     ] })),
     response(call('finish', { tables: [{ artifact: 'a1' }, { artifact: 'a2' }], not_done: [{ item: 3, why: 'not needed' }] }))
@@ -341,7 +341,7 @@ test('the plan carries the data each deliverable needs, and every summon starts 
   assert.equal(result.outcome, 'incomplete', result.summary);
   assert.deepEqual(agentCalls.map(c => c.args.question), ['liver nTPM', 'lung nTPM'], 'both summons started with the plan; the one naming a future artifact waited');
   const desk2 = requests[1].messages[1].content;
-  assert.match(desk2, /ARTIFACTS\na1 "liver values"[^\n]*\n[\s\S]*\na2 "Lung"/);
+  assert.match(desk2, /ARTIFACTS\na1 "liver values"[^\n]*\n  the liver column of the table\n[\s\S]*\na2 "Lung"[^\n]*\n  lung nTPM of ERBB2, described\n/, 'an item\'s description is its summon\'s; a need\'s own description wins');
   assert.match(desk2, /plan item 3: investigator_hpa from=a9 waits for that artifact; ask when it exists/);
 });
 

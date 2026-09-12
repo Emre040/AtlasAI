@@ -192,6 +192,19 @@ test('finish naming no result title returns every result made', async () => {
   assert.equal(result.note, 'MET has no recorded liver value');
 });
 
+test('without a list, a gene the question names is the point: its rows are read by its keys', async () => {
+  const { run, requests } = await investigator([
+    response(call('fetch', { title: 'EGFR nTPM', description: 'nTPM per tissue', table: 'rna_tissue_consensus.tsv', fields: ['Tissue', 'nTPM'] })),
+    response(call('finish', { results: ['EGFR nTPM'] }))
+  ]);
+  const steps = [];
+  const result = await run({ question: 'liver and lung nTPM of EGFR' }, { onStep: s => steps.push(s) });
+  assert.equal(result.status, 'ok');
+  assert.deepEqual(result.tables[0].rows.map(r => [r.gene, r.Tissue, r.nTPM]), [['EGFR', 'liver', '32.2'], ['EGFR', 'lung', '14.1'], ['EGFR', 'heart', '0.0']], 'only the named gene\'s rows, not the whole table');
+  assert.match(requests[0].messages[1].content, /POINTS\nNo list; the question names EGFR \(a gene of the release\): read as the point, by its keys, on either side of a pair table/);
+  assert.ok(steps.some(s => s.stage === 'start' && /No list; the question names EGFR: the point\. Question:/.test(s.message)));
+});
+
 test('a search that places no table not already found is nothing new, and two in a row end the run; a table name searched shows that table\'s card once', async () => {
   const { run, requests } = await investigator([
     response(call('search', { words: ['liver'] })),
@@ -226,7 +239,7 @@ test('a where naming one gene in both id columns of a pair table reads the gene 
     response(call('fetch', { title: 'EGFR pairs', description: 'Pairs of EGFR', table: 'interaction_consensus.tsv', fields: ['datasets'], where: [{ column: 'ensembl_gene_id_1', op: '=', value: 'EGFR' }, { column: 'ensembl_gene_id_2', op: '=', value: 'EGFR' }] })),
     response(call('finish', { results: ['EGFR pairs'] }))
   ], { adapter: withPairs() });
-  const result = await run({ question: 'interaction partners of EGFR' });
+  const result = await run({ question: 'interaction partners of the gene named in the filter' });
   assert.equal(result.status, 'ok');
   assert.deepEqual(result.tables[0].rows.map(r => [r.other, r.datasets]).sort(), [['ENSG2', 'a'], ['ENSG3', 'b']], 'both sides are read; the partner is other');
   assert.match(requests[1].messages[1].content, /interaction_consensus\.tsv holds gene ids on both sides: ENSG1 is read as the point, matched against ensembl_gene_id_1 and ensembl_gene_id_2; the other side is other/);
@@ -237,7 +250,7 @@ test('a where that matches no row names a gene of the release as a point, and sa
     response(call('fetch', { title: 'Heart', description: 'ERBB2 in heart', table: 'rna_tissue_consensus.tsv', fields: ['nTPM'], where: [{ column: 'Gene', op: '=', value: 'ENSG2' }, { column: 'Tissue', op: '=', value: 'heart' }] })),
     response(call('finish', { results: ['Heart'] }))
   ]);
-  const result = await run({ question: 'ERBB2 nTPM in heart' });
+  const result = await run({ question: 'nTPM in heart of the gene named in the filter' });
   assert.equal(result.status, 'ok');
   assert.equal(result.tables[0].rows.length, 0);
   assert.match(requests[1].messages[1].content, /no row of rna_tissue_consensus\.tsv matched the where \(all 2 clauses at once\): "ENSG2" is a gene of the release \(ERBB2 = ENSG2\): sent as a point it is read by its keys\. "heart" is recorded in tissues\.tsv · Tissue = heart/);

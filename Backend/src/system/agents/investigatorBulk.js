@@ -421,6 +421,16 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
     db = adapter.identity();
     const keys = { entity: db.entity, columns: db.keys };
     const listed = points && points.length ? [...points] : [];
+    // Without a list, a gene the question itself names is the point: its rows are what the
+    // question is about (the partners of TP53, the location of TP53), read by its keys on
+    // either side of a pair table, and not by a where the model has to write.
+    let questionNamed = [];
+    if (!listed.length) {
+      const tokens = [...new Set(String(question || '').match(/\bENSG\d{11}\b|\b[A-Z][A-Z0-9]{1,9}(?:-[A-Z0-9]{1,4})?\b/g) || [])];
+      const genes = tokens.length ? await adapter.resolveGenes(tokens).catch(() => []) : [];
+      questionNamed = tokens.filter((t, i) => genes[i] && (String(genes[i].gene || '').toUpperCase() === t.toUpperCase() || String(genes[i].ensembl || '').toUpperCase() === t.toUpperCase()));
+      listed.push(...questionNamed);
+    }
     resolved = listed.length ? await adapter.resolveGenes(listed) : [];
     const identities = new Map();
     for (const gene of resolved) if (gene && !identities.has(gene.ensembl)) identities.set(gene.ensembl, gene);
@@ -429,11 +439,13 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
     const system = systemPrompt(db, catalog);
     const offered = tools(db);
     const maxTurns = ctx.maxTurns || platformConfig().asoMaxSteps;
-    await emit('start', 'Investigator', `${listed.length ? `${listed.length} points supplied, ${identities.size} resolve as ${db.entity}s` : 'No list'}. Question: ${question}`);
+    await emit('start', 'Investigator', `${questionNamed.length ? `No list; the question names ${questionNamed.join(', ')}: the point${questionNamed.length > 1 ? 's' : ''}` : listed.length ? `${listed.length} points supplied, ${identities.size} resolve as ${db.entity}s` : 'No list'}. Question: ${question}`);
 
 
     const desk = turn => {
-      const list = listed.length
+      const list = questionNamed.length
+        ? `No list; the question names ${questionNamed.join(', ')} (${questionNamed.length > 1 ? `${db.entity}s` : `a ${db.entity}`} of the release): read as the point${questionNamed.length > 1 ? 's' : ''}, by ${questionNamed.length > 1 ? 'their' : 'its'} keys, on either side of a pair table`
+        : listed.length
         ? `${count(listed.length)} points supplied${identities.size ? `, ${count(identities.size)} resolve as ${db.entity}s in the release` : `; none is a ${db.entity} of the release, so fetch matches them against the column the search finds them in`}${unresolvedPoints().length && identities.size ? `; not ${db.entity}s of the release: ${unresolvedPoints().slice(0, 8).join(', ')}${unresolvedPoints().length > 8 ? ` (+${unresolvedPoints().length - 8})` : ''}` : ''}. First points: ${listed.slice(0, 5).join(', ')}`
         : 'No list: the question selects rows by a filter.';
       const shownSearches = searches.slice(-SEARCHES_SHOWN).map(s => `search ${s.words.map(w => JSON.stringify(w)).join(', ')} →\n  ${s.text.split('\n').join('\n  ')}`);

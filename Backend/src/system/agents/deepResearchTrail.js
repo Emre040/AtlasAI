@@ -112,7 +112,9 @@ async function planFilters(adapter, goal, context, requirements, study = null, a
     // ("validated" inside "Unfavorable - validated prognostic") refines that field's walk: it
     // rides with the requirement planned on that field instead of stopping the search.
     const words = [...have].filter(w => w.length >= 3);
-    const inside = words.length && typeof adapter.optionIndex === 'function' ? adapter.optionIndex().find(entry => { const w = wordsOf(entry.option); return words.every(x => w.has(x)) && requirements.some(r => r.field === entry.field && r.status === 'planned'); }) : null;
+    // ("validation status 'Validated'" rides with the field whose option says "validated"): one
+    // word of the requirement inside an option of a planned field is enough; the walk decides.
+    const inside = words.length && typeof adapter.optionIndex === 'function' ? adapter.optionIndex().find(entry => { const w = wordsOf(entry.option); return words.some(x => x.length >= 4 && w.has(x)) && requirements.some(r => r.field === entry.field && r.status === 'planned'); }) : null;
     if (inside) { const host = requirements.find(r => r.field === inside.field && r.status === 'planned'); host.requirement = `${host.requirement} (${item.requirement})`; continue; }
     requirements.push({ id: `r${requirements.length + 1}`, requirement: item.requirement, status: 'unexpressible', error: item.why });
   }

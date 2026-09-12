@@ -647,7 +647,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     // The same page opened again while it is still whole on the desk shows nothing new.
     const key = `${a.id}|${offset}`, existing = state.views.get(key);
     const consumedAt = Math.max(-Infinity, ...state.artifacts.filter(x => (x.inputs || []).includes(a.id)).map(x => x.turn));
-    if (existing && existing.text === text && !(consumedAt > existing.turn)) { remember(`${a.id} ${range} is already on the desk under VIEWS`); return false; }
+    if (existing && existing.text === text && !(consumedAt > existing.turn) && state.turn <= existing.turn + 1) { remember(`${a.id} ${range} is already on the desk under VIEWS`); return false; }
     view(key, text, `${a.id} ${range} (opened at turn ${state.turn}; open again to see them)`);
     remember(`opened ${a.id} ${range} (view on the desk)`);
     return true;
@@ -673,7 +673,9 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
     // its receipt, since the rows live on in the successor and open shows them again.
     const consumedAfter = new Map();
     for (const a of state.artifacts) for (const input of a.inputs || []) consumedAfter.set(input, Math.max(consumedAfter.get(input) ?? -Infinity, a.turn));
-    const views = [...state.views.entries()].map(([key, v]) => (consumedAfter.get(key.split('|')[0]) ?? -Infinity) > v.turn ? v.receipt : v.text);
+    // A view is read on the turn after it was opened; from then on it is its receipt, and open
+    // brings it back. Rows the study keeps looking at do not ride along on every turn.
+    const views = [...state.views.entries()].map(([key, v]) => ((consumedAfter.get(key.split('|')[0]) ?? -Infinity) > v.turn || state.turn > v.turn + 1) ? v.receipt : v.text);
     const sections = [
       desk.section('STUDY', goal),
       desk.section('PLAN', studyPlan.planText(state.plan, agentNames.has('deep_research_hpa') ? { gene_set: 'gene_set ← deep_research_hpa' } : {})),

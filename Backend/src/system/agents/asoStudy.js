@@ -109,12 +109,33 @@ function argumentLine(name, schema) {
   if (schema.type === 'object' && schema.properties) return `${name}{${Object.entries(schema.properties).map(([k, v]) => argumentLine(k, v)).join(', ')}}`;
   return name;
 }
+// What each operation does, in one clause; the arguments come from the schema. The filter clause
+// shape and its operators are written once, above the list.
+const BRIEF = {
+  combine: 'one table from a and b: concat every row of both (label names a column saying which input a row came from), intersect or difference by entity, or by a column with on',
+  join: 'rows of a and b side by side, matched on the entity keys, on one column (on) or several (on_columns), left=right when the sides name it differently; a shared column that agrees is kept once, one that differs comes from b as name_2',
+  filter: 'keep the rows where every where clause holds and, when any is given, one any clause holds; a value is a value: matching another artifact is join',
+  select: 'keep or rename columns, add label columns; entity keys stay',
+  rank: 'sort by a column and add rank; top keeps the first n (ties at the edge kept unless ties=truncate); group_by ranks within groups',
+  aggregate: 'summarise a column over all rows or per group; a statistic is named metric_column, count is rows, recorded is cells with a value; group_domains lists expected groups so empty ones show 0',
+  classify: 'add a category column: the first rule whose where holds gives its value, else otherwise',
+  compute: 'add a column from an expression over columns and numbers: + - * / ( ) log2 log10 ln abs sqrt exp min max, + also joins text; if(condition, then, else) with < <= > >= = != and or not; contains(column, "text") for text and list cells',
+  pivot: 'a matrix for a heatmap: rows from row, columns from column, cells from value (aggregate duplicates first)',
+  chart: 'a figure: bars take x labels and y values, series from group (a column of names) or series[] (value columns); scatter and bubble take numeric x and y, label, group, size; heatmap takes a pivot; x_scale, y_scale, scale log for wide-ranging values; missing=omit skips rows without a number',
+  correlate: 'Pearson or Spearman correlation of x and y: r, p_value, n; group_by gives one row per group',
+  overlap: 'the entities a and b share, tested against every entity of the database or a universe artifact: shared, expected, fold, hypergeometric p; group_by tests each group of a',
+  explode: 'one row per item of a list cell: "key: number" items become as_key and as_value, "label (number)" as_label and as_value, others as_item'
+};
 function operationsReference(tools) {
-  return tools.filter(t => TABLE_TOOLS.has(t.name)).map(t => {
+  const ops = tools.find(t => t.name === 'filter').parameters.properties.where.items.properties.op.enum;
+  const clause = `where and any are lists of clauses {column, op, value} (column_b compares two columns); op is one of ${ops.join(' ')}; in takes a list as value`;
+  const lines = tools.filter(t => TABLE_TOOLS.has(t.name)).map(t => {
     const props = Object.entries(t.parameters.properties).filter(([k]) => !['title', 'description'].includes(k));
     const required = new Set(t.parameters.required || []);
-    return `${t.name}(${props.map(([k, v]) => `${argumentLine(k, v)}${required.has(k) ? '' : '?'}`).join(', ')}): ${t.description}`;
-  }).join('\n');
+    const arg = (k, v) => ['where', 'any'].includes(k) ? k : k === 'rules' ? 'rules[{where, value}]' : argumentLine(k, v);
+    return `${t.name}(${props.map(([k, v]) => `${arg(k, v)}${required.has(k) ? '' : '?'}`).join(', ')}): ${BRIEF[t.name] || t.description}`;
+  });
+  return `${clause}\n${lines.join('\n')}`;
 }
 const SYNC_TOOLS = new Set(['plan', 'note', 'open', 'skip', 'finish']);
 

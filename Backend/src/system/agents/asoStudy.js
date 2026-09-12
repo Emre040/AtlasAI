@@ -70,7 +70,7 @@ const tool = (name, description, properties = {}, required = []) => ({ name, des
 // Every operation names its result (title, description); one left unnamed is named by its operation.
 const op = (name, description, properties = {}, required = []) => tool(name, description, { title: S, description: S, ...properties }, required);
 const STUDY_TOOLS = [
-  tool('plan', 'The deliverables the study owes: one item per requested table, figure (its chart type), cohort (gene_set) or interpretation. Replaces the plan.', { items: { type: 'array', items: { type: 'object', properties: { step: S, kind: { type: 'string', enum: studyPlan.KINDS } }, required: ['step', 'kind'] } } }, ['items']),
+  tool('plan', 'The deliverables the study owes: one item per requested table, figure (its chart type), cohort (gene_set) or interpretation, each with the data it needs from the agents (needs), which start at once. Replaces the plan.', { items: { type: 'array', items: { type: 'object', properties: { step: S, kind: { type: 'string', enum: studyPlan.KINDS }, needs: { type: 'array', description: 'the agent calls this deliverable needs: agent (investigator_hpa or deep_research_hpa), its question or goal, its points or from', items: { type: 'object', properties: { agent: S, question: S, goal: S, points: { type: 'array', items: S }, from: S, column: S, title: S }, required: ['agent'] } } }, required: ['step', 'kind'] } } }, ['items']),
   tool('note', 'Keep a decision or open question on the desk; replace overwrites note N.', { text: S, replace: N }, ['text']),
   tool('open', 'Show rows of an artifact: rows and offset page it, columns narrow it.', { artifact: A, rows: N, offset: N, columns: { type: 'array', items: S } }, ['artifact']),
   tool('run', 'Runs operations: a chain of steps, each {id, tool: an operation from the list, args}, later steps naming earlier ones as @id (an existing artifact by its own id); one artifact per step, every step in the trail.',{ steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
@@ -152,7 +152,7 @@ The desk in the message is your whole working set and stays in front of you ever
 Read the question as one study: what it says about how a thing is measured, in which cohort, scope or release, holds for every part of the question unless the question says otherwise.
 
 How a study goes:
-1. plan lists the deliverables, one item per requested table, figure of a given type, cohort or interpretation; independent work starts in the same turn.
+1. plan lists the deliverables, one item per requested table, figure of a given type, cohort or interpretation, and with each item the data it needs from the agents (needs: the agent, its question or goal, its points); every summon the plan needs starts at once, on the plan's turn, and the study goes on when all are back.
 2. A set of ${entity}s comes from ${search}; its rows come from investigator_hpa with from=<that artifact's id> and the question. Both run in the background and return tables that are used as they are.
 3. Operations run as steps of run, written as chains: every step whose inputs are known goes in one run call, later steps naming earlier ones as @id (explode, then aggregate the counts, then the chart; filter, then rank, then the table), each step named with a title and a description a reader understands. One run per analysis, one turn; a run of one step is only for a step whose next step needs its result seen first. Independent chains go in the same turn. The operations and their arguments are listed below.
 4. finish delivers the report from the data: tables and figures by id, and findings as claims, each bound to the rows and columns it rests on. The report prints those cells beside the claim, so every number a claim states is among them or was computed into an artifact the claim cites. Limitations state what the evidence cannot establish, in words. A plan item that cannot be delivered goes in not_done with the reason.
@@ -380,6 +380,12 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
 
   const wake = { resolve: null };
   const wakeUp = () => { if (wake.resolve) { const r = wake.resolve; wake.resolve = null; r(); } };
+  // A turn that only summoned (or waited) has nothing new to look at until its agents return:
+  // the loop waits for all of them, so no turn is spent watching one of three come back.
+  const waitForAll = async () => {
+    await Promise.allSettled([...state.running.values()].map(job => job.promise));
+    await new Promise(resolve => setTimeout(resolve, WAKE_DEBOUNCE_MS));
+  };
   const waitForCompletion = () => new Promise(resolve => {
     const timer = setTimeout(resolve, JOB_WAIT_MS);
     wake.resolve = () => { clearTimeout(timer); setTimeout(resolve, WAKE_DEBOUNCE_MS); };
@@ -751,7 +757,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       });
       await log('turn', { turn, text: message.content ? String(message.content).slice(0, 600) : null, calls: calls.map(c => ({ tool: c.name, args: c.args })), offered: offered.length });
       if (message.content && !calls.length) remember(`said: ${String(message.content).slice(0, 300)}`);
-      let waiting = false, sync = 0, started = 0, repeated = 0;
+      let waiting = false, sync = 0, started = 0, repeated = 0, operated = 0;
       async function executeCall(call) {
         if (call.error) throw new Error(`invalid arguments: ${call.error}`);
         // An operation called by name, though only run is offered, is the operation: it runs.
@@ -764,7 +770,20 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           state.plan = (call.args.items || []).map(studyPlan.createItem);
           if (!state.plan.length) throw new Error('plan needs at least one deliverable');
           sync++; remember(`plan: ${state.plan.length} deliverables`);
-          await log('plan', { items: state.plan }); return;
+          await log('plan', { items: state.plan });
+          // The data the plan needs is asked for now, every summon at once: a deliverable's
+          // needs name the agent and its question or goal; one naming an artifact that does not
+          // exist yet waits for the study to ask when it does.
+          for (const [i, item] of state.plan.entries()) {
+            for (const need of item.needs || []) {
+              if (!agentNames.has(need.agent)) { remember(`plan item ${i + 1} needs ${JSON.stringify(need.agent)}, which is not an agent (${[...agentNames].join(', ')})`); continue; }
+              if (need.from !== undefined && !state.byId.has(String(need.from).trim())) { remember(`plan item ${i + 1}: ${need.agent} from=${need.from} waits for that artifact; ask when it exists`); continue; }
+              const args = Object.fromEntries(Object.entries({ title: need.title || item.text, description: item.text, question: need.question, goal: need.goal, points: need.points, from: need.from, column: need.column }).filter(([, v]) => v !== undefined && v !== null && v !== ''));
+              try { if (startAgent(need.agent, args)) started++; }
+              catch (error) { state.failed++; remember(`plan item ${i + 1} ${need.agent}(${desk.argsLine(bare(args), 120)}) failed: ${error.message}`); }
+            }
+          }
+          return;
         }
         if (call.name === 'note') {
           const text = String(call.args.text || '').trim();
@@ -774,7 +793,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           sync++; await log('note', { text, replace: at || undefined }); return;
         }
         if (call.name === 'skip') { waiting = true; remember(`waited: ${String(call.args.reason || '').slice(0, 100)}`); await log('skip', { reason: call.args.reason || '' }); return; }
-        if (call.name === 'open') { if (await openWhat(call.args)) sync++; return; }
+        if (call.name === 'open') { if (await openWhat(call.args)) { sync++; operated++; } return; }
         if (call.name === 'run') {
           const specifications = new Map(toolSpecs.filter(t => TABLE_TOOLS.has(t.function.name)).map(t => [t.function.name, t.function]));
           const all = Array.isArray(call.args.steps) ? call.args.steps : [];
@@ -803,6 +822,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           if (steps.length) {
             const batch = await executeBatch({ steps, outputs: steps.map(s => s?.id).filter(id => typeof id === 'string') }, { specifications, concurrency: parallel, execute: runTableTool, external: id => (state.byId.has(id) ? id : null) });
             if (batch.status !== 'completed') remember(`run: ${batch.steps.filter(s => s.status !== 'done').map(s => `${s.id} ${s.status}${s.error ? `: ${s.error}` : ''}`).join('; ')}`);
+            operated++;
           }
           sync++; return;
         }
@@ -839,7 +859,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           return;
         }
         // A call already made, or already asked, does no work: the turn is idle if that is all it did.
-        if (TABLE_TOOLS.has(call.name)) { const made = await runTableTool(call.name, call.args); if (made?.repeated) repeated++; else sync++; return; }
+        if (TABLE_TOOLS.has(call.name)) { const made = await runTableTool(call.name, call.args); if (made?.repeated) repeated++; else { sync++; operated++; } return; }
         if (agentNames.has(call.name)) { if (startAgent(call.name, call.args)) started++; else repeated++; return; }
         throw new Error(`no tool ${call.name}`);
       }
@@ -866,7 +886,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       }
       // An agent still running holds the next decision: the loop wakes when the first one returns,
       // so no turn is spent looking at an unchanged desk.
-      if (state.running.size) { stalls = 0; await waitForCompletion(); continue; }
+      if (state.running.size) { stalls = 0; await (operated ? waitForCompletion() : waitForAll()); continue; }
       if (sync === 0 && started === 0 && !waiting) { stalls++; remember(repeated ? 'that turn only repeated calls already made: use their artifacts as they are, ask differently, or finish' : 'that turn did no work: summon agents, run operations, or finish'); if (stalls > MAX_STALLS) break; continue; }
       if (waiting) { stalls++; remember('nothing is running, so there is nothing to wait for: act or finish'); if (stalls > MAX_STALLS) break; continue; }
       stalls = 0;

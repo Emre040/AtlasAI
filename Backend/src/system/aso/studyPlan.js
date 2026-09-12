@@ -9,7 +9,10 @@ function createItem(input, index) {
   const text = String(input?.step || '').trim();
   if (!text) throw new Error(`plan item ${index + 1} needs a step describing the deliverable`);
   if (!KINDS.includes(input.kind)) throw new Error(`plan item ${index + 1} kind must be one of ${KINDS.join(', ')}`);
-  return { text, kind: input.kind, status: 'todo', artifacts: [] };
+  // What the deliverable needs from the agents rides with it: the study loop starts those
+  // summons when the plan is recorded.
+  const needs = Array.isArray(input.needs) ? input.needs.filter(n => n && typeof n === 'object' && typeof n.agent === 'string') : [];
+  return { text, kind: input.kind, status: 'todo', artifacts: [], needs };
 }
 
 // The plan on the desk; labels name who delivers a kind (a cohort comes from the search agent).

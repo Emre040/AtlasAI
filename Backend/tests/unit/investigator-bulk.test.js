@@ -43,6 +43,8 @@ test('the investigator searches the release, fetches for the whole list and retu
   assert.match(requests[0].messages[1].content, /TABLES FOUND\n\(none yet\)/);
   assert.doesNotMatch(desk2, /OPENED|columns: Gene, Gene name/, 'no table card');
   assert.ok(Buffer.byteLength(desk2) < 2500, `a turn's desk stays small: ${Buffer.byteLength(desk2)} bytes`);
+  // The release's tables are listed in the system prompt, so a fetch needs no search to find the table.
+  assert.match(requests[0].messages[0].content, /Tables of the release:\nrna_tissue_consensus\.tsv — Consensus tissue RNA \(4 columns\)\ntissues\.tsv — Tissue lookup \(2 columns\)$/);
   // The desk of the third turn: the result as one line.
   const desk3 = requests[2].messages[1].content;
   assert.match(desk3, /RESULTS\nLiver and lung nTPM \(6 rows: gene, ensembl, Tissue, nTPM\) ← fetch table=rna_tissue_consensus\.tsv, fields=\["Tissue","nTPM"\]/);

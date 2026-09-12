@@ -327,6 +327,23 @@ test('a study whose data does not exist finishes: finish is offered once an agen
   assert.match(result.summary, /The atlas records no protein half-life\./);
 });
 
+test('the plan carries the data each deliverable needs, and every summon starts on the plan\'s turn; the next turn sees them all back', async t => {
+  const { run, requests, agentCalls } = await study(t, [
+    response(call('plan', { items: [
+      { step: 'liver values', kind: 'table', needs: [{ agent: 'investigator_hpa', question: 'liver nTPM', points: ['EGFR'] }] },
+      { step: 'lung values', kind: 'table', needs: [{ agent: 'investigator_hpa', question: 'lung nTPM', points: ['ERBB2'], title: 'Lung' }] },
+      { step: 'later', kind: 'table', needs: [{ agent: 'investigator_hpa', question: 'more', from: 'a9' }] }
+    ] })),
+    response(call('finish', { tables: [{ artifact: 'a1' }, { artifact: 'a2' }], not_done: [{ item: 3, why: 'not needed' }] }))
+  ]);
+  const result = await run({});
+  assert.equal(result.outcome, 'incomplete', result.summary);
+  assert.deepEqual(agentCalls.map(c => c.args.question), ['liver nTPM', 'lung nTPM'], 'both summons started with the plan; the one naming a future artifact waited');
+  const desk2 = requests[1].messages[1].content;
+  assert.match(desk2, /ARTIFACTS\na1 "liver values"[^\n]*\n[\s\S]*\na2 "Lung"/);
+  assert.match(desk2, /plan item 3: investigator_hpa from=a9 waits for that artifact; ask when it exists/);
+});
+
 test('agents summoned together run a few at a time', async t => {
   let active = 0, peak = 0;
   const { run } = await study(t, [

@@ -6,7 +6,8 @@ const plan = require('../../src/system/aso/studyPlan');
 test('plan items need a description and a known kind', () => {
   assert.throws(() => plan.createItem({ step: '', kind: 'table' }, 0), /plan item 1 needs a step/);
   assert.throws(() => plan.createItem({ step: 'x', kind: 'measure' }, 1), /plan item 2 kind must be one of/);
-  assert.deepEqual(plan.createItem({ step: 'A heatmap', kind: 'heatmap' }, 0), { text: 'A heatmap', kind: 'heatmap', status: 'todo', artifacts: [] });
+  assert.deepEqual(plan.createItem({ step: 'A heatmap', kind: 'heatmap', needs: [{ agent: 'investigator_hpa', question: 'q' }, 'junk'] }, 0).needs, [{ agent: 'investigator_hpa', question: 'q' }], 'needs keep the well-formed entries');
+  assert.deepEqual(plan.createItem({ step: 'A heatmap', kind: 'heatmap' }, 0), { text: 'A heatmap', kind: 'heatmap', status: 'todo', artifacts: [], needs: [] });
 });
 
 test('a finish covers a chart item only with a rendered figure of that type, and not_done skips an item', () => {

@@ -42,12 +42,16 @@ function tools(db) {
   ];
 }
 
-function systemPrompt(db) {
+function systemPrompt(db, catalog = []) {
+  // The release's own tables, listed: the agent fetches the one that holds the field and
+  // searches only for what the list does not say (a column, the spelling of a value).
+  const tables = catalog.filter(e => e.key !== 'unreadable').map(e => `${e.file} — ${e.title || ''}${Array.isArray(e.columns) ? ` (${e.columns.length} columns)` : ''}`);
   return `You are the Investigator in a study over the ${db.database}: given a question about a list of points (the tools hold the list), you return the rows that answer it, from one table, with the mapping you made.
+- The tables of the release are listed below. fetch the one that holds the field asked; search when its columns or the spelling of a value are not known.
 - search says where words live. Search the field asked and the context named, with specific words; a point that is a ${db.entity} is read by the list, not searched.
 - fetch reads the rows: the table found, the fields asked (every column when the field's name is not known), a where for the context, spelled as the search shows. What one table lists and another measures is two fetches, the second taking its points from the first (from, column).
 - finish as soon as a result holds rows for the points with the field asked: the results, the mapping (field → table, column of the result), a note on what was chosen over what, what no table holds, which points did not resolve. The rows are the evidence; the study computes with them.
-Never fetch a whole table to look at it; the search says what is there.`;
+Never fetch a whole table to look at it; the search says what is there.${tables.length ? `\n\nTables of the release:\n${tables.join('\n')}` : ''}`;
 }
 
 // One field in one context per question is the study's rule: it asks that way, and this agent reads what it is asked.
@@ -393,7 +397,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
     for (const gene of resolved) if (gene && !identities.has(gene.ensembl)) identities.set(gene.ensembl, gene);
     listed.resolvedAny = identities.size > 0;
     const catalog = await adapter.catalog();
-    const system = systemPrompt(db);
+    const system = systemPrompt(db, catalog);
     const offered = tools(db);
     const maxTurns = ctx.maxTurns || platformConfig().asoMaxSteps;
     await emit('start', 'Investigator', `${listed.length ? `${listed.length} points supplied, ${identities.size} resolve as ${db.entity}s` : 'No list'}. Question: ${question}`);

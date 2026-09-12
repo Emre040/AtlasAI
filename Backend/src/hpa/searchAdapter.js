@@ -237,6 +237,27 @@ async function execute(filters, url, requestedMode) {
       }
       return { rows, mode: 'offline', version: agentMode.hpaVersion, source_files: local.source_files, context_columns: [axis.field] };
     }
+    // The same when the first level is named and the second is left open (a cancer, any
+    // category): the rows carry the matched second-level value.
+    const secondLevel = (f, cls) => {
+      if (!f) return [];
+      const key = f.nested ? Object.keys(f.nested).find(k => k.toLowerCase() === String(cls).trim().toLowerCase()) : null;
+      const list = f.nested ? (key ? f.nested[key] : null) : f.schema?.levels?.[1]?.options;
+      return (Array.isArray(list) ? list : Object.keys(list || {})).filter(o => !unnamed(o));
+    };
+    const openSecond = include.filter(axis => !unnamed(axis.class) && !Array.isArray(axis.class) && unnamed(axis.subclass) && secondLevel(field(axis.field), axis.class).length > 1);
+    if (!open.length && openSecond.length === 1) {
+      const axis = openSecond[0];
+      const f = field(axis.field);
+      const column = f.levels?.[1]?.label ? `${axis.field}: ${f.levels[1].label}` : `${axis.field} value`;
+      const rows = [];
+      for (const option of secondLevel(f, axis.class)) {
+        const part = await offlineSearch.evaluate(include.map(x => x === axis ? { ...x, subclass: option } : x), exclude);
+        if (part.unsupported.length) continue;
+        for (const row of part.rows) rows.push({ ...row, [column]: option });
+      }
+      return { rows, mode: 'offline', version: agentMode.hpaVersion, source_files: local.source_files, context_columns: [column] };
+    }
     return { rows: local.rows, mode: 'offline', version: agentMode.hpaVersion, source_files: local.source_files };
   }
   const rows = await httpGetJson(`${url}?format=json&download=yes`);

@@ -43,6 +43,8 @@ function validate(value, schema, label, ignored = []) {
     for (const [key, item] of Object.entries(value)) {
       const declared = schema.properties && Object.hasOwn(schema.properties, key) ? schema.properties[key] : null;
       if (item === null && declared && !(schema.required || []).includes(key) && declared.type !== 'null' && !acceptsType(declared, 'null')) delete value[key];
+      // A list sent as the JSON text of a list is that list (steps: "[{...}]" is steps: [{...}]).
+      else if (declared?.type === 'array' && typeof item === 'string' && /^\s*\[/.test(item)) { try { const parsed = JSON.parse(item); if (Array.isArray(parsed)) value[key] = parsed; } catch { /* left as sent; the check below says what was expected */ } }
       // One value where a list is declared is a list of one (metrics: "count" is metrics: ["count"]).
       else if (declared?.type === 'array' && (typeof item === 'string' || typeof item === 'number') && (!declared.items?.type || declared.items.type === typeof item)) value[key] = [item];
       // An object holding one string where a string is declared is that string (match: {column: "Tissue"}).

@@ -286,7 +286,9 @@ function grain(rows, columns, identityKeys = IDENTITY) {
 // entities, many category values, several measurements, or a column that varies within an entity.
 // `only` names the columns the lookup filtered to named values: a table widens by one of those,
 // never by a column the question did not name (a table of every tissue stays long).
-const WIDE_VALUES = 8;
+// A few named values widen (a scatter or a ratio compares two or three); a profile over more
+// named values stays long, the shape a pivot, a heatmap and a per-value mean read.
+const WIDE_VALUES = 3;
 function widenByCategory(rows, columns, identityKeys = IDENTITY, { only = null } = {}) {
   const g = grain(rows, columns, identityKeys);
   if (!g?.by || g.distinct > WIDE_VALUES || (only && !only.includes(g.by))) return null;

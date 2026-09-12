@@ -813,8 +813,10 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           // Names a claim states are read like its numbers: a gene of the release named in a
           // claim must be among the cells the claim is bound to.
           const tokens = [...new Set((args.claims || []).flatMap(c => String(c?.text || '').match(/\bENSG\d{11}\b|\b[A-Z][A-Z0-9]{1,9}(?:-[A-Z0-9]{1,4})?\b/g) || []))];
+          // A token is a name when it is a gene's own symbol or id, not one of its synonyms: an
+          // acronym that happens to be listed as some gene's synonym is not a claim about that gene.
           const known = tokens.length ? await geneData.resolveGenes(tokens).catch(() => []) : [];
-          const entityNames = new Set(tokens.filter((t, i) => known[i]));
+          const entityNames = new Set(tokens.filter((t, i) => known[i] && (String(known[i].gene || '').toUpperCase() === t.toUpperCase() || String(known[i].ensembl || '').toUpperCase() === t.toUpperCase())));
           const issues = reportIssues(args, state, { entityNames });
           let figures = [];
           if (!issues.length) {

@@ -118,7 +118,15 @@ function spelledOtherwise(points, spelled) {
 async function searchRelease(adapter, catalog, words, listed, found = new Set(), memo = new Map()) {
   // A word is searched by its parts: main_subcellular_location is main, subcellular, location.
   const parts = w => String(w).split(/[^A-Za-z0-9]+/).filter(Boolean);
-  const needles = [...new Set(words.flatMap(parts).map(flat).filter(n => n.length >= 2))];
+  // A word that names a table of the release (with or without its extension) is that table,
+  // whole: it is not split into parts that name every table with "tsv" in its name.
+  const sansExt = w => String(w).trim().replace(/\.tsv$/i, '');
+  const tableOf = w => catalog.find(e => e.key !== 'unreadable' && flat(String(e.file).replace(/\.tsv$/i, '')) === flat(sansExt(w)));
+  const tableWords = words.filter(w => flat(sansExt(w)).length >= 2 && tableOf(w));
+  const tableNeedles = new Set(tableWords.map(w => flat(sansExt(w))));
+  const needles = [...new Set(words.flatMap(w => tableWords.includes(w) ? [flat(sansExt(w))] : parts(w).map(flat)).filter(n => n.length >= 2))];
+  // The parts of the words are looked for in column names and values; a table's name is not.
+  const textNeedles = needles.filter(n => !tableNeedles.has(n));
   const entities = (await adapter.resolveGenes(words).catch(() => [])).map((gene, i) => gene ? { word: words[i], gene } : null).filter(Boolean);
   const hits = new Map();
   const hit = e => { if (!hits.has(e.file)) hits.set(e.file, { e, words: new Set(), named: new Set(), titled: new Set(), columns: [], values: [], items: [] }); return hits.get(e.file); };
@@ -129,7 +137,7 @@ async function searchRelease(adapter, catalog, words, listed, found = new Set(),
     if (named.length) { const h = hit(e); const own = flat(`${e.file} ${e.title || ''}`); for (const n of named) { h.named.add(n); h.words.add(n); if (own.includes(n)) h.titled.add(n); } }
     const profile = await adapter.profile(e).catch(() => null);
     for (const c of e.columns) {
-      const inName = needles.filter(n => flat(c).includes(n));
+      const inName = textNeedles.filter(n => flat(c).includes(n));
       if (!inName.length) continue;
       const h = hit(e);
       h.columns.push({ column: c, card: (profile?.columns || []).find(card => card.column === c) || null, words: inName });
@@ -138,13 +146,14 @@ async function searchRelease(adapter, catalog, words, listed, found = new Set(),
     for (const card of profile?.columns || []) {
       for (const [kind, recorded] of [['values', card.observed_values], ['items', card.parts?.values]]) {
         if (!Array.isArray(recorded)) continue;
-        for (const n of needles) { const f = recorded.filter(v => holdsWord(v, n)); if (f.length) { const h = hit(e); h[kind].push({ column: card.column, found: f.slice(0, 3), more: f.length - Math.min(3, f.length), word: n }); h.words.add(n); } }
+        for (const n of textNeedles) { const f = recorded.filter(v => holdsWord(v, n)); if (f.length) { const h = hit(e); h[kind].push({ column: card.column, found: f.slice(0, 3), more: f.length - Math.min(3, f.length), word: n }); h.words.add(n); } }
       }
     }
   }
   const ranked = [...hits.values()].sort((a, b) => b.words.size - a.words.size || b.titled.size - a.titled.size || b.named.size - a.named.size || (b.columns.length + b.values.length + b.items.length) - (a.columns.length + a.values.length + a.items.length));
   const wordOf = new Map();
-  for (const w of words) for (const part of parts(w)) { const n = flat(part); if (n.length >= 2 && !wordOf.has(n)) wordOf.set(n, part); }
+  for (const w of tableWords) wordOf.set(flat(sansExt(w)), sansExt(w));
+  for (const w of words) { if (tableWords.includes(w)) continue; for (const part of parts(w)) { const n = flat(part); if (n.length >= 2 && !wordOf.has(n)) wordOf.set(n, part); } }
   const groups = [];
   for (const h of ranked) {
     const key = needles.filter(n => h.words.has(n)).map(n => wordOf.get(n)).join(' + ');
@@ -195,7 +204,7 @@ async function searchRelease(adapter, catalog, words, listed, found = new Set(),
           for (const v of inItems.slice(0, Math.max(0, 3 - shown.length))) shown.push(itemLine(v));
           places.push(`values of ${count(hitsHere)} columns (${shown.join(', ')}, …)`);
         }
-        if (h.named.has(n) && !places.length) places.push('its name or description');
+        if (h.named.has(n) && !places.length) places.push(tableNeedles.has(n) ? 'its name' : 'its name or description');
         if (places.length) parts.push(`${wordOf.get(n)}: ${places.join(', ')}`);
       }
       for (const c of h.columns.filter(c => needles.every(n => c.words.includes(n)) && vocabularyShown(c.card))) parts.push(`column ${c.column} = ${vocabularyShown(c.card)}`);
@@ -457,8 +466,15 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
           if (name === 'search') {
             const words = (args.words || []).map(String).map(w => w.trim()).filter(Boolean);
             if (!words.length) throw new Error('search needs a word');
+            // A search that places no table the agent has not already found is nothing new: the
+            // desk says so, and two such in a row end the run as no progress, the same way a
+            // repeated call does.
+            const before = new Set(found);
             const { text, tables: placed } = await searchRelease(adapter, catalog, words, listed, found, memo);
-            searches.push({ words, text, key, tables: placed });
+            const gained = placed.filter(file => !before.has(file));
+            const fresh = gained.length > 0 || searches.length === 0;
+            searches.push({ words, text: fresh ? text : `${text}\n(nothing new: every table here was found already; fetch from one, or search other words)`, key, tables: placed });
+            if (!fresh) { history.push(`turn ${turn}: searched ${words.map(w => JSON.stringify(w)).join(', ')}: nothing new (under SEARCHES)`); seen.set(key, 'under SEARCHES'); await emit('execution_step', 'Search', `${words.join(', ')}: nothing new`); continue; }
             history.push(`turn ${turn}: searched ${words.map(w => JSON.stringify(w)).join(', ')} (under SEARCHES)`);
             seen.set(key, 'under SEARCHES'); progressed = true;
             await emit('execution_step', 'Search', `${words.join(', ')}: ${text.split('\n')[0].slice(0, 160)}`);

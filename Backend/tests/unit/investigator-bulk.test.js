@@ -189,3 +189,19 @@ test('finish naming no result title returns every result made', async () => {
   assert.deepEqual(result.tables.map(t => t.title), ['liver'], 'the values read are no titles; every result made is returned');
   assert.equal(result.note, 'MET has no recorded liver value');
 });
+
+test('a search that places no table not already found is nothing new, and two in a row end the run; a table name searched is that table', async () => {
+  const { run, requests } = await investigator([
+    response(call('search', { words: ['liver'] })),
+    response(call('search', { words: ['nTPM', 'rna_tissue_consensus.tsv'] })),
+    response(call('search', { words: ['Tissue', 'rna_tissue_consensus'] })),
+    response(call('finish', { results: [] }))
+  ]);
+  const result = await run({ points: ['EGFR'], question: 'liver nTPM' });
+  assert.equal(result.status, 'partial');
+  assert.equal(result.stop_reason, 'no_progress');
+  const desk3 = requests[2].messages[1].content;
+  assert.match(desk3, /search "nTPM", "rna_tissue_consensus\.tsv" →\n  nTPM \+ rna_tissue_consensus:\n    rna_tissue_consensus\.tsv \(Gene, Gene name, Tissue, nTPM\) — Consensus tissue RNA: nTPM: column nTPM; rna_tissue_consensus: its name\n  \(nothing new: every table here was found already; fetch from one, or search other words\)/);
+  assert.match(desk3, /turn 2: searched "nTPM", "rna_tissue_consensus\.tsv": nothing new \(under SEARCHES\)/);
+  assert.equal(requests.length, 3, 'the third fruitless search ends the run before a fourth call');
+});

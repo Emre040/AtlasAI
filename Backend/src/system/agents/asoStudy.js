@@ -58,7 +58,8 @@ const desk = require('../aso/desk');
 const MAX_STALLS = 2;             // turns in a row with nothing to do before the loop ends
 const WAKE_DEBOUNCE_MS = 300;     // completions this close together wake the loop once
 const JOB_WAIT_MS = 15 * 60_000;  // longest the loop waits for a running agent
-const VIEW_ROWS = 10;             // rows an open shows by default
+const VIEW_ROWS = 25;             // rows a page of an open shows
+const WHOLE_VIEW_ROWS = 40;       // an artifact up to this many rows opens whole
 
 // ---- tools of the study itself ---------------------------------------------------------------------
 
@@ -679,7 +680,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       remember(line.length > 2000 ? `${line.slice(0, 1999)}…` : line);
       return true;
     }
-    const rows = Number.isSafeInteger(args.rows) && args.rows > 0 ? args.rows : VIEW_ROWS;
+    const rows = Number.isSafeInteger(args.rows) && args.rows > 0 ? args.rows : a.rows.length <= WHOLE_VIEW_ROWS ? a.rows.length : VIEW_ROWS;
     const offset = Number.isSafeInteger(args.offset) && args.offset >= 0 ? args.offset : 0;
     const columns = named ? args.columns.map(c => { const found = a.columns.find(x => x === c) || a.columns.find(x => x.toLowerCase() === String(c).toLowerCase()); if (!found) throw new Error(`${a.id} has no column ${JSON.stringify(c)}; its columns: ${desk.namedColumns(a.columns)}`); return found; }) : a.columns;
     // A view of a wide artifact shows its keys, the columns its operation named and the first
@@ -705,10 +706,14 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
 
   function deskText(turn) {
     const running = [...state.running.values()].map(j => `${j.id} ${j.tool} "${String(j.args.title || '').slice(0, 100)}" ${Math.round((Date.now() - j.startedAt) / 1000)} s`).join('\n') || '(nothing running)';
-    // An artifact a later operation read shows no rows: they live on in the successor.
-    const consumed = new Set(state.artifacts.flatMap(a => a.inputs || []));
+    // A small result stays whole on the desk until a rewrite supersedes it: a later operation
+    // with the same rows and every one of its columns (a compute, a rank, a select adding a
+    // column) carries all its cells, so the rows live on there. A summary, a filter or a join
+    // reading it does not replace it, and its rows stay: a study cites what it computed last
+    // and does not spend turns opening it again.
+    const superseded = new Set(state.artifacts.filter(a => Array.isArray(a.rows) && state.artifacts.some(b => b !== a && (b.inputs || []).includes(a.id) && Array.isArray(b.rows) && b.rows.length === a.rows.length && a.columns.every(c => b.columns.includes(c)))).map(a => a.id));
     // The artifacts whose every row is on the desk this turn; open answers for them from the desk.
-    state.wholeOnDesk = new Set(state.artifacts.filter(a => Array.isArray(a.rows) && !consumed.has(a.id) && desk.inline(a.rows, a.columns)).map(a => a.id));
+    state.wholeOnDesk = new Set(state.artifacts.filter(a => Array.isArray(a.rows) && !superseded.has(a.id) && desk.inline(a.rows, a.columns)).map(a => a.id));
     // A table with more rows than entities says so, and says what tells its rows apart (one row
     // per gene and tissue, with the tissues): ranking or counting it counts rows, not entities,
     // and a filter on that column uses the values as written.
@@ -718,7 +723,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       const by = g.by ? `, one row per ${identity.entity} and ${g.by}${g.values ? ` (${g.by}: ${g.values.join(', ')})` : ` (${desk.count(g.distinct)} values)`}` : '';
       return ` over ${desk.count(g.entities)} ${identity.entity}s${by}`;
     };
-    const lines = state.artifacts.map(a => desk.resultLine({ id: a.id, title: a.unnamed ? '' : a.label, description: a.unnamed || a.description === a.label ? '' : a.description, origin: origin(a), rows: a.rows || [], columns: a.columns, spread: spread(a), matrix: a.matrix, figure: a.figure, images: a.images, text: a.text, consumed: consumed.has(a.id) }));
+    const lines = state.artifacts.map(a => desk.resultLine({ id: a.id, title: a.unnamed ? '' : a.label, description: a.unnamed || a.description === a.label ? '' : a.description, origin: origin(a), rows: a.rows || [], columns: a.columns, spread: spread(a), matrix: a.matrix, figure: a.figure, images: a.images, text: a.text, consumed: superseded.has(a.id) }));
     // A view stays whole until a later turn's operation consumes its artifact; then it folds to
     // its receipt, since the rows live on in the successor and open shows them again.
     const consumedAfter = new Map();
@@ -841,7 +846,16 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
             } catch (error) { state.failed++; state.failedCalls.set(callKeyOf(s.tool, s.args || {}), { turn, error: error.message }); lifted.set(String(s.id), null); remember(`run step ${s.id} ${s.tool}(${desk.argsLine(bare(s.args), 120)}) failed: ${error.message}`); }
           }
           const waits = [], steps = [];
-          for (const s of all) {
+          // A step blocked in an earlier run by a failed step waits here; sent again under its
+          // id, the fixed step runs and the waiting steps run with it, in the same turn.
+          state.pendingSteps = state.pendingSteps || new Map();
+          state.stepArtifacts = state.stepArtifacts || new Map();
+          const resent = new Set(all.filter(s => s && typeof s.id === 'string').map(s => s.id));
+          for (const id of resent) state.pendingSteps.delete(id);
+          const resolvable = s => [...new Set([...JSON.stringify(s.args || {}).matchAll(/@([A-Za-z][A-Za-z0-9_]*)/g)].map(m => m[1]))].every(ref => resent.has(ref) || state.byId.has(ref) || state.stepArtifacts.has(ref));
+          const revived = [...state.pendingSteps.values()].filter(resolvable);
+          for (const s of revived) state.pendingSteps.delete(s.id);
+          for (const s of [...all, ...revived]) {
             if (!s || agentNames.has(s.tool)) continue;
             const text = JSON.stringify(s.args || {});
             // A step uses another as @id, or names it bare where an artifact id goes.
@@ -852,8 +866,13 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           }
           if (lifted.size) remember(`run: ${[...lifted].map(([stepId, t]) => `${stepId} ${t ? (t === 'already asked' ? 'already asked' : `started as ${t}`) : 'failed'}`).join(', ')}${waits.length ? `; ${waits.join('; ')}` : ''}`);
           if (steps.length) {
-            const batch = await executeBatch({ steps, outputs: steps.map(s => s?.id).filter(id => typeof id === 'string') }, { specifications, concurrency: parallel, execute: runTableTool, external: id => (state.byId.has(id) ? id : null) });
-            if (batch.status !== 'completed') remember(`run: ${batch.steps.filter(s => s.status !== 'done').map(s => `${s.id} ${s.status}${s.error ? `: ${s.error}` : ''}`).join('; ')}`);
+            const batch = await executeBatch({ steps, outputs: steps.map(s => s?.id).filter(id => typeof id === 'string') }, { specifications, concurrency: parallel, execute: runTableTool, external: id => (state.byId.has(id) ? id : state.stepArtifacts.get(id) || null) });
+            for (const s of batch.steps) if (s.status === 'done' && s.artifact) state.stepArtifacts.set(s.id, s.artifact);
+            if (revived.length) remember(`run: ${revived.map(s => s.id).join(', ')} from the earlier run ran with this one`);
+            // The steps a failure blocked are kept: the model resends only the failed step.
+            const blocked = batch.steps.filter(s => s.status === 'blocked');
+            for (const s of blocked) { const spec = steps.find(x => x.id === s.id); if (spec) state.pendingSteps.set(s.id, spec); }
+            if (batch.status !== 'completed') remember(`run: ${batch.steps.filter(s => s.status !== 'done' && s.status !== 'blocked').map(s => `${s.id} ${s.status}${s.error ? `: ${s.error}` : ''}`).join('; ')}${blocked.length ? `; ${blocked.map(s => s.id).join(', ')} wait${blocked.length === 1 ? 's' : ''} for ${[...new Set(blocked.map(s => String(s.error || '').replace(/^Dependencies failed: /, '')))].join(', ')}: send the failed step again under its id, fixed, and the waiting steps run with it` : ''}`);
             operated++;
           }
           sync++; return;

@@ -66,7 +66,7 @@ test('plan, delegate, compute a chain, and finish a report bound to the data', a
   assert.match(desk2, /HISTORY\nturn 1: plan: 3 deliverables\nturn 1: t1 investigator_hpa "Lung and liver nTPM" done → a1 "Lung and liver nTPM" \(4 rows\)/);
   assert.match(desk2, /PLAN\n1\. \[todo\] lung and liver nTPM \| table\n2\. \[todo\] heatmap \| heatmap/);
   const desk3 = requests[2].messages[1].content;
-  assert.match(desk3, /a1 "Lung and liver nTPM" \(4 rows over 2 genes, one row per gene and Tissue[^\n]*\n  Lung and liver nTPM, described\na2 "Heat matrix"/, 'once thepivot read a1, its rows leave the desk');
+  assert.match(desk3, /a1 "Lung and liver nTPM" \(4 rows over 2 genes, one row per gene and Tissue[^\n]*\n  Lung and liver nTPM, described\n  0: EGFR[^\n]*\n  1: EGFR[^\n]*\n  2: ERBB2[^\n]*\n  3: ERBB2[^\n]*\na2 "Heat matrix"/, 'a pivot reading a1 does not supersede it: its rows stay whole on the desk');
   assert.match(desk3, /a2 "Heat matrix" matrix 2 × 2 \(rows: EGFR, ERBB2; columns: liver, lung\) ← pivot t2 of a1; a heatmap input\n  Heat matrix, described/);
   assert.match(desk3, /a3 "Heat" figure heatmap ← chart t3\(artifact=a2, type=heatmap\) \(rendered\)/);
   assert.match(requests[3].messages[1].content, /a4 "Bars" figure grouped_bar/);
@@ -144,6 +144,33 @@ test('opening an artifact that is whole on the desk is answered from the desk, w
   assert.match(desk3, /turn 2: rank: comment is not an argument of this tool, ignored\nturn 2: rank\(artifact=a1, by=nTPM\) → a2 \(4 rows\)/, 'an unnamed result is its operation, said once');
   assert.match(desk3, /\na2 \(4 rows[^\n]*: gene, ensembl, rank, Tissue, nTPM[^\n]*\) ← rank\(artifact=a1, by=nTPM\) t2\n  0: ERBB2/, 'the desk line of an unnamed result carries no quoted title and no description');
   assert.doesNotMatch(desk3, /\nVIEWS\n/);
+});
+
+test('a small result stays whole on the desk until a rewrite supersedes it; a summary or a filter reading it does not', async t => {
+  const { run, requests } = await study(t, [
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' }))),
+    response(call('run', { steps: [{ id: 'r', tool: 'rank', args: named('Ranked', { artifact: 'a1', by: 'nTPM' }) }, { id: 'l', tool: 'filter', args: named('Liver', { artifact: 'a1', where: [{ column: 'Tissue', op: '=', value: 'liver' }] }) }] })),
+    response(call('finish', { tables: [{ artifact: 'a2' }] }))
+  ]);
+  const result = await run({});
+  assert.equal(result.outcome, 'completed', result.summary);
+  const desk3 = requests[2].messages[1].content;
+  assert.match(desk3, /\na1 "Values" \(4 rows[^\n]*\n  Values, described\na2 "Ranked" \(4 rows[^\n]*\n  Ranked, described\n  0: /, 'the rank carries every cell of a1: a1 folds to its line, a2 shows whole');
+  assert.match(desk3, /\na3 "Liver" \(2 rows[^\n]*\n  Liver, described\n  0: EGFR/, 'a filter keeps its rows too');
+});
+
+test('the steps a failed step blocked wait, and run the moment the failed step is sent again fixed', async t => {
+  const { run, requests } = await study(t, [
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' }))),
+    response(call('run', { steps: [{ id: 'e', tool: 'filter', args: named('Liver', { artifact: 'a1', where: [{ column: 'nope', op: '=', value: 'liver' }] }) }, { id: 'f', tool: 'rank', args: named('Ranked liver', { artifact: '@e', by: 'nTPM' }) }] })),
+    response(call('run', { steps: [{ id: 'e', tool: 'filter', args: named('Liver', { artifact: 'a1', where: [{ column: 'Tissue', op: '=', value: 'liver' }] }) }] })),
+    response(call('finish', { tables: [{ artifact: 'a3' }] }))
+  ]);
+  const result = await run({});
+  assert.equal(result.outcome, 'completed', result.summary);
+  assert.match(requests[2].messages[1].content, /turn 2: run: e failed[^\n]*; f waits for e: send the failed step again under its id, fixed, and the waiting steps run with it/);
+  const desk4 = requests[3].messages[1].content;
+  assert.match(desk4, /turn 3: filter\([^\n]*\) → a2 "Liver" \(2 rows\)\nturn 3: rank\([^\n]*\) → a3 "Ranked liver" \(2 rows\)\nturn 3: run: f from the earlier run ran with this one/, 'the waiting step ran on the fixed one, unasked');
 });
 
 test('a view folds to its receipt once a later turn consumes its artifact; opening it again brings it back', async t => {

@@ -20,19 +20,6 @@ const fs = require('node:fs/promises');
 const { inference, getActiveModel } = require('../../inference/gateway');
 const { jsonCall } = require('../../inference/jsonCall');
 
-// A report's findings are read once more, by a narrow call, against three rules of the data
-// they rest on: a missing record is not an absence, a quantity the source does not record is not
-// derived from one it does, and an association is not a cause or a choice.
-const CLAIMS_RULES = {
-  1: 'reads a missing record as a zero or an absence',
-  2: 'states a quantity the source does not record, derived from one it does',
-  3: 'presents an association as a cause, a benefit or a best choice'
-};
-const CLAIMS_SYSTEM = `You check a report against three rules of the data it rests on, and nothing else. The source columns the report was built from are listed first, with their tables: those are the quantities the source records, in their own units. Go through every finding, every column of every table delivered and every figure, and for each quantity ask: is it a source column, or a count, a share, a rank, a mean, a median, a range, a correlation or a fold of source values in their own unit? If not, it is derived, and it is flagged under rule 2. Flag:
-1. a missing record (a blank, an unrecorded value) read as a zero, an absence, a non-detection or a non-expression, or a count, a fraction, a median or a mean that treats blanks that way;
-2. a quantity whose unit or kind is not a source column's (an absolute amount or count of anything from a relative level, a product or a ratio of levels from different assays, any stand-in), however it is labelled;
-3. an association presented as a cause, an effect, a benefit, a treatment, or a best or recommended choice.
-What reports a recorded quantity, with blanks counted as missing records, is not flagged, whatever the question asked for. Answer as JSON: {"issues": [{"claim": <index of the finding>, "rule": 1|2|3, "why": "<one sentence>"}, {"table": <index>, "column": "<name>", "rule": 1|2|3, "why": "..."}, {"figure": <index>, "rule": 1|2|3, "why": "..."}]}; issues is [] when nothing is flagged.`;
 const { platformConfig } = require('../../policy/config');
 const tools = require('../aso/studyTools');
 const { TABLE_OPERATIONS, executeTableOperation, A } = require('../aso/tableOperations');
@@ -85,7 +72,7 @@ const tool = (name, description, properties = {}, required = []) => ({ name, des
 // Every operation names its result (title, description); one left unnamed is named by its operation.
 const op = (name, description, properties = {}, required = []) => tool(name, description, { title: S, description: S, ...properties }, required);
 const STUDY_TOOLS = [
-  tool('plan', 'The deliverables the study owes: one item per requested table, figure (its chart type), cohort (gene_set) or interpretation, each with the data it needs from the agents (needs), which start at once. Replaces the plan.', { items: { type: 'array', items: { type: 'object', properties: { step: S, kind: { type: 'string', enum: studyPlan.KINDS }, description: S, needs: { type: 'array', description: 'the agent calls this deliverable needs: agent (investigator_hpa or deep_research_hpa), its question or goal, and its points, or from_item (the number of the plan item whose set it reads; it starts when that set exists)', items: { type: 'object', properties: { agent: S, question: S, goal: S, points: { type: 'array', items: S }, from_item: N, from: S, column: S, title: S, description: S }, required: ['agent'] } } }, required: ['step', 'kind'] } } }, ['items']),
+  tool('plan', 'The deliverables the study owes: one item per requested table, figure (its chart type), cohort (gene_set) or interpretation, each with the data it needs from the agents (needs), which start at once. Replaces the plan.', { items: { type: 'array', items: { type: 'object', properties: { step: S, kind: { type: 'string', enum: studyPlan.KINDS }, description: S, not_done: { type: 'string', description: 'the reason this deliverable is not computed from this data (a blank read as absence, a stand-in quantity, a cause from an association); it is delivered as a limitation' }, needs: { type: 'array', description: 'the agent calls this deliverable needs: agent (investigator_hpa or deep_research_hpa), its question or goal, and its points, or from_item (the number of the plan item whose set it reads; it starts when that set exists)', items: { type: 'object', properties: { agent: S, question: S, goal: S, points: { type: 'array', items: S }, from_item: N, from: S, column: S, title: S, description: S }, required: ['agent'] } } }, required: ['step', 'kind'] } } }, ['items']),
   tool('note', 'Keep a decision or open question on the desk; replace overwrites note N.', { text: S, replace: N }, ['text']),
   tool('open', 'Show rows of an artifact: rows and offset page it, columns narrow it.', { artifact: A, rows: N, offset: N, columns: { type: 'array', items: S } }, ['artifact']),
   tool('run', 'Runs operations: a chain of steps, each {id, tool: an operation from the list, args}, later steps naming earlier ones as @id (an existing artifact by its own id); one artifact per step, every step in the trail.',{ steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
@@ -167,7 +154,7 @@ The desk in the message is your whole working set and stays in front of you ever
 Read the question as one study: what it says about how a thing is measured, in which cohort, scope or release, holds for every part of the question unless the question says otherwise.
 
 How a study goes:
-1. plan lists the deliverables, one item per requested table, figure of a given type, cohort or interpretation, and with each item the data it needs from the agents (needs: the agent, its question or goal, and its points, or from_item: the number of the item whose set it reads); every summon the plan needs starts at once, on the plan's turn, a need on another item's set the moment that set exists, and the study goes on when all are back.
+1. plan lists the deliverables, one item per requested table, figure of a given type, cohort or interpretation. Three things are never computed, whatever the question asks: a blank read as a zero or an absence (it is a missing record), a quantity in a unit or of a kind the atlas does not measure derived from one it does (a stand-in), and a cause, a benefit or a best choice read from an association. A deliverable that would need one is planned with not_done: the reason, delivered as a limitation, and the descriptive results around it are delivered in full. With each other item, the data it needs from the agents (needs: the agent, its question or goal, and its points, or from_item: the number of the item whose set it reads); every summon the plan needs starts at once, on the plan's turn, a need on another item's set the moment that set exists, and the study goes on when all are back.
 2. A set of ${entity}s comes from ${search}; its rows come from investigator_hpa with from=<that artifact's id> and the question. Both run in the background and return tables that are used as they are.
 3. Operations run as steps of run, written as chains: every step whose inputs are known goes in one run call, later steps naming earlier ones as @id (explode, then aggregate the counts, then the chart; filter, then rank, then the table), each step named with a title and a description a reader understands. One run per analysis, one turn; a run of one step is only for a step whose next step needs its result seen first. Independent chains go in the same turn. The operations and their arguments are listed below.
 4. finish delivers the report from the data: tables and figures by id, and findings as claims, each bound to the rows and columns it rests on. The report prints those cells beside the claim, so every number a claim states is among them or was computed into an artifact the claim cites. Limitations state what the evidence cannot establish, in words. A plan item that cannot be delivered goes in not_done with the reason. Three things are never computed, whatever the question asks: a blank read as a zero or an absence (it is a missing record), a quantity in a unit or of a kind the atlas does not measure derived from one it does (a stand-in), and a cause, a benefit or a best choice read from an association. Each is a not_done item with the reason and a limitation, and the descriptive results are delivered.
@@ -907,27 +894,6 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           const issues = reportIssues(args, state, { entityNames });
           // The findings, once bound, are read against the three rules by a narrow call; a
           // finding that breaks one is refused with the rule, like a number no cell holds.
-          const deliveredTables = (Array.isArray(args.tables) ? args.tables : []).map(t => { const a = state.byId.get(String(t?.artifact || '').trim()); return a ? { title: String(t.title || a.label || ''), columns: Array.isArray(t.columns) && t.columns.length ? t.columns.map(String) : a.columns } : null; });
-          const deliveredFigures = (Array.isArray(args.figures) ? args.figures : []).map(id => { const a = state.byId.get(String(id).trim()); return a?.figure ? { title: String(a.figure.title || a.label || ''), x: a.figure.x_label || a.figure.x || '', y: a.figure.y_label || a.figure.y || '', type: a.figure.type || '' } : null; });
-          if (!issues.length && ((Array.isArray(args.claims) && args.claims.length) || deliveredTables.some(Boolean) || deliveredFigures.some(Boolean))) {
-            // The quantities the source recorded: the fields every agent read, with their tables.
-            const sourceColumns = [...new Map(state.artifacts.filter(a => agentNames.has(a.tool)).flatMap(a => (a.meta?.lookups || []).flatMap(l => (l?.fields || []).map(f => [`${f}@${l.table}`, `${f} (${String(l.table || '').replace(/\.tsv$/, '')})`]))).concat(state.artifacts.filter(a => a.tool === 'deep_research_hpa').map(a => [`set@${a.id}`, `a gene set from the atlas search (${a.label})`]))).values()];
-            const user = [`SOURCE COLUMNS READ\n${sourceColumns.join('\n') || '(none)'}`,
-              `FINDINGS\n${(args.claims || []).map((c, i) => `${i}: ${String(c?.text || '').replace(/\s+/g, ' ').trim()}`).join('\n') || '(none)'}`,
-              `TABLES DELIVERED\n${deliveredTables.map((t, i) => t ? `${i}: "${t.title}": ${t.columns.join(', ')}` : `${i}: (unknown artifact)`).join('\n') || '(none)'}`,
-              `FIGURES DELIVERED\n${deliveredFigures.map((f, i) => f ? `${i}: ${f.type} "${f.title}"${f.x || f.y ? ` (${f.x || '?'} vs ${f.y || '?'})` : ''}` : `${i}: (unknown artifact)`).join('\n') || '(none)'}`].join('\n\n');
-            try {
-              const verdict = effort ? await inference.withContext({ reasoningEffort: effort }, () => jsonCall(CLAIMS_SYSTEM, user, undefined, 'claims review', reviewStats)) : await jsonCall(CLAIMS_SYSTEM, user, undefined, 'claims review', reviewStats);
-              for (const j of Array.isArray(verdict?.issues) ? verdict.issues : []) {
-                const rule = CLAIMS_RULES[Number(j?.rule)]; if (!rule) continue;
-                const why = String(j.why || '').replace(/\s+/g, ' ').trim().slice(0, 240);
-                const tail = 'Report what is recorded; what this would need goes in not_done with the reason and in limitations';
-                if (j.claim !== undefined) { const i = Number(j.claim); if (Number.isInteger(i) && args.claims?.[i]) issues.push(`claims[${i}]: "${String(args.claims[i].text || '').slice(0, 100)}${String(args.claims[i].text || '').length > 100 ? '…' : ''}" ${rule}: ${why}. ${tail}`); }
-                else if (j.table !== undefined) { const i = Number(j.table); if (Number.isInteger(i) && deliveredTables[i]) issues.push(`tables[${i}] "${deliveredTables[i].title}"${j.column ? ` column ${j.column}` : ''} ${rule}: ${why}. Deliver the table without that column, or not at all; ${tail.charAt(0).toLowerCase()}${tail.slice(1)}`); }
-                else if (j.figure !== undefined) { const i = Number(j.figure); if (Number.isInteger(i) && deliveredFigures[i]) issues.push(`figures[${i}] "${deliveredFigures[i].title}" ${rule}: ${why}. Leave the figure out; ${tail.charAt(0).toLowerCase()}${tail.slice(1)}`); }
-              }
-            } catch (error) { remember(`claims review failed: ${error.message}`); }
-          }
           let figures = [];
           if (!issues.length) {
             figures = selectFigures(state.artifacts, args.figures).filter(a => a.images?.length);

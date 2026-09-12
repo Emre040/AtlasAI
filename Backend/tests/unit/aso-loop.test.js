@@ -17,7 +17,7 @@ async function study(t, script, options = {}) {
   const requests = [], events = [], agentCalls = [], reviews = [];
   let artifact = 0;
   const stubs = {
-    '../../inference/gateway': { getActiveModel: () => ({ id: 1, configKey: 'test-model' }), inference: { assignContext() {}, withContext: (context, fn) => fn(), chat: { completions: { async create(request) { requests.push(request); const next = script.shift(); if (!next) throw new Error('script exhausted'); return typeof next === 'function' ? next(request) : next; } } } } },
+    '../../inference/gateway': { getActiveModel: () => ({ id: 1, configKey: 'test-model' }), inference: { assignContext() {}, chat: { completions: { async create(request) { requests.push(request); const next = script.shift(); if (!next) throw new Error('script exhausted'); return typeof next === 'function' ? next(request) : next; } } } } },
     '../../policy/config': { platformConfig: () => ({ asoMaxSteps: options.maxTurns || 12, asoParallelLimit: 3 }) },
     // The review of an agent's result against the goal that summoned it is its own model call; tests script it.
     '../../inference/jsonCall': { jsonCall: async (system, user, onStep, label, stats) => { reviews.push({ label, user }); if (stats) { stats.promptTokens += 100; stats.completionTokens += 10; stats.totalTokens += 110; } return options.review ? options.review(user) : { accepted: true, reason: '' }; } },
@@ -78,18 +78,15 @@ test('plan, delegate, compute a chain, and finish a report bound to the data', a
   assert.ok(requests[0].tools.every(tool => !['union', 'intersect'].includes(tool.function.name)));
 });
 
-test('a finding that reads a blank as an absence is refused by the claims review with the rule, then accepted once it reports what is recorded', async t => {
-  let judged = 0;
-  const { run, requests, reviews } = await study(t, [
-    response(call('plan', { items: [{ step: 'values', kind: 'table' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' }))),
-    response(call('finish', { claims: [{ text: 'EGFR is absent from heart (blank nTPM).', artifact: 'a1', rows: [0], columns: ['nTPM'] }] })),
-    response(call('finish', { claims: [{ text: 'EGFR has no recorded heart nTPM; liver nTPM is 32.2.', artifact: 'a1', rows: [0], columns: ['nTPM'] }], limitations: ['a blank is a missing record, not an absence'] }))
-  ], { review: user => user.includes('\nFINDINGS\n') && ++judged === 1 ? { issues: [{ claim: 0, rule: 1, why: 'a blank nTPM is a missing record, not an absence' }] } : { issues: [] } });
+test('a plan item declined up front with not_done is delivered as not done, and finish needs nothing for it', async t => {
+  const { run, requests } = await study(t, [
+    response(call('plan', { items: [{ step: 'values', kind: 'table' }, { step: 'molecules per cell', kind: 'table', not_done: 'a stand-in: the atlas records a relative level, not an amount per cell' }] }), call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' }))),
+    response(call('finish', { tables: [{ artifact: 'a1' }] }))
+  ]);
   const result = await run({});
   assert.equal(result.outcome, 'completed', result.summary);
-  assert.match(requests[2].messages[1].content, /turn 2: finish refused:\n    - claims\[0\]: "EGFR is absent from heart \(blank nTPM\)\." reads a missing record as a zero or an absence: a blank nTPM is a missing record, not an absence\. Report what is recorded; what this would need goes in not_done with the reason and in limitations/);
-  assert.equal(reviews.filter(r => r.label === 'claims review').length, 2, 'the findings are reviewed at each finish');
-  assert.match(reviews.find(r => r.label === 'claims review').user, /^SOURCE COLUMNS READ\nTissue \(rna_tissue_consensus\)\nnTPM \(rna_tissue_consensus\)\n\nFINDINGS\n0: EGFR is absent from heart \(blank nTPM\)\.\n\nTABLES DELIVERED\n\(none\)\n\nFIGURES DELIVERED\n\(none\)$/, 'the judge reads the source columns, the findings and the deliverables');
+  assert.match(requests[1].messages[1].content, /PLAN\n1\. \[todo\] values \| table\n2\. \[not_done\] molecules per cell \| table \(not computed: a stand-in: the atlas records a relative level, not an amount per cell\)/);
+  assert.match(result.summary, /\*\*Not done\*\*\n\n- Plan item 2: a stand-in: the atlas records a relative level, not an amount per cell/);
 });
 
 test('a claim with a number its rows do not hold is refused with the reason, then accepted once bound correctly', async t => {
@@ -337,7 +334,7 @@ test('an Investigator artifact is not reviewed: the study judges it by its own n
   ], { review: () => ({ accepted: false, reason: 'would have flagged it' }) });
   const result = await run({});
   assert.equal(result.outcome, 'completed', result.summary);
-  assert.equal(reviews.filter(r => r.label !== 'claims review').length, 0, 'no review call for an Investigator artifact');
+  assert.equal(reviews.length, 0, 'no review call for an Investigator artifact');
   assert.doesNotMatch(requests[1].messages[1].content, /⚠ Review/);
 });
 

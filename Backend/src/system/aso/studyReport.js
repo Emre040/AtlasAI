@@ -317,7 +317,10 @@ function renderReport(args, state, figures) {
   // A limitation is scope, not evidence: a number in it that no saved artifact holds (a definition's
   // threshold, a count from elsewhere) is printed with a note saying it is unverified here.
   if ((args.limitations || []).length) sections.push(`**Limitations**\n\n${args.limitations.map(text => { const loose = statedNumbers(text).filter(n => !locate(state, n.value, n.tolerance).length && !(n.percent && locate(state, n.value / 100, n.tolerance / 100).length) && !state.artifacts.some(a => (a.rows || []).length === n.value)); return `- ${String(text).trim()}${loose.length ? ` (${loose.map(n => n.raw).join(', ')}: not verified against the data of this study)` : ''}`; }).join('\n')}`);
-  if ((args.not_done || []).length) sections.push(`**Not done**\n\n${args.not_done.map(item => `- Plan item ${item.item}: ${String(item.why).trim()}`).join('\n')}`);
+  // Items declined when the plan was written are not done too, with the reason given then.
+  const declined = state.plan.map((p, i) => (p.not_done && !(args.not_done || []).some(item => item.item === i + 1) ? { item: i + 1, why: p.not_done } : null)).filter(Boolean);
+  const notDone = [...(args.not_done || []), ...declined].sort((a, b) => a.item - b.item);
+  if (notDone.length) sections.push(`**Not done**\n\n${notDone.map(item => `- Plan item ${item.item}: ${String(item.why).trim()}`).join('\n')}`);
   return sections.join('\n\n');
 }
 

@@ -262,6 +262,7 @@ async function deepResearchTrail({ goal, mode: requestedMode = 'online', study =
         mode: run.mode, hpa_version: run.version, source_files: run.source_files, plan: adapter.describe(filters), understanding: plan.understanding,
         trail: filters.map(f => ({ requirement_id: f.requirement_id, requirement: f.requirement, field: f.field, path: f.path, operator: f.operator, why: f.why })),
         requirements, unresolved_requirements: [], not_expressible: [],
+        ...(run.context_columns?.length ? { context_columns: run.context_columns } : {}),
         ...(includeRows ? { rows: run.rows } : {})
       },
       tokens: { prompt: stats.promptTokens, completion: stats.completionTokens, total: stats.totalTokens },

@@ -279,12 +279,18 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
   const isNumber = v => v !== null && v !== undefined && String(v).trim() !== '' && Number.isFinite(Number(String(v).replace(/,/g, '')));
   const perValue = table => {
     const keyCols = table.columns.filter(c => KEY_COLUMNS.has(c));
-    // A column that only repeats a key column row for row (an id column beside ensembl) is no
-    // value: it is left out before the values are told apart.
-    const filled = c => table.rows.filter(r => r[c] !== null && r[c] !== undefined && String(r[c]).trim() !== '');
-    const echoes = table.columns.filter(c => !KEY_COLUMNS.has(c) && keyCols.some(k => filled(c).length && filled(c).every(r => String(r[c]).trim().toLowerCase() === String(r[k] ?? '').trim().toLowerCase())));
-    const others = table.columns.filter(c => !KEY_COLUMNS.has(c) && !echoes.includes(c));
-    if (echoes.length && others.length) { const columns = table.columns.filter(c => !echoes.includes(c)); table = { ...table, columns, rows: table.rows.map(r => Object.fromEntries(columns.map(c => [c, r[c] ?? null]))) }; }
+    // A column that only repeats a key column row for row (an id column beside ensembl, the
+    // match column holding the point) is no value: it is left out before the values are told
+    // apart. Compared over the rows where both are filled: a point found in no row has its
+    // spelling in the match column and no keys, which says nothing about the column.
+    const filled = v => v !== null && v !== undefined && String(v).trim() !== '';
+    const same = (x, y) => String(x).trim().toLowerCase() === String(y).trim().toLowerCase();
+    const echoes = table.columns.filter(c => !KEY_COLUMNS.has(c) && keyCols.some(k => { const both = table.rows.filter(r => filled(r[c]) && filled(r[k])); return both.length > 0 && both.every(r => same(r[c], r[k])); }));
+    if (echoes.length) { const columns = table.columns.filter(c => !echoes.includes(c)); table = { ...table, columns, rows: table.rows.map(r => Object.fromEntries(columns.map(c => [c, r[c] ?? null]))) }; }
+    const others = table.columns.filter(c => !KEY_COLUMNS.has(c));
+    // Keys alone (the names of a list of ids) are one row per point, however many rows the
+    // table had for it.
+    if (!others.length) { const seen = new Set(); const keys = keyCols.filter(c => !['source_rows', 'source_status'].includes(c)); table = { ...table, rows: table.rows.filter(r => { const k = JSON.stringify(keys.map(c => r[c] ?? null)); if (seen.has(k)) return false; seen.add(k); return true; }) }; }
     if (others.length <= 1) return [table];
     // Measured columns are the values; text columns beside them (a cohort, a tissue) are the
     // context that tells a point's rows apart. Without a measured column, each text column that
@@ -319,14 +325,20 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
       : `${count(table.rows.length)} rows selected`;
     // In a pair table's result the value is the other side of the pair; a further column rides along.
     const partner = keyCols.includes('other') ? ((mapping || []).find(m => m.column === 'other' && m.table === table.source_file)?.field || 'other') : null;
+    // A table's own columns for the entity (its name, its id) are folded into the keys; a fetch
+    // of those alone (the names of a list of ids) is an artifact of keys, named by the fields
+    // read.
+    const folded = value || partner ? [] : Object.entries(table.identityKeys || {}).filter(([, k]) => keyCols.includes(k));
     const field = partner || (mapping || []).find(m => m.column === value && m.table === table.source_file)?.field || value;
-    const note = `${value ? `${value}` : 'rows'} from ${table.source_file}${contextText}, points ${read}${filter}; ${coverage}${keyCols.includes('other') ? '; the other side of each pair is in other' : ''}.`;
+    const what = value ? `${value}` : folded.length ? `${folded.map(([f, k]) => `${f} (in ${k})`).join(' and ')}` : 'rows';
+    const note = `${what} from ${table.source_file}${contextText}, points ${read}${filter}; ${coverage}${keyCols.includes('other') ? '; the other side of each pair is in other' : ''}.`;
     // A title the model gave stays; a default title (the fetch spelled out) becomes the value and
     // its source.
     const source = String(table.source_file).replace(/\.tsv$/i, '');
     const auto = String(table.title).startsWith(`${source}: `);
-    const short = auto && (value || partner) ? `${field}${context.length ? ` per ${context.join(' and ')}` : ''}${partner && value ? ` with ${value}` : ''} (${source})` : table.title;
-    return { ...table, name: short, title: short, description: note, note, mapping: value ? { field, table: table.source_file, column: value } : null };
+    const short = auto && (value || partner) ? `${field}${context.length ? ` per ${context.join(' and ')}` : ''}${partner && value ? ` with ${value}` : ''} (${source})` : auto && folded.length ? `${folded.map(([f]) => f).join(', ')} (${source})` : table.title;
+    const mapped = value ? { field, table: table.source_file, column: value } : folded.length ? { field: folded[0][0], table: table.source_file, column: folded[0][1] } : null;
+    return { ...table, name: short, title: short, description: note, note, mapping: mapped };
   };
   const done = (extra, turns) => ({ bulk: true, mode: 'offline', hpa_version: release?.hpaVersion || null, tokens: { total: { prompt: stats.prompt, completion: stats.completion, total: stats.total } }, calls: stats.calls, turns, seconds: (Date.now() - started) / 1000, unresolved: unresolvedPoints(), ...extra, ...(Array.isArray(extra.tables) ? { tables: extra.tables.flatMap(perValue).map(t => explain(t, extra.mapping)) } : {}) });
   try {

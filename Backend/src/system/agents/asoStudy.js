@@ -162,8 +162,8 @@ Values are reported as recorded: units, zeros, blanks, repeated rows and ties. A
 // ---- what agents return -----------------------------------------------------------------------------
 
 // A found set is its members, by identity. What else holds of them is a question for the Investigator.
-function normalizeSearchRow(r) {
-  return { gene: r.Gene ?? r.gene ?? null, ensembl: r.Ensembl ?? r.ensembl ?? null };
+function normalizeSearchRow(r, context = []) {
+  return { gene: r.Gene ?? r.gene ?? null, ensembl: r.Ensembl ?? r.ensembl ?? null, ...Object.fromEntries(context.map(c => [c, r[c] ?? null])) };
 }
 
 function scalarRow(obj) {
@@ -185,7 +185,10 @@ function agentArtifact(toolName, args, result) {
     // field and value it chose, and why. The controller and the review read it; a choice among
     // fields, or of a narrower category than asked, is visible instead of buried in the agent's log.
     const trail = (r.trail || []).map(f => `${f.requirement} → ${f.field}${Array.isArray(f.path) && f.path.length ? `: ${f.path.join(' / ')}` : ''}${f.operator === 'NOT' ? ' (excluded)' : ''}${f.why ? ` — ${String(f.why).replace(/\s+/g, ' ').trim().slice(0, 200)}` : ''}`);
-    return { kind: 'data', label: String(args.goal || 'search').slice(0, 80), rows: (r.rows || []).map(normalizeSearchRow), meta: { search_url: r.search_urls?.[0] || null, query: r.plan || null, trail, understanding: r.understanding || null, not_expressible: (r.not_expressible || []).map(c => c.requirement), mode: r.mode || null, hpa_version: r.hpa_version, source_files: r.source_files } };
+    // A search over a two-level field with no value named returns one row per gene and matched
+    // value; that column rides along, named after the field.
+    const context = Array.isArray(r.context_columns) ? r.context_columns : [];
+    return { kind: 'data', label: String(args.goal || 'search').slice(0, 80), rows: (r.rows || []).map(row => normalizeSearchRow(row, context)), ...(context.length ? { columns: ['gene', 'ensembl', ...context] } : {}), meta: { search_url: r.search_urls?.[0] || null, query: r.plan || null, trail, understanding: r.understanding || null, not_expressible: (r.not_expressible || []).map(c => c.requirement), mode: r.mode || null, hpa_version: r.hpa_version, source_files: r.source_files, ...(context.length ? { context_columns: context } : {}) } };
   }
   if (toolName === 'investigator_hpa') {
     if (result?.error && result.found !== true) throw new Error(result.error);

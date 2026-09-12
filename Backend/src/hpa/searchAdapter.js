@@ -221,6 +221,22 @@ async function execute(filters, url, requestedMode) {
     if (local.unsupported.length) {
       throw Object.assign(new Error(`The local HPA search cannot evaluate these filters: ${JSON.stringify(local.unsupported)}. No online request was made.`), { reason: 'offline_filter_unsupported', unsupported_filters: local.unsupported });
     }
+    // A filter on a two-level field with no value named at the first level (any cancer, any
+    // tissue) matches by any value. The rows then say which value each gene matched, one row
+    // per gene and value, in a column named after the field, so a count per value is a group_by
+    // downstream and not a second search.
+    const unnamed = value => value === null || value === undefined || (typeof value === 'string' && value.trim().toLowerCase() === 'any');
+    const open = include.filter(axis => unnamed(axis.class) && (field(axis.field)?.level0 || []).length > 1);
+    if (open.length === 1) {
+      const axis = open[0];
+      const rows = [];
+      for (const option of field(axis.field).level0) {
+        const part = await offlineSearch.evaluate(include.map(x => x === axis ? { ...x, class: option } : x), exclude);
+        if (part.unsupported.length) continue;
+        for (const row of part.rows) rows.push({ ...row, [axis.field]: option });
+      }
+      return { rows, mode: 'offline', version: agentMode.hpaVersion, source_files: local.source_files, context_columns: [axis.field] };
+    }
     return { rows: local.rows, mode: 'offline', version: agentMode.hpaVersion, source_files: local.source_files };
   }
   const rows = await httpGetJson(`${url}?format=json&download=yes`);

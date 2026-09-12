@@ -16,6 +16,9 @@ test('a finish covers a chart item only with a rendered figure of that type, and
   assert.deepEqual(plan.uncovered(items, { tables: [{ artifact: 'a1' }], figures: [{ figure: { type: 'heatmap' } }], claims: [], notDone: [{ item: 3 }] }, byId), [], 'a cited table delivers a table item and a cohort item; not_done skips the scatter');
   assert.deepEqual(plan.uncovered(items, { tables: [], figures: [{ figure: { type: 'heatmap' } }, { figure: { type: 'scatter' } }], claims: [], notDone: [] }, byId), ['1. measurements (table)', '4. cohort (gene_set)']);
   assert.deepEqual(plan.uncovered(items, { tables: [{ artifact: 'a5' }], figures: [{ figure: { type: 'heatmap' } }, { figure: { type: 'scatter' } }], claims: [], notDone: [] }, byId), []);
+  assert.deepEqual(plan.uncovered(items, { tables: [{ artifact: 'a5' }], figures: [{ figure: { type: 'heatmap' } }, { figure: { type: 'bubble' } }], claims: [], notDone: [] }, byId), [], 'a bubble chart delivers a scatter item: the same family');
+  assert.deepEqual(plan.uncovered([plan.createItem({ step: 'counts', kind: 'bar' }, 0)], { tables: [], figures: [{ figure: { type: 'grouped_bar' } }], claims: [], notDone: [] }, byId), [], 'a grouped bar delivers a bar item');
+  assert.deepEqual(plan.uncovered([plan.createItem({ step: 'counts', kind: 'bar' }, 0)], { tables: [], figures: [{ figure: { type: 'heatmap' } }], claims: [], notDone: [] }, byId), ['1. counts (bar)'], 'a heatmap does not');
   assert.match(plan.planText(items), /^1\. \[todo\] measurements \| table\n2\. \[todo\] heatmap \| heatmap/);
   assert.match(plan.planText([plan.createItem({ step: 'kidney cohort', kind: 'gene_set' }, 0)], { gene_set: 'gene_set ← deep_research_hpa' }), /^1\. \[todo\] kidney cohort \| gene_set ← deep_research_hpa$/, 'the plan says who delivers a cohort');
 });

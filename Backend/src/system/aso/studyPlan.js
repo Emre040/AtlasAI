@@ -4,6 +4,10 @@
 // figure of a given type, an interpretation) so the finish can be checked against it.
 const CHART_KINDS = ['bar', 'lollipop', 'dot_plot', 'diverging_bar', 'grouped_bar', 'scatter', 'bubble', 'heatmap', 'radar', 'line', 'volcano'];
 const KINDS = ['gene_set', 'table', 'interpretation', ...CHART_KINDS];
+// A chart item is delivered by a figure of its family: a bar chart of counts per cancer drawn as
+// a grouped bar, a scatter drawn as a bubble, are the figure asked for.
+const CHART_FAMILIES = [['bar', 'grouped_bar', 'lollipop', 'diverging_bar', 'dot_plot'], ['scatter', 'bubble', 'volcano'], ['heatmap'], ['radar'], ['line']];
+const sameFamily = (kind, type) => kind === type || CHART_FAMILIES.some(family => family.includes(kind) && family.includes(type));
 
 function createItem(input, index) {
   const text = String(input?.step || '').trim();
@@ -30,11 +34,11 @@ function uncovered(plan, { tables = [], figures = [], claims = [], notDone = [] 
   const skipped = new Set(notDone.map(item => item.item));
   return plan.map((p, i) => ({ p, n: i + 1 })).filter(({ p, n }) => {
     if (skipped.has(n)) return false;
-    if (CHART_KINDS.includes(p.kind)) return !figureTypes.includes(p.kind);
+    if (CHART_KINDS.includes(p.kind)) return !figureTypes.some(type => sameFamily(p.kind, type));
     if (p.kind === 'interpretation') return !claims.length;
     // A cohort or a table is delivered by any cited table; a supplied list is a cohort too.
     return ![...tableIds].some(id => byId.has(id));
   }).map(({ p, n }) => `${n}. ${p.text} (${p.kind})`);
 }
 
-module.exports = { KINDS, CHART_KINDS, createItem, planText, uncovered };
+module.exports = { KINDS, CHART_KINDS, CHART_FAMILIES, sameFamily, createItem, planText, uncovered };

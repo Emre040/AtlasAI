@@ -311,7 +311,9 @@ function keysOf(e, row) {
   const isId = v => HUMAN_GENE_ID.test(String(v || ''));
   if (e.key === 'name') return { gene: row[e.columns[0]] || null, ensembl: row[e.columns[1]] || null };
   const column = e.geneColumn || e.columns.find(c => isId(row[c]));
-  const name = row['Gene name'] ?? (isId(row.Gene) ? null : row.Gene) ?? null;
+  // The gene's name is what the atlas writes: its symbol, or its id where it has no symbol, the
+  // same in every table's rows and in the search's, so keys agree across artifacts.
+  const name = row['Gene name'] ?? row.Gene ?? null;
   return { gene: name || null, ensembl: column ? row[column] || null : null };
 }
 

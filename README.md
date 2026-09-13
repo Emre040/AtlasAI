@@ -1,30 +1,49 @@
 # AtlasAI
 
 AtlasAI is the natural-language research assistant of the [Human Protein Atlas](https://www.proteinatlas.org),
-developed by the Human Protein Atlas project at Science for Life Laboratory, KTH Royal Institute
-of Technology, together with King's College London.
+developed by the Human Protein Atlas project at Science for Life Laboratory and KTH Royal
+Institute of Technology.
 
-Ask it a research question and it returns a report in which every number is bound to the table
-cell it was computed from. A claim whose number is not in a cited cell is refused, so a report
-cannot state what the data does not hold. Every intermediate table is an artifact with its
-operation and inputs recorded, and a finished study is shown as a map of those steps with its
-provenance graph.
+Ask it what a biologist would ask: build two cohorts, test whether they overlap more than chance
+expects, give the mean expression of each in two tissues, draw the scatter, and hand over the
+table behind the figure. AtlasAI returns the report, the tables and the figures, and every number
+in the report is bound to the table cell it was computed from. A report that states a number not
+found in a cited cell is refused before it reaches you.
 
-Measured on the [benchmarks](benchmark/README.md) in this repository:
+## How high the bar is
 
-- On 45 research questions that need tables, statistics and figures, an open-weight 27B model
-  running inside AtlasAI delivers 40 complete answers. The strongest closed model with SQL access
-  to the same files delivers 9; any model over the atlas's MCP server delivers at most 2. The same
-  two models that run inside AtlasAI deliver 0 and 1 over MCP and 5 and 7 over SQL: the gain is
-  the system.
-- On the three questions written to invite inference beyond the data, AtlasAI declined every
-  time; the tool arms invented in 36 of 42 answers.
-- Its search agent composes the exact atlas query for 216 of 236 plain-language questions and
-  the right gene set for 220. Its investigator returns the right rows from the right file for 30
-  of 30. Its reader answers 19 of 20 documentation questions from the atlas's own pages with
-  every quote verified, at a fifth of the tokens an open web search spends.
+The [system benchmark](benchmark/system/README.md) asks 45 such questions, 22 of them Hard by a
+fixed rubric: multi-cohort comparisons, hypergeometric and matched-sample tests, prognostic
+associations across cancers, three-tissue expression contrasts, seven questions built to tempt an
+unsupported conclusion, and three asked ambiguously beside their explicit twins. Each has a
+reference answer computed from the atlas files. An answer counts only when everything the question
+asks for is delivered and matches that reference: every count, every mean, every list, every table
+and every figure. One wrong cohort, one missing figure, one invented quantity, and the answer is
+not correct. There is no partial credit.
 
-Four agents answer:
+Under that rule:
+
+| | Complete answers of 45 | Tokens per complete answer |
+| --- | --- | --- |
+| AtlasAI with an open-weight 27B model (Qwen 3.8 27B) | 40 | 192,053 |
+| AtlasAI with Gemini 3.8 Flash | 37 | 365,873 |
+| The strongest closed model with SQL over the same files (GPT-5.6 Terra) | 9 | 305,419 |
+| The best of six models over the atlas's MCP server | 2 | 16,978,919 |
+
+The same two models that run inside AtlasAI complete 0 and 1 questions over MCP and 5 and 7 over
+SQL: the gain is the system, not the model. Counting right numbers alone, AtlasAI is right on all
+22 Hard questions with either model; the best tool arm reaches 15. On the three questions written
+to invite inference beyond the data, AtlasAI declined every time; the tool arms invented in 36 of
+42 answers. Across the 80 recorded studies, 350 statements rest on 3,469 computed tables, each
+statement bound to its cells.
+
+Three more [benchmarks](benchmark/README.md) test one agent each, scored by code against
+references: the search agent composes the exact atlas query for 216 of 236 plain-language
+questions and the right gene set for 220; the investigator returns the right rows from the right
+file for 30 of 30; the reader answers 19 of 20 documentation questions from the atlas's own pages
+with every quote verified, at a fifth of the tokens an open web search spends.
+
+## Four agents
 
 - **Search** (`deep_research_hpa`): finds the genes matching a description the way the atlas
   search would, from the atlas's own schema, and returns them as a table with the search it ran.

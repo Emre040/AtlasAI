@@ -1,7 +1,7 @@
 # Authors and credits
 
 AtlasAI is developed by the Human Protein Atlas project at Science for Life Laboratory,
-KTH Royal Institute of Technology (Stockholm, Sweden), together with King's College London.
+KTH Royal Institute of Technology (Stockholm, Sweden).
 
 ## Development
 

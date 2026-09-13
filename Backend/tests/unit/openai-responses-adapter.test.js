@@ -37,6 +37,9 @@ test('without reasoning the temperature stands, JSON mode maps to the text forma
   assert.equal(body.reasoning, undefined);
   assert.equal(body.temperature, 0);
   assert.deepEqual(body.text, { format: { type: 'json_object' } });
+  assert.equal(body.input[0].content, 'u\n\nRespond in JSON.', 'the JSON format needs the word in an input message');
+  const said = buildRequest({ messages: [{ role: 'user', content: 'give JSON' }], response_format: { type: 'json_object' } }, model);
+  assert.equal(said.input[0].content, 'give JSON');
 });
 
 test('a response becomes one chat completion: text, tool calls, finish reason and usage in chat names', () => {

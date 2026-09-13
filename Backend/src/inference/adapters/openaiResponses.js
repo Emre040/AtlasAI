@@ -53,8 +53,13 @@ function buildRequest(request, model) {
   const reasoning = effort && effort !== 'none';
   if (reasoning) body.reasoning = { effort };
   else if (typeof temperature === 'number') body.temperature = temperature;
-  if (responseFormat?.type === 'json_object') body.text = { format: { type: 'json_object' } };
-  else if (responseFormat?.type === 'json_schema') {
+  if (responseFormat?.type === 'json_object') {
+    body.text = { format: { type: 'json_object' } };
+    // The Responses API refuses the JSON format unless an input message says "json"; the
+    // instructions do not count, so the last user item gets the word when none has it.
+    const lastUser = [...input].reverse().find(item => item.role === 'user');
+    if (lastUser && !input.some(item => item.role === 'user' && /json/i.test(item.content))) lastUser.content = `${lastUser.content}\n\nRespond in JSON.`;
+  } else if (responseFormat?.type === 'json_schema') {
     const schema = responseFormat.json_schema || {};
     body.text = { format: { type: 'json_schema', name: schema.name || 'response', schema: schema.schema, ...(schema.strict !== undefined ? { strict: schema.strict } : {}) } };
   }

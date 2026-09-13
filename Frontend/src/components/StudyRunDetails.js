@@ -478,7 +478,12 @@ export function Overview({ state, live, onSelect }) {
                   )}
                 </span>
                 <span>
-                  {p.text}
+                  {p.text?.includes(" ") ? p.text : p.text?.replace(/_/g, " ")}
+                  {p.description ? (
+                    <small className="HPAG-aso-plan-description">
+                      {p.description}
+                    </small>
+                  ) : null}
                   <small>
                     {p.kind?.replace(/_/g, " ")}
                     {p.status === "dropped" ? " · dropped" : ""}

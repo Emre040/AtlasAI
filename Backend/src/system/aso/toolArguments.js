@@ -15,7 +15,13 @@ function decodeArguments(value, schema, label) {
       if (!isObject(value)) throw new Error(`${label} JSON text must encode an object`);
     }
     if (!isObject(value)) return value; // The registered validator reports wrong types.
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, decodeArguments(item, childSchema(schema, key), `${label}.${key}`)]));
+    // An optional argument given as an empty string, null or an empty list is not given: some
+    // models write every declared field and leave the ones they do not use empty.
+    const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+    const empty = item => item === '' || item === null || (Array.isArray(item) && item.length === 0);
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key, item]) => required.has(key) || !schema.properties || !Object.hasOwn(schema.properties, key) || !empty(item))
+      .map(([key, item]) => [key, decodeArguments(item, childSchema(schema, key), `${label}.${key}`)]));
   }
   if (schema.type === 'array' && Array.isArray(value)) return value.map((item, index) => decodeArguments(item, schema.items, `${label}[${index}]`));
   return value;

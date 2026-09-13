@@ -1,6 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+process.env.HPA_LOG_LLM_IO = process.env.HPA_LOG_LLM_IO || 'false';   // the reader's model calls read the flag at load
 const { readerAnswer, quoteOnPage, nearestPassage, allowedUrl, parsePage, sentences, MAX_RETRIES } = require('../../src/system/agents/reader');
 
 test('a quote is verbatim page text modulo whitespace and quote marks, within length bounds', () => {

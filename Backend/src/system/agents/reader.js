@@ -180,14 +180,29 @@ function openedText(state, opened) {
 // . ! or ? (with any citation markers around it) that is followed by the end of the text or by a
 // space and a capital, a digit or a bracket: "24.0", "2024-10-22" and "e.g. the" do not end one,
 // and nothing inside an open quotation does ("What makes a kidney a kidney? And a heart a heart?").
-const SENTENCE_END = /[.!?]+(?:\s*\[\d+\])*(?=\s+[\p{Lu}\p{N}"'(\[]|\s*$)/gu;
+// A citation marker after the terminator belongs to the sentence it ends, never starts the next one.
+const SENTENCE_END = /[.!?]+["')\]]*(?:\s*\[\d+\])*(?=\s+(?!\[\d+\])[\p{Lu}\p{N}"'(\[]|\s*$)/gu;
+// How many quotations are open at the end of a span of text. Straight quotes open and close with
+// the same character, so one that follows a space (or a bracket, or a colon) and precedes a word
+// opens, and any other closes: a quotation inside a quotation counts twice, and closes twice.
+function openQuotations(text) {
+  let depth = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== '"') continue;
+    const before = i === 0 ? ' ' : text[i - 1]; const after = i + 1 < text.length ? text[i + 1] : ' ';
+    if (/[\s(\[:]/.test(before) && !/\s/.test(after)) depth += 1; else if (depth > 0) depth -= 1;
+  }
+  return depth;
+}
 function sentences(text) {
   const s = normalize(text);
   const out = []; let start = 0;
   const push = end => { const t = s.slice(start, end).trim(); if (t) out.push({ text: t, cites: [...t.matchAll(/\[(\d+)\]/g)].map(x => Number(x[1])) }); start = end; };
   for (const m of s.matchAll(SENTENCE_END)) {
-    const insideQuotation = (s.slice(start, m.index).match(/"/g) || []).length % 2 === 1;
-    if (!insideQuotation) push(m.index + m[0].length);
+    // a terminator inside a quotation (a quoted question in the middle of a sentence) ends nothing;
+    // the closing quote marks that follow a terminator are part of the sentence they close
+    const end = m.index + m[0].length;
+    if (openQuotations(s.slice(start, end)) === 0) push(end);
   }
   push(s.length);
   return out;

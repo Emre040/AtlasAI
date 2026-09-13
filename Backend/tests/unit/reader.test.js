@@ -51,6 +51,10 @@ test('sentences carry the citation markers around their full stop', () => {
     [{ text: 'Version 24.0 came out in October 2024 [1].', cites: [1] }, { text: 'It added a Structure Atlas.[2][3]', cites: [2, 3] }, { text: 'No citation here.', cites: [] }]);
   // a question mark inside a quotation does not end the sentence
   assert.deepEqual(sentences('The founders asked: “What is it that makes a kidney a kidney? And what makes a heart a heart?” [2]. The pilot began in 2000 [1].').map(x => x.cites), [[2], [1]]);
+  // a quotation inside a quotation: the inner question mark ends nothing, the two closing quotes belong to the sentence
+  assert.deepEqual(sentences('The question was: "In the proposal (2002), the founders asked: "What is it that makes a kidney a kidney? And what makes a heart a heart?"" [2] The program started in 2003 [3].').map(x => x.cites), [[2], [3]]);
+  assert.deepEqual(sentences('He asked "What is it?" and left [1]. Then a second one [2].').map(x => x.text), ['He asked "What is it?" and left [1].', 'Then a second one [2].']);
+  assert.deepEqual(sentences('She said "It works." [1] It did [2].').map(x => x.text), ['She said "It works." [1]', 'It did [2].']);
 });
 
 const site = {

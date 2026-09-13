@@ -42,7 +42,7 @@ table holds the value. Nothing is graded by a model or by hand;
 
 ## Results
 
-Gemini 3.8 Flash at low reasoning effort, offline against release 25.1
+Gemini 3.8 Flash at low reasoning effort against release 25.1
 ([results/README.md](results/README.md)):
 
 | | Questions | Correct |

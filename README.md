@@ -4,26 +4,42 @@ AtlasAI is the natural-language research assistant of the [Human Protein Atlas](
 developed by the Human Protein Atlas project at Science for Life Laboratory, KTH Royal Institute
 of Technology, together with King's College London.
 
-A question in plain language is routed to the agent that answers it:
+Ask it a research question and it returns a report in which every number is bound to the table
+cell it was computed from. A claim whose number is not in a cited cell is refused, so a report
+cannot state what the data does not hold. Every intermediate table is an artifact with its
+operation and inputs recorded, and a finished study is shown as a map of those steps with its
+provenance graph.
+
+Measured on the [benchmarks](benchmark/README.md) in this repository:
+
+- On 45 research questions that need tables, statistics and figures, an open-weight 27B model
+  running inside AtlasAI delivers 40 complete answers. The strongest closed model with SQL access
+  to the same files delivers 9; any model over the atlas's MCP server delivers at most 2. The same
+  two models that run inside AtlasAI deliver 0 and 1 over MCP and 5 and 7 over SQL: the gain is
+  the system.
+- On the three questions written to invite inference beyond the data, AtlasAI declined every
+  time; the tool arms invented in 36 of 42 answers.
+- Its search agent composes the exact atlas query for 216 of 236 plain-language questions and
+  the right gene set for 220. Its investigator returns the right rows from the right file for 30
+  of 30. Its reader answers 19 of 20 documentation questions from the atlas's own pages with
+  every quote verified, at a fifth of the tokens an open web search spends.
+
+Four agents answer:
 
 - **Search** (`deep_research_hpa`): finds the genes matching a description the way the atlas
   search would, from the atlas's own schema, and returns them as a table with the search it ran.
 - **Investigator** (`investigator_hpa`): answers a question with rows read from the HPA data
   release, for one gene or for hundreds, or for any list of points such as tissues or cell lines.
 - **Dictionary expert**: histology, pathology and cell-biology questions answered from the atlas
-  dictionary with its annotated images.
-- **Inclusion check**: whether a gene appears in an earlier result.
-- **Study** (`aso_hpa`): a research objective that needs several steps. The orchestrator plans
-  the deliverables, summons the search and the Investigator, combines their tables with
-  declarative operations (join, filter, rank, aggregate, compute, pivot, correlate, overlap,
-  chart), and finishes with a report whose every claim is bound to the cells it rests on.
+  dictionary with its annotated images, and questions about the atlas itself answered from its
+  pages with verified quotes.
+- **ASO, the Autonomous Scientific Orchestrator** (`aso_hpa`): a research objective that needs
+  several steps. It plans the deliverables, summons the search and the Investigator, combines
+  their tables with declarative operations (join, filter, rank, aggregate, compute, pivot,
+  correlate, overlap, chart), and finishes with the bound report.
 
-Studies run on the pinned HPA data release only; nothing is read from the website. Every
-intermediate result is an artifact with a title, a description, its columns, and the operation
-and inputs that produced it. The report cites artifacts by id, prints the bound cells beside every
-finding, and is refused when a stated number is not among them. The frontend streams each run as
-it happens, draws a study as a map of its steps, and shows the stored provenance graph of a
-finished study.
+Every study computes on a versioned release of the atlas's published data (25.1 today), so the
+same question gives the same tables; the frontend streams each run as it happens.
 
 Live instance: <https://atlas-ai-livid.vercel.app>
 
@@ -36,7 +52,7 @@ AtlasAI/
 │   ├── src/system/agents/           # the agents: deepResearchTrail, investigatorTrail, investigatorBulk,
 │   │                                #   dictionaryExpert, checkInclusion, asoStudy (the study loop)
 │   ├── src/system/aso/              # the study's desk, table operations, report binder, provenance, chart rendering
-│   ├── src/hpa/                     # atlas schema and search options, the offline search, the data-release adapter
+│   ├── src/hpa/                     # atlas schema and search options, the search evaluator, the data-release adapter
 │   ├── src/inference/               # the gateway and the provider adapters (OpenAI-compatible, Gemini, Anthropic)
 │   ├── src/http/                    # routes, CORS, authentication, rate limiting
 │   ├── src/database/schema.sql      # the schema, the model catalog, the HPA file catalog
@@ -52,7 +68,7 @@ AtlasAI/
 
 `Backend/README.md` documents the backend in detail: configuration, the database and the
 inference catalog, conversations and runs, authentication, the platform policy, HPA data
-releases and offline agents, the study orchestrator, provenance, and deployment.
+releases, the study orchestrator, provenance, and deployment.
 
 ## Benchmarks
 

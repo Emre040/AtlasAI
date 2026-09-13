@@ -180,7 +180,7 @@ providers the visitor has keys for. `GET /keys` lists the visitor's keys (suffix
 endpoint and stores it AES-256-GCM encrypted with the secret in `ATLAS_PROVIDER_KEY_SECRET_FILE`,
 and `DELETE /keys/:provider` removes it. Keys are decrypted only for the request that uses them.
 
-## HPA data releases and offline agents
+## HPA data releases
 
 `hpa_datasets` is the HPA bulk-download catalog (one row per file, keyed by the catalog ID from the
 HPA team's sheet) with the local sync state of each file. `platform_config.active_hpa_version`
@@ -221,14 +221,11 @@ figures by id, findings as claims bound to the rows and columns they rest on; a 
 is not among the bound cells refuses the report and says where the number lives. Figures are chart
 specifications rendered by `pipelines/render_charts.py`.
 
-`deep_research_hpa` and `investigator_hpa` accept `mode: "online" | "offline"`; a study
-(`aso_hpa`) always runs offline and its agents inherit that. Offline evaluates the composed
-search against the local release (`src/hpa/offlineSearch.js` reproduces the proteinatlas.org
-search semantics for category, class, location, evidence, cluster, prognostic, IHC and
-interaction fields) and is the default; a search field the bulk files cannot express stops the
-search with the unexpressible requirement named, and no online request is made. The
-investigator reads the local release only; `offline_agents_enabled` turns the mode off. The
-dictionary expert is always online.
+Searches and Investigator reads run against the release in `HPA_DATA_LOCAL_DIR`:
+`src/hpa/offlineSearch.js` evaluates a composed search with the proteinatlas.org search
+semantics for category, class, location, evidence, cluster, prognostic, IHC and interaction
+fields, and a field the release files cannot express stops the search with the unexpressible
+requirement named. The dictionary expert reads proteinatlas.org.
 
 ## ASO provenance
 

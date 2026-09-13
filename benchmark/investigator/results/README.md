@@ -8,7 +8,7 @@ calls, turns, seconds, every step, and the score), `results.tsv`,
 
 ## flash-low
 
-Gemini 3.8 Flash at low reasoning effort, offline against release 25.1, four
+Gemini 3.8 Flash at low reasoning effort against release 25.1, four
 questions at a time, 13 September 2026.
 
 | | Questions | Correct |

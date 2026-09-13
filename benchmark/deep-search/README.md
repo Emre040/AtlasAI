@@ -32,8 +32,7 @@ By the rubric in [questions/difficulty.md](questions/difficulty.md): 51 Easy,
 
 [references/queries.json](references/queries.json) holds each question's
 reference filters (field, path, operator), the query they compose to, and a
-check recorded before any run: the query executed on the local copy of
-release 25.1 and fetched from proteinatlas.org, with both gene counts. All 236
+check recorded before any run: the query executed on release 25.1 and fetched from proteinatlas.org, with both gene counts. All 236
 references return the same, non-empty gene set both ways (median 21 genes).
 
 ## Scoring
@@ -42,7 +41,7 @@ references return the same, non-empty gene set both ways (median 21 genes).
 | --- | --- |
 | Same genes | The composed query returns the reference's gene set on the atlas. An equivalent query written differently passes. |
 | Same clauses | The composed query has exactly the reference's filters, in any order. |
-| Count verified | The row count the agent reports from the local release equals the atlas's count for its own query. |
+| Count verified | The row count the agent reports from release 25.1 equals the atlas's count for its own query. |
 
 Same genes is the headline. Nothing is graded by a model or by hand;
 [execution/README.md](execution/README.md) describes the runner and the three
@@ -50,7 +49,7 @@ modes.
 
 ## Results
 
-Gemini 3.8 Flash at low reasoning effort, offline against release 25.1
+Gemini 3.8 Flash at low reasoning effort against release 25.1
 ([results/README.md](results/README.md)):
 
 | | Questions | Same genes | Same clauses | Count verified |

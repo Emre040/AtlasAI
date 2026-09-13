@@ -727,7 +727,7 @@ Which genes form the basophil proteolysis co-expression cluster?
 
 **Cortex-specific, absent in liver and kidney** (Medium: scope 1, schema depth 1, logic 0, wording 1; 3 filters on 2 fields; a two-level path; inclusions only; a derived form of an option.)
 
-Which genes specific to the cerebral cortex among brain regions have no detectable mRNA in either liver or kidney?
+Which genes specific to the cerebral cortex among brain regions have no detectable mRNA in liver and none in kidney?
 
 ### D82
 
@@ -847,13 +847,13 @@ Which genes with enhanced heart muscle expression show no antibody staining in c
 
 **Liver-specific secreted enzymes, silent elsewhere** (Medium: scope 2, schema depth 1, logic 0, wording 1; 5 filters on 3 fields; a two-level path; inclusions only; a derived form of an option.)
 
-Which liver-specific enzymes have no detectable mRNA in either kidney or testis, and are secreted into the blood?
+Which liver-specific enzymes have no detectable mRNA in kidney and none in testis, and are secreted into the blood?
 
 ### D102
 
 **Testis-specific factors, not in brain regions** (Medium: scope 2, schema depth 1, logic 0, wording 1; 5 filters on 4 fields; a two-level path; inclusions only; a derived form of an option.)
 
-Which testis-specific transcription factors have no detectable mRNA in either the cerebral cortex or cerebellum, and have protein-level evidence?
+Which testis-specific transcription factors have no detectable mRNA in the cerebral cortex and none in cerebellum, and have protein-level evidence?
 
 ### D103
 
@@ -865,7 +865,7 @@ Kidney-specific transporters at the plasma membrane that have no detectable mRNA
 
 **Pancreatic proteases to the gut** (Medium: scope 2, schema depth 1, logic 0, wording 1; 5 filters on 3 fields; a two-level path; inclusions only; a derived form of an option.)
 
-Which pancreas-specific proteases are secreted in the digestive tract and have no detectable mRNA in either liver or lung?
+Which pancreas-specific proteases are secreted in the digestive tract and have no detectable mRNA in liver and none in lung?
 
 ### D105
 
@@ -991,7 +991,7 @@ Which genes with enhanced ovary expression have no detectable mRNA in testis, an
 
 **Salivary secretome** (Medium: scope 2, schema depth 1, logic 0, wording 1; 4 filters on 2 fields; a two-level path; inclusions only; a derived form of an option.)
 
-Which salivary-gland-specific genes encode proteins secreted in the digestive tract and have no detectable mRNA in either pancreas or liver?
+Which salivary-gland-specific genes encode proteins secreted in the digestive tract and have no detectable mRNA in pancreas and none in liver?
 
 ### D126
 
@@ -1027,7 +1027,7 @@ Which genes enhanced in classical monocytes among blood immune cells stain moder
 
 **Cortex-specific, not cerebellum or hypothalamus** (Medium: scope 1, schema depth 1, logic 0, wording 1; 3 filters on 1 field; a two-level path; inclusions only; a derived form of an option.)
 
-Which genes specific to the cerebral cortex among brain regions have no detectable mRNA in either the cerebellum or the hypothalamus?
+Which genes specific to the cerebral cortex among brain regions have no detectable mRNA in the cerebellum and none in the hypothalamus?
 
 ### D132
 
@@ -1141,7 +1141,7 @@ Which B-cell-lineage-enriched genes stain moderately or strongly in the white pu
 
 **Epidermal staining, skin silent in liver** (Medium: scope 1, schema depth 2, logic 0, wording 1; 3 filters on 2 fields; a three-level path, several values on one level or a category with no entity; inclusions only; a derived form of an option.)
 
-Which genes stain strongly in skin keratinocytes and have no detectable mRNA in either liver or kidney?
+Which genes stain strongly in skin keratinocytes and have no detectable mRNA in liver and none in kidney?
 
 ### D151
 
@@ -1171,7 +1171,7 @@ Which genes with enhanced salivary gland expression are enhanced in salivary duc
 
 **Spermatid-specific, no somatic expression** (Medium: scope 2, schema depth 1, logic 0, wording 1; 5 filters on 2 fields; a two-level path; inclusions only; a derived form of an option.)
 
-Which testis-specific genes are specific to late spermatids (single-cell) and have no detectable mRNA in any of liver, kidney and lung?
+Which testis-specific genes are specific to late spermatids (single-cell) and have no detectable mRNA in liver, none in kidney and none in lung?
 
 ### D156
 
@@ -1195,7 +1195,7 @@ Which retina-specific genes are enhanced in rod photoreceptor cells (single-cell
 
 **Melanocytes, skin silent in liver** (Medium: scope 1, schema depth 1, logic 0, wording 1; 3 filters on 2 fields; a two-level path; inclusions only; a derived form of an option.)
 
-Which melanocyte-specific genes (single-cell) have no detectable mRNA in either liver or kidney?
+Which melanocyte-specific genes (single-cell) have no detectable mRNA in liver and none in kidney?
 
 ### D160
 
@@ -1243,7 +1243,7 @@ Which genes of the macrophage and microglia immune response brain cluster are en
 
 **Schwann cells, not brain regions** (Medium: scope 1, schema depth 1, logic 0, wording 1; 3 filters on 2 fields; a two-level path; inclusions only; a derived form of an option.)
 
-Which Schwann-cell-specific genes (single-cell) have no detectable mRNA in either the cerebral cortex or the cerebellum?
+Which Schwann-cell-specific genes (single-cell) have no detectable mRNA in the cerebral cortex and none in the cerebellum?
 
 ### D168
 
@@ -1453,13 +1453,13 @@ Which liver-specific enzymes are secreted into the blood, have protein-level evi
 
 **Brain-wide channels, six constraints** (Hard: scope 2, schema depth 2, logic 2, wording 2; 6 filters on 4 fields; a three-level path, several values on one level or a category with no entity; an exclusion beside an absence category or several exclusions; a category given by its definition.)
 
-Which voltage-gated ion channels expressed in every brain region have no detectable mRNA in either liver or kidney, are at the plasma membrane, and are not targets of approved small-molecule drugs?
+Which voltage-gated ion channels expressed in every brain region have no detectable mRNA in liver and none in kidney, are at the plasma membrane, and are not targets of approved small-molecule drugs?
 
 ### D203
 
 **Kidney transporters, six constraints** (Hard: scope 2, schema depth 1, logic 2, wording 1; 6 filters on 4 fields; a two-level path; an exclusion beside an absence category or several exclusions; a derived form of an option.)
 
-Which kidney-specific transporters sit at the plasma membrane, have no detectable mRNA in either liver or testis, and are not secreted into the blood?
+Which kidney-specific transporters sit at the plasma membrane, have no detectable mRNA in liver and none in testis, and are not secreted into the blood?
 
 ### D204
 
@@ -1495,7 +1495,7 @@ Which placenta-specific genes enhanced in syncytiotrophoblasts (single-cell) enc
 
 **Retinal GPCRs, six constraints** (Hard: scope 2, schema depth 2, logic 2, wording 1; 7 filters on 3 fields; a three-level path, several values on one level or a category with no entity; an exclusion beside an absence category or several exclusions; a derived form of an option.)
 
-Which retina-specific GPCRs are specific to rod or cone photoreceptor cells (single-cell), have no detectable mRNA in any of liver, kidney and lung, and are not targets of FDA-approved drugs?
+Which retina-specific GPCRs are specific to rod or cone photoreceptor cells (single-cell), have no detectable mRNA in liver, none in kidney and none in lung, and are not targets of FDA-approved drugs?
 
 ### D210
 
@@ -1513,13 +1513,13 @@ Which validated markers of longer survival in kidney renal clear cell carcinoma 
 
 **Cerebellum nucleic acid cluster** (Hard: scope 2, schema depth 1, logic 2, wording 1; 4 filters on 3 fields; a two-level path; an exclusion beside an absence category or several exclusions; a derived form of an option.)
 
-Which genes of the cerebellum nucleic acid binding brain cluster have no detectable mRNA in either liver or kidney, and are not at the plasma membrane?
+Which genes of the cerebellum nucleic acid binding brain cluster have no detectable mRNA in liver and none in kidney, and are not at the plasma membrane?
 
 ### D213
 
 **Skin barrier, six constraints** (Hard: scope 2, schema depth 2, logic 2, wording 1; 6 filters on 4 fields; a three-level path, several values on one level or a category with no entity; an exclusion beside an absence category or several exclusions; a derived form of an option.)
 
-Which genes enhanced in suprabasal keratinocytes (single-cell) stain moderately or strongly in skin keratinocytes, have no detectable mRNA in any of liver, kidney and lung, and are not cancer-related genes?
+Which genes enhanced in suprabasal keratinocytes (single-cell) stain moderately or strongly in skin keratinocytes, have no detectable mRNA in liver, none in kidney and none in lung, and are not cancer-related genes?
 
 ### D214
 
@@ -1549,7 +1549,7 @@ Which bone-marrow-specific genes are enriched in the granulocyte or monocyte lin
 
 **Salivary or pancreas digestive** (Hard: scope 2, schema depth 2, logic 2, wording 1; 5 filters on 2 fields; a three-level path, several values on one level or a category with no entity; an exclusion beside an absence category or several exclusions; a derived form of an option.)
 
-Which genes specific to either salivary gland or pancreas are secreted in the digestive tract, have no detectable mRNA in either liver or kidney, and are not secreted into the blood?
+Which genes specific to either salivary gland or pancreas are secreted in the digestive tract, have no detectable mRNA in liver and none in kidney, and are not secreted into the blood?
 
 ### D219
 
@@ -1561,7 +1561,7 @@ Which genes with enhanced lung expression are enhanced in alveolar type 2 cells 
 
 **Sperm tail, seven constraints** (Hard: scope 2, schema depth 1, logic 2, wording 1; 7 filters on 3 fields; a two-level path; an exclusion beside an absence category or several exclusions; a derived form of an option.)
 
-Which testis-specific genes are specific to late spermatids (single-cell), have no detectable mRNA in any of liver, kidney, lung and ovary, and are not transcription factors?
+Which testis-specific genes are specific to late spermatids (single-cell), have no detectable mRNA in liver, none in kidney, none in lung and none in ovary, and are not transcription factors?
 
 ### D221
 
@@ -1573,13 +1573,13 @@ Which choroid-plexus-specific transporters (brain regions) have no detectable mR
 
 **Hypothalamic peptides** (Hard: scope 2, schema depth 2, logic 2, wording 1; 5 filters on 4 fields; a three-level path, several values on one level or a category with no entity; an exclusion beside an absence category or several exclusions; a derived form of an option.)
 
-Which genes specific to the hypothalamus among brain regions encode proteins secreted locally in the brain or into the blood, have no detectable mRNA in either liver or kidney, and are not enzymes?
+Which genes specific to the hypothalamus among brain regions encode proteins secreted locally in the brain or into the blood, have no detectable mRNA in liver and none in kidney, and are not enzymes?
 
 ### D223
 
 **Pituitary hormones** (Hard: scope 2, schema depth 1, logic 2, wording 1; 7 filters on 4 fields; a two-level path; an exclusion beside an absence category or several exclusions; a derived form of an option.)
 
-Which pituitary-specific genes encode blood-secreted proteins, have no detectable mRNA in any of liver, kidney and lung, have protein-level evidence, and are not enzymes?
+Which pituitary-specific genes encode blood-secreted proteins, have no detectable mRNA in liver, none in kidney and none in lung, have protein-level evidence, and are not enzymes?
 
 ### D224
 
@@ -1591,7 +1591,7 @@ Which genes specific to either the parathyroid or the thyroid gland encode blood
 
 **Digestive proteases, six constraints** (Hard: scope 2, schema depth 1, logic 2, wording 1; 6 filters on 3 fields; a two-level path; an exclusion beside an absence category or several exclusions; a derived form of an option.)
 
-Which proteases secreted in the digestive tract have no detectable mRNA in any of liver, kidney and lung, and are not secreted into the blood?
+Which proteases secreted in the digestive tract have no detectable mRNA in liver, none in kidney and none in lung, and are not secreted into the blood?
 
 ### D226
 
@@ -1603,7 +1603,7 @@ Which genes with enhanced ovary expression are enhanced in ovarian stromal or gr
 
 **Epididymis secretome** (Hard: scope 2, schema depth 1, logic 2, wording 1; 5 filters on 3 fields; a two-level path; an exclusion beside an absence category or several exclusions; a derived form of an option.)
 
-Which epididymis-specific genes encode proteins secreted in the male reproductive tract, have no detectable mRNA in either liver or kidney, and are not enzymes?
+Which epididymis-specific genes encode proteins secreted in the male reproductive tract, have no detectable mRNA in liver and none in kidney, and are not enzymes?
 
 ### D228
 
@@ -1633,7 +1633,7 @@ Which genes with enhanced breast expression stain moderately or strongly in brea
 
 **Seminal vesicle secretome** (Hard: scope 2, schema depth 1, logic 2, wording 1; 6 filters on 3 fields; a two-level path; an exclusion beside an absence category or several exclusions; a derived form of an option.)
 
-Which seminal-vesicle-specific genes encode proteins secreted in the male reproductive tract, have no detectable mRNA in any of liver, kidney and lung, and are not enzymes?
+Which seminal-vesicle-specific genes encode proteins secreted in the male reproductive tract, have no detectable mRNA in liver, none in kidney and none in lung, and are not enzymes?
 
 ### D233
 
@@ -1657,4 +1657,4 @@ Which genes enriched or enhanced in cervix or vagina are enhanced in suprabasal 
 
 **Adipose secretome, seven constraints** (Hard: scope 2, schema depth 1, logic 2, wording 1; 7 filters on 5 fields; a two-level path; an exclusion beside an absence category or several exclusions; a derived form of an option.)
 
-Which genes with enhanced adipose tissue expression are enhanced in adipocytes (single-cell), encode blood-secreted proteins, have no detectable mRNA in either liver or kidney, have protein-level evidence, and are not enzymes?
+Which genes with enhanced adipose tissue expression are enhanced in adipocytes (single-cell), encode blood-secreted proteins, have no detectable mRNA in liver and none in kidney, have protein-level evidence, and are not enzymes?

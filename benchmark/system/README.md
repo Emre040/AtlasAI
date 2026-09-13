@@ -3,7 +3,7 @@
 An open-weight 27B model running inside AtlasAI answers 40 of 45 Human Protein
 Atlas questions completely. The strongest closed model with SQL access answers 9;
 any model over the atlas's MCP server answers at most 2. The same two models that
-run inside AtlasAI answer 0 and 1 questions over MCP and 5 and 7 over SQL, so the
+run inside AtlasAI answer 0 and 2 questions over MCP and 5 and 7 over SQL, so the
 gain is the system, and every number AtlasAI reports can be traced to the table
 it was computed from.
 

@@ -2,48 +2,48 @@
 
 AtlasAI is the natural-language research assistant of the [Human Protein Atlas](https://www.proteinatlas.org),
 developed by the Human Protein Atlas project at Science for Life Laboratory and KTH Royal
-Institute of Technology.
+Institute of Technology, and deployed in the Human Protein Atlas.
 
-Ask it what a biologist would ask: build two cohorts, test whether they overlap more than chance
-expects, give the mean expression of each in two tissues, draw the scatter, and hand over the
-table behind the figure. AtlasAI returns the report, the tables and the figures, and every number
-in the report is bound to the table cell it was computed from. A report that states a number not
-found in a cited cell is refused before it reaches you.
+A research question in plain language is answered with a report, the tables it rests on and the
+figures it asks for. Every statement in a report is bound to the cells of the table it was
+computed from; every table records the operation and the inputs that produced it; a report that
+states a number absent from its cited cells is refused. The provenance of a finished study is
+stored and shown as a graph.
 
-## How high the bar is
+## Evaluation
 
-The [system benchmark](benchmark/system/README.md) asks 45 such questions, 22 of them Hard by a
-fixed rubric: multi-cohort comparisons, hypergeometric and matched-sample tests, prognostic
-associations across cancers, three-tissue expression contrasts, seven questions built to tempt an
-unsupported conclusion, and three asked ambiguously beside their explicit twins. Each has a
-reference answer computed from the atlas files. An answer counts only when everything the question
-asks for is delivered and matches that reference: every count, every mean, every list, every table
-and every figure. One wrong cohort, one missing figure, one invented quantity, and the answer is
-not correct. There is no partial credit.
+The [system benchmark](benchmark/system/README.md) comprises 45 questions about the atlas: 4
+lookups; 26 analyses, among them cohort construction, hypergeometric and matched-sample tests,
+prognostic associations across cancers and expression contrasts across tissues; 7 negative tests
+that tempt an unsupported conclusion; 3 ambiguous questions with explicit counterparts; and 5
+documentation questions. 22 are Hard by a fixed rubric. Each question has a reference answer
+computed from the atlas files. An answer is scored correct only when every requested number, list,
+table and figure is delivered and matches the reference; there is no partial credit. Each question
+is asked three ways, each in a fresh conversation: through the ProteinAtlas MCP server, through
+SQL over the atlas files, and through AtlasAI over the same files.
 
-Under that rule:
-
-| | Complete answers of 45 | Tokens per complete answer |
+| Configuration | Correct of 45 | Tokens per correct answer |
 | --- | --- | --- |
-| AtlasAI with an open-weight 27B model (Qwen 3.8 27B) | 40 | 192,053 |
-| AtlasAI with Gemini 3.8 Flash | 37 | 365,873 |
-| The strongest closed model with SQL over the same files (GPT-5.6 Terra) | 9 | 305,419 |
-| The best of six models over the atlas's MCP server | 2 | 16,978,919 |
+| AtlasAI, Qwen 3.8 27B (open weights) | 40 | 192,053 |
+| AtlasAI, Gemini 3.8 Flash | 37 | 365,873 |
+| SQL, GPT-5.6 | 9 | 305,419 |
+| SQL, Gemini 3.8 Flash | 7 | 2,330,730 |
+| MCP, GPT-5.6 | 1 | 861,502 |
+| MCP, Gemini 3.8 Flash | 2 | 16,978,919 |
 
-The same two models that run inside AtlasAI complete 0 and 1 questions over MCP and 5 and 7 over
-SQL: the gain is the system, not the model. Counting right numbers alone, AtlasAI is right on all
-22 Hard questions with either model; the best tool arm reaches 15. On the three questions written
-to invite inference beyond the data, AtlasAI declined every time; the tool arms invented in 36 of
-42 answers. Across the 80 recorded studies, 350 statements rest on 3,469 computed tables, each
-statement bound to its cells.
+Qwen 3.8 27B and Gemini 3.8 Flash are correct on 0 and 2 questions over MCP and on 5 and 7 over
+SQL. On numerical results alone, AtlasAI is correct on all 22 Hard questions with either model;
+the best tool configuration reaches 15. On the three questions that invite inference beyond the
+data, AtlasAI declined in all six runs; the tool configurations inferred in 36 of 42. The 80
+recorded studies contain 350 statements bound to 3,469 computed tables.
 
-Three more [benchmarks](benchmark/README.md) test one agent each, scored by code against
-references: the search agent composes the exact atlas query for 216 of 236 plain-language
-questions and the right gene set for 220; the investigator returns the right rows from the right
-file for 30 of 30; the reader answers 19 of 20 documentation questions from the atlas's own pages
-with every quote verified, at a fifth of the tokens an open web search spends.
+Three further [benchmarks](benchmark/README.md) evaluate single agents against references, scored
+by code: the search agent composes the reference query for 216 of 236 questions and an equivalent
+gene set for 220; the investigator returns the reference rows from the reference file for 30 of
+30; the reader answers 19 of 20 documentation questions from the atlas's pages with every quotation
+verified, using a fifth of the tokens of the same model with open web search.
 
-## Four agents
+## Agents
 
 - **Search** (`deep_research_hpa`): finds the genes matching a description the way the atlas
   search would, from the atlas's own schema, and returns them as a table with the search it ran.
@@ -59,8 +59,6 @@ with every quote verified, at a fifth of the tokens an open web search spends.
 
 Every study computes on a versioned release of the atlas's published data (25.1 today), so the
 same question gives the same tables; the frontend streams each run as it happens.
-
-Live instance: <https://atlas-ai-livid.vercel.app>
 
 ## What is where
 

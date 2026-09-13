@@ -72,7 +72,7 @@ const tool = (name, description, properties = {}, required = []) => ({ name, des
 // Every operation names its result (title, description); one left unnamed is named by its operation.
 const op = (name, description, properties = {}, required = []) => tool(name, description, { title: S, description: S, ...properties }, required);
 const STUDY_TOOLS = [
-  tool('plan', 'The deliverables the study owes: one item per requested table, figure (its chart type), cohort (gene_set) or interpretation, each with the data it needs from the agents (needs), which start at once. Replaces the plan.', { items: { type: 'array', items: { type: 'object', properties: { step: S, kind: { type: 'string', enum: studyPlan.KINDS }, description: S, not_done: { type: 'string', description: 'the reason this deliverable is not computed from this data (a blank read as absence, a stand-in quantity, a cause from an association); it is delivered as a limitation' } }, required: ['step', 'kind'] } } }, ['items']),
+  tool('plan', 'The deliverables the study owes: one item per requested table, figure (its chart type), cohort (gene_set) or interpretation. Replaces the plan; nothing starts by itself, the agents and the operations are called next to make the deliverables.', { items: { type: 'array', items: { type: 'object', properties: { step: S, kind: { type: 'string', enum: studyPlan.KINDS }, description: S, not_done: { type: 'string', description: 'the reason this deliverable is not computed from this data (a blank read as absence, a stand-in quantity, a cause from an association); it is delivered as a limitation' } }, required: ['step', 'kind'] } } }, ['items']),
   tool('note', 'Keep a decision or open question on the desk; replace overwrites note N.', { text: S, replace: N }, ['text']),
   tool('open', 'Show rows of an artifact: rows and offset page it, columns narrow it.', { artifact: A, rows: N, offset: N, columns: { type: 'array', items: S } }, ['artifact']),
   tool('run', 'Runs operations: a chain of steps, each {id, tool: an operation from the list, args}, later steps naming earlier ones as @id (an existing artifact by its own id); one artifact per step, every step in the trail.',{ steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
@@ -792,8 +792,12 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
         const ignored = validate(call.args, spec.function.parameters, call.name);
         if (ignored.length) remember(`${call.name}: ${ignored.slice(0, 5).map(key => key.slice(call.name.length + 1).slice(0, 40)).join(', ')}${ignored.length > 5 ? ` (+${ignored.length - 5})` : ''} ${ignored.length === 1 ? 'is not an argument' : 'are not arguments'} of this tool, ignored`);
         if (call.name === 'plan') {
-          state.plan = (call.args.items || []).map(studyPlan.createItem);
-          if (!state.plan.length) throw new Error('plan needs at least one deliverable');
+          const items = (call.args.items || []).map(studyPlan.createItem);
+          if (!items.length) throw new Error('plan needs at least one deliverable');
+          // A plan that repeats the current one changes nothing: the deliverables are made by the calls that follow.
+          const sameItem = (a, b) => a.text === b.text && a.kind === b.kind && (a.description || '') === (b.description || '') && (a.not_done || '') === (b.not_done || '');
+          if (state.plan.length === items.length && items.every((item, i) => sameItem(item, state.plan[i]))) throw new Error('plan unchanged: nothing starts by itself; the agents and the operations are called to make the deliverables');
+          state.plan = items;
           sync++; remember(`plan: ${state.plan.length} deliverables`);
           await log('plan', { items: state.plan });
           return;

@@ -12,10 +12,10 @@ KTH Royal Institute of Technology (Stockholm, Sweden), together with King's Coll
 - **Kalle von Feilitzen** and **Mattias Forsberg** (Science for Life Laboratory, KTH Royal
   Institute of Technology): system design and testing.
 
-## Supervision
+## Supervision and correspondence
 
-- **Mathias Uhlén** (Science for Life Laboratory, KTH Royal Institute of Technology)
-- **Cheng Zhang** (King's College London)
+- **Mathias Uhlén** (Science for Life Laboratory, KTH Royal Institute of Technology), corresponding author
+- **Cheng Zhang** (King's College London), corresponding author
 
 ## Testing and feedback
 

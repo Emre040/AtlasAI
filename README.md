@@ -103,10 +103,10 @@ are subject to the [Human Protein Atlas licence terms](https://www.proteinatlas.
 
 If you use AtlasAI, please cite the preprint:
 
-> Zhang C, Green E, von Feilitzen K, Johansson F, Forsberg M, Sumer Z, Song X, Liao X, Li M,
-> Altay Ö, Yang H, Zhang T, Kong X, Li X, Mardinoglu A, Uhlén M. *AtlasAI: Multi-Agent Reasoning
+> Green E, von Feilitzen K, Johansson F, Forsberg M, Sumer Z, Song X, Liao X, Li M, Altay Ö,
+> Yang H, Zhang T, Kong X, Li X, Mardinoglu A, Uhlén M\*, Zhang C\*. *AtlasAI: Multi-Agent Reasoning
 > for Knowledge Discovery in the Human Protein Atlas.* Research Square (2026).
-> <https://doi.org/10.21203/rs.3.rs-9452188/v1>
+> <https://doi.org/10.21203/rs.3.rs-9452188/v1> (\* corresponding authors)
 
 `CITATION.cff` carries the same reference in machine-readable form.
 

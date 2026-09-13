@@ -158,6 +158,7 @@ How a study goes:
 2. A set of ${entity}s comes from ${search}; its rows come from investigator_hpa with from=<that artifact's id> and the question. Both run in the background and return tables that are used as they are.
 3. Operations run as steps of run, written as chains: every step whose inputs are known goes in one run call, later steps naming earlier ones as @id (explode, then aggregate the counts, then the chart; filter, then rank, then the table), each step named with a title and a description a reader understands. One run per analysis, one turn; a run of one step is only for a step whose next step needs its result seen first. Independent chains go in the same turn. The operations and their arguments are listed below.
 4. finish delivers the report from the data: tables and figures by id, and findings as claims, each bound to the rows and columns it rests on. The report prints those cells beside the claim, so every number a claim states is among them or was computed into an artifact the claim cites. Limitations state what the evidence cannot establish, in words. A plan item that cannot be delivered goes in not_done with the reason. Three things are never computed, whatever the question asks and whatever formula it gives: a blank read as a zero or an absence (it is a missing record); a quantity of a kind the atlas does not measure made from one it does (an absolute amount or count of molecules, copies or cells, a concentration, a mass, a ratio of levels from different assays); and a cause, a benefit or a best choice read from an association. Each is a not_done item with the reason and a limitation, and the descriptive results are delivered.
+A ${entity} is its id: counts, groupings and joins of ${entity}s go by the id column, never by the name, which two ${entity}s can share or lack. A universe the question defines (the ${entity}s present in both sets, those measured in every cohort) is built first with an operation, separately per group when the groups differ, and every count is taken over it.
 Values are reported as recorded: units, zeros, blanks, repeated rows and ties. A blank is a record the source lacks: not a zero, and not an absence of the thing measured. The report states what the atlas records and what the operations computed from it; a quantity the atlas does not measure is not derived from a stand-in, it is named in limitations as not identified by this data.`;
 }
 
@@ -563,6 +564,20 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
         // A statistic of a column is named after both (mean_value), so two aggregates joined
         // side by side stay told apart: a bare "mean" and "mean_2" once had a study report two
         // tissues' means the wrong way round. count is rows and keeps its name.
+        // Grouping by the entity's name merges entities that share one: the result says so, and
+        // the study decides. Nothing is regrouped for it.
+        {
+          const groups = [...(Array.isArray(args.group_by_columns) ? args.group_by_columns : []), ...(args.group_by ? String(args.group_by).split(',').map(g => g.trim()) : [])].map(g => g.toLowerCase());
+          const [nameKey, idKey] = identity.keys;
+          if (groups.includes(nameKey.toLowerCase()) && !groups.includes(idKey.toLowerCase())) {
+            const input = rowsOf('artifact');
+            if (input.length && idKey in input[0]) {
+              const filled = input.filter(r => r[idKey] !== null && r[idKey] !== undefined && String(r[idKey]).trim() !== '');
+              const ids = new Set(filled.map(r => String(r[idKey]))), names = new Set(filled.map(r => String(r[nameKey] ?? '')));
+              if (ids.size > names.size) remember(`aggregate grouped by ${nameKey}: ${ids.size - names.size} ${identity.entity}s share a name with another and were merged; group_by ${idKey} keeps them apart`);
+            }
+          }
+        }
         if (args.column && out.rows) {
           const metrics = (Array.isArray(args.metrics) ? args.metrics : [args.metrics]).map(m => String(m).toLowerCase()).filter(m => m !== 'count');
           const renamed = Object.fromEntries(metrics.map(m => [m, `${m}_${args.column}`]));

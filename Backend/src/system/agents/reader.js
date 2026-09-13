@@ -147,6 +147,16 @@ ${COPY_RULE} Quote from section text you opened, never from link labels or from 
 const RETRY = `You are fixing citations in an answer about the Human Protein Atlas. The answer text stays as it is; only the citations named below change. ${COPY_RULE} Copy from the page text shown to you, not from memory.
 Reply with JSON only: {"citations": [{"n": <number>, "page": <page number>, "quote": "<exact span>" or ["<span>", "<span>"]}], "drop": [<numbers of citations that cannot be copied from the text shown>]}.`;
 
+// An answer whose sentences carry no citation marker at all, with citations given, goes back once
+// for the markers alone: the words stay, each sentence gets the number of the citation it rests on.
+const MARKERS = `You are placing citation markers in an answer about the Human Protein Atlas. The answer text and its citations stay exactly as they are; only the markers are added: each sentence ends with the number of the citation it rests on, written as [n], and a sentence no citation supports is left without one.
+Reply with JSON only: {"text": "<the same text, with the markers>"}.`;
+function markersPrompt(question, answer) {
+  return [`Question: ${question}`, `The answer, whose words stay as they are:\n${normalize(answer.text)}`, '', 'Its citations:', ...answer.citations.map(c => `[${c?.n}] on page ${c?.page}: ${JSON.stringify(Array.isArray(c?.quote) ? c.quote.join(' […] ') : String(c?.quote ?? ''))}`), '', 'Return the text with a marker at the end of each sentence.'].join('\n');
+}
+// The words of a text, markers and punctuation aside: what a marker pass must leave unchanged.
+const words = text => String(text ?? '').replace(/\[\d+\]/g, ' ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().toLowerCase();
+
 function describe(state, opened) {
   const lines = [];
   state.pages.forEach((page, p) => {
@@ -269,6 +279,12 @@ async function readerAnswer(question, { onStep, fetchPage = fetchHtml, ask = jso
   // the page's text around the spot they came from, up to MAX_RETRIES rounds.
   const settle = async reply => {
     let answer = { text: String(reply?.answer?.text ?? ''), citations: Array.isArray(reply?.answer?.citations) ? reply.answer.citations : [], not_found: reply?.answer?.not_found };
+    if (answer.citations.length && answer.text.trim() && !/\[\d+\]/.test(answer.text)) {
+      await onStep?.({ stage: 'planning_step', label: 'Sent back', message: 'the answer carries no citation markers: sent back for the markers, the words unchanged' });
+      const marked = await ask(MARKERS, markersPrompt(q, answer), onStep, 'reader markers', stats);
+      const text = String(marked?.text ?? '');
+      if (/\[\d+\]/.test(text) && words(text) === words(answer.text)) answer = { ...answer, text };
+    }
     let checked = check({ answer }, state);
     for (let retry = 0; retry < MAX_RETRIES; retry += 1) {
       const failing = checked.rejected.filter(r => Number.isInteger(r.n));

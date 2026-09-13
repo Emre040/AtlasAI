@@ -676,6 +676,31 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
                 }
               }
             }
+            // A table with no column of entity ids holds no row of any entity point, whatever it
+            // lists: fetched for such points it is refused, naming the tables found so far that
+            // hold ids, unless a match column holds the points under one of their names (its
+            // vocabulary, or the spellings recorded at the source), or a where reads it whole.
+            if (supplied.length && supplyIdentities.size && !idCols.length) {
+              const matchCols = Array.isArray(match) ? match : match ? [match] : [];
+              const names = supplied.flatMap(p => [p, ...(aliases.get(String(p).trim()) || [])]).map(flat);
+              let holdsPoints = false, unknown = false;
+              for (const column of matchCols) {
+                const known = knownValuesOf(column);
+                if (Array.isArray(known)) { if (known.some(v => names.includes(flat(v)))) holdsPoints = true; continue; }
+                const spelled = await recordedSpellings(adapter, entry, column, supplied, memo);
+                if (!spelled) unknown = true;
+                else if (supplied.some(p => spelled.get(p)?.length)) holdsPoints = true;
+              }
+              if (!holdsPoints && !unknown && (matchCols.length || !args.where?.length)) {
+                const holders = [];
+                for (const file of found) {
+                  if (file === entry.file || holders.length >= 5) continue;
+                  const e = catalog.find(x => x.file === file);
+                  if (e && (await idColumns(adapter, e)).length) holders.push(file);
+                }
+                throw new Error(`${entry.file} holds no column of ${db.entity} ids: it lists ${namedColumns(entry.columns)}, and no row of it is a point's${matchCols.length ? `; ${matchCols.join(' and ')} holds none of the points` : ''}. A where reads it whole, without the list; the points' rows are in a table that holds ${db.entity} ids${holders.length ? `: ${holders.join(', ')}` : ' (the search names them)'}`);
+              }
+            }
             // A field naming no column is dropped with a note (a point is no column: the list reads
             // it); a fetch with no field left fails with the columns.
             if (Array.isArray(args.fields) && args.fields.length) {
@@ -714,18 +739,21 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
               history.push(`turn ${turn}: ${entry.file} holds ${db.entity} ids on both sides (${idCols.join(', ')}): the points are matched against both; the other side is other`);
               fetched = await fetchMatching({ adapter, entry, points: supplied, fields: args.fields, where: args.where, match: idCols, keys, aliases });
             }
-            else if (supplyIdentities.size) fetched = await fetchRows({ adapter, entry, supplied, resolved: supplyResolved, fields: args.fields, where: args.where, keys });
-            else if (['lookup', 'stream'].includes(entry.key) && supplyIdentities.size && args.where?.length) {
-              history.push(`turn ${turn}: ${entry.file} has no ${db.entity} rows for the list; read whole by the where`);
+            else if (supplyIdentities.size && !idCols.length && args.where?.length) {
+              // No column of ids: the table has no row for the list; the where reads it whole.
+              history.push(`turn ${turn}: ${entry.file} holds no ${db.entity} ids, so no row of the list; read whole by the where`);
               fetched = await fetchAll({ adapter, entry, fields: args.fields, where: args.where, keys });
             }
+            else if (supplyIdentities.size) fetched = await fetchRows({ adapter, entry, supplied, resolved: supplyResolved, fields: args.fields, where: args.where, keys });
             else throw new Error(`none of the points is a ${db.entity} of the release, and no column of ${entry.file} holds them; search a point to see where such values live, name the column with match, or fetch without the list`);
             const { rows, columns } = carried(fetched, supplied, supplyResolved, keys.columns);
             const table = { name: title, title, description, rows, columns, args: { table: entry.file, fields: fetched.fields, ...(args.where?.length ? { where: args.where } : {}), ...(fetched.match ? { match: fetched.match } : {}), ...(chained || {}) }, coverage: fetched.coverage, source_file: entry.file, effective, identity: fetched.identity_columns || [], identityKeys: fetched.identity_keys || {} };
             results.set(title, table);
             const c = fetched.coverage;
             // A filter that matched no row at all: the desk says where its values are recorded.
-            if (args.where?.length && ((supplied.length && !c.with_rows && c.no_match) || (!supplied.length && !c.rows))) {
+            // A table read whole beside a list (no ids in it) has the coverage of a whole read.
+            const whole = !('with_rows' in c);
+            if (args.where?.length && ((supplied.length && !whole && !c.with_rows && c.no_match) || ((!supplied.length || whole) && !c.rows))) {
               const notes = [];
               for (const clause of args.where) {
                 if (!clause || clause.value === null || clause.value === undefined) continue;
@@ -739,7 +767,7 @@ async function investigatorBulk(args, ctx = {}, adapter = require('../../hpa/gen
               }
               if (notes.length) history.push(`turn ${turn}: no row of ${entry.file} matched the where${args.where.length > 1 ? ` (all ${args.where.length} clauses at once)` : ''}: ${notes.join('. ')}`);
             }
-            const summary = supplied.length
+            const summary = supplied.length && !whole
               ? `${c.with_rows} points with rows${c.no_match ? `, ${c.no_match} with no row matching the filter${!c.with_rows && (args.where?.length || 0) > 1 ? ` (no row holds all ${args.where.length} clauses at once)` : ''}` : ''}${c.no_rows ? `, ${c.no_rows} with no row in the table` : ''}${c.not_in_release ? `, ${c.not_in_release} not in the release` : ''}`
               : `${count(c.rows)} of ${count(c.scanned)} rows selected`;
             history.push(`turn ${turn}: fetch${chained ? ` for the ${count(supplied.length)} values of "${chained.from}" ${chained.column}` : ''} → "${title}" (${count(table.rows.length)} rows; ${summary})`);

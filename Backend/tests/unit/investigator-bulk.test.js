@@ -224,6 +224,24 @@ test('a search that places no table not already found is nothing new, and two in
   assert.equal(requests.length, 4, 'the second fruitless search in a row ends the run before a fifth call');
 });
 
+test('a table with no column of gene ids is not fetched for gene points: the fetch is refused naming the tables found that hold ids, and a where reads it whole', async () => {
+  const { run, requests } = await investigator([
+    response(call('search', { words: ['liver'] })),
+    response(call('fetch', { title: 'Liver tissues', description: 'Tissues of the points in the liver organ', table: 'tissues.tsv', fields: ['Tissue', 'Organ'], match: 'Tissue' })),
+    response(call('fetch', { title: 'Liver organ', description: 'Tissues of the liver organ', table: 'tissues.tsv', fields: ['Tissue'], where: [{ column: 'Organ', op: '=', value: 'Liver & Gallbladder' }] })),
+    response(call('finish', { results: ['Liver organ'] }))
+  ]);
+  const result = await run({ points: ['EGFR', 'ERBB2'], question: 'the tissues of the liver organ' });
+  assert.equal(result.status, 'ok');
+  assert.equal(result.tables.length, 1);
+  assert.deepEqual(result.tables[0].rows, [{ Tissue: 'liver' }], 'the where reads the lookup whole; the list plays no part');
+  const desk3 = requests[2].messages[1].content;
+  assert.match(desk3, /turn 2: fetch\(.*\) failed: tissues\.tsv holds no column of gene ids: it lists Tissue, Organ, and no row of it is a point's; Tissue holds none of the points\. A where reads it whole, without the list; the points' rows are in a table that holds gene ids: rna_tissue_consensus\.tsv/);
+  const desk4 = requests[3].messages[1].content;
+  assert.match(desk4, /turn 3: tissues\.tsv holds no gene ids, so no row of the list; read whole by the where/);
+  assert.match(desk4, /fetch → "Liver organ" \(1 rows; 1 of 2 rows selected\)/);
+});
+
 const PAIRS = { file: 'interaction_consensus.tsv', key: 'stream', title: 'Interactions', description: 'Gene pairs', columns: ['ensembl_gene_id_1', 'ensembl_gene_id_2', 'datasets'], hpaVersion: 'test' };
 const PAIR_ROWS = [{ ensembl_gene_id_1: 'ENSG1', ensembl_gene_id_2: 'ENSG2', datasets: 'a' }, { ensembl_gene_id_1: 'ENSG3', ensembl_gene_id_2: 'ENSG1', datasets: 'b' }, { ensembl_gene_id_1: 'ENSG2', ensembl_gene_id_2: 'ENSG3', datasets: 'c' }];
 const withPairs = () => ({

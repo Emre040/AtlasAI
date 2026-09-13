@@ -210,6 +210,9 @@ async function run(values) {
       console.log(`${q.id}\t${same ? 'SAME' : rec.status === 'ok' ? 'DIFF' : 'FAIL'}\t${rec.tokens?.total ?? '-'} tok\t${rec.seconds.toFixed(1)}s\t${same ? '' : (rec.error || `- ${[...want].filter(c => !got.has(c)).join(' | ')} + ${[...got].filter(c => !want.has(c)).join(' | ')}`).slice(0, 220)}`);
     };
     const queue = [...todo];
+    // The first question runs alone so the local indexes (protein classes, per-tissue values)
+    // are built once; parallel runs then share them instead of each building its own.
+    if (Number(values.parallel) > 1 && queue.length) await runOne(queue.shift());
     await Promise.all(Array.from({ length: Number(values.parallel) }, async () => { while (queue.length) await runOne(queue.shift()); }));
     await writeJson(path.join(out, 'run.json'), { ...settings, finished_unix_ms: Date.now() });
   } finally { await session.end(); }

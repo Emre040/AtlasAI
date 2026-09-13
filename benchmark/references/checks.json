@@ -1,0 +1,77 @@
+{
+  "at": "2026-09-09T21:47:10.701Z",
+  "checks": [
+    {
+      "name": "master genes",
+      "value": 20162,
+      "expected": 20162,
+      "tolerance": 0,
+      "passed": true,
+      "sql": "SELECT count(*) AS value FROM proteinatlas"
+    },
+    {
+      "name": "drug-target class",
+      "value": 854,
+      "expected": 854,
+      "tolerance": 0,
+      "passed": true,
+      "sql": "SELECT count(*) AS value FROM proteinatlas WHERE contains(\"Protein class\", 'FDA approved drug targets')"
+    },
+    {
+      "name": "Q27 complete positive cohort",
+      "value": 214,
+      "expected": 214,
+      "tolerance": 0,
+      "passed": true,
+      "sql": "WITH r AS (SELECT \"Gene\", max(CASE WHEN \"Tissue\"='kidney' THEN try_cast(\"nTPM\" AS DOUBLE) END) k, max(CASE WHEN \"Tissue\"='colon' THEN try_cast(\"nTPM\" AS DOUBLE) END) c FROM rna_tissue_consensus GROUP BY \"Gene\"), p AS (SELECT \"Gene\", max(CASE WHEN \"Tissue\"='kidney' THEN try_cast(\"Intensity\" AS DOUBLE) END) k, max(CASE WHEN \"Tissue\"='colon' THEN try_cast(\"Intensity\" AS DOUBLE) END) c FROM ms_tissue GROUP BY \"Gene\"), es AS (SELECT m.\"Ensembl\", log2(r.k/r.c) x, log2(p.k/p.c) y FROM proteinatlas m JOIN r ON m.\"Ensembl\"=r.\"Gene\" JOIN p ON m.\"Ensembl\"=p.\"Gene\" WHERE contains(m.\"Protein class\", 'FDA approved drug targets') AND r.k>0 AND r.c>0 AND p.k>0 AND p.c>0) SELECT count(*) AS value FROM es"
+    },
+    {
+      "name": "Q27 Spearman",
+      "value": 0.5439843952804826,
+      "expected": 0.5439843952804825,
+      "tolerance": 1e-12,
+      "passed": true,
+      "sql": "WITH r AS (SELECT \"Gene\", max(CASE WHEN \"Tissue\"='kidney' THEN try_cast(\"nTPM\" AS DOUBLE) END) k, max(CASE WHEN \"Tissue\"='colon' THEN try_cast(\"nTPM\" AS DOUBLE) END) c FROM rna_tissue_consensus GROUP BY \"Gene\"), p AS (SELECT \"Gene\", max(CASE WHEN \"Tissue\"='kidney' THEN try_cast(\"Intensity\" AS DOUBLE) END) k, max(CASE WHEN \"Tissue\"='colon' THEN try_cast(\"Intensity\" AS DOUBLE) END) c FROM ms_tissue GROUP BY \"Gene\"), es AS (SELECT m.\"Ensembl\", log2(r.k/r.c) x, log2(p.k/p.c) y FROM proteinatlas m JOIN r ON m.\"Ensembl\"=r.\"Gene\" JOIN p ON m.\"Ensembl\"=p.\"Gene\" WHERE contains(m.\"Protein class\", 'FDA approved drug targets') AND r.k>0 AND r.c>0 AND p.k>0 AND p.c>0), ranks AS (SELECT rank() OVER (ORDER BY x)+(count(*) OVER (PARTITION BY x)-1)/2.0 rx,rank() OVER (ORDER BY y)+(count(*) OVER (PARTITION BY y)-1)/2.0 ry FROM es) SELECT corr(rx,ry) AS value FROM ranks"
+    },
+    {
+      "name": "Q28 shared measured genes",
+      "value": 6297,
+      "expected": 6297,
+      "tolerance": 0,
+      "passed": true,
+      "sql": "WITH v AS (SELECT \"Gene\", \"Cancer\", try_cast(\"logFC\" AS DOUBLE) fc, try_cast(\"p-value adjusted\" AS DOUBLE) p FROM cancer_cptac WHERE \"Cancer\" IN ('Colon AC','Lung AC','Ovary SC')), agg AS (SELECT \"Gene\",count(*) FILTER(WHERE fc IS NOT NULL AND p IS NOT NULL) n,count(*) FILTER(WHERE p<.01 AND fc>=.5) up,count(*) FILTER(WHERE p<.01 AND fc<=-.5) down FROM v WHERE \"Gene\" IN (SELECT \"Ensembl\" FROM proteinatlas) GROUP BY \"Gene\") SELECT count(*) AS value FROM agg WHERE n=3"
+    },
+    {
+      "name": "Q28 opposite significant changes",
+      "value": 44,
+      "expected": 44,
+      "tolerance": 0,
+      "passed": true,
+      "sql": "WITH v AS (SELECT \"Gene\", \"Cancer\", try_cast(\"logFC\" AS DOUBLE) fc, try_cast(\"p-value adjusted\" AS DOUBLE) p FROM cancer_cptac WHERE \"Cancer\" IN ('Colon AC','Lung AC','Ovary SC')), agg AS (SELECT \"Gene\",count(*) FILTER(WHERE fc IS NOT NULL AND p IS NOT NULL) n,count(*) FILTER(WHERE p<.01 AND fc>=.5) up,count(*) FILTER(WHERE p<.01 AND fc<=-.5) down FROM v WHERE \"Gene\" IN (SELECT \"Ensembl\" FROM proteinatlas) GROUP BY \"Gene\") SELECT count(*) AS value FROM agg WHERE n=3 AND up>0 AND down>0"
+    },
+    {
+      "name": "Q33 matched donors",
+      "value": 5,
+      "expected": 5,
+      "tolerance": 0,
+      "passed": true,
+      "sql": "SELECT count(*) AS value FROM (SELECT \"Donor\" FROM rna_immune_cell_sample WHERE \"Immune cell\" IN ('NK-cell','memory CD8 T-cell') GROUP BY \"Donor\" HAVING count(DISTINCT \"Immune cell\")=2)"
+    },
+    {
+      "name": "Q43 observed MS count",
+      "value": 4,
+      "expected": 4,
+      "tolerance": 0,
+      "passed": true,
+      "sql": "WITH chosen AS (SELECT m.\"Ensembl\" FROM proteinatlas m JOIN rna_tissue_consensus r ON m.\"Ensembl\"=r.\"Gene\" WHERE contains(m.\"Protein class\", 'Transcription factors') AND r.\"Tissue\"='colon' ORDER BY try_cast(r.\"nTPM\" AS DOUBLE) DESC,m.\"Ensembl\" LIMIT 20) SELECT count(*) AS value FROM chosen JOIN ms_tissue p ON chosen.\"Ensembl\"=p.\"Gene\" WHERE p.\"Tissue\"='colon' AND try_cast(p.\"Intensity\" AS DOUBLE) IS NOT NULL"
+    },
+    {
+      "name": "Q45 descriptive intersection",
+      "value": 5,
+      "expected": 5,
+      "tolerance": 0,
+      "passed": true,
+      "sql": "SELECT count(*) AS value FROM cancer_cptac c JOIN cancer_prognostic_data p ON c.\"Gene\"=p.\"Gene\" JOIN proteinatlas m ON c.\"Gene\"=m.\"Ensembl\" WHERE c.\"Cancer\"='Lung AC' AND try_cast(c.\"logFC\" AS DOUBLE)>=1 AND try_cast(c.\"p-value adjusted\" AS DOUBLE)<.01 AND p.\"Cancer\"='Lung Adenocarcinoma (TCGA)' AND coalesce(p.\"validated prognostic - unfavorable\",'')<>''"
+    }
+  ]
+}

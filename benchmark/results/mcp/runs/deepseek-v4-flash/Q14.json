@@ -1,0 +1,845 @@
+{
+  "id": "Q14",
+  "kind": "analysis",
+  "question": "Which transcription factors have cell type enriched RNA expression, and in which single cell types? Give the number of such transcription factors per cell type as a bar chart of the fifteen cell types with the most. For the cell type with the most, list its transcription factors with their nCPM, the distribution of their RNA tissue specificity categories as a bar chart, and which of them have a validated prognostic association in any TCGA cohort. Provide the table.",
+  "model": "deepseek-v4-flash",
+  "effort": null,
+  "turns": [
+    {
+      "turn": 1,
+      "ms": 4353,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 2627,
+        "completion_tokens": 626,
+        "total_tokens": 3253,
+        "prompt_tokens_details": {
+          "cached_tokens": 2432
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 511
+        },
+        "prompt_cache_hit_tokens": 2432,
+        "prompt_cache_miss_tokens": 195
+      },
+      "text": "I'll start by exploring the data structure and available fields for transcription factors and single-cell expression.",
+      "tool_uses": [
+        {
+          "name": "advanced_search",
+          "input": "{\"proteinClass\": \"Transcription factors\", \"maxResults\": 20}"
+        },
+        {
+          "name": "get_protein_info",
+          "input": "{\"gene\": \"TP53\"}"
+        }
+      ]
+    },
+    {
+      "turn": 2,
+      "ms": 11875,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 15173,
+        "completion_tokens": 1561,
+        "total_tokens": 16734,
+        "prompt_tokens_details": {
+          "cached_tokens": 3200
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1384
+        },
+        "prompt_cache_hit_tokens": 3200,
+        "prompt_cache_miss_tokens": 11973
+      },
+      "text": "Let me explore what data is available, particularly around single-cell/blood expression and nCPM values.",
+      "tool_uses": [
+        {
+          "name": "get_blood_expression",
+          "input": "{\"gene\": \"TP53\"}"
+        },
+        {
+          "name": "compare_expression_profiles",
+          "input": "{\"genes\": [\"TP53\", \"MYC\"], \"expressionType\": \"single_cell\"}"
+        },
+        {
+          "name": "get_protein_info",
+          "input": "{\"gene\": \"TP53\", \"format\": \"tsv\"}"
+        }
+      ]
+    },
+    {
+      "turn": 3,
+      "ms": 19128,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 33373,
+        "completion_tokens": 2383,
+        "total_tokens": 35756,
+        "prompt_tokens_details": {
+          "cached_tokens": 16640
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 2155
+        },
+        "prompt_cache_hit_tokens": 16640,
+        "prompt_cache_miss_tokens": 16733
+      },
+      "text": "Let me explore the data structure more, checking whether single-cell type expression fields are available and how the various endpoints behave.",
+      "tool_uses": [
+        {
+          "name": "get_protein_by_ensembl",
+          "input": "{\"ensemblId\": \"ENSG00000141510\", \"format\": \"tsv\"}"
+        },
+        {
+          "name": "get_subcellular_location",
+          "input": "{\"gene\": \"TP53\"}"
+        },
+        {
+          "name": "get_brain_expression",
+          "input": "{\"gene\": \"TP53\"}"
+        },
+        {
+          "name": "search_proteins",
+          "input": "{\"query\": \"MS4A1\", \"columns\": [\"Gene\", \"RNA single cell type specificity\", \"RNA cell type specificity\"]}"
+        }
+      ]
+    },
+    {
+      "turn": 4,
+      "ms": 34423,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 47896,
+        "completion_tokens": 4882,
+        "total_tokens": 52778,
+        "prompt_tokens_details": {
+          "cached_tokens": 35712
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 4518
+        },
+        "prompt_cache_hit_tokens": 35712,
+        "prompt_cache_miss_tokens": 12184
+      },
+      "text": "The full gene record (via `get_protein_by_ensembl`) contains single-cell-type RNA fields (specificity, nCPM) as well as tissue specificity and cancer prognostic columns. Let me investigate how to query these systematically.",
+      "tool_uses": [
+        {
+          "name": "advanced_search",
+          "input": "{\"proteinClass\": \"Transcription factors\", \"columns\": [\"Gene\", \"Protein class\"], \"format\": \"tsv\", \"maxResults\": 200}"
+        },
+        {
+          "name": "search_proteins",
+          "input": "{\"query\": \"GATA1\", \"columns\": [\"Gene\", \"Protein class\", \"RNA single cell type specificity\", \"RNA single cell type specific nCPM\", \"RNA tissue specificity\"]}"
+        },
+        {
+          "name": "batch_protein_lookup",
+          "input": "{\"genes\": [\"GATA1\", \"MYC\", \"TP53\"], \"columns\": [\"Gene\", \"Protein class\", \"RNA single cell type specificity\", \"RNA single cell type specific nCPM\", \"RNA tissue specificity\", \"Cancer prognostics - Breast Invasive Carcinoma (TCGA)\"]}"
+        },
+        {
+          "name": "get_pathology_data",
+          "input": "{\"gene\": \"TP53\"}"
+        }
+      ]
+    },
+    {
+      "turn": 5,
+      "ms": 38359,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 63845,
+        "completion_tokens": 5021,
+        "total_tokens": 68866,
+        "prompt_tokens_details": {
+          "cached_tokens": 52736
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 4760
+        },
+        "prompt_cache_hit_tokens": 52736,
+        "prompt_cache_miss_tokens": 11109
+      },
+      "text": "I need to understand the data access better. Let me probe what large tabular queries return and whether specific columns (single-cell type specificity, tissue specificity, protein class) can be retrieved together.",
+      "tool_uses": [
+        {
+          "name": "advanced_search",
+          "input": "{\"maxResults\": 5000, \"columns\": [\"Gene\", \"Ensembl\", \"Protein class\", \"RNA single cell type specificity\", \"RNA single cell type specific nCPM\", \"RNA tissue specificity\", \"RNA single nuclei brain specificity\"], \"format\": \"tsv\"}"
+        },
+        {
+          "name": "search_proteins",
+          "input": "{\"query\": \"transcription\", \"maxResults\": 5000, \"columns\": [\"Gene\", \"Ensembl\", \"Protein class\", \"RNA single cell type specificity\", \"RNA tissue specificity\"], \"format\": \"tsv\"}"
+        }
+      ]
+    },
+    {
+      "turn": 6,
+      "ms": 40857,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 70422,
+        "completion_tokens": 4886,
+        "total_tokens": 75308,
+        "prompt_tokens_details": {
+          "cached_tokens": 68864
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 4686
+        },
+        "prompt_cache_hit_tokens": 68864,
+        "prompt_cache_miss_tokens": 1558
+      },
+      "text": "Let me test how the `proteinClass` filter behaves with a different class to understand filtering semantics.",
+      "tool_uses": [
+        {
+          "name": "advanced_search",
+          "input": "{\"maxResults\": 10, \"proteinClass\": \"Enzymes\"}"
+        },
+        {
+          "name": "advanced_search",
+          "input": "{\"maxResults\": 10, \"proteinClass\": \"Transcription factors\", \"query\": \"GATA1\"}"
+        },
+        {
+          "name": "advanced_search",
+          "input": "{\"maxResults\": 10, \"query\": \"cell type enriched\"}"
+        }
+      ]
+    },
+    {
+      "turn": 7,
+      "ms": 35198,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 81987,
+        "completion_tokens": 4040,
+        "total_tokens": 86027,
+        "prompt_tokens_details": {
+          "cached_tokens": 75264
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 3812
+        },
+        "prompt_cache_hit_tokens": 75264,
+        "prompt_cache_miss_tokens": 6723
+      },
+      "text": "The `proteinClass` filter seems inconsistent. Let me examine full per-gene records (via Ensembl IDs) to understand the single-cell-type fields, and test the compare function's dataset options.",
+      "tool_uses": [
+        {
+          "name": "get_protein_by_ensembl",
+          "input": "{\"ensemblId\": \"ENSG00000102145\", \"format\": \"tsv\"}"
+        },
+        {
+          "name": "get_protein_by_ensembl",
+          "input": "{\"ensemblId\": \"ENSG00000169856\", \"format\": \"tsv\"}"
+        },
+        {
+          "name": "compare_expression_profiles",
+          "input": "{\"genes\": [\"TP53\", \"MYC\"], \"expressionType\": \"blood\"}"
+        }
+      ]
+    },
+    {
+      "turn": 8,
+      "ms": 16374,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 95451,
+        "completion_tokens": 2018,
+        "total_tokens": 97469,
+        "prompt_tokens_details": {
+          "cached_tokens": 86016
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1867
+        },
+        "prompt_cache_hit_tokens": 86016,
+        "prompt_cache_miss_tokens": 9435
+      },
+      "text": "I now understand the schema better: full records contain \"RNA single cell type specificity\"/specific nCPM fields. Let me verify whether the `proteinClass` filter actually isolates transcription factors.",
+      "tool_uses": [
+        {
+          "name": "advanced_search",
+          "input": "{\"maxResults\": 15, \"proteinClass\": \"Transcription factors\"}"
+        },
+        {
+          "name": "advanced_search",
+          "input": "{\"maxResults\": 5, \"proteinClass\": \"Plasma proteins\"}"
+        }
+      ]
+    },
+    {
+      "turn": 9,
+      "ms": 32766,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 109284,
+        "completion_tokens": 3795,
+        "total_tokens": 113079,
+        "prompt_tokens_details": {
+          "cached_tokens": 97408
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 3609
+        },
+        "prompt_cache_hit_tokens": 97408,
+        "prompt_cache_miss_tokens": 11876
+      },
+      "text": "Let me check what `get_tissue_expression` and `get_protein_classes` return for a gene, and test the `single_cell` comparison with genes that clearly have single-cell-type data.",
+      "tool_uses": [
+        {
+          "name": "get_tissue_expression",
+          "input": "{\"gene\": \"GATA1\"}"
+        },
+        {
+          "name": "get_protein_classes",
+          "input": "{\"gene\": \"GATA1\"}"
+        },
+        {
+          "name": "compare_expression_profiles",
+          "input": "{\"genes\": [\"GATA1\", \"ONECUT1\"], \"expressionType\": \"single_cell\"}"
+        }
+      ]
+    },
+    {
+      "turn": 10,
+      "ms": 22632,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 116126,
+        "completion_tokens": 2606,
+        "total_tokens": 118732,
+        "prompt_tokens_details": {
+          "cached_tokens": 113024
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 2467
+        },
+        "prompt_cache_hit_tokens": 113024,
+        "prompt_cache_miss_tokens": 3102
+      },
+      "text": "Let me test whether `search_proteins` can return gene lists by searching on protein class text and cell-type-enriched text.",
+      "tool_uses": [
+        {
+          "name": "search_proteins",
+          "input": "{\"query\": \"Transcription factors\", \"maxResults\": 100}"
+        },
+        {
+          "name": "search_proteins",
+          "input": "{\"query\": \"Enzymes\", \"maxResults\": 30}"
+        }
+      ]
+    },
+    {
+      "turn": 11,
+      "ms": 17880,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 130541,
+        "completion_tokens": 2035,
+        "total_tokens": 132576,
+        "prompt_tokens_details": {
+          "cached_tokens": 118656
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1797
+        },
+        "prompt_cache_hit_tokens": 118656,
+        "prompt_cache_miss_tokens": 11885
+      },
+      "text": "Let me test whether search endpoints can return single-cell-type columns when valid column names are used.",
+      "tool_uses": [
+        {
+          "name": "search_proteins",
+          "input": "{\"query\": \"GATA1\", \"columns\": [\"Gene\", \"RNA single cell type specificity\", \"RNA single cell type specific nCPM\"], \"format\": \"json\", \"maxResults\": 5}"
+        },
+        {
+          "name": "advanced_search",
+          "input": "{\"query\": \"Transcription factors\", \"columns\": [\"Gene\", \"RNA single cell type specificity\", \"RNA single cell type specific nCPM\", \"RNA tissue specificity\"], \"format\": \"json\", \"maxResults\": 10}"
+        }
+      ]
+    },
+    {
+      "turn": 12,
+      "ms": 19298,
+      "stop_reason": "stop",
+      "usage": {
+        "prompt_tokens": 102031,
+        "completion_tokens": 2113,
+        "total_tokens": 104144,
+        "prompt_tokens_details": {
+          "cached_tokens": 2560
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1102
+        },
+        "prompt_cache_hit_tokens": 2560,
+        "prompt_cache_miss_tokens": 99471
+      },
+      "text": "I have to be transparent about what I could and could not retrieve with the tools available, because the question asks for a **complete, database-wide enumeration** that the query interface in this environment does not support.\n\n## What I could verify (real data from the tools)\n\n**1. The schema exists for these analyses.** Each full gene record (via Ensembl lookup) contains:\n- `RNA single cell type specificity` (values such as *Cell type enriched*, *Cell type enhanced*, *Low cell type specificity*)\n- `RNA single cell type specific nCPM` (listing per-cell-type nCPM)\n- `RNA tissue specificity`\n- TCGA cancer-prognostic columns per cancer cohort\n\n**2. Transcription factors are identifiable as a protein class** (e.g., TAF1, SPI1, E2F1, TCF3, ATF2, POU4F1, TFAP4, STAT6, E2F7, POU1F1, SOX4, TP63, HOXA7, FOXA1, FOXA2, POU3F2, BATF, GATA1, etc.).\n\n**3. Verified example — GATA1 (a transcription factor):**\n- RNA single cell type specificity: **Cell type enhanced**, distribution *Detected in some*\n- Specific nCPM: **Megakaryocytes 315.3; Platelets 209.1; Erythrocyte progenitors 151.7; Megakaryocyte-Erythroid progenitors 80.7; Megakaryocyte progenitors 82.7; Late spermatids 44.8; Erythrocytes 34.7; Mast cells 32.3**\n- RNA tissue specificity: **Tissue enriched** (bone marrow, score 27)\n\n**4. Verified example — ONECUT1 (TF):** Cell type enhanced; highest nCPM in **Retinal horizontal cells (1041.8)**, then Cholangiocytes (278.1), Pancreatic duct cells (173.7), Pancreatic acinar cells (119.3), Hepatocytes (116.3), Retinal ganglion cells (100.4).\n\n**5. Negative control — TP53:** RNA single cell type specificity = **Low cell type specificity** (so it would *not* count as cell-type-enriched).\n\n## Why the full requested analysis could not be produced\n\nThe specific asks — (a) the number of cell-type-enriched TFs per single-cell type across the whole genome, (b) the 15 cell types with the most, (c) an exhaustive list with nCPM for the top cell type, (d) the distribution of their RNA tissue-specificity categories, and (e) which have validated TCGA prognostic associations — all require a **bulk table of all transcription factors together with their single-cell-type specificity and nCPM columns**.\n\nEvery attempt to obtain such a bulk view failed in this environment:\n- `advanced_search` with `proteinClass=Transcription factors` + the single-cell columns returned **empty arrays**.\n- `search_proteins`/`advanced_search` with column filtering for single-cell-type fields returned empty rows.\n- Large TSV exports of these fields returned blank output.\n- The `proteinClass` filter itself is unreliable (it returns hits where \"Transcription factors\" is one of several classes, and also mixes in non-TF \"transcription-related\" hits).\n\nIndividual per-gene lookups (the one route that works) cannot be scaled to all transcription factors within the call budget, and I cannot fabricate the missing counts.\n\n## Bottom line\n\n- I can confirm that **cell-type-enriched/enhanced transcription factors exist and that the HPA data model reports them with per-cell-type nCPM** (verified: GATA1 in megakaryocytes/platelets/erythroid lineage, ONECUT1 in retinal horizontal cells and pancreatic/ductal cells; TP53 is explicitly *not* cell-type enriched).\n- I **cannot** truthfully give the required genome-wide counts per cell type, the top-15 cell-type bar chart, the full TF table for the top cell type, the tissue-specificity-category bar chart, or the TCGA-prognostic subset, because the tools available here did not return a complete queryable dataset for that combination of filters and columns.\n\nIf the intended dataset were available in bulk, the analysis pipeline would be: filter genes to those whose `RNA single cell type specificity` = \"Cell type enriched\", cross-reference their protein class for \"Transcription factors\", tabulate per-cell-type counts from the `RNA single cell type specific nCPM` strings, then join each gene's tissue-specificity category and TCGA prognostic status. I did n",
+      "tool_uses": []
+    }
+  ],
+  "tool_calls": [
+    {
+      "turn": 1,
+      "name": "advanced_search",
+      "input": {
+        "proteinClass": "Transcription factors",
+        "maxResults": 20
+      },
+      "ms": 208,
+      "result_chars": 30036,
+      "truncated": true,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"TAF1\",\n    \"Gene synonym\": [\n      \"BA2R\",\n      \"CCG1\",\n      \"CCGS\",\n      \"DYT3\",\n      \"DYT3/TAF1\",\n      \"KAT4\",\n      \"NSCL2\",\n      \"TAF2A\",\n      \"TAFII250\"\n    ],\n    \"Ensembl\": \"ENSG00000147133\",\n    \"Gene description\": \"TATA-box binding protein associated factor 1\",\n    \"Uniprot\": [\n      \"P21675\"\n    ],\n    \"Chromosome\": \"X\",\n    \"Protein class\": [\n      \"Cancer-related genes\",\n      \"Disease related genes\",\n      \"Enzymes\",\n      \"Essential proteins\",\n      \"Human disease related genes\",\n      \"Potential drug targets\",\n      \"Predicted intracellular proteins\",\n "
+    },
+    {
+      "turn": 1,
+      "name": "get_protein_info",
+      "input": {
+        "gene": "TP53"
+      },
+      "ms": 161,
+      "result_chars": 19796,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"TP53\",\n    \"Gene synonym\": [\n      \"LFS1\",\n      \"p53\"\n    ],\n    \"Ensembl\": \"ENSG00000141510\",\n    \"Gene description\": \"Tumor protein p53\",\n    \"Uniprot\": [\n      \"P04637\"\n    ],\n    \"Chromosome\": \"17\",\n    \"Protein class\": [\n      \"Cancer-related genes\",\n      \"Disease related genes\",\n      \"Human disease related genes\",\n      \"Plasma proteins\",\n      \"Potential drug targets\",\n      \"Predicted intracellular proteins\",\n      \"Transcription factors\",\n      \"Transporters\"\n    ],\n    \"Evidence\": \"Evidence at protein level\"\n  },\n  {\n    \"Gene\": \"TP53INP1\",\n    \"Gene synonym\": ["
+    },
+    {
+      "turn": 2,
+      "name": "get_blood_expression",
+      "input": {
+        "gene": "TP53"
+      },
+      "ms": 187,
+      "result_chars": 20316,
+      "truncated": true,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"TP53\",\n    \"Ensembl\": \"ENSG00000141510\",\n    \"RNA blood cell specificity\": \"Low immune cell specificity\",\n    \"RNA blood cell distribution\": \"Detected in all\",\n    \"RNA blood cell specificity score\": null,\n    \"Blood RNA - basophil [nTPM]\": \"1.2\",\n    \"Blood RNA - classical monocyte [nTPM]\": \"21.2\",\n    \"Blood RNA - eosinophil [nTPM]\": \"3.4\",\n    \"Blood RNA - neutrophil [nTPM]\": \"2.4\",\n    \"Blood RNA - NK-cell [nTPM]\": \"17.7\"\n  },\n  {\n    \"Gene\": \"TP53INP1\",\n    \"Ensembl\": \"ENSG00000164938\",\n    \"RNA blood cell specificity\": \"Immune cell enhanced\",\n    \"RNA blood cell distri"
+    },
+    {
+      "turn": 2,
+      "name": "compare_expression_profiles",
+      "input": {
+        "genes": [
+          "TP53",
+          "MYC"
+        ],
+        "expressionType": "single_cell"
+      },
+      "ms": 420,
+      "result_chars": 223402,
+      "truncated": true,
+      "error": null,
+      "result_head": "{\n  \"expressionComparison\": [\n    {\n      \"gene\": \"TP53\",\n      \"expressionData\": [\n        {\n          \"Gene\": \"TP53\",\n          \"Ensembl\": \"ENSG00000141510\",\n          \"RNA tissue specificity\": \"Low tissue specificity\",\n          \"RNA tissue distribution\": \"Detected in all\",\n          \"RNA tissue specificity score\": null,\n          \"Tissue RNA - adipose tissue [nTPM]\": \"18.2\",\n          \"Tissue RNA - adrenal gland [nTPM]\": \"13.1\",\n          \"Tissue RNA - breast [nTPM]\": \"21.1\",\n          \"Tissue RNA - colon [nTPM]\": \"27.1\",\n          \"Tissue RNA - heart muscle [nTPM]\": \"10.7\",\n          \"Tis"
+    },
+    {
+      "turn": 2,
+      "name": "get_protein_info",
+      "input": {
+        "gene": "TP53",
+        "format": "tsv"
+      },
+      "ms": 163,
+      "result_chars": 9088,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\t\"Gene synonym\"\tEnsembl\t\"Gene description\"\tUniprot\tChromosome\t\"Protein class\"\tEvidence\nTP53\t\"LFS1, p53\"\tENSG00000141510\t\"Tumor protein p53\"\tP04637\t17\t\"Cancer-related genes, Disease related genes, Human disease related genes, Plasma proteins, Potential drug targets, Predicted intracellular proteins, Transcription factors, Transporters\"\t\"Evidence at protein level\"\nTP53INP1\t\"DKFZp434M1317, FLJ22139, P53DINP1, SIP, Teap, TP53INP1A, TP53INP1B\"\tENSG00000164938\t\"Tumor protein p53 inducible nuclear protein 1\"\tQ96A56\t8\t\"Predicted intracellular proteins\"\t\"Evidence at protein level\"\nTP53TG3\t\"P53TG3, "
+    },
+    {
+      "turn": 3,
+      "name": "get_protein_by_ensembl",
+      "input": {
+        "ensemblId": "ENSG00000141510",
+        "format": "tsv"
+      },
+      "ms": 74,
+      "result_chars": 6942,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\t\"Gene synonym\"\tEnsembl\t\"Gene description\"\tUniprot\tChromosome\tPosition\t\"Protein class\"\t\"Biological process\"\t\"Molecular function\"\t\"Disease involvement\"\tEvidence\t\"HPA evidence\"\t\"UniProt evidence\"\t\"NeXtProt evidence\"\t\"RNA tissue specificity\"\t\"RNA tissue distribution\"\t\"RNA tissue specificity score\"\t\"RNA tissue specific nTPM\"\t\"RNA single cell type specificity\"\t\"RNA single cell type distribution\"\t\"RNA single cell type specificity score\"\t\"RNA single cell type specific nCPM\"\t\"RNA single cell type group specificity\"\t\"RNA single cell type group distribution\"\t\"RNA single cell type group specificity s"
+    },
+    {
+      "turn": 3,
+      "name": "get_subcellular_location",
+      "input": {
+        "gene": "TP53"
+      },
+      "ms": 288,
+      "result_chars": 12890,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"TP53\",\n    \"Ensembl\": \"ENSG00000141510\",\n    \"Reliability (IF)\": \"Enhanced\",\n    \"Subcellular location\": [\n      \"Nucleoplasm\",\n      \"Vesicles\",\n      \"Cytosol\"\n    ],\n    \"Subcellular main location\": [\n      \"Nucleoplasm\"\n    ],\n    \"Subcellular additional location\": [\n      \"Vesicles\",\n      \"Cytosol\"\n    ]\n  },\n  {\n    \"Gene\": \"TP53INP1\",\n    \"Ensembl\": \"ENSG00000164938\",\n    \"Reliability (IF)\": \"Supported\",\n    \"Subcellular location\": [\n      \"Cytosol\"\n    ],\n    \"Subcellular main location\": [\n      \"Cytosol\"\n    ],\n    \"Subcellular additional location\": null\n  },\n  {\n "
+    },
+    {
+      "turn": 3,
+      "name": "get_brain_expression",
+      "input": {
+        "gene": "TP53"
+      },
+      "ms": 225,
+      "result_chars": 21249,
+      "truncated": true,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"TP53\",\n    \"Ensembl\": \"ENSG00000141510\",\n    \"RNA brain regional specificity\": \"Low region specificity\",\n    \"RNA brain regional distribution\": \"Detected in all\",\n    \"RNA brain regional specificity score\": null,\n    \"Brain RNA - amygdala [nTPM]\": \"29.8\",\n    \"Brain RNA - cerebellum [nTPM]\": \"29.6\",\n    \"Brain RNA - cerebral cortex [nTPM]\": \"32.0\",\n    \"Brain RNA - hippocampal formation [nTPM]\": \"29.1\",\n    \"Brain RNA - hypothalamus [nTPM]\": \"32.2\"\n  },\n  {\n    \"Gene\": \"TP53INP1\",\n    \"Ensembl\": \"ENSG00000164938\",\n    \"RNA brain regional specificity\": \"Low region specificity"
+    },
+    {
+      "turn": 3,
+      "name": "search_proteins",
+      "input": {
+        "query": "MS4A1",
+        "columns": [
+          "Gene",
+          "RNA single cell type specificity",
+          "RNA cell type specificity"
+        ]
+      },
+      "ms": 205,
+      "result_chars": 44,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  []\n]"
+    },
+    {
+      "turn": 4,
+      "name": "advanced_search",
+      "input": {
+        "proteinClass": "Transcription factors",
+        "columns": [
+          "Gene",
+          "Protein class"
+        ],
+        "format": "tsv",
+        "maxResults": 200
+      },
+      "ms": 189,
+      "result_chars": 69,
+      "truncated": false,
+      "error": null,
+      "result_head": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "turn": 4,
+      "name": "search_proteins",
+      "input": {
+        "query": "GATA1",
+        "columns": [
+          "Gene",
+          "Protein class",
+          "RNA single cell type specificity",
+          "RNA single cell type specific nCPM",
+          "RNA tissue specificity"
+        ]
+      },
+      "ms": 150,
+      "result_chars": 20,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  [],\n  [],\n  []\n]"
+    },
+    {
+      "turn": 4,
+      "name": "batch_protein_lookup",
+      "input": {
+        "genes": [
+          "GATA1",
+          "MYC",
+          "TP53"
+        ],
+        "columns": [
+          "Gene",
+          "Protein class",
+          "RNA single cell type specificity",
+          "RNA single cell type specific nCPM",
+          "RNA tissue specificity",
+          "Cancer prognostics - Breast Invasive Carcinoma (TCGA)"
+        ]
+      },
+      "ms": 374,
+      "result_chars": 118343,
+      "truncated": true,
+      "error": null,
+      "result_head": "{\n  \"batchResults\": [\n    {\n      \"gene\": \"GATA1\",\n      \"data\": [\n        {\n          \"Gene\": \"GATA1\",\n          \"Gene synonym\": [\n            \"ERYF1\",\n            \"GATA-1\",\n            \"GF1\",\n            \"NF-E1\",\n            \"NFE1\"\n          ],\n          \"Ensembl\": \"ENSG00000102145\",\n          \"Gene description\": \"GATA binding protein 1\",\n          \"Uniprot\": [\n            \"P15976\"\n          ],\n          \"Chromosome\": \"X\",\n          \"Protein class\": [\n            \"Cancer-related genes\",\n            \"Disease related genes\",\n            \"Human disease related genes\",\n            \"Predicted int"
+    },
+    {
+      "turn": 4,
+      "name": "get_pathology_data",
+      "input": {
+        "gene": "TP53"
+      },
+      "ms": 169,
+      "result_chars": 31198,
+      "truncated": true,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"TP53\",\n    \"Ensembl\": \"ENSG00000141510\",\n    \"Cancer prognostics - Breast Invasive Carcinoma (TCGA)\": {\n      \"prognostic type\": \"\",\n      \"prognostic\": \"unprognostic\",\n      \"is_prognostic\": false,\n      \"p_val\": \"2.13e-3\"\n    },\n    \"Cancer prognostics - Colon Adenocarcinoma (TCGA)\": {\n      \"prognostic type\": \"\",\n      \"prognostic\": \"unprognostic\",\n      \"is_prognostic\": false,\n      \"p_val\": \"4.64e-2\"\n    },\n    \"Cancer prognostics - Lung Adenocarcinoma (TCGA)\": {\n      \"prognostic type\": \"\",\n      \"prognostic\": \"unprognostic\",\n      \"is_prognostic\": false,\n      \"p_val\""
+    },
+    {
+      "turn": 5,
+      "name": "advanced_search",
+      "input": {
+        "maxResults": 5000,
+        "columns": [
+          "Gene",
+          "Ensembl",
+          "Protein class",
+          "RNA single cell type specificity",
+          "RNA single cell type specific nCPM",
+          "RNA tissue specificity",
+          "RNA single nuclei brain specificity"
+        ],
+        "format": "tsv"
+      },
+      "ms": 12111,
+      "result_chars": 20163,
+      "truncated": true,
+      "error": null,
+      "result_head": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "turn": 5,
+      "name": "search_proteins",
+      "input": {
+        "query": "transcription",
+        "maxResults": 5000,
+        "columns": [
+          "Gene",
+          "Ensembl",
+          "Protein class",
+          "RNA single cell type specificity",
+          "RNA tissue specificity"
+        ],
+        "format": "tsv"
+      },
+      "ms": 3092,
+      "result_chars": 4275,
+      "truncated": false,
+      "error": null,
+      "result_head": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "turn": 6,
+      "name": "advanced_search",
+      "input": {
+        "maxResults": 10,
+        "proteinClass": "Enzymes"
+      },
+      "ms": 181,
+      "result_chars": 17582,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"GSTA2\",\n    \"Gene synonym\": [\n      \"GST2\"\n    ],\n    \"Ensembl\": \"ENSG00000244067\",\n    \"Gene description\": \"Glutathione S-transferase alpha 2\",\n    \"Uniprot\": [\n      \"P09210\"\n    ],\n    \"Chromosome\": \"6\",\n    \"Protein class\": [\n      \"Enzymes\",\n      \"Metabolic proteins\",\n      \"Predicted intracellular proteins\"\n    ],\n    \"Evidence\": \"Evidence at protein level\"\n  },\n  {\n    \"Gene\": \"GSTA3\",\n    \"Gene synonym\": [],\n    \"Ensembl\": \"ENSG00000174156\",\n    \"Gene description\": \"Glutathione S-transferase alpha 3\",\n    \"Uniprot\": [\n      \"Q16772\"\n    ],\n    \"Chromosome\": \"6\",\n   "
+    },
+    {
+      "turn": 6,
+      "name": "advanced_search",
+      "input": {
+        "maxResults": 10,
+        "proteinClass": "Transcription factors",
+        "query": "GATA1"
+      },
+      "ms": 202,
+      "result_chars": 2,
+      "truncated": false,
+      "error": null,
+      "result_head": "[]"
+    },
+    {
+      "turn": 6,
+      "name": "advanced_search",
+      "input": {
+        "maxResults": 10,
+        "query": "cell type enriched"
+      },
+      "ms": 175,
+      "result_chars": 5254,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"ONECUT1\",\n    \"Gene synonym\": [\n      \"HNF-6\",\n      \"HNF6\",\n      \"HNF6A\"\n    ],\n    \"Ensembl\": \"ENSG00000169856\",\n    \"Gene description\": \"One cut homeobox 1\",\n    \"Uniprot\": [\n      \"Q9UBC0\"\n    ],\n    \"Chromosome\": \"15\",\n    \"Protein class\": [\n      \"Predicted intracellular proteins\",\n      \"Transcription factors\"\n    ],\n    \"Evidence\": \"Evidence at protein level\"\n  },\n  {\n    \"Gene\": \"RHEB\",\n    \"Gene synonym\": [\n      \"RHEB2\"\n    ],\n    \"Ensembl\": \"ENSG00000106615\",\n    \"Gene description\": \"Ras homolog, mTORC1 binding\",\n    \"Uniprot\": [\n      \"Q15382\"\n    ],\n    \"Chrom"
+    },
+    {
+      "turn": 7,
+      "name": "get_protein_by_ensembl",
+      "input": {
+        "ensemblId": "ENSG00000102145",
+        "format": "tsv"
+      },
+      "ms": 67,
+      "result_chars": 6445,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\t\"Gene synonym\"\tEnsembl\t\"Gene description\"\tUniprot\tChromosome\tPosition\t\"Protein class\"\t\"Biological process\"\t\"Molecular function\"\t\"Disease involvement\"\tEvidence\t\"HPA evidence\"\t\"UniProt evidence\"\t\"NeXtProt evidence\"\t\"RNA tissue specificity\"\t\"RNA tissue distribution\"\t\"RNA tissue specificity score\"\t\"RNA tissue specific nTPM\"\t\"RNA single cell type specificity\"\t\"RNA single cell type distribution\"\t\"RNA single cell type specificity score\"\t\"RNA single cell type specific nCPM\"\t\"RNA single cell type group specificity\"\t\"RNA single cell type group distribution\"\t\"RNA single cell type group specificity s"
+    },
+    {
+      "turn": 7,
+      "name": "get_protein_by_ensembl",
+      "input": {
+        "ensemblId": "ENSG00000169856",
+        "format": "tsv"
+      },
+      "ms": 52,
+      "result_chars": 6216,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\t\"Gene synonym\"\tEnsembl\t\"Gene description\"\tUniprot\tChromosome\tPosition\t\"Protein class\"\t\"Biological process\"\t\"Molecular function\"\t\"Disease involvement\"\tEvidence\t\"HPA evidence\"\t\"UniProt evidence\"\t\"NeXtProt evidence\"\t\"RNA tissue specificity\"\t\"RNA tissue distribution\"\t\"RNA tissue specificity score\"\t\"RNA tissue specific nTPM\"\t\"RNA single cell type specificity\"\t\"RNA single cell type distribution\"\t\"RNA single cell type specificity score\"\t\"RNA single cell type specific nCPM\"\t\"RNA single cell type group specificity\"\t\"RNA single cell type group distribution\"\t\"RNA single cell type group specificity s"
+    },
+    {
+      "turn": 7,
+      "name": "compare_expression_profiles",
+      "input": {
+        "genes": [
+          "TP53",
+          "MYC"
+        ],
+        "expressionType": "blood"
+      },
+      "ms": 444,
+      "result_chars": 106492,
+      "truncated": true,
+      "error": null,
+      "result_head": "{\n  \"expressionComparison\": [\n    {\n      \"gene\": \"TP53\",\n      \"expressionData\": [\n        {\n          \"Gene\": \"TP53\",\n          \"Ensembl\": \"ENSG00000141510\",\n          \"RNA blood cell specificity\": \"Low immune cell specificity\",\n          \"RNA blood cell distribution\": \"Detected in all\",\n          \"RNA blood cell specificity score\": null,\n          \"Blood RNA - basophil [nTPM]\": \"1.2\",\n          \"Blood RNA - classical monocyte [nTPM]\": \"21.2\",\n          \"Blood RNA - eosinophil [nTPM]\": \"3.4\",\n          \"Blood RNA - neutrophil [nTPM]\": \"2.4\",\n          \"Blood RNA - NK-cell [nTPM]\": \"17.7\"\n   "
+    },
+    {
+      "turn": 8,
+      "name": "advanced_search",
+      "input": {
+        "maxResults": 15,
+        "proteinClass": "Transcription factors"
+      },
+      "ms": 204,
+      "result_chars": 30036,
+      "truncated": true,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"TAF1\",\n    \"Gene synonym\": [\n      \"BA2R\",\n      \"CCG1\",\n      \"CCGS\",\n      \"DYT3\",\n      \"DYT3/TAF1\",\n      \"KAT4\",\n      \"NSCL2\",\n      \"TAF2A\",\n      \"TAFII250\"\n    ],\n    \"Ensembl\": \"ENSG00000147133\",\n    \"Gene description\": \"TATA-box binding protein associated factor 1\",\n    \"Uniprot\": [\n      \"P21675\"\n    ],\n    \"Chromosome\": \"X\",\n    \"Protein class\": [\n      \"Cancer-related genes\",\n      \"Disease related genes\",\n      \"Enzymes\",\n      \"Essential proteins\",\n      \"Human disease related genes\",\n      \"Potential drug targets\",\n      \"Predicted intracellular proteins\",\n "
+    },
+    {
+      "turn": 8,
+      "name": "advanced_search",
+      "input": {
+        "maxResults": 5,
+        "proteinClass": "Plasma proteins"
+      },
+      "ms": 239,
+      "result_chars": 69286,
+      "truncated": true,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"HLA-A\",\n    \"Gene synonym\": [],\n    \"Ensembl\": \"ENSG00000206503\",\n    \"Gene description\": \"Major histocompatibility complex, class I, A\",\n    \"Uniprot\": [\n      \"P04439\"\n    ],\n    \"Chromosome\": \"6\",\n    \"Protein class\": [\n      \"Cancer-related genes\",\n      \"Disease related genes\",\n      \"Human disease related genes\",\n      \"Plasma proteins\",\n      \"Potential drug targets\",\n      \"Predicted intracellular proteins\",\n      \"Predicted membrane proteins\",\n      \"Transporters\"\n    ],\n    \"Evidence\": \"Evidence at protein level\"\n  },\n  {\n    \"Gene\": \"HLA-DRB1\",\n    \"Gene synonym\":"
+    },
+    {
+      "turn": 9,
+      "name": "get_tissue_expression",
+      "input": {
+        "gene": "GATA1"
+      },
+      "ms": 192,
+      "result_chars": 2832,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"GATA1\",\n    \"Ensembl\": \"ENSG00000102145\",\n    \"RNA tissue specificity\": \"Tissue enriched\",\n    \"RNA tissue distribution\": \"Detected in some\",\n    \"RNA tissue specificity score\": \"27\",\n    \"Tissue RNA - adipose tissue [nTPM]\": \"0.2\",\n    \"Tissue RNA - adrenal gland [nTPM]\": \"0.1\",\n    \"Tissue RNA - breast [nTPM]\": \"0.1\",\n    \"Tissue RNA - colon [nTPM]\": \"0.2\",\n    \"Tissue RNA - heart muscle [nTPM]\": \"0.1\",\n    \"Tissue RNA - kidney [nTPM]\": \"0.2\",\n    \"Tissue RNA - liver [nTPM]\": \"0.3\",\n    \"Tissue RNA - lung [nTPM]\": \"2.0\",\n    \"Tissue RNA - ovary [nTPM]\": \"0.0\",\n    \"Tissue "
+    },
+    {
+      "turn": 9,
+      "name": "get_protein_classes",
+      "input": {
+        "gene": "GATA1"
+      },
+      "ms": 172,
+      "result_chars": 1376,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"GATA1\",\n    \"Ensembl\": \"ENSG00000102145\",\n    \"Protein class\": [\n      \"Cancer-related genes\",\n      \"Disease related genes\",\n      \"Human disease related genes\",\n      \"Predicted intracellular proteins\",\n      \"Transcription factors\"\n    ],\n    \"Biological process\": [\n      \"Transcription\",\n      \"Transcription regulation\"\n    ],\n    \"Molecular function\": [\n      \"Activator\",\n      \"DNA-binding\",\n      \"Repressor\"\n    ],\n    \"Evidence\": \"Evidence at protein level\"\n  },\n  {\n    \"Gene\": \"EDRF1\",\n    \"Ensembl\": \"ENSG00000107938\",\n    \"Protein class\": [\n      \"Predicted intrace"
+    },
+    {
+      "turn": 9,
+      "name": "compare_expression_profiles",
+      "input": {
+        "genes": [
+          "GATA1",
+          "ONECUT1"
+        ],
+        "expressionType": "single_cell"
+      },
+      "ms": 272,
+      "result_chars": 4523,
+      "truncated": false,
+      "error": null,
+      "result_head": "{\n  \"expressionComparison\": [\n    {\n      \"gene\": \"GATA1\",\n      \"expressionData\": [\n        {\n          \"Gene\": \"GATA1\",\n          \"Ensembl\": \"ENSG00000102145\",\n          \"RNA tissue specificity\": \"Tissue enriched\",\n          \"RNA tissue distribution\": \"Detected in some\",\n          \"RNA tissue specificity score\": \"27\",\n          \"Tissue RNA - adipose tissue [nTPM]\": \"0.2\",\n          \"Tissue RNA - adrenal gland [nTPM]\": \"0.1\",\n          \"Tissue RNA - breast [nTPM]\": \"0.1\",\n          \"Tissue RNA - colon [nTPM]\": \"0.2\",\n          \"Tissue RNA - heart muscle [nTPM]\": \"0.1\",\n          \"Tissue RNA -"
+    },
+    {
+      "turn": 10,
+      "name": "search_proteins",
+      "input": {
+        "query": "Transcription factors",
+        "maxResults": 100
+      },
+      "ms": 534,
+      "result_chars": 211724,
+      "truncated": true,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"ATF4\",\n    \"Gene synonym\": [\n      \"CREB-2\",\n      \"TAXREB67\",\n      \"TXREB\"\n    ],\n    \"Ensembl\": \"ENSG00000128272\",\n    \"Gene description\": \"Activating transcription factor 4\",\n    \"Uniprot\": [\n      \"P18848\"\n    ],\n    \"Chromosome\": \"22\",\n    \"Protein class\": [\n      \"Predicted intracellular proteins\",\n      \"Transcription factors\"\n    ],\n    \"Evidence\": \"Evidence at protein level\"\n  },\n  {\n    \"Gene\": \"TAF1\",\n    \"Gene synonym\": [\n      \"BA2R\",\n      \"CCG1\",\n      \"CCGS\",\n      \"DYT3\",\n      \"DYT3/TAF1\",\n      \"KAT4\",\n      \"NSCL2\",\n      \"TAF2A\",\n      \"TAFII250\"\n    ],"
+    },
+    {
+      "turn": 10,
+      "name": "search_proteins",
+      "input": {
+        "query": "Enzymes",
+        "maxResults": 30
+      },
+      "ms": 466,
+      "result_chars": 218128,
+      "truncated": true,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"UBE3B\",\n    \"Gene synonym\": [],\n    \"Ensembl\": \"ENSG00000151148\",\n    \"Gene description\": \"Ubiquitin protein ligase E3B\",\n    \"Uniprot\": [\n      \"Q7Z3V4\"\n    ],\n    \"Chromosome\": \"12\",\n    \"Protein class\": [\n      \"Disease related genes\",\n      \"Enzymes\",\n      \"Human disease related genes\",\n      \"Metabolic proteins\",\n      \"Potential drug targets\",\n      \"Predicted intracellular proteins\"\n    ],\n    \"Evidence\": \"Evidence at protein level\"\n  },\n  {\n    \"Gene\": \"AKR1C1\",\n    \"Gene synonym\": [\n      \"DD1\",\n      \"DDH\",\n      \"DDH1\",\n      \"HAKRC\",\n      \"MBAB\"\n    ],\n    \"Ens"
+    },
+    {
+      "turn": 11,
+      "name": "search_proteins",
+      "input": {
+        "query": "GATA1",
+        "columns": [
+          "Gene",
+          "RNA single cell type specificity",
+          "RNA single cell type specific nCPM"
+        ],
+        "format": "json",
+        "maxResults": 5
+      },
+      "ms": 151,
+      "result_chars": 20,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  [],\n  [],\n  []\n]"
+    },
+    {
+      "turn": 11,
+      "name": "advanced_search",
+      "input": {
+        "query": "Transcription factors",
+        "columns": [
+          "Gene",
+          "RNA single cell type specificity",
+          "RNA single cell type specific nCPM",
+          "RNA tissue specificity"
+        ],
+        "format": "json",
+        "maxResults": 10
+      },
+      "ms": 550,
+      "result_chars": 2918,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  []"
+    }
+  ],
+  "usage": {
+    "input_tokens": 868756,
+    "output_tokens": 35966,
+    "cache_read_input_tokens": 672512,
+    "cache_creation_input_tokens": 0,
+    "reasoning_tokens": 32668
+  },
+  "started_unix_ms": 1788893847284,
+  "final_answer": "I have to be transparent about what I could and could not retrieve with the tools available, because the question asks for a **complete, database-wide enumeration** that the query interface in this environment does not support.\n\n## What I could verify (real data from the tools)\n\n**1. The schema exists for these analyses.** Each full gene record (via Ensembl lookup) contains:\n- `RNA single cell type specificity` (values such as *Cell type enriched*, *Cell type enhanced*, *Low cell type specificity*)\n- `RNA single cell type specific nCPM` (listing per-cell-type nCPM)\n- `RNA tissue specificity`\n- TCGA cancer-prognostic columns per cancer cohort\n\n**2. Transcription factors are identifiable as a protein class** (e.g., TAF1, SPI1, E2F1, TCF3, ATF2, POU4F1, TFAP4, STAT6, E2F7, POU1F1, SOX4, TP63, HOXA7, FOXA1, FOXA2, POU3F2, BATF, GATA1, etc.).\n\n**3. Verified example — GATA1 (a transcription factor):**\n- RNA single cell type specificity: **Cell type enhanced**, distribution *Detected in some*\n- Specific nCPM: **Megakaryocytes 315.3; Platelets 209.1; Erythrocyte progenitors 151.7; Megakaryocyte-Erythroid progenitors 80.7; Megakaryocyte progenitors 82.7; Late spermatids 44.8; Erythrocytes 34.7; Mast cells 32.3**\n- RNA tissue specificity: **Tissue enriched** (bone marrow, score 27)\n\n**4. Verified example — ONECUT1 (TF):** Cell type enhanced; highest nCPM in **Retinal horizontal cells (1041.8)**, then Cholangiocytes (278.1), Pancreatic duct cells (173.7), Pancreatic acinar cells (119.3), Hepatocytes (116.3), Retinal ganglion cells (100.4).\n\n**5. Negative control — TP53:** RNA single cell type specificity = **Low cell type specificity** (so it would *not* count as cell-type-enriched).\n\n## Why the full requested analysis could not be produced\n\nThe specific asks — (a) the number of cell-type-enriched TFs per single-cell type across the whole genome, (b) the 15 cell types with the most, (c) an exhaustive list with nCPM for the top cell type, (d) the distribution of their RNA tissue-specificity categories, and (e) which have validated TCGA prognostic associations — all require a **bulk table of all transcription factors together with their single-cell-type specificity and nCPM columns**.\n\nEvery attempt to obtain such a bulk view failed in this environment:\n- `advanced_search` with `proteinClass=Transcription factors` + the single-cell columns returned **empty arrays**.\n- `search_proteins`/`advanced_search` with column filtering for single-cell-type fields returned empty rows.\n- Large TSV exports of these fields returned blank output.\n- The `proteinClass` filter itself is unreliable (it returns hits where \"Transcription factors\" is one of several classes, and also mixes in non-TF \"transcription-related\" hits).\n\nIndividual per-gene lookups (the one route that works) cannot be scaled to all transcription factors within the call budget, and I cannot fabricate the missing counts.\n\n## Bottom line\n\n- I can confirm that **cell-type-enriched/enhanced transcription factors exist and that the HPA data model reports them with per-cell-type nCPM** (verified: GATA1 in megakaryocytes/platelets/erythroid lineage, ONECUT1 in retinal horizontal cells and pancreatic/ductal cells; TP53 is explicitly *not* cell-type enriched).\n- I **cannot** truthfully give the required genome-wide counts per cell type, the top-15 cell-type bar chart, the full TF table for the top cell type, the tissue-specificity-category bar chart, or the TCGA-prognostic subset, because the tools available here did not return a complete queryable dataset for that combination of filters and columns.\n\nIf the intended dataset were available in bulk, the analysis pipeline would be: filter genes to those whose `RNA single cell type specificity` = \"Cell type enriched\", cross-reference their protein class for \"Transcription factors\", tabulate per-cell-type counts from the `RNA single cell type specific nCPM` strings, then join each gene's tissue-specificity category and TCGA prognostic status. I did not obtain a single complete gene list for that pipeline, so providing numerical answers would be guessing, which I won't do.",
+  "stop": "stop",
+  "tool_call_count": 30,
+  "seconds": 315.069,
+  "model_calls": 12,
+  "cost_usd": 0.439142928
+}

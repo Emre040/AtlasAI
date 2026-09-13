@@ -1,0 +1,214 @@
+{
+ "id": "Q8",
+ "kind": "analysis",
+ "question": "For proteins that have a blood concentration by both immunoassay and mass spectrometry, compute log10 of each concentration and plot immunoassay against mass spectrometry as a scatter coloured by secretome location. Then a diverging bar chart of the log10 ratio (immunoassay over mass spectrometry) for the fifteen most discordant proteins, and a bar chart of how many proteins fall in each secretome location. Provide the table.",
+ "model": "gpt-5.6-terra",
+ "effort": "low",
+ "turns": [
+  {
+   "turn": 1,
+   "ms": 1292,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 265,
+    "input_tokens_details": {
+     "cache_write_tokens": 0,
+     "cached_tokens": 0
+    },
+    "output_tokens": 27,
+    "output_tokens_details": {
+     "reasoning_tokens": 12
+    },
+    "total_tokens": 292
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "schema",
+     "input": "{}"
+    }
+   ]
+  },
+  {
+   "turn": 2,
+   "ms": 2627,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 5785,
+    "input_tokens_details": {
+     "cache_write_tokens": 5782,
+     "cached_tokens": 0
+    },
+    "output_tokens": 219,
+    "output_tokens_details": {
+     "reasoning_tokens": 63
+    },
+    "total_tokens": 6004
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT * FROM blood_immunoassay_concentration LIMIT 20\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT * FROM blood_ms_concentration LIMIT 20\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT Gene, \\\"Secretome location\\\", \\\"Blood concentration - Conc. blood IM [pg/L]\\\", \\\"Blood concentration - Conc. blood MS [pg/L]\\\" FROM proteinatlas WHERE \\\"Blood concentration - Conc. blood IM [pg/L]\\\" IS NOT NULL AND \\\"Blood concentration - Conc. blood MS [pg/L]\\\" IS NOT NULL LIMIT 20\"}"
+    }
+   ]
+  },
+  {
+   "turn": 3,
+   "ms": 5336,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 7328,
+    "input_tokens_details": {
+     "cache_write_tokens": 1543,
+     "cached_tokens": 5782
+    },
+    "output_tokens": 557,
+    "output_tokens_details": {
+     "reasoning_tokens": 111
+    },
+    "total_tokens": 7885
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH d AS (SELECT Gene, \\\"Secretome location\\\" AS secretome_location, TRY_CAST(\\\"Blood concentration - Conc. blood IM [pg/L]\\\" AS DOUBLE) AS im_pg_l, TRY_CAST(\\\"Blood concentration - Conc. blood MS [pg/L]\\\" AS DOUBLE) AS ms_pg_l FROM proteinatlas) SELECT COUNT(*) AS proteins, COUNT(DISTINCT secretome_location) AS locations FROM d WHERE im_pg_l > 0 AND ms_pg_l > 0\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH d AS (SELECT Gene, \\\"Secretome location\\\" AS secretome_location, TRY_CAST(\\\"Blood concentration - Conc. blood IM [pg/L]\\\" AS DOUBLE) AS im_pg_l, TRY_CAST(\\\"Blood concentration - Conc. blood MS [pg/L]\\\" AS DOUBLE) AS ms_pg_l FROM proteinatlas), x AS (SELECT *, log10(im_pg_l) AS log10_im, log10(ms_pg_l) AS log10_ms, log10(im_pg_l/ms_pg_l) AS log10_ratio FROM d WHERE im_pg_l > 0 AND ms_pg_l > 0) SELECT Gene, secretome_location, im_pg_l, ms_pg_l, log10_im, log10_ms, log10_ratio, abs(log10_ratio) AS absolute_log10_ratio FROM x ORDER BY abs(log10_ratio) DESC, Gene LIMIT 15\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH d AS (SELECT \\\"Secretome location\\\" AS secretome_location, TRY_CAST(\\\"Blood concentration - Conc. blood IM [pg/L]\\\" AS DOUBLE) AS im_pg_l, TRY_CAST(\\\"Blood concentration - Conc. blood MS [pg/L]\\\" AS DOUBLE) AS ms_pg_l FROM proteinatlas) SELECT coalesce(secretome_location, '(not annotated)') AS secretome_location, COUNT(*) AS protein_count FROM d WHERE im_pg_l > 0 AND ms_pg_l > 0 GROUP BY 1 ORDER BY protein_count DESC, secretome_location\"}"
+    }
+   ]
+  },
+  {
+   "turn": 4,
+   "ms": 19048,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 8726,
+    "input_tokens_details": {
+     "cache_write_tokens": 1398,
+     "cached_tokens": 7325
+    },
+    "output_tokens": 2513,
+    "output_tokens_details": {
+     "reasoning_tokens": 644
+    },
+    "total_tokens": 11239
+   },
+   "text": "## Results\n\nUsing the Human Protein Atlas `proteinatlas` blood-concentration fields, **316 proteins** had positive concentrations measured by **both** immunoassay and mass spectrometry.\n\nAll 316 are annotated with the same secretome location: **Secreted to blood**. Thus, the scatter has one colour category and the location-count chart has one bar.\n\nDefinitions:\n\n\\[\n\\log_{10}(\\mathrm{IM/MS})=\n\\log_{10}(\\mathrm{IM\\ concentration\\ [pg/L]})-\n\\log_{10}(\\mathrm{MS\\ concentration\\ [pg/L]})\n\\]\n\n“Most discordant” means greatest absolute value of \\(\\log_{10}(\\mathrm{IM/MS})\\).\n\n### Fifteen most discordant proteins\n\n| Rank | Gene | Secretome location | Immunoassay (pg/L) | Mass spectrometry (pg/L) | log10(IM) | log10(MS) | log10(IM/MS) |\n|---:|---|---|---:|---:|---:|---:|---:|\n| 1 | SERPINF2 | Secreted to blood | 11,900 | 31,000,000,000 | 4.075547 | 10.491362 | **−6.415815** |\n| 2 | CRISPLD2 | Secreted to blood | 219,000,000,000 | 1,400,000 | 11.340444 | 6.146128 | **5.194316** |\n| 3 | ITIH4 | Secreted to blood | 3,060,000 | 98,000,000,000 | 6.485721 | 10.991226 | **−4.505505** |\n| 4 | BMP4 | Secreted to blood | 162,000,000 | 5,800 | 8.209515 | 3.763428 | **4.446087** |\n| 5 | ITIH1 | Secreted to blood | 4,490,000 | 110,000,000,000 | 6.652246 | 11.041393 | **−4.389146** |\n| 6 | F12 | Secreted to blood | 1,040,000 | 10,000,000,000 | 6.017033 | 10.000000 | **−3.982967** |\n| 7 | C1QTNF1 | Secreted to blood | 314,000,000 | 35,000 | 8.496930 | 4.544068 | **3.952862** |\n| 8 | CXCL17 | Secreted to blood | 400,000,000 | 53,000 | 8.602060 | 4.724276 | **3.877784** |\n| 9 | AGT | Secreted to blood | 5,940,000 | 40,000,000,000 | 6.773786 | 10.602060 | **−3.828274** |\n| 10 | C1QTNF9 | Secreted to blood | 210,000,000 | 45,000 | 8.322219 | 4.653213 | **3.669006** |\n| 11 | CCK | Secreted to blood | 43,700,000 | 11,000 | 7.640481 | 4.041393 | **3.599089** |\n| 12 | NPY | Secreted to blood | 30,700,000 | 18,000 | 7.487138 | 4.255273 | **3.231866** |\n| 13 | BDNF | Secreted to blood | 16,000,000 | 12,000 | 7.204120 | 4.079181 | **3.124939** |\n| 14 | ANXA2 | Secreted to blood | 26,700,000,000 | 25,000,000 | 10.426511 | 7.397940 | **3.028571** |\n| 15 | AFP | Secreted to blood | 3,010,000 | 3,000,000,000 | 6.478566 | 9.477121 | **−2.998555** |\n\nNegative values indicate a higher mass-spectrometry concentration; positive values indicate a higher immunoassay concentration.\n\n### Proteins by secretome location\n\n| Secretome location | Protein count |\n|---|---:|\n| Secreted to blood | 316 |\n\n## Reproducible plotting code\n\nThis code produces: (1) the log-scale scatter plot, (2) a diverging bar chart for the 15 most discordant proteins, and (3) the secretome-location count bar chart.\n\n```python\nimport duckdb\nimport pandas as pd\nimport matplotlib.pyplot as plt\nimport seaborn as sns\n\n# `con` should be a DuckDB connection containing the HPA `proteinatlas` table.\n# For example: con = duckdb.connect(\"hpa.duckdb\")\n\nsql = \"\"\"\nWITH d AS (\n    SELECT\n        Gene AS gene,\n        \"Secretome location\" AS secretome_location,\n        TRY_CAST(\"Blood concentration - Conc. blood IM [pg/L]\" AS DOUBLE) AS im_pg_l,\n        TRY_CAST(\"Blood concentration - Conc. blood MS [pg/L]\" AS DOUBLE) AS ms_pg_l\n    FROM proteinatlas\n)\nSELECT\n    gene,\n    secretome_location,\n    im_pg_l,\n    ms_pg_l,\n    LOG10(im_pg_l) AS log10_im,\n    LOG10(ms_pg_l) AS log10_ms,\n    LOG10(im_pg_l / ms_pg_l) AS log10_im_over_ms\nFROM d\nWHERE im_pg_l > 0 AND ms_pg_l > 0\n\"\"\"\n\nd = con.execute(sql).df()\nd[\"secretome_location\"] = d[\"secretome_location\"].fillna(\"(not annotated)\")\nd[\"abs_log10_ratio\"] = d[\"log10_im_over_ms\"].abs()\n\n# 1. Scatter: immunoassay against mass spectrometry\nplt.figure(figsize=(8, 6))\nsns.scatterplot(\n    data=d,\n    x=\"log10_ms\",\n    y=\"log10_im\",\n    hue=\"secretome_location\",\n    s=45,\n    alpha=0.8\n)\nlims = [\n    min(d[\"log10_ms\"].min(), d[\"log10_im\"].min()),\n    max(d[\"log10_ms\"].max(), d[\"log10_im\"].max())\n]\nplt.plot(lims, lims, \"--\", color=\"black\", linewidth=1, label=\"IM = MS\")\nplt.xlim(lims)\npl",
+   "tool_uses": []
+  }
+ ],
+ "tool_calls": [
+  {
+   "turn": 1,
+   "name": "schema",
+   "input": {},
+   "ms": 36090,
+   "result_chars": 148152,
+   "truncated": true,
+   "error": null,
+   "result_head": "Tables built from the Human Protein Atlas bulk files (all columns are text; cast for arithmetic, e.g. TRY_CAST(col AS DOUBLE)).\n\nblood_immunoassay_concentration (0.1 MB): gene, ENSG ID, conc [pg/L], sample type, number_of_samples, pubmed id\nblood_ms_concentration (0.1 MB): Gene, ENSG ID, Conc [pg/L]\nblood_pea_disease_de (17.9 MB): Gene, ENSG ID, Disease, Class, Control, logFC, p-value adjusted, Seeds, Mean importance, SD importance, Max importance, Min importance\nblood_pea_diseases (0.0 MB): Disease, Class\ncancer_cancers (0.0 MB): Cancer, Organ\ncancer_cptac (5.7 MB): Cancer, Gene, Gene name, p"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT * FROM blood_immunoassay_concentration LIMIT 20"
+   },
+   "ms": 111,
+   "result_chars": 1074,
+   "truncated": false,
+   "error": null,
+   "result_head": "gene\tENSG ID\tconc [pg/L]\tsample type\tnumber_of_samples\tpubmed id\nA1BG\tENSG00000121410\t2.0E11\tPlasma\t10-100\t25276097\nA2M\tENSG00000175899\t9.5E11\tPlasma\t10-100\t22641612\nA2M\tENSG00000175899\t1.0E12\tSerum\t10-100\t22641612\nA2M\tENSG00000175899\t2.9E12\tSerum\t10-100\t29037141\nACE\tENSG00000159640\t9.4E7\tPlasma\t10-100\t22641612\nACE\tENSG00000159640\t8.0E7\tSerum\t10-100\t22641612\nACE\tENSG00000159640\t1.7E8\tSerum\t10-100\t28066203\nACE\tENSG00000159640\t7.3E7\tPlasma\t10-100\t30059342\nACE2\tENSG00000130234\t4.5E6\tSerum\t10-100\t36082632\nACP3\tENSG00000014257\t1.9E5\tPlasma\t10-100\t22641612\nACP3\tENSG00000014257\t7.3E5\tSerum\t10-100\t226"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT * FROM blood_ms_concentration LIMIT 20"
+   },
+   "ms": 82,
+   "result_chars": 602,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tENSG ID\tConc [pg/L]\nA1BG\tENSG00000121410\t8.8E10\nA2M\tENSG00000175899\t4.2E11\nA2ML1\tENSG00000166535\t1.2E7\nA4GALT\tENSG00000128274\t1.6E4\nAARS1\tENSG00000090861\t9.3E5\nAASS\tENSG00000008311\t2.0E4\nABAT\tENSG00000183044\t2.6E6\nABCD3\tENSG00000117528\t1.2E4\nABCE1\tENSG00000164163\t1.4E5\nABCF1\tENSG00000204574\t2.1E5\nABCF2\tENSG00000033050\t3.8E3\nABHD10\tENSG00000144827\t6.3E4\nABHD11\tENSG00000106077\t7.9E3\nABHD14A\tENSG00000248487\t1.0E5\nABHD14B\tENSG00000114779\t2.3E6\nABHD16A\tENSG00000204427\t1.6E4\nABI1\tENSG00000136754\t3.3E5\nABI3BP\tENSG00000154175\t8.4E7\nABLIM3\tENSG00000173210\t5.5E3\nABRACL\tENSG00000146386\t7.3E6\n[20 row"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT Gene, \"Secretome location\", \"Blood concentration - Conc. blood IM [pg/L]\", \"Blood concentration - Conc. blood MS [pg/L]\" FROM proteinatlas WHERE \"Blood concentration - Conc. blood IM [pg/L]\" IS NOT NULL AND \"Blood concentration - Conc. blood MS [pg/L]\" IS NOT NULL LIMIT 20"
+   },
+   "ms": 1945,
+   "result_chars": 962,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tSecretome location\tBlood concentration - Conc. blood IM [pg/L]\tBlood concentration - Conc. blood MS [pg/L]\nCFH\tSecreted to blood\t396000000000\t130000000000\nSEMA3F\tSecreted to blood\t1700000\t5500000\nTFPI\tSecreted to blood\t58100000\t88000000\nPON1\tSecreted to blood\t96000000000\t15000000000\nMASP2\tSecreted to blood\t340000000\t600000000\nCD6\tSecreted to blood\t5270000\t21000\nACP3\tSecreted to blood\t460000\t560000\nIGF1\tSecreted to blood\t103000000\t120000000\nHGF\tSecreted to blood\t4110000\t5600000\nFAS\tSecreted to blood\t11900000\t560000\nCD44\tSecreted to blood\t260000000\t200000000\nTNFRSF1B\tSecreted to blood\t32300"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "WITH d AS (SELECT Gene, \"Secretome location\" AS secretome_location, TRY_CAST(\"Blood concentration - Conc. blood IM [pg/L]\" AS DOUBLE) AS im_pg_l, TRY_CAST(\"Blood concentration - Conc. blood MS [pg/L]\" AS DOUBLE) AS ms_pg_l FROM proteinatlas) SELECT COUNT(*) AS proteins, COUNT(DISTINCT secretome_location) AS locations FROM d WHERE im_pg_l > 0 AND ms_pg_l > 0"
+   },
+   "ms": 2595,
+   "result_chars": 33,
+   "truncated": false,
+   "error": null,
+   "result_head": "proteins\tlocations\n316\t1\n[1 rows]"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "WITH d AS (SELECT Gene, \"Secretome location\" AS secretome_location, TRY_CAST(\"Blood concentration - Conc. blood IM [pg/L]\" AS DOUBLE) AS im_pg_l, TRY_CAST(\"Blood concentration - Conc. blood MS [pg/L]\" AS DOUBLE) AS ms_pg_l FROM proteinatlas), x AS (SELECT *, log10(im_pg_l) AS log10_im, log10(ms_pg_l) AS log10_ms, log10(im_pg_l/ms_pg_l) AS log10_ratio FROM d WHERE im_pg_l > 0 AND ms_pg_l > 0) SELECT Gene, secretome_location, im_pg_l, ms_pg_l, log10_im, log10_ms, log10_ratio, abs(log10_ratio) AS absolute_log10_ratio FROM x ORDER BY abs(log10_ratio) DESC, Gene LIMIT 15"
+   },
+   "ms": 5250,
+   "result_chars": 1814,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tsecretome_location\tim_pg_l\tms_pg_l\tlog10_im\tlog10_ms\tlog10_ratio\tabsolute_log10_ratio\nSERPINF2\tSecreted to blood\t11900\t31000000000\t4.075546961392531\t10.491361693834273\t-6.415814732441742\t6.415814732441742\nCRISPLD2\tSecreted to blood\t219000000000\t1400000\t11.340444114840118\t6.146128035678238\t5.19431607916188\t5.19431607916188\nITIH4\tSecreted to blood\t3060000\t98000000000\t6.48572142648158\t10.991226075692495\t-4.5055046492109145\t4.5055046492109145\nBMP4\tSecreted to blood\t162000000\t5800\t8.209515014542632\t3.7634279935629373\t4.446087020979694\t4.446087020979694\nITIH1\tSecreted to blood\t4490000\t110000000"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "WITH d AS (SELECT \"Secretome location\" AS secretome_location, TRY_CAST(\"Blood concentration - Conc. blood IM [pg/L]\" AS DOUBLE) AS im_pg_l, TRY_CAST(\"Blood concentration - Conc. blood MS [pg/L]\" AS DOUBLE) AS ms_pg_l FROM proteinatlas) SELECT coalesce(secretome_location, '(not annotated)') AS secretome_location, COUNT(*) AS protein_count FROM d WHERE im_pg_l > 0 AND ms_pg_l > 0 GROUP BY 1 ORDER BY protein_count DESC, secretome_location"
+   },
+   "ms": 4870,
+   "result_chars": 63,
+   "truncated": false,
+   "error": null,
+   "result_head": "secretome_location\tprotein_count\nSecreted to blood\t316\n[1 rows]"
+  }
+ ],
+ "usage": {
+  "input_tokens": 22104,
+  "output_tokens": 3316,
+  "cache_read_input_tokens": 13107,
+  "cache_creation_input_tokens": 0,
+  "reasoning_tokens": 830
+ },
+ "started_unix_ms": 1789298085042,
+ "final_answer": "## Results\n\nUsing the Human Protein Atlas `proteinatlas` blood-concentration fields, **316 proteins** had positive concentrations measured by **both** immunoassay and mass spectrometry.\n\nAll 316 are annotated with the same secretome location: **Secreted to blood**. Thus, the scatter has one colour category and the location-count chart has one bar.\n\nDefinitions:\n\n\\[\n\\log_{10}(\\mathrm{IM/MS})=\n\\log_{10}(\\mathrm{IM\\ concentration\\ [pg/L]})-\n\\log_{10}(\\mathrm{MS\\ concentration\\ [pg/L]})\n\\]\n\n“Most discordant” means greatest absolute value of \\(\\log_{10}(\\mathrm{IM/MS})\\).\n\n### Fifteen most discordant proteins\n\n| Rank | Gene | Secretome location | Immunoassay (pg/L) | Mass spectrometry (pg/L) | log10(IM) | log10(MS) | log10(IM/MS) |\n|---:|---|---|---:|---:|---:|---:|---:|\n| 1 | SERPINF2 | Secreted to blood | 11,900 | 31,000,000,000 | 4.075547 | 10.491362 | **−6.415815** |\n| 2 | CRISPLD2 | Secreted to blood | 219,000,000,000 | 1,400,000 | 11.340444 | 6.146128 | **5.194316** |\n| 3 | ITIH4 | Secreted to blood | 3,060,000 | 98,000,000,000 | 6.485721 | 10.991226 | **−4.505505** |\n| 4 | BMP4 | Secreted to blood | 162,000,000 | 5,800 | 8.209515 | 3.763428 | **4.446087** |\n| 5 | ITIH1 | Secreted to blood | 4,490,000 | 110,000,000,000 | 6.652246 | 11.041393 | **−4.389146** |\n| 6 | F12 | Secreted to blood | 1,040,000 | 10,000,000,000 | 6.017033 | 10.000000 | **−3.982967** |\n| 7 | C1QTNF1 | Secreted to blood | 314,000,000 | 35,000 | 8.496930 | 4.544068 | **3.952862** |\n| 8 | CXCL17 | Secreted to blood | 400,000,000 | 53,000 | 8.602060 | 4.724276 | **3.877784** |\n| 9 | AGT | Secreted to blood | 5,940,000 | 40,000,000,000 | 6.773786 | 10.602060 | **−3.828274** |\n| 10 | C1QTNF9 | Secreted to blood | 210,000,000 | 45,000 | 8.322219 | 4.653213 | **3.669006** |\n| 11 | CCK | Secreted to blood | 43,700,000 | 11,000 | 7.640481 | 4.041393 | **3.599089** |\n| 12 | NPY | Secreted to blood | 30,700,000 | 18,000 | 7.487138 | 4.255273 | **3.231866** |\n| 13 | BDNF | Secreted to blood | 16,000,000 | 12,000 | 7.204120 | 4.079181 | **3.124939** |\n| 14 | ANXA2 | Secreted to blood | 26,700,000,000 | 25,000,000 | 10.426511 | 7.397940 | **3.028571** |\n| 15 | AFP | Secreted to blood | 3,010,000 | 3,000,000,000 | 6.478566 | 9.477121 | **−2.998555** |\n\nNegative values indicate a higher mass-spectrometry concentration; positive values indicate a higher immunoassay concentration.\n\n### Proteins by secretome location\n\n| Secretome location | Protein count |\n|---|---:|\n| Secreted to blood | 316 |\n\n## Reproducible plotting code\n\nThis code produces: (1) the log-scale scatter plot, (2) a diverging bar chart for the 15 most discordant proteins, and (3) the secretome-location count bar chart.\n\n```python\nimport duckdb\nimport pandas as pd\nimport matplotlib.pyplot as plt\nimport seaborn as sns\n\n# `con` should be a DuckDB connection containing the HPA `proteinatlas` table.\n# For example: con = duckdb.connect(\"hpa.duckdb\")\n\nsql = \"\"\"\nWITH d AS (\n    SELECT\n        Gene AS gene,\n        \"Secretome location\" AS secretome_location,\n        TRY_CAST(\"Blood concentration - Conc. blood IM [pg/L]\" AS DOUBLE) AS im_pg_l,\n        TRY_CAST(\"Blood concentration - Conc. blood MS [pg/L]\" AS DOUBLE) AS ms_pg_l\n    FROM proteinatlas\n)\nSELECT\n    gene,\n    secretome_location,\n    im_pg_l,\n    ms_pg_l,\n    LOG10(im_pg_l) AS log10_im,\n    LOG10(ms_pg_l) AS log10_ms,\n    LOG10(im_pg_l / ms_pg_l) AS log10_im_over_ms\nFROM d\nWHERE im_pg_l > 0 AND ms_pg_l > 0\n\"\"\"\n\nd = con.execute(sql).df()\nd[\"secretome_location\"] = d[\"secretome_location\"].fillna(\"(not annotated)\")\nd[\"abs_log10_ratio\"] = d[\"log10_im_over_ms\"].abs()\n\n# 1. Scatter: immunoassay against mass spectrometry\nplt.figure(figsize=(8, 6))\nsns.scatterplot(\n    data=d,\n    x=\"log10_ms\",\n    y=\"log10_im\",\n    hue=\"secretome_location\",\n    s=45,\n    alpha=0.8\n)\nlims = [\n    min(d[\"log10_ms\"].min(), d[\"log10_im\"].min()),\n    max(d[\"log10_ms\"].max(), d[\"log10_im\"].max())\n]\nplt.plot(lims, lims, \"--\", color=\"black\", linewidth=1, label=\"IM = MS\")\nplt.xlim(lims)\nplt.ylim(lims)\nplt.xlabel(\"log10 mass-spectrometry concentration (pg/L)\")\nplt.ylabel(\"log10 immunoassay concentration (pg/L)\")\nplt.title(\"Blood concentrations: immunoassay versus mass spectrometry\")\nplt.tight_layout()\nplt.show()\n\n# 2. Diverging chart: 15 greatest absolute log10 ratios\ntop15 = (\n    d.sort_values([\"abs_log10_ratio\", \"gene\"], ascending=[False, True])\n     .head(15)\n     .sort_values(\"log10_im_over_ms\")\n)\n\nplt.figure(figsize=(9, 7))\ncolors = top15[\"log10_im_over_ms\"].map(\n    lambda x: \"#c44e52\" if x < 0 else \"#4c72b0\"\n)\nplt.barh(top15[\"gene\"], top15[\"log10_im_over_ms\"], color=colors)\nplt.axvline(0, color=\"black\", linewidth=0.8)\nplt.xlabel(\"log10(immunoassay / mass spectrometry)\")\nplt.ylabel(\"Gene\")\nplt.title(\"Fifteen most discordant blood concentrations\")\nplt.tight_layout()\nplt.show()\n\n# 3. Number of proteins per secretome location\nlocation_counts = (\n    d.groupby(\"secretome_location\", dropna=False)\n     .size()\n     .reset_index(name=\"protein_count\")\n     .sort_values(\"protein_count\", ascending=False)\n)\n\nplt.figure(figsize=(7, 4))\nsns.barplot(\n    data=location_counts,\n    x=\"secretome_location\",\n    y=\"protein_count\",\n    color=\"#55a868\"\n)\nplt.xlabel(\"Secretome location\")\nplt.ylabel(\"Number of proteins\")\nplt.title(\"Proteins with both blood-concentration measurements\")\nplt.tight_layout()\nplt.show()\n\nprint(location_counts)\nprint(top15[\n    [\"gene\", \"secretome_location\", \"im_pg_l\", \"ms_pg_l\",\n     \"log10_im\", \"log10_ms\", \"log10_im_over_ms\"]\n])\n```\n\nThe scatter’s sole colour category is expected from the data: all 316 overlapping proteins are **Secreted to blood**.",
+ "stop": "completed",
+ "tool_call_count": 7,
+ "seconds": 79.248,
+ "model_calls": 4,
+ "cost_usd": 0.08662139999999999
+}

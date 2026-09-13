@@ -1,0 +1,358 @@
+{
+ "id": "Q32",
+ "kind": "analysis",
+ "question": "Build a two-step interaction analysis around EGFR, ERBB2 and MET using HPA consensus interactions and Ensembl IDs. Treat edges as undirected, remove self-edges, deduplicate edges and restrict endpoints to genes in the atlas master table. Define the first layer as the union of the seeds' neighbours excluding all three seeds; define the second layer as nodes reached from the first layer excluding seeds and the entire first layer. Report both layer sizes, each seed's neighbour count before excluding the other seeds, and pairwise shared-neighbour counts. For each second-layer gene count distinct first-layer intermediaries connecting it to each seed. Rank twelve genes by the sum of those three intermediary counts, ties by Ensembl ID. Give the three counts, number of seeds reached, main subcellular locations, FDA approved drug-target status and validated favourable/unfavourable TCGA cohort counts for each. Draw the shared-neighbour heatmap, a seed-by-second-layer path-count heatmap and a ranked bar chart; provide the tables. If a requested ranked list has fewer eligible members, return every eligible member and state the count. Use Ensembl genes present in the HPA master table as the gene universe and break all gene-ranking ties by Ensembl ID.",
+ "model": "gpt-5.6-terra",
+ "effort": "low",
+ "turns": [
+  {
+   "turn": 1,
+   "ms": 933,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 425,
+    "input_tokens_details": {
+     "cache_write_tokens": 0,
+     "cached_tokens": 0
+    },
+    "output_tokens": 26,
+    "output_tokens_details": {
+     "reasoning_tokens": 11
+    },
+    "total_tokens": 451
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "schema",
+     "input": "{}"
+    }
+   ]
+  },
+  {
+   "turn": 2,
+   "ms": 6376,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 5944,
+    "input_tokens_details": {
+     "cache_write_tokens": 5941,
+     "cached_tokens": 0
+    },
+    "output_tokens": 721,
+    "output_tokens_details": {
+     "reasoning_tokens": 135
+    },
+    "total_tokens": 6665
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH universe AS (SELECT DISTINCT \\\"Ensembl\\\" AS id FROM proteinatlas WHERE \\\"Ensembl\\\" IS NOT NULL AND \\\"Ensembl\\\" <> ''), seeds AS (SELECT * FROM (VALUES ('ENSG00000146648','EGFR'),('ENSG00000141736','ERBB2'),('ENSG00000105976','MET')) AS t(id,symbol)), e0 AS (SELECT LEAST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,GREATEST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b FROM interaction_consensus i JOIN universe u1 ON i.ensembl_gene_id_1=u1.id JOIN universe u2 ON i.ensembl_gene_id_2=u2.id WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2), edges AS (SELECT DISTINCT a,b FROM e0), adj AS (SELECT a src,b dst FROM edges UNION ALL SELECT b,a FROM edges), n AS (SELECT s.id seed,a.dst node FROM seeds s JOIN adj a ON s.id=a.src), l1 AS (SELECT DISTINCT node id FROM n WHERE node NOT IN (SELECT id FROM seeds)), l2 AS (SELECT DISTINCT a.dst id FROM l1 JOIN adj a ON l1.id=a.src WHERE a.dst NOT IN (SELECT id FROM seeds) AND a.dst NOT IN (SELECT id FROM l1)), paths AS (SELECT l2.id, n.seed, COUNT(DISTINCT n.node) cnt FROM l2 JOIN n ON 1=1 JOIN adj a ON a.src=n.node AND a.dst=l2.id GROUP BY l2.id,n.seed), wide AS (SELECT l2.id, COALESCE(MAX(CASE WHEN seed='ENSG00000146648' THEN cnt END),0) egfr,COALESCE(MAX(CASE WHEN seed='ENSG00000141736' THEN cnt END),0) erbb2,COALESCE(MAX(CASE WHEN seed='ENSG00000105976' THEN cnt END),0) met FROM l2 LEFT JOIN paths USING(id)), r AS (SELECT *,egfr+erbb2+met total,(CASE WHEN egfr>0 THEN 1 ELSE 0 END)+(CASE WHEN erbb2>0 THEN 1 ELSE 0 END)+(CASE WHEN met>0 THEN 1 ELSE 0 END) seeds_reached FROM wide) SELECT r.id,p.\\\"Gene\\\" gene,r.egfr,r.erbb2,r.met,r.total,r.seeds_reached,p.\\\"Subcellular main location\\\",p.\\\"Protein class\\\" FROM r JOIN proteinatlas p ON r.id=p.\\\"Ensembl\\\" ORDER BY total DESC,id ASC LIMIT 12\"}"
+    }
+   ]
+  },
+  {
+   "turn": 3,
+   "ms": 9361,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 6776,
+    "input_tokens_details": {
+     "cache_write_tokens": 832,
+     "cached_tokens": 5941
+    },
+    "output_tokens": 613,
+    "output_tokens_details": {
+     "reasoning_tokens": 21
+    },
+    "total_tokens": 7389
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH universe AS (SELECT DISTINCT \\\"Ensembl\\\" AS id FROM proteinatlas WHERE \\\"Ensembl\\\" IS NOT NULL AND \\\"Ensembl\\\" <> ''), seeds AS (SELECT * FROM (VALUES ('ENSG00000146648','EGFR'),('ENSG00000141736','ERBB2'),('ENSG00000105976','MET')) AS t(id,symbol)), e0 AS (SELECT LEAST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,GREATEST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b FROM interaction_consensus i JOIN universe u1 ON i.ensembl_gene_id_1=u1.id JOIN universe u2 ON i.ensembl_gene_id_2=u2.id WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2), edges AS (SELECT DISTINCT a,b FROM e0), adj AS (SELECT a src,b dst FROM edges UNION ALL SELECT b,a FROM edges), n AS (SELECT s.id seed,a.dst node FROM seeds s JOIN adj a ON s.id=a.src), l1 AS (SELECT DISTINCT node id FROM n WHERE node NOT IN (SELECT id FROM seeds)), l2 AS (SELECT DISTINCT a.dst id FROM l1 JOIN adj a ON l1.id=a.src WHERE a.dst NOT IN (SELECT id FROM seeds) AND a.dst NOT IN (SELECT id FROM l1)), paths AS (SELECT l2.id, n.seed, COUNT(DISTINCT n.node) cnt FROM l2 JOIN n ON 1=1 JOIN adj a ON a.src=n.node AND a.dst=l2.id GROUP BY l2.id,n.seed), wide AS (SELECT l2.id, COALESCE(MAX(CASE WHEN seed='ENSG00000146648' THEN cnt END),0) egfr,COALESCE(MAX(CASE WHEN seed='ENSG00000141736' THEN cnt END),0) erbb2,COALESCE(MAX(CASE WHEN seed='ENSG00000105976' THEN cnt END),0) met FROM l2 LEFT JOIN paths USING(id) GROUP BY l2.id), r AS (SELECT *,egfr+erbb2+met total,(CASE WHEN egfr>0 THEN 1 ELSE 0 END)+(CASE WHEN erbb2>0 THEN 1 ELSE 0 END)+(CASE WHEN met>0 THEN 1 ELSE 0 END) seeds_reached FROM wide) SELECT r.id,p.\\\"Gene\\\" gene,r.egfr,r.erbb2,r.met,r.total,r.seeds_reached,p.\\\"Subcellular main location\\\",p.\\\"Protein class\\\" FROM r JOIN proteinatlas p ON r.id=p.\\\"Ensembl\\\" ORDER BY total DESC,id ASC LIMIT 12\"}"
+    }
+   ]
+  },
+  {
+   "turn": 4,
+   "ms": 5150,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 7994,
+    "input_tokens_details": {
+     "cache_write_tokens": 1218,
+     "cached_tokens": 6773
+    },
+    "output_tokens": 678,
+    "output_tokens_details": {
+     "reasoning_tokens": 68
+    },
+    "total_tokens": 8672
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH universe AS (SELECT DISTINCT \\\"Ensembl\\\" id FROM proteinatlas WHERE \\\"Ensembl\\\" IS NOT NULL AND \\\"Ensembl\\\"<>''), seeds AS (SELECT * FROM (VALUES ('ENSG00000146648','EGFR'),('ENSG00000141736','ERBB2'),('ENSG00000105976','MET')) t(id,symbol)), ed AS (SELECT DISTINCT LEAST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,GREATEST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b FROM interaction_consensus i JOIN universe x ON x.id=i.ensembl_gene_id_1 JOIN universe y ON y.id=i.ensembl_gene_id_2 WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2), adj AS (SELECT a src,b dst FROM ed UNION ALL SELECT b,a FROM ed), n AS (SELECT s.id seed,s.symbol,a.dst node FROM seeds s JOIN adj a ON a.src=s.id), l1 AS (SELECT DISTINCT node id FROM n WHERE node NOT IN (SELECT id FROM seeds)), l2 AS (SELECT DISTINCT a.dst id FROM l1 JOIN adj a ON a.src=l1.id WHERE a.dst NOT IN (SELECT id FROM seeds) AND a.dst NOT IN (SELECT id FROM l1)), pairs AS (SELECT x.symbol s1,y.symbol s2,COUNT(DISTINCT x.node) shared FROM n x JOIN n y ON x.node=y.node AND x.symbol<y.symbol) SELECT 'layer_sizes' metric, CAST((SELECT COUNT(*) FROM l1) AS VARCHAR)||'|'||CAST((SELECT COUNT(*) FROM l2) AS VARCHAR) value UNION ALL SELECT 'seed_neighbor_count',symbol||'|'||CAST(COUNT(DISTINCT node) AS VARCHAR) FROM n GROUP BY symbol UNION ALL SELECT 'shared_neighbors',s1||'|'||s2||'|'||CAST(shared AS VARCHAR) FROM pairs ORDER BY metric,value\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT Gene, Cancer, \\\"validated prognostic - favorable\\\" favorable, \\\"validated prognostic - unfavorable\\\" unfavorable FROM cancer_prognostic_data WHERE Gene IN ('YWHAE','FYN','YWHAG','BCAR1','IGF1R','YWHAH','TP53','BRAF','LRRK2','GAB2','FKBP5','CSNK2A1') ORDER BY Gene,Cancer LIMIT 2000\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT \\\"Gene\\\", \\\"Ensembl\\\", \\\"Subcellular main location\\\", \\\"Protein class\\\" FROM proteinatlas WHERE \\\"Gene\\\" IN ('EGFR','ERBB2','MET') ORDER BY \\\"Gene\\\"\"}"
+    }
+   ]
+  },
+  {
+   "turn": 5,
+   "ms": 4785,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 8960,
+    "input_tokens_details": {
+     "cache_write_tokens": 966,
+     "cached_tokens": 7991
+    },
+    "output_tokens": 736,
+    "output_tokens_details": {
+     "reasoning_tokens": 33
+    },
+    "total_tokens": 9696
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH universe AS (SELECT DISTINCT \\\"Ensembl\\\" id FROM proteinatlas WHERE \\\"Ensembl\\\" IS NOT NULL AND \\\"Ensembl\\\"<>''), seeds AS (SELECT * FROM (VALUES ('ENSG00000146648','EGFR'),('ENSG00000141736','ERBB2'),('ENSG00000105976','MET')) t(id,symbol)), ed AS (SELECT DISTINCT LEAST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,GREATEST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b FROM interaction_consensus i JOIN universe x ON x.id=i.ensembl_gene_id_1 JOIN universe y ON y.id=i.ensembl_gene_id_2 WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2), adj AS (SELECT a src,b dst FROM ed UNION ALL SELECT b,a FROM ed), n AS (SELECT s.id seed,s.symbol,a.dst node FROM seeds s JOIN adj a ON a.src=s.id), l1 AS (SELECT DISTINCT node id FROM n WHERE node NOT IN (SELECT id FROM seeds)), l2 AS (SELECT DISTINCT a.dst id FROM l1 JOIN adj a ON a.src=l1.id WHERE a.dst NOT IN (SELECT id FROM seeds) AND a.dst NOT IN (SELECT id FROM l1)), pairs AS (SELECT x.symbol s1,y.symbol s2,COUNT(DISTINCT x.node) shared FROM n x JOIN n y ON x.node=y.node AND x.symbol<y.symbol GROUP BY x.symbol,y.symbol) SELECT 'layer_sizes' AS metric, CAST((SELECT COUNT(*) FROM l1) AS VARCHAR)||'|'||CAST((SELECT COUNT(*) FROM l2) AS VARCHAR) AS val UNION ALL SELECT 'seed_neighbor_count',symbol||'|'||CAST(COUNT(DISTINCT node) AS VARCHAR) FROM n GROUP BY symbol UNION ALL SELECT 'shared_neighbors',s1||'|'||s2||'|'||CAST(shared AS VARCHAR) FROM pairs ORDER BY metric,val\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT \\\"Gene name\\\", Cancer, \\\"validated prognostic - favorable\\\" favorable, \\\"validated prognostic - unfavorable\\\" unfavorable FROM cancer_prognostic_data WHERE \\\"Gene name\\\" IN ('YWHAE','FYN','YWHAG','BCAR1','IGF1R','YWHAH','TP53','BRAF','LRRK2','GAB2','FKBP5','CSNK2A1') ORDER BY \\\"Gene name\\\",Cancer LIMIT 2000\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT \\\"Gene name\\\", COUNT(*) n, STRING_AGG(DISTINCT \\\"validated prognostic - favorable\\\",'|') fav_values, STRING_AGG(DISTINCT \\\"validated prognostic - unfavorable\\\",'|') unfav_values FROM cancer_prognostic_data WHERE \\\"Gene name\\\" IN ('YWHAE','FYN','YWHAG','BCAR1','IGF1R','YWHAH','TP53','BRAF','LRRK2','GAB2','FKBP5','CSNK2A1') GROUP BY \\\"Gene name\\\" ORDER BY \\\"Gene name\\\"\"}"
+    }
+   ]
+  },
+  {
+   "turn": 6,
+   "ms": 5270,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 16027,
+    "input_tokens_details": {
+     "cache_write_tokens": 7067,
+     "cached_tokens": 8957
+    },
+    "output_tokens": 562,
+    "output_tokens_details": {
+     "reasoning_tokens": 276
+    },
+    "total_tokens": 16589
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH r(gene) AS (VALUES ('YWHAE'),('FYN'),('YWHAG'),('BCAR1'),('IGF1R'),('YWHAH'),('TP53'),('BRAF'),('LRRK2'),('GAB2'),('FKBP5'),('CSNK2A1')) SELECT r.gene, COUNT(*) FILTER (WHERE c.Cancer LIKE '%(TCGA)' AND c.\\\"validated prognostic - favorable\\\" IS NOT NULL AND c.\\\"validated prognostic - favorable\\\" <> '') AS tcga_validated_favorable, COUNT(*) FILTER (WHERE c.Cancer LIKE '%(TCGA)' AND c.\\\"validated prognostic - unfavorable\\\" IS NOT NULL AND c.\\\"validated prognostic - unfavorable\\\" <> '') AS tcga_validated_unfavorable, COUNT(*) FILTER (WHERE c.\\\"validated prognostic - favorable\\\" IS NOT NULL AND c.\\\"validated prognostic - favorable\\\" <> '') AS all_cohorts_validated_favorable, COUNT(*) FILTER (WHERE c.\\\"validated prognostic - unfavorable\\\" IS NOT NULL AND c.\\\"validated prognostic - unfavorable\\\" <> '') AS all_cohorts_validated_unfavorable FROM r LEFT JOIN cancer_prognostic_data c ON c.\\\"Gene name\\\"=r.gene GROUP BY r.gene ORDER BY r.gene\"}"
+    }
+   ]
+  },
+  {
+   "turn": 7,
+   "ms": 16080,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 16779,
+    "input_tokens_details": {
+     "cache_write_tokens": 752,
+     "cached_tokens": 16024
+    },
+    "output_tokens": 1076,
+    "output_tokens_details": {
+     "reasoning_tokens": 479
+    },
+    "total_tokens": 17855
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH universe AS (SELECT DISTINCT \\\"Ensembl\\\" AS id FROM proteinatlas WHERE \\\"Ensembl\\\" IS NOT NULL AND \\\"Ensembl\\\" <> ''), seeds AS (SELECT * FROM (VALUES ('ENSG00000146648','EGFR'),('ENSG00000141736','ERBB2'),('ENSG00000105976','MET')) AS t(id,symbol)), e0 AS (SELECT LEAST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,GREATEST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b FROM interaction_consensus i JOIN universe u1 ON i.ensembl_gene_id_1=u1.id JOIN universe u2 ON i.ensembl_gene_id_2=u2.id WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2), edges AS (SELECT DISTINCT a,b FROM e0), adj AS (SELECT a src,b dst FROM edges UNION ALL SELECT b,a FROM edges), n AS (SELECT s.id seed,a.dst node FROM seeds s JOIN adj a ON s.id=a.src), l1 AS (SELECT DISTINCT node id FROM n WHERE node NOT IN (SELECT id FROM seeds)), l2 AS (SELECT DISTINCT a.dst id FROM l1 JOIN adj a ON l1.id=a.src WHERE a.dst NOT IN (SELECT id FROM seeds) AND a.dst NOT IN (SELECT id FROM l1)), paths AS (SELECT l2.id,n.seed,COUNT(DISTINCT n.node) cnt FROM l2 JOIN n ON 1=1 JOIN l1 f ON f.id=n.node JOIN adj a ON a.src=n.node AND a.dst=l2.id GROUP BY l2.id,n.seed), wide AS (SELECT l2.id,COALESCE(MAX(CASE WHEN seed='ENSG00000146648' THEN cnt END),0) egfr,COALESCE(MAX(CASE WHEN seed='ENSG00000141736' THEN cnt END),0) erbb2,COALESCE(MAX(CASE WHEN seed='ENSG00000105976' THEN cnt END),0) met FROM l2 LEFT JOIN paths USING(id) GROUP BY l2.id), r AS (SELECT *,egfr+erbb2+met total,(egfr>0)::INT+(erbb2>0)::INT+(met>0)::INT seeds_reached FROM wide) SELECT r.id,p.\\\"Gene\\\" gene,r.egfr,r.erbb2,r.met,r.total,r.seeds_reached,p.\\\"Subcellular main location\\\", CASE WHEN p.\\\"Protein class\\\" LIKE '%FDA approved drug targets%' THEN 'Yes' ELSE 'No' END FDA_target FROM r JOIN proteinatlas p ON r.id=p.\\\"Ensembl\\\" ORDER BY total DESC,id LIMIT 12\"}"
+    }
+   ]
+  },
+  {
+   "turn": 8,
+   "ms": 12382,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 18226,
+    "input_tokens_details": {
+     "cache_write_tokens": 1447,
+     "cached_tokens": 16776
+    },
+    "output_tokens": 1817,
+    "output_tokens_details": {
+     "reasoning_tokens": 92
+    },
+    "total_tokens": 20043
+   },
+   "text": "## Two-step HPA consensus-interaction analysis\n\n**Seeds (Ensembl):** EGFR **ENSG00000146648**, ERBB2 **ENSG00000141736**, MET **ENSG00000105976**.\n\nI treated consensus interactions as undirected; removed self-edges; canonicalized and deduplicated edges; and retained only edges for which **both endpoints are Ensembl genes in the HPA master (`proteinatlas`) table**. First-layer intermediaries exclude all seeds; second-layer genes exclude both seeds and the complete first layer. Path counts are numbers of **distinct first-layer intermediaries**.\n\n### Network layer and seed-neighbour summary\n\n| Measure | EGFR | ERBB2 | MET | Total / result |\n|---|---:|---:|---:|---:|\n| Seed neighbours, before excluding the other seeds | 187 | 32 | 6 | — |\n| First-layer size | — | — | — | **198** |\n| Second-layer size | — | — | — | **1,273** |\n\n### Shared-neighbour heatmap\n\nDiagonal cells are each seed’s unfiltered neighbour count; off-diagonal cells are pairwise counts of shared neighbours.\n\n|  | EGFR | ERBB2 | MET |\n|---|---:|---:|---:|\n| **EGFR** | **187** | 21 | 2 |\n| **ERBB2** | 21 | **32** | 2 |\n| **MET** | 2 | 2 | **6** |\n\n**Text heatmap** (larger number = darker):\n\n```text\n             EGFR     ERBB2     MET\nEGFR        █████ 187  ░░ 21    · 2\nERBB2       ░░ 21      █ 32     · 2\nMET         · 2         · 2      · 6\n```\n\n## Ranked second-layer genes\n\nAll **12 requested** positions were available. Rank is by the sum of EGFR, ERBB2, and MET two-step intermediary counts, descending; ties are resolved by Ensembl ID ascending.\n\n“FDA target” is **Yes** only where the HPA master-table protein-class annotation includes **“FDA approved drug targets.”** TCGA prognosis counts are counts of nonblank HPA **validated prognostic** results among cohorts labelled “(TCGA).”\n\n| Rank | Gene | Ensembl ID | EGFR paths | ERBB2 paths | MET paths | Sum | Seeds reached | Main subcellular location(s) | FDA target | Validated favourable TCGA cohorts | Validated unfavourable TCGA cohorts |\n|---:|---|---|---:|---:|---:|---:|---:|---|---|---:|---:|\n| 1 | YWHAE | ENSG00000108953 | 18 | 2 | 1 | **21** | 3 | Cytosol | No | 0 | 0 |\n| 2 | FYN | ENSG00000010810 | 10 | 5 | 2 | **17** | 3 | Plasma membrane | No | 2 | 0 |\n| 3 | YWHAG | ENSG00000170027 | 16 | 0 | 1 | **17** | 2 | Cytosol | No | 0 | 1 |\n| 4 | BCAR1 | ENSG00000050820 | 10 | 2 | 1 | **13** | 3 | Plasma membrane; Focal adhesion sites | No | 0 | 0 |\n| 5 | IGF1R | ENSG00000140443 | 9 | 4 | 0 | **13** | 2 | Nucleoli; Plasma membrane | Yes | 1 | 0 |\n| 6 | YWHAH | ENSG00000128245 | 11 | 0 | 0 | **11** | 1 | Cytosol | No | 0 | 0 |\n| 7 | TP53 | ENSG00000141510 | 9 | 2 | 0 | **11** | 2 | Nucleoplasm | No | 0 | 0 |\n| 8 | BRAF | ENSG00000157764 | 9 | 2 | 0 | **11** | 2 | Vesicles; Cytosol | Yes | 1 | 0 |\n| 9 | LRRK2 | ENSG00000188906 | 10 | 1 | 0 | **11** | 2 | Vesicles; Basal body | No | 0 | 0 |\n| 10 | GAB2 | ENSG00000033327 | 6 | 4 | 0 | **10** | 2 | Plasma membrane | No | 1 | 0 |\n| 11 | FKBP5 | ENSG00000096060 | 7 | 3 | 0 | **10** | 2 | Nucleoplasm | No | 0 | 0 |\n| 12 | CSNK2A1 | ENSG00000101266 | 5 | 4 | 1 | **10** | 3 | Nucleoplasm | No | 0 | 1 |\n\n## Seed-by-second-layer path-count heatmap\n\nCells give the exact count of distinct first-layer intermediaries forming seed → intermediary → second-layer-gene paths.\n\n| Seed \\ second-layer gene | YWHAE | FYN | YWHAG | BCAR1 | IGF1R | YWHAH | TP53 | BRAF | LRRK2 | GAB2 | FKBP5 | CSNK2A1 |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n| **EGFR** | 18 | 10 | 16 | 10 | 9 | 11 | 9 | 9 | 10 | 6 | 7 | 5 |\n| **ERBB2** | 2 | 5 | 0 | 2 | 4 | 0 | 2 | 2 | 1 | 4 | 3 | 4 |\n| **MET** | 1 | 2 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |\n\n```text\nPath-count intensity: 0 = ·, 1–2 = ░, 3–5 = ▒, 6–10 = ▓, 11–18 = █\n\nEGFR   █18  ▓10  █16  ▓10  ▓9  █11  ▓9  ▓9  ▓10  ▓6  ▓7  ▒5\nERBB2  ░2   ▒5   ·0   ░2   ▒4  ·0   ░2  ░2  ░1   ▒4  ▒3  ▒4\nMET    ░1   ░2   ░1   ░1   ·0   ·0   ·0  ·0  ·0   ·0   ·0   ░1\n```\n\n## Ranked bar chart — total two-step intermediary paths\n\n```text\nYWHAE     21 | █████",
+   "tool_uses": []
+  }
+ ],
+ "tool_calls": [
+  {
+   "turn": 1,
+   "name": "schema",
+   "input": {},
+   "ms": 29245,
+   "result_chars": 148152,
+   "truncated": true,
+   "error": null,
+   "result_head": "Tables built from the Human Protein Atlas bulk files (all columns are text; cast for arithmetic, e.g. TRY_CAST(col AS DOUBLE)).\n\nblood_immunoassay_concentration (0.1 MB): gene, ENSG ID, conc [pg/L], sample type, number_of_samples, pubmed id\nblood_ms_concentration (0.1 MB): Gene, ENSG ID, Conc [pg/L]\nblood_pea_disease_de (17.9 MB): Gene, ENSG ID, Disease, Class, Control, logFC, p-value adjusted, Seeds, Mean importance, SD importance, Max importance, Min importance\nblood_pea_diseases (0.0 MB): Disease, Class\ncancer_cancers (0.0 MB): Cancer, Organ\ncancer_cptac (5.7 MB): Cancer, Gene, Gene name, p"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "WITH universe AS (SELECT DISTINCT \"Ensembl\" AS id FROM proteinatlas WHERE \"Ensembl\" IS NOT NULL AND \"Ensembl\" <> ''), seeds AS (SELECT * FROM (VALUES ('ENSG00000146648','EGFR'),('ENSG00000141736','ERBB2'),('ENSG00000105976','MET')) AS t(id,symbol)), e0 AS (SELECT LEAST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,GREATEST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b FROM interaction_consensus i JOIN universe u1 ON i.ensembl_gene_id_1=u1.id JOIN universe u2 ON i.ensembl_gene_id_2=u2.id WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2), edges AS (SELECT DISTINCT a,b FROM e0), adj AS (SELECT a src,b dst FROM edges UNION ALL SELECT b,a FROM edges), n AS (SELECT s.id seed,a.dst node FROM seeds s JOIN adj a ON s.id=a.src), l1 AS (SELECT DISTINCT node id FROM n WHERE node NOT IN (SELECT id FROM seeds)), l2 AS (SELECT DISTINCT a.dst id FROM l1 JOIN adj a ON l1.id=a.src WHERE a.dst NOT IN (SELECT id FROM seeds) AND a.dst NOT IN (SELECT id FROM l1)), paths AS (SELECT l2.id, n.seed, COUNT(DISTINCT n.node) cnt FROM l2 JOIN n ON 1=1 JOIN adj a ON a.src=n.node AND a.dst=l2.id GROUP BY l2.id,n.seed), wide AS (SELECT l2.id, COALESCE(MAX(CASE WHEN seed='ENSG00000146648' THEN cnt END),0) egfr,COALESCE(MAX(CASE WHEN seed='ENSG00000141736' THEN cnt END),0) erbb2,COALESCE(MAX(CASE WHEN seed='ENSG00000105976' THEN cnt END),0) met FROM l2 LEFT JOIN paths USING(id)), r AS (SELECT *,egfr+erbb2+met total,(CASE WHEN egfr>0 THEN 1 ELSE 0 END)+(CASE WHEN erbb2>0 THEN 1 ELSE 0 END)+(CASE WHEN met>0 THEN 1 ELSE 0 END) seeds_reached FROM wide) SELECT r.id,p.\"Gene\" gene,r.egfr,r.erbb2,r.met,r.total,r.seeds_reached,p.\"Subcellular main location\",p.\"Protein class\" FROM r JOIN proteinatlas p ON r.id=p.\"Ensembl\" ORDER BY total DESC,id ASC LIMIT 12"
+   },
+   "ms": 373,
+   "result_chars": 423,
+   "truncated": false,
+   "error": "tool reported an error",
+   "result_head": "Error: Binder Error: column \"id\" must appear in the GROUP BY clause or must be part of an aggregate function.\nEither add it to the GROUP BY list, or use \"ANY_VALUE(id)\" if the exact value of \"id\" is not important.\n\nLINE 1: ....node AND a.dst=l2.id GROUP BY l2.id,n.seed), wide AS (SELECT l2.id, COALESCE(MAX(CASE WHEN seed='ENSG00000146648' THEN...\n                                                                         ^"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "WITH universe AS (SELECT DISTINCT \"Ensembl\" AS id FROM proteinatlas WHERE \"Ensembl\" IS NOT NULL AND \"Ensembl\" <> ''), seeds AS (SELECT * FROM (VALUES ('ENSG00000146648','EGFR'),('ENSG00000141736','ERBB2'),('ENSG00000105976','MET')) AS t(id,symbol)), e0 AS (SELECT LEAST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,GREATEST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b FROM interaction_consensus i JOIN universe u1 ON i.ensembl_gene_id_1=u1.id JOIN universe u2 ON i.ensembl_gene_id_2=u2.id WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2), edges AS (SELECT DISTINCT a,b FROM e0), adj AS (SELECT a src,b dst FROM edges UNION ALL SELECT b,a FROM edges), n AS (SELECT s.id seed,a.dst node FROM seeds s JOIN adj a ON s.id=a.src), l1 AS (SELECT DISTINCT node id FROM n WHERE node NOT IN (SELECT id FROM seeds)), l2 AS (SELECT DISTINCT a.dst id FROM l1 JOIN adj a ON l1.id=a.src WHERE a.dst NOT IN (SELECT id FROM seeds) AND a.dst NOT IN (SELECT id FROM l1)), paths AS (SELECT l2.id, n.seed, COUNT(DISTINCT n.node) cnt FROM l2 JOIN n ON 1=1 JOIN adj a ON a.src=n.node AND a.dst=l2.id GROUP BY l2.id,n.seed), wide AS (SELECT l2.id, COALESCE(MAX(CASE WHEN seed='ENSG00000146648' THEN cnt END),0) egfr,COALESCE(MAX(CASE WHEN seed='ENSG00000141736' THEN cnt END),0) erbb2,COALESCE(MAX(CASE WHEN seed='ENSG00000105976' THEN cnt END),0) met FROM l2 LEFT JOIN paths USING(id) GROUP BY l2.id), r AS (SELECT *,egfr+erbb2+met total,(CASE WHEN egfr>0 THEN 1 ELSE 0 END)+(CASE WHEN erbb2>0 THEN 1 ELSE 0 END)+(CASE WHEN met>0 THEN 1 ELSE 0 END) seeds_reached FROM wide) SELECT r.id,p.\"Gene\" gene,r.egfr,r.erbb2,r.met,r.total,r.seeds_reached,p.\"Subcellular main location\",p.\"Protein class\" FROM r JOIN proteinatlas p ON r.id=p.\"Ensembl\" ORDER BY total DESC,id ASC LIMIT 12"
+   },
+   "ms": 1682,
+   "result_chars": 2093,
+   "truncated": false,
+   "error": null,
+   "result_head": "id\tgene\tegfr\terbb2\tmet\ttotal\tseeds_reached\tSubcellular main location\tProtein class\nENSG00000108953\tYWHAE\t18\t2\t1\t21\t3\tCytosol\tCancer-related genes, Plasma proteins, Predicted intracellular proteins, Transporters\nENSG00000010810\tFYN\t10\t5\t2\t17\t3\tPlasma membrane\tEnzymes, Plasma proteins, Predicted intracellular proteins\nENSG00000170027\tYWHAG\t16\t0\t1\t17\t2\tCytosol\tDisease related genes, Human disease related genes, Plasma proteins, Predicted intracellular proteins\nENSG00000050820\tBCAR1\t10\t2\t1\t13\t3\tPlasma membrane, Focal adhesion sites\tPlasma proteins, Predicted intracellular proteins\nENSG00000140443\t"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "WITH universe AS (SELECT DISTINCT \"Ensembl\" id FROM proteinatlas WHERE \"Ensembl\" IS NOT NULL AND \"Ensembl\"<>''), seeds AS (SELECT * FROM (VALUES ('ENSG00000146648','EGFR'),('ENSG00000141736','ERBB2'),('ENSG00000105976','MET')) t(id,symbol)), ed AS (SELECT DISTINCT LEAST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,GREATEST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b FROM interaction_consensus i JOIN universe x ON x.id=i.ensembl_gene_id_1 JOIN universe y ON y.id=i.ensembl_gene_id_2 WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2), adj AS (SELECT a src,b dst FROM ed UNION ALL SELECT b,a FROM ed), n AS (SELECT s.id seed,s.symbol,a.dst node FROM seeds s JOIN adj a ON a.src=s.id), l1 AS (SELECT DISTINCT node id FROM n WHERE node NOT IN (SELECT id FROM seeds)), l2 AS (SELECT DISTINCT a.dst id FROM l1 JOIN adj a ON a.src=l1.id WHERE a.dst NOT IN (SELECT id FROM seeds) AND a.dst NOT IN (SELECT id FROM l1)), pairs AS (SELECT x.symbol s1,y.symbol s2,COUNT(DISTINCT x.node) shared FROM n x JOIN n y ON x.node=y.node AND x.symbol<y.symbol) SELECT 'layer_sizes' metric, CAST((SELECT COUNT(*) FROM l1) AS VARCHAR)||'|'||CAST((SELECT COUNT(*) FROM l2) AS VARCHAR) value UNION ALL SELECT 'seed_neighbor_count',symbol||'|'||CAST(COUNT(DISTINCT node) AS VARCHAR) FROM n GROUP BY symbol UNION ALL SELECT 'shared_neighbors',s1||'|'||s2||'|'||CAST(shared AS VARCHAR) FROM pairs ORDER BY metric,value"
+   },
+   "ms": 7,
+   "result_chars": 262,
+   "truncated": false,
+   "error": "tool reported an error",
+   "result_head": "Error: Parser Error: syntax error at or near \"value\"\n\nLINE 1: ...) AS VARCHAR)||'|'||CAST((SELECT COUNT(*) FROM l2) AS VARCHAR) value UNION ALL SELECT 'seed_neighbor_count',symbol||'|...\n                                                                          ^"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "SELECT Gene, Cancer, \"validated prognostic - favorable\" favorable, \"validated prognostic - unfavorable\" unfavorable FROM cancer_prognostic_data WHERE Gene IN ('YWHAE','FYN','YWHAG','BCAR1','IGF1R','YWHAH','TP53','BRAF','LRRK2','GAB2','FKBP5','CSNK2A1') ORDER BY Gene,Cancer LIMIT 2000"
+   },
+   "ms": 533,
+   "result_chars": 18,
+   "truncated": false,
+   "error": null,
+   "result_head": "(no rows)\n[0 rows]"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"Gene\", \"Ensembl\", \"Subcellular main location\", \"Protein class\" FROM proteinatlas WHERE \"Gene\" IN ('EGFR','ERBB2','MET') ORDER BY \"Gene\""
+   },
+   "ms": 757,
+   "result_chars": 914,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tEnsembl\tSubcellular main location\tProtein class\nEGFR\tENSG00000146648\tGolgi apparatus, Plasma membrane\tCancer-related genes, Disease related genes, Enzymes, FDA approved drug targets, Human disease related genes, Metabolic proteins, Plasma proteins, Predicted membrane proteins, Predicted secreted proteins, RAS pathway related proteins, Transporters\nERBB2\tENSG00000141736\tPlasma membrane\tCancer-related genes, CD markers, Disease related genes, Enzymes, FDA approved drug targets, Human disease related genes, Plasma proteins, Predicted intracellular proteins, Predicted membrane proteins, Trans"
+  },
+  {
+   "turn": 5,
+   "name": "sql",
+   "input": {
+    "query": "WITH universe AS (SELECT DISTINCT \"Ensembl\" id FROM proteinatlas WHERE \"Ensembl\" IS NOT NULL AND \"Ensembl\"<>''), seeds AS (SELECT * FROM (VALUES ('ENSG00000146648','EGFR'),('ENSG00000141736','ERBB2'),('ENSG00000105976','MET')) t(id,symbol)), ed AS (SELECT DISTINCT LEAST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,GREATEST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b FROM interaction_consensus i JOIN universe x ON x.id=i.ensembl_gene_id_1 JOIN universe y ON y.id=i.ensembl_gene_id_2 WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2), adj AS (SELECT a src,b dst FROM ed UNION ALL SELECT b,a FROM ed), n AS (SELECT s.id seed,s.symbol,a.dst node FROM seeds s JOIN adj a ON a.src=s.id), l1 AS (SELECT DISTINCT node id FROM n WHERE node NOT IN (SELECT id FROM seeds)), l2 AS (SELECT DISTINCT a.dst id FROM l1 JOIN adj a ON a.src=l1.id WHERE a.dst NOT IN (SELECT id FROM seeds) AND a.dst NOT IN (SELECT id FROM l1)), pairs AS (SELECT x.symbol s1,y.symbol s2,COUNT(DISTINCT x.node) shared FROM n x JOIN n y ON x.node=y.node AND x.symbol<y.symbol GROUP BY x.symbol,y.symbol) SELECT 'layer_sizes' AS metric, CAST((SELECT COUNT(*) FROM l1) AS VARCHAR)||'|'||CAST((SELECT COUNT(*) FROM l2) AS VARCHAR) AS val UNION ALL SELECT 'seed_neighbor_count',symbol||'|'||CAST(COUNT(DISTINCT node) AS VARCHAR) FROM n GROUP BY symbol UNION ALL SELECT 'shared_neighbors',s1||'|'||s2||'|'||CAST(shared AS VARCHAR) FROM pairs ORDER BY metric,val"
+   },
+   "ms": 901,
+   "result_chars": 212,
+   "truncated": false,
+   "error": null,
+   "result_head": "metric\tval\nlayer_sizes\t198|1273\nseed_neighbor_count\tEGFR|187\nseed_neighbor_count\tERBB2|32\nseed_neighbor_count\tMET|6\nshared_neighbors\tEGFR|ERBB2|21\nshared_neighbors\tEGFR|MET|2\nshared_neighbors\tERBB2|MET|2\n[7 rows]"
+  },
+  {
+   "turn": 5,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"Gene name\", Cancer, \"validated prognostic - favorable\" favorable, \"validated prognostic - unfavorable\" unfavorable FROM cancer_prognostic_data WHERE \"Gene name\" IN ('YWHAE','FYN','YWHAG','BCAR1','IGF1R','YWHAH','TP53','BRAF','LRRK2','GAB2','FKBP5','CSNK2A1') ORDER BY \"Gene name\",Cancer LIMIT 2000"
+   },
+   "ms": 410,
+   "result_chars": 16832,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene name\tCancer\tfavorable\tunfavorable\nBCAR1\tBladder Urothelial Carcinoma (TCGA)\t\t\nBCAR1\tBreast Invasive Carcinoma (TCGA)\t\t\nBCAR1\tBreast Invasive Carcinoma (validation)\t\t\nBCAR1\tCervical Squamous Cell Carcinoma and Endocervical Adenocarcinoma (TCGA)\t\t\nBCAR1\tColon Adenocarcinoma (TCGA)\t\t\nBCAR1\tColon Adenocarcinoma (validation)\t\t\nBCAR1\tGlioblastoma Multiforme (TCGA)\t\t\nBCAR1\tGlioblastoma Multiforme (validation)\t\t\nBCAR1\tHead and Neck Squamous Cell Carcinoma (TCGA)\t\t\nBCAR1\tKidney Chromophobe (TCGA)\t\t\nBCAR1\tKidney Renal Clear Cell Carcinoma (TCGA)\t\t\nBCAR1\tKidney Renal Clear Cell Carcinoma (validation"
+  },
+  {
+   "turn": 5,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"Gene name\", COUNT(*) n, STRING_AGG(DISTINCT \"validated prognostic - favorable\",'|') fav_values, STRING_AGG(DISTINCT \"validated prognostic - unfavorable\",'|') unfav_values FROM cancer_prognostic_data WHERE \"Gene name\" IN ('YWHAE','FYN','YWHAG','BCAR1','IGF1R','YWHAH','TP53','BRAF','LRRK2','GAB2','FKBP5','CSNK2A1') GROUP BY \"Gene name\" ORDER BY \"Gene name\""
+   },
+   "ms": 487,
+   "result_chars": 294,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene name\tn\tfav_values\tunfav_values\nBCAR1\t31\t\t\nBRAF\t31\t1.040e-4|2.240e-4\t\nCSNK2A1\t31\t\t7.591e-6|8.142e-5\nFKBP5\t31\t\t\nFYN\t31\t3.697e-5|5.083e-5|1.083e-5|7.376e-4\t\nGAB2\t31\t5.858e-4|6.275e-7\t\nIGF1R\t31\t3.892e-9|2.904e-4\t\nLRRK2\t31\t\t\nTP53\t31\t\t\nYWHAE\t31\t\t\nYWHAG\t31\t\t2.857e-5|1.538e-4\nYWHAH\t31\t\t\n[12 rows]"
+  },
+  {
+   "turn": 6,
+   "name": "sql",
+   "input": {
+    "query": "WITH r(gene) AS (VALUES ('YWHAE'),('FYN'),('YWHAG'),('BCAR1'),('IGF1R'),('YWHAH'),('TP53'),('BRAF'),('LRRK2'),('GAB2'),('FKBP5'),('CSNK2A1')) SELECT r.gene, COUNT(*) FILTER (WHERE c.Cancer LIKE '%(TCGA)' AND c.\"validated prognostic - favorable\" IS NOT NULL AND c.\"validated prognostic - favorable\" <> '') AS tcga_validated_favorable, COUNT(*) FILTER (WHERE c.Cancer LIKE '%(TCGA)' AND c.\"validated prognostic - unfavorable\" IS NOT NULL AND c.\"validated prognostic - unfavorable\" <> '') AS tcga_validated_unfavorable, COUNT(*) FILTER (WHERE c.\"validated prognostic - favorable\" IS NOT NULL AND c.\"validated prognostic - favorable\" <> '') AS all_cohorts_validated_favorable, COUNT(*) FILTER (WHERE c.\"validated prognostic - unfavorable\" IS NOT NULL AND c.\"validated prognostic - unfavorable\" <> '') AS all_cohorts_validated_unfavorable FROM r LEFT JOIN cancer_prognostic_data c ON c.\"Gene name\"=r.gene GROUP BY r.gene ORDER BY r.gene"
+   },
+   "ms": 691,
+   "result_chars": 297,
+   "truncated": false,
+   "error": null,
+   "result_head": "gene\ttcga_validated_favorable\ttcga_validated_unfavorable\tall_cohorts_validated_favorable\tall_cohorts_validated_unfavorable\nBCAR1\t0\t0\t0\t0\nBRAF\t1\t0\t2\t0\nCSNK2A1\t0\t1\t0\t2\nFKBP5\t0\t0\t0\t0\nFYN\t2\t0\t4\t0\nGAB2\t1\t0\t2\t0\nIGF1R\t1\t0\t2\t0\nLRRK2\t0\t0\t0\t0\nTP53\t0\t0\t0\t0\nYWHAE\t0\t0\t0\t0\nYWHAG\t0\t1\t0\t2\nYWHAH\t0\t0\t0\t0\n[12 rows]"
+  },
+  {
+   "turn": 7,
+   "name": "sql",
+   "input": {
+    "query": "WITH universe AS (SELECT DISTINCT \"Ensembl\" AS id FROM proteinatlas WHERE \"Ensembl\" IS NOT NULL AND \"Ensembl\" <> ''), seeds AS (SELECT * FROM (VALUES ('ENSG00000146648','EGFR'),('ENSG00000141736','ERBB2'),('ENSG00000105976','MET')) AS t(id,symbol)), e0 AS (SELECT LEAST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,GREATEST(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b FROM interaction_consensus i JOIN universe u1 ON i.ensembl_gene_id_1=u1.id JOIN universe u2 ON i.ensembl_gene_id_2=u2.id WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2), edges AS (SELECT DISTINCT a,b FROM e0), adj AS (SELECT a src,b dst FROM edges UNION ALL SELECT b,a FROM edges), n AS (SELECT s.id seed,a.dst node FROM seeds s JOIN adj a ON s.id=a.src), l1 AS (SELECT DISTINCT node id FROM n WHERE node NOT IN (SELECT id FROM seeds)), l2 AS (SELECT DISTINCT a.dst id FROM l1 JOIN adj a ON l1.id=a.src WHERE a.dst NOT IN (SELECT id FROM seeds) AND a.dst NOT IN (SELECT id FROM l1)), paths AS (SELECT l2.id,n.seed,COUNT(DISTINCT n.node) cnt FROM l2 JOIN n ON 1=1 JOIN l1 f ON f.id=n.node JOIN adj a ON a.src=n.node AND a.dst=l2.id GROUP BY l2.id,n.seed), wide AS (SELECT l2.id,COALESCE(MAX(CASE WHEN seed='ENSG00000146648' THEN cnt END),0) egfr,COALESCE(MAX(CASE WHEN seed='ENSG00000141736' THEN cnt END),0) erbb2,COALESCE(MAX(CASE WHEN seed='ENSG00000105976' THEN cnt END),0) met FROM l2 LEFT JOIN paths USING(id) GROUP BY l2.id), r AS (SELECT *,egfr+erbb2+met total,(egfr>0)::INT+(erbb2>0)::INT+(met>0)::INT seeds_reached FROM wide) SELECT r.id,p.\"Gene\" gene,r.egfr,r.erbb2,r.met,r.total,r.seeds_reached,p.\"Subcellular main location\", CASE WHEN p.\"Protein class\" LIKE '%FDA approved drug targets%' THEN 'Yes' ELSE 'No' END FDA_target FROM r JOIN proteinatlas p ON r.id=p.\"Ensembl\" ORDER BY total DESC,id LIMIT 12"
+   },
+   "ms": 2746,
+   "result_chars": 721,
+   "truncated": false,
+   "error": null,
+   "result_head": "id\tgene\tegfr\terbb2\tmet\ttotal\tseeds_reached\tSubcellular main location\tFDA_target\nENSG00000108953\tYWHAE\t18\t2\t1\t21\t3\tCytosol\tNo\nENSG00000010810\tFYN\t10\t5\t2\t17\t3\tPlasma membrane\tNo\nENSG00000170027\tYWHAG\t16\t0\t1\t17\t2\tCytosol\tNo\nENSG00000050820\tBCAR1\t10\t2\t1\t13\t3\tPlasma membrane, Focal adhesion sites\tNo\nENSG00000140443\tIGF1R\t9\t4\t0\t13\t2\tNucleoli, Plasma membrane\tYes\nENSG00000128245\tYWHAH\t11\t0\t0\t11\t1\tCytosol\tNo\nENSG00000141510\tTP53\t9\t2\t0\t11\t2\tNucleoplasm\tNo\nENSG00000157764\tBRAF\t9\t2\t0\t11\t2\tVesicles, Cytosol\tYes\nENSG00000188906\tLRRK2\t10\t1\t0\t11\t2\tVesicles, Basal body\tNo\nENSG00000033327\tGAB2\t6\t4\t0\t10\t2\tPlasm"
+  }
+ ],
+ "usage": {
+  "input_tokens": 81131,
+  "output_tokens": 6229,
+  "cache_read_input_tokens": 62462,
+  "cache_creation_input_tokens": 0,
+  "reasoning_tokens": 1115
+ },
+ "started_unix_ms": 1789299393035,
+ "final_answer": "## Two-step HPA consensus-interaction analysis\n\n**Seeds (Ensembl):** EGFR **ENSG00000146648**, ERBB2 **ENSG00000141736**, MET **ENSG00000105976**.\n\nI treated consensus interactions as undirected; removed self-edges; canonicalized and deduplicated edges; and retained only edges for which **both endpoints are Ensembl genes in the HPA master (`proteinatlas`) table**. First-layer intermediaries exclude all seeds; second-layer genes exclude both seeds and the complete first layer. Path counts are numbers of **distinct first-layer intermediaries**.\n\n### Network layer and seed-neighbour summary\n\n| Measure | EGFR | ERBB2 | MET | Total / result |\n|---|---:|---:|---:|---:|\n| Seed neighbours, before excluding the other seeds | 187 | 32 | 6 | — |\n| First-layer size | — | — | — | **198** |\n| Second-layer size | — | — | — | **1,273** |\n\n### Shared-neighbour heatmap\n\nDiagonal cells are each seed’s unfiltered neighbour count; off-diagonal cells are pairwise counts of shared neighbours.\n\n|  | EGFR | ERBB2 | MET |\n|---|---:|---:|---:|\n| **EGFR** | **187** | 21 | 2 |\n| **ERBB2** | 21 | **32** | 2 |\n| **MET** | 2 | 2 | **6** |\n\n**Text heatmap** (larger number = darker):\n\n```text\n             EGFR     ERBB2     MET\nEGFR        █████ 187  ░░ 21    · 2\nERBB2       ░░ 21      █ 32     · 2\nMET         · 2         · 2      · 6\n```\n\n## Ranked second-layer genes\n\nAll **12 requested** positions were available. Rank is by the sum of EGFR, ERBB2, and MET two-step intermediary counts, descending; ties are resolved by Ensembl ID ascending.\n\n“FDA target” is **Yes** only where the HPA master-table protein-class annotation includes **“FDA approved drug targets.”** TCGA prognosis counts are counts of nonblank HPA **validated prognostic** results among cohorts labelled “(TCGA).”\n\n| Rank | Gene | Ensembl ID | EGFR paths | ERBB2 paths | MET paths | Sum | Seeds reached | Main subcellular location(s) | FDA target | Validated favourable TCGA cohorts | Validated unfavourable TCGA cohorts |\n|---:|---|---|---:|---:|---:|---:|---:|---|---|---:|---:|\n| 1 | YWHAE | ENSG00000108953 | 18 | 2 | 1 | **21** | 3 | Cytosol | No | 0 | 0 |\n| 2 | FYN | ENSG00000010810 | 10 | 5 | 2 | **17** | 3 | Plasma membrane | No | 2 | 0 |\n| 3 | YWHAG | ENSG00000170027 | 16 | 0 | 1 | **17** | 2 | Cytosol | No | 0 | 1 |\n| 4 | BCAR1 | ENSG00000050820 | 10 | 2 | 1 | **13** | 3 | Plasma membrane; Focal adhesion sites | No | 0 | 0 |\n| 5 | IGF1R | ENSG00000140443 | 9 | 4 | 0 | **13** | 2 | Nucleoli; Plasma membrane | Yes | 1 | 0 |\n| 6 | YWHAH | ENSG00000128245 | 11 | 0 | 0 | **11** | 1 | Cytosol | No | 0 | 0 |\n| 7 | TP53 | ENSG00000141510 | 9 | 2 | 0 | **11** | 2 | Nucleoplasm | No | 0 | 0 |\n| 8 | BRAF | ENSG00000157764 | 9 | 2 | 0 | **11** | 2 | Vesicles; Cytosol | Yes | 1 | 0 |\n| 9 | LRRK2 | ENSG00000188906 | 10 | 1 | 0 | **11** | 2 | Vesicles; Basal body | No | 0 | 0 |\n| 10 | GAB2 | ENSG00000033327 | 6 | 4 | 0 | **10** | 2 | Plasma membrane | No | 1 | 0 |\n| 11 | FKBP5 | ENSG00000096060 | 7 | 3 | 0 | **10** | 2 | Nucleoplasm | No | 0 | 0 |\n| 12 | CSNK2A1 | ENSG00000101266 | 5 | 4 | 1 | **10** | 3 | Nucleoplasm | No | 0 | 1 |\n\n## Seed-by-second-layer path-count heatmap\n\nCells give the exact count of distinct first-layer intermediaries forming seed → intermediary → second-layer-gene paths.\n\n| Seed \\ second-layer gene | YWHAE | FYN | YWHAG | BCAR1 | IGF1R | YWHAH | TP53 | BRAF | LRRK2 | GAB2 | FKBP5 | CSNK2A1 |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n| **EGFR** | 18 | 10 | 16 | 10 | 9 | 11 | 9 | 9 | 10 | 6 | 7 | 5 |\n| **ERBB2** | 2 | 5 | 0 | 2 | 4 | 0 | 2 | 2 | 1 | 4 | 3 | 4 |\n| **MET** | 1 | 2 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |\n\n```text\nPath-count intensity: 0 = ·, 1–2 = ░, 3–5 = ▒, 6–10 = ▓, 11–18 = █\n\nEGFR   █18  ▓10  █16  ▓10  ▓9  █11  ▓9  ▓9  ▓10  ▓6  ▓7  ▒5\nERBB2  ░2   ▒5   ·0   ░2   ▒4  ·0   ░2  ░2  ░1   ▒4  ▒3  ▒4\nMET    ░1   ░2   ░1   ░1   ·0   ·0   ·0  ·0  ·0   ·0   ·0   ░1\n```\n\n## Ranked bar chart — total two-step intermediary paths\n\n```text\nYWHAE     21 | █████████████████████\nFYN       17 | █████████████████\nYWHAG     17 | █████████████████\nBCAR1     13 | █████████████\nIGF1R     13 | █████████████\nYWHAH     11 | ███████████\nTP53      11 | ███████████\nBRAF      11 | ███████████\nLRRK2     11 | ███████████\nGAB2      10 | ██████████\nFKBP5     10 | ██████████\nCSNK2A1   10 | ██████████\n```",
+ "stop": "completed",
+ "tool_call_count": 11,
+ "seconds": 98.178,
+ "model_calls": 8,
+ "cost_usd": 0.24950239999999999
+}

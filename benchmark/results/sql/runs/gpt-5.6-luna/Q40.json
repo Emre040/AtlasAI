@@ -1,0 +1,358 @@
+{
+ "id": "Q40",
+ "kind": "analysis",
+ "question": "Study all genes with salivary-gland consensus RNA nTPM >=1 in HPA; do not additionally require tissue enrichment, enhancement or another specificity category. Report the cohort size, counts by RNA tissue specificity category, the number of FDA approved drug targets and counts measured by blood immunoassay, by mass spectrometry, by both and by neither. Among cohort genes secreted to blood, rank twelve by log2((salivary gland nTPM+1)/(liver nTPM+1)), ties by Ensembl ID. Give their consensus nTPM in salivary gland, liver, pancreas and kidney, their specificity categories and the available blood concentrations. Draw a specificity-category bar chart, a blood-assay-coverage chart and the four-tissue heatmap; provide the tables. If a requested ranked list has fewer eligible members, return every eligible member and state the count. Use Ensembl genes present in the HPA master table as the gene universe and break all gene-ranking ties by Ensembl ID.",
+ "model": "gpt-5.6-luna",
+ "effort": "low",
+ "turns": [
+  {
+   "turn": 1,
+   "ms": 1017,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 382,
+    "input_tokens_details": {
+     "cache_write_tokens": 0,
+     "cached_tokens": 0
+    },
+    "output_tokens": 27,
+    "output_tokens_details": {
+     "reasoning_tokens": 12
+    },
+    "total_tokens": 409
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "schema",
+     "input": "{}"
+    }
+   ]
+  },
+  {
+   "turn": 2,
+   "ms": 1203,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 431,
+    "input_tokens_details": {
+     "cache_write_tokens": 0,
+     "cached_tokens": 0
+    },
+    "output_tokens": 21,
+    "output_tokens_details": {
+     "reasoning_tokens": 6
+    },
+    "total_tokens": 452
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "schema",
+     "input": "{}"
+    }
+   ]
+  },
+  {
+   "turn": 3,
+   "ms": 2048,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 474,
+    "input_tokens_details": {
+     "cache_write_tokens": 0,
+     "cached_tokens": 0
+    },
+    "output_tokens": 26,
+    "output_tokens_details": {
+     "reasoning_tokens": 11
+    },
+    "total_tokens": 500
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "schema",
+     "input": "{}"
+    }
+   ]
+  },
+  {
+   "turn": 4,
+   "ms": 4112,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 5993,
+    "input_tokens_details": {
+     "cache_write_tokens": 5990,
+     "cached_tokens": 0
+    },
+    "output_tokens": 191,
+    "output_tokens_details": {
+     "reasoning_tokens": 50
+    },
+    "total_tokens": 6184
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT Tissue, COUNT(*) n FROM rna_tissue_consensus GROUP BY 1 ORDER BY n DESC LIMIT 100\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT \\\"RNA tissue specificity\\\" cat, COUNT(*) n FROM proteinatlas GROUP BY 1 ORDER BY n DESC\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT \\\"Protein class\\\" pc, COUNT(*) n FROM proteinatlas WHERE lower(\\\"Protein class\\\") LIKE '%approved%' OR lower(\\\"Protein class\\\") LIKE '%drug%' GROUP BY 1\"}"
+    }
+   ]
+  },
+  {
+   "turn": 5,
+   "ms": 4763,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 10495,
+    "input_tokens_details": {
+     "cache_write_tokens": 4502,
+     "cached_tokens": 5990
+    },
+    "output_tokens": 481,
+    "output_tokens_details": {
+     "reasoning_tokens": 82
+    },
+    "total_tokens": 10976
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH t AS (SELECT Gene, MAX(CASE WHEN Tissue='salivary gland' THEN TRY_CAST(nTPM AS DOUBLE) END) sg, MAX(CASE WHEN Tissue='liver' THEN TRY_CAST(nTPM AS DOUBLE) END) liv, MAX(CASE WHEN Tissue='pancreas' THEN TRY_CAST(nTPM AS DOUBLE) END) pan, MAX(CASE WHEN Tissue='kidney' THEN TRY_CAST(nTPM AS DOUBLE) END) kid FROM rna_tissue_consensus GROUP BY Gene), c AS (SELECT p.*,t.sg,t.liv,t.pan,t.kid FROM proteinatlas p JOIN t ON p.Ensembl=t.Gene WHERE COALESCE(t.sg,0)>=1) SELECT 'COHORT' metric, COUNT(*) value FROM c UNION ALL SELECT 'FDA approved drug targets', COUNT(*) FROM c WHERE \\\"Protein class\\\" LIKE '%FDA approved drug targets%' UNION ALL SELECT 'blood immunoassay', COUNT(*) FROM c WHERE TRY_CAST(\\\"Blood concentration - Conc. blood IM [pg/L]\\\" AS DOUBLE) IS NOT NULL UNION ALL SELECT 'blood MS', COUNT(*) FROM c WHERE TRY_CAST(\\\"Blood concentration - Conc. blood MS [pg/L]\\\" AS DOUBLE) IS NOT NULL UNION ALL SELECT 'both', COUNT(*) FROM c WHERE TRY_CAST(\\\"Blood concentration - Conc. blood IM [pg/L]\\\" AS DOUBLE) IS NOT NULL AND TRY_CAST(\\\"Blood concentration - Conc. blood MS [pg/L]\\\" AS DOUBLE) IS NOT NULL UNION ALL SELECT 'neither', COUNT(*) FROM c WHERE TRY_CAST(\\\"Blood concentration - Conc. blood IM [pg/L]\\\" AS DOUBLE) IS NULL AND TRY_CAST(\\\"Blood concentration - Conc. blood MS [pg/L]\\\" AS DOUBLE) IS NULL UNION ALL SELECT \\\"RNA tissue specificity\\\", COUNT(*) FROM c GROUP BY 1 ORDER BY 1\"}"
+    }
+   ]
+  },
+  {
+   "turn": 6,
+   "ms": 3481,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 11038,
+    "input_tokens_details": {
+     "cache_write_tokens": 543,
+     "cached_tokens": 10492
+    },
+    "output_tokens": 409,
+    "output_tokens_details": {
+     "reasoning_tokens": 9
+    },
+    "total_tokens": 11447
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH t AS (SELECT Gene, MAX(CASE WHEN Tissue='salivary gland' THEN TRY_CAST(nTPM AS DOUBLE) END) sg, MAX(CASE WHEN Tissue='liver' THEN TRY_CAST(nTPM AS DOUBLE) END) liv, MAX(CASE WHEN Tissue='pancreas' THEN TRY_CAST(nTPM AS DOUBLE) END) pan, MAX(CASE WHEN Tissue='kidney' THEN TRY_CAST(nTPM AS DOUBLE) END) kid FROM rna_tissue_consensus GROUP BY Gene), c AS (SELECT p.*,t.sg,t.liv,t.pan,t.kid FROM proteinatlas p JOIN t ON p.Ensembl=t.Gene WHERE COALESCE(t.sg,0)>=1) SELECT 'COHORT' metric, COUNT(*) AS cnt FROM c UNION ALL SELECT 'FDA approved drug targets', COUNT(*) FROM c WHERE \\\"Protein class\\\" LIKE '%FDA approved drug targets%' UNION ALL SELECT 'blood immunoassay', COUNT(*) FROM c WHERE TRY_CAST(\\\"Blood concentration - Conc. blood IM [pg/L]\\\" AS DOUBLE) IS NOT NULL UNION ALL SELECT 'blood MS', COUNT(*) FROM c WHERE TRY_CAST(\\\"Blood concentration - Conc. blood MS [pg/L]\\\" AS DOUBLE) IS NOT NULL UNION ALL SELECT 'both', COUNT(*) FROM c WHERE TRY_CAST(\\\"Blood concentration - Conc. blood IM [pg/L]\\\" AS DOUBLE) IS NOT NULL AND TRY_CAST(\\\"Blood concentration - Conc. blood MS [pg/L]\\\" AS DOUBLE) IS NOT NULL UNION ALL SELECT 'neither', COUNT(*) FROM c WHERE TRY_CAST(\\\"Blood concentration - Conc. blood IM [pg/L]\\\" AS DOUBLE) IS NULL AND TRY_CAST(\\\"Blood concentration - Conc. blood MS [pg/L]\\\" AS DOUBLE) IS NULL UNION ALL SELECT \\\"RNA tissue specificity\\\", COUNT(*) FROM c GROUP BY 1 ORDER BY 1\"}"
+    }
+   ]
+  },
+  {
+   "turn": 7,
+   "ms": 2376,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 11526,
+    "input_tokens_details": {
+     "cache_write_tokens": 488,
+     "cached_tokens": 11035
+    },
+    "output_tokens": 70,
+    "output_tokens_details": {
+     "reasoning_tokens": 20
+    },
+    "total_tokens": 11596
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT \\\"Secretome location\\\", COUNT(*) n FROM proteinatlas WHERE \\\"Secretome location\\\" IS NOT NULL GROUP BY 1 ORDER BY n DESC LIMIT 30\"}"
+    }
+   ]
+  },
+  {
+   "turn": 8,
+   "ms": 2993,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 11695,
+    "input_tokens_details": {
+     "cache_write_tokens": 169,
+     "cached_tokens": 11523
+    },
+    "output_tokens": 253,
+    "output_tokens_details": {
+     "reasoning_tokens": 9
+    },
+    "total_tokens": 11948
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH t AS (SELECT Gene, MAX(CASE WHEN Tissue='salivary gland' THEN TRY_CAST(nTPM AS DOUBLE) END) sg, MAX(CASE WHEN Tissue='liver' THEN TRY_CAST(nTPM AS DOUBLE) END) liv, MAX(CASE WHEN Tissue='pancreas' THEN TRY_CAST(nTPM AS DOUBLE) END) pan, MAX(CASE WHEN Tissue='kidney' THEN TRY_CAST(nTPM AS DOUBLE) END) kid FROM rna_tissue_consensus GROUP BY Gene), c AS (SELECT p.Ensembl,p.Gene,p.\\\"RNA tissue specificity\\\" spec,t.sg,t.liv,t.pan,t.kid,log2((t.sg+1)/(t.liv+1)) score,p.\\\"Blood concentration - Conc. blood IM [pg/L]\\\" im,p.\\\"Blood concentration - Conc. blood MS [pg/L]\\\" ms FROM proteinatlas p JOIN t ON p.Ensembl=t.Gene WHERE t.sg>=1 AND p.\\\"Secretome location\\\"='Secreted to blood') SELECT * FROM c ORDER BY score DESC, Ensembl LIMIT 12\"}"
+    }
+   ]
+  },
+  {
+   "turn": 9,
+   "ms": 16269,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 12499,
+    "input_tokens_details": {
+     "cache_write_tokens": 804,
+     "cached_tokens": 11692
+    },
+    "output_tokens": 2014,
+    "output_tokens_details": {
+     "reasoning_tokens": 85
+    },
+    "total_tokens": 14513
+   },
+   "text": "## Cohort definition\n\nI used the HPA master table (`proteinatlas`) as the gene universe, joined to `rna_tissue_consensus` by Ensembl gene ID, and selected every gene with salivary-gland consensus RNA **nTPM ≥ 1**. No tissue-enrichment or tissue-specificity filter was applied.\n\n**Cohort size: 14,312 genes**\n\n### Summary counts\n\n| Measure | Count |\n|---|---:|\n| Cohort genes | 14,312 |\n| FDA-approved drug targets | 567 |\n| Blood immunoassay measured | 297 |\n| Mass-spectrometry measured | 3,774 |\n| Measured by both methods | 223 |\n| Measured by immunoassay only | 74 |\n| Measured by mass spectrometry only | 3,551 |\n| Measured by neither method | 10,464 |\n\nFDA-approved drug targets were identified from the HPA `Protein class` field containing **“FDA approved drug targets”**. Blood assay availability was determined from the HPA blood concentration fields.\n\n## RNA tissue-specificity categories\n\n| HPA RNA tissue specificity category | Count |\n|---|---:|\n| Low tissue specificity | 7,924 |\n| Tissue enhanced | 4,748 |\n| Tissue enriched | 930 |\n| Group enriched | 710 |\n| Not detected | 0 |\n| **Total** | **14,312** |\n\n### Specificity-category bar chart\n\n```text\nLow tissue specificity | ████████████████████████████████████████ 7,924\nTissue enhanced        | ████████████████████████                 4,748\nTissue enriched        | █████                                      930\nGroup enriched         | ███                                        710\nNot detected           |                                             0\n```\n\n## Blood-assay coverage\n\n| Blood assay category | Count |\n|---|---:|\n| Immunoassay only | 74 |\n| Mass spectrometry only | 3,551 |\n| Both | 223 |\n| Neither | 10,464 |\n| **Total** | **14,312** |\n\n```text\nImmunoassay only       | ▏                                         74\nMass spectrometry only | █████████████████                       3,551\nBoth                   | █                                         223\nNeither                | ████████████████████████████████████████ 10,464\n```\n\n## Secreted-to-blood genes ranked by salivary-gland/liver expression\n\nThe ranking was restricted to cohort genes whose HPA `Secretome location` is **“Secreted to blood”**. The ranking score was:\n\n\\[\n\\log_2\\left(\\frac{\\text{salivary gland nTPM}+1}{\\text{liver nTPM}+1}\\right)\n\\]\n\nTies were ordered by Ensembl ID. There were more than twelve eligible genes; the top twelve are shown.\n\n| Rank | Ensembl ID | Gene | Salivary gland nTPM | Liver nTPM | Pancreas nTPM | Kidney nTPM | log2 ratio | Specificity category | Blood immunoassay pg/L | Blood MS pg/L |\n|---:|---|---|---:|---:|---:|---:|---:|---|---:|---:|\n| 1 | ENSG00000134827 | TCN1 | 816.7 | 0.4 | 4.6 | 0.2 | 9.190001002962777 | Tissue enriched | — | 3,700,000 |\n| 2 | ENSG00000012223 | LTF | 1,063 | 3.2 | 17.4 | 99.6 | 7.984893107609792 | Group enriched | — | 470,000,000 |\n| 3 | ENSG00000110195 | FOLR1 | 206.7 | 0.2 | 6.7 | 142.6 | 7.435323000123492 | Tissue enriched | 448,000 | 25,000 |\n| 4 | ENSG00000189058 | APOD | 1,584.2 | 8.5 | 269.7 | 66.6 | 7.382521643637036 | Tissue enhanced | 98,900,000,000 | 6,300,000,000 |\n| 5 | ENSG00000090382 | LYZ | 21,193.7 | 128.8 | 59.7 | 30.2 | 7.351269352374190 | Tissue enhanced | 1,500,000,000 | 690,000,000 |\n| 6 | ENSG00000189377 | CXCL17 | 146.4 | 0.1 | 43.2 | 0.2 | 7.066089190457772 | Group enriched | 400,000,000 | 53,000 |\n| 7 | ENSG00000124102 | PI3 | 528.5 | 3.2 | 1.6 | 1.5 | 6.978097546109940 | Tissue enhanced | — | 3,100,000 |\n| 8 | ENSG00000151882 | CCL28 | 283 | 1.6 | 7.3 | 2.6 | 6.771235496250952 | Tissue enriched | 700,000,000 | 10,000,000 |\n| 9 | ENSG00000161055 | SCGB3A1 | 829.3 | 8.3 | 17.5 | 1.4 | 6.480258171836152 | Group enriched | — | 4,200,000 |\n| 10 | ENSG00000064886 | CHI3L2 | 133.9 | 0.9 | 0.8 | 2.9 | 6.149747119807068 | Tissue enhanced | — | 540,000 |\n| 11 | ENSG00000124205 | EDN3 | 64.3 | 0 | 8.3 | 0.1 | 6.029011086659068 | Tissue enhanced | 30,900 | — |\n| 12 | ENSG00000124107 | SLPI | 14,071.9 | 250.9 | 34.1 | 333 | 5.803924722823561 ",
+   "tool_uses": []
+  }
+ ],
+ "tool_calls": [
+  {
+   "turn": 1,
+   "name": "schema",
+   "input": {},
+   "ms": 60131,
+   "result_chars": 47,
+   "truncated": false,
+   "error": "MCP error -32001: Request timed out",
+   "result_head": "Tool error: MCP error -32001: Request timed out"
+  },
+  {
+   "turn": 2,
+   "name": "schema",
+   "input": {},
+   "ms": 60057,
+   "result_chars": 47,
+   "truncated": false,
+   "error": "MCP error -32001: Request timed out",
+   "result_head": "Tool error: MCP error -32001: Request timed out"
+  },
+  {
+   "turn": 3,
+   "name": "schema",
+   "input": {},
+   "ms": 30406,
+   "result_chars": 148152,
+   "truncated": true,
+   "error": null,
+   "result_head": "Tables built from the Human Protein Atlas bulk files (all columns are text; cast for arithmetic, e.g. TRY_CAST(col AS DOUBLE)).\n\nblood_immunoassay_concentration (0.1 MB): gene, ENSG ID, conc [pg/L], sample type, number_of_samples, pubmed id\nblood_ms_concentration (0.1 MB): Gene, ENSG ID, Conc [pg/L]\nblood_pea_disease_de (17.9 MB): Gene, ENSG ID, Disease, Class, Control, logFC, p-value adjusted, Seeds, Mean importance, SD importance, Max importance, Min importance\nblood_pea_diseases (0.0 MB): Disease, Class\ncancer_cancers (0.0 MB): Cancer, Organ\ncancer_cptac (5.7 MB): Cancer, Gene, Gene name, p"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "SELECT Tissue, COUNT(*) n FROM rna_tissue_consensus GROUP BY 1 ORDER BY n DESC LIMIT 100"
+   },
+   "ms": 529,
+   "result_chars": 882,
+   "truncated": false,
+   "error": null,
+   "result_head": "Tissue\tn\nheart muscle\t20162\nduodenum\t20162\nendometrium\t20162\ntongue\t20162\nappendix\t20162\nbone marrow\t20162\nspleen\t20162\nlymph node\t20162\nkidney\t20162\nsalivary gland\t20162\nsmooth muscle\t20162\npancreas\t20162\nrectum\t20162\nstomach\t20162\nparathyroid gland\t20162\ntestis\t20162\nesophagus\t20162\nlung\t20162\ntonsil\t20162\nadipose tissue\t20162\ncerebral cortex\t20162\nepididymis\t20162\novary\t20162\nadrenal gland\t20162\nskeletal muscle\t20162\nfallopian tube\t20162\nplacenta\t20162\ngallbladder\t20162\nprostate\t20162\nliver\t20162\ncolon\t20162\nseminal vesicle\t20162\nskin\t20162\nsmall intestine\t20162\nbreast\t20162\nretina\t20162\nce"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"RNA tissue specificity\" cat, COUNT(*) n FROM proteinatlas GROUP BY 1 ORDER BY n DESC"
+   },
+   "ms": 834,
+   "result_chars": 122,
+   "truncated": false,
+   "error": null,
+   "result_head": "cat\tn\nLow tissue specificity\t8096\nTissue enhanced\t6356\nTissue enriched\t3132\nGroup enriched\t1547\nNot detected\t1031\n[5 rows]"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"Protein class\" pc, COUNT(*) n FROM proteinatlas WHERE lower(\"Protein class\") LIKE '%approved%' OR lower(\"Protein class\") LIKE '%drug%' GROUP BY 1"
+   },
+   "ms": 936,
+   "result_chars": 104002,
+   "truncated": true,
+   "error": null,
+   "result_head": "pc\tn\nCancer-related genes, Candidate cardiovascular disease genes, FDA approved drug targets, Plasma proteins, Predicted secreted proteins\t1\nCD markers, FDA approved drug targets, Human disease related genes, Predicted membrane proteins\t1\nEnzymes, FDA approved drug targets, Metabolic proteins, Plasma proteins, Predicted intracellular proteins\t16\nCancer-related genes, Disease related genes, Enzymes, Essential proteins, FDA approved drug targets, Human disease related genes, Metabolic proteins, Plasma proteins, Predicted membrane proteins, Transporters\t1\nEnzymes, FDA approved drug targets, Predi"
+  },
+  {
+   "turn": 5,
+   "name": "sql",
+   "input": {
+    "query": "WITH t AS (SELECT Gene, MAX(CASE WHEN Tissue='salivary gland' THEN TRY_CAST(nTPM AS DOUBLE) END) sg, MAX(CASE WHEN Tissue='liver' THEN TRY_CAST(nTPM AS DOUBLE) END) liv, MAX(CASE WHEN Tissue='pancreas' THEN TRY_CAST(nTPM AS DOUBLE) END) pan, MAX(CASE WHEN Tissue='kidney' THEN TRY_CAST(nTPM AS DOUBLE) END) kid FROM rna_tissue_consensus GROUP BY Gene), c AS (SELECT p.*,t.sg,t.liv,t.pan,t.kid FROM proteinatlas p JOIN t ON p.Ensembl=t.Gene WHERE COALESCE(t.sg,0)>=1) SELECT 'COHORT' metric, COUNT(*) value FROM c UNION ALL SELECT 'FDA approved drug targets', COUNT(*) FROM c WHERE \"Protein class\" LIKE '%FDA approved drug targets%' UNION ALL SELECT 'blood immunoassay', COUNT(*) FROM c WHERE TRY_CAST(\"Blood concentration - Conc. blood IM [pg/L]\" AS DOUBLE) IS NOT NULL UNION ALL SELECT 'blood MS', COUNT(*) FROM c WHERE TRY_CAST(\"Blood concentration - Conc. blood MS [pg/L]\" AS DOUBLE) IS NOT NULL UNION ALL SELECT 'both', COUNT(*) FROM c WHERE TRY_CAST(\"Blood concentration - Conc. blood IM [pg/L]\" AS DOUBLE) IS NOT NULL AND TRY_CAST(\"Blood concentration - Conc. blood MS [pg/L]\" AS DOUBLE) IS NOT NULL UNION ALL SELECT 'neither', COUNT(*) FROM c WHERE TRY_CAST(\"Blood concentration - Conc. blood IM [pg/L]\" AS DOUBLE) IS NULL AND TRY_CAST(\"Blood concentration - Conc. blood MS [pg/L]\" AS DOUBLE) IS NULL UNION ALL SELECT \"RNA tissue specificity\", COUNT(*) FROM c GROUP BY 1 ORDER BY 1"
+   },
+   "ms": 6,
+   "result_chars": 259,
+   "truncated": false,
+   "error": "tool reported an error",
+   "result_head": "Error: Parser Error: syntax error at or near \"value\"\n\nLINE 1: ... WHERE COALESCE(t.sg,0)>=1) SELECT 'COHORT' metric, COUNT(*) value FROM c UNION ALL SELECT 'FDA approved drug targets...\n                                                                        ^"
+  },
+  {
+   "turn": 6,
+   "name": "sql",
+   "input": {
+    "query": "WITH t AS (SELECT Gene, MAX(CASE WHEN Tissue='salivary gland' THEN TRY_CAST(nTPM AS DOUBLE) END) sg, MAX(CASE WHEN Tissue='liver' THEN TRY_CAST(nTPM AS DOUBLE) END) liv, MAX(CASE WHEN Tissue='pancreas' THEN TRY_CAST(nTPM AS DOUBLE) END) pan, MAX(CASE WHEN Tissue='kidney' THEN TRY_CAST(nTPM AS DOUBLE) END) kid FROM rna_tissue_consensus GROUP BY Gene), c AS (SELECT p.*,t.sg,t.liv,t.pan,t.kid FROM proteinatlas p JOIN t ON p.Ensembl=t.Gene WHERE COALESCE(t.sg,0)>=1) SELECT 'COHORT' metric, COUNT(*) AS cnt FROM c UNION ALL SELECT 'FDA approved drug targets', COUNT(*) FROM c WHERE \"Protein class\" LIKE '%FDA approved drug targets%' UNION ALL SELECT 'blood immunoassay', COUNT(*) FROM c WHERE TRY_CAST(\"Blood concentration - Conc. blood IM [pg/L]\" AS DOUBLE) IS NOT NULL UNION ALL SELECT 'blood MS', COUNT(*) FROM c WHERE TRY_CAST(\"Blood concentration - Conc. blood MS [pg/L]\" AS DOUBLE) IS NOT NULL UNION ALL SELECT 'both', COUNT(*) FROM c WHERE TRY_CAST(\"Blood concentration - Conc. blood IM [pg/L]\" AS DOUBLE) IS NOT NULL AND TRY_CAST(\"Blood concentration - Conc. blood MS [pg/L]\" AS DOUBLE) IS NOT NULL UNION ALL SELECT 'neither', COUNT(*) FROM c WHERE TRY_CAST(\"Blood concentration - Conc. blood IM [pg/L]\" AS DOUBLE) IS NULL AND TRY_CAST(\"Blood concentration - Conc. blood MS [pg/L]\" AS DOUBLE) IS NULL UNION ALL SELECT \"RNA tissue specificity\", COUNT(*) FROM c GROUP BY 1 ORDER BY 1"
+   },
+   "ms": 1606,
+   "result_chars": 210,
+   "truncated": false,
+   "error": null,
+   "result_head": "metric\tcnt\nCOHORT\t14312\nFDA approved drug targets\t567\nGroup enriched\t710\nLow tissue specificity\t7924\nTissue enhanced\t4748\nTissue enriched\t930\nblood MS\t3774\nblood immunoassay\t297\nboth\t223\nneither\t10464\n[10 rows]"
+  },
+  {
+   "turn": 7,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"Secretome location\", COUNT(*) n FROM proteinatlas WHERE \"Secretome location\" IS NOT NULL GROUP BY 1 ORDER BY n DESC LIMIT 30"
+   },
+   "ms": 741,
+   "result_chars": 343,
+   "truncated": false,
+   "error": null,
+   "result_head": "Secretome location\tn\nSecreted to blood\t785\nIntracellular and membrane\t619\nSecreted in other tissues\t286\nSecreted to extracellular matrix\t236\nImmunoglobulin genes\t147\nSecreted in male reproductive system\t123\nSecreted - unknown location\t116\nSecreted to digestive system\t94\nSecreted in brain\t76\nSecreted in female reproductive system\t38\n[10 rows]"
+  },
+  {
+   "turn": 8,
+   "name": "sql",
+   "input": {
+    "query": "WITH t AS (SELECT Gene, MAX(CASE WHEN Tissue='salivary gland' THEN TRY_CAST(nTPM AS DOUBLE) END) sg, MAX(CASE WHEN Tissue='liver' THEN TRY_CAST(nTPM AS DOUBLE) END) liv, MAX(CASE WHEN Tissue='pancreas' THEN TRY_CAST(nTPM AS DOUBLE) END) pan, MAX(CASE WHEN Tissue='kidney' THEN TRY_CAST(nTPM AS DOUBLE) END) kid FROM rna_tissue_consensus GROUP BY Gene), c AS (SELECT p.Ensembl,p.Gene,p.\"RNA tissue specificity\" spec,t.sg,t.liv,t.pan,t.kid,log2((t.sg+1)/(t.liv+1)) score,p.\"Blood concentration - Conc. blood IM [pg/L]\" im,p.\"Blood concentration - Conc. blood MS [pg/L]\" ms FROM proteinatlas p JOIN t ON p.Ensembl=t.Gene WHERE t.sg>=1 AND p.\"Secretome location\"='Secreted to blood') SELECT * FROM c ORDER BY score DESC, Ensembl LIMIT 12"
+   },
+   "ms": 901,
+   "result_chars": 1110,
+   "truncated": false,
+   "error": null,
+   "result_head": "Ensembl\tGene\tspec\tsg\tliv\tpan\tkid\tscore\tim\tms\nENSG00000134827\tTCN1\tTissue enriched\t816.7\t0.4\t4.6\t0.2\t9.190001002962777\t\t3700000\nENSG00000012223\tLTF\tGroup enriched\t1063\t3.2\t17.4\t99.6\t7.984893107609792\t\t470000000\nENSG00000110195\tFOLR1\tTissue enriched\t206.7\t0.2\t6.7\t142.6\t7.435323000123492\t448000\t25000\nENSG00000189058\tAPOD\tTissue enhanced\t1584.2\t8.5\t269.7\t66.6\t7.382521643637036\t98900000000\t6300000000\nENSG00000090382\tLYZ\tTissue enhanced\t21193.7\t128.8\t59.7\t30.2\t7.35126935237419\t1500000000\t690000000\nENSG00000189377\tCXCL17\tGroup enriched\t146.4\t0.1\t43.2\t0.2\t7.066089190457772\t400000000\t53000\nENSG00000124"
+  }
+ ],
+ "usage": {
+  "input_tokens": 64533,
+  "output_tokens": 3492,
+  "cache_read_input_tokens": 50732,
+  "cache_creation_input_tokens": 0,
+  "reasoning_tokens": 284
+ },
+ "started_unix_ms": 1789296220379,
+ "final_answer": "## Cohort definition\n\nI used the HPA master table (`proteinatlas`) as the gene universe, joined to `rna_tissue_consensus` by Ensembl gene ID, and selected every gene with salivary-gland consensus RNA **nTPM ≥ 1**. No tissue-enrichment or tissue-specificity filter was applied.\n\n**Cohort size: 14,312 genes**\n\n### Summary counts\n\n| Measure | Count |\n|---|---:|\n| Cohort genes | 14,312 |\n| FDA-approved drug targets | 567 |\n| Blood immunoassay measured | 297 |\n| Mass-spectrometry measured | 3,774 |\n| Measured by both methods | 223 |\n| Measured by immunoassay only | 74 |\n| Measured by mass spectrometry only | 3,551 |\n| Measured by neither method | 10,464 |\n\nFDA-approved drug targets were identified from the HPA `Protein class` field containing **“FDA approved drug targets”**. Blood assay availability was determined from the HPA blood concentration fields.\n\n## RNA tissue-specificity categories\n\n| HPA RNA tissue specificity category | Count |\n|---|---:|\n| Low tissue specificity | 7,924 |\n| Tissue enhanced | 4,748 |\n| Tissue enriched | 930 |\n| Group enriched | 710 |\n| Not detected | 0 |\n| **Total** | **14,312** |\n\n### Specificity-category bar chart\n\n```text\nLow tissue specificity | ████████████████████████████████████████ 7,924\nTissue enhanced        | ████████████████████████                 4,748\nTissue enriched        | █████                                      930\nGroup enriched         | ███                                        710\nNot detected           |                                             0\n```\n\n## Blood-assay coverage\n\n| Blood assay category | Count |\n|---|---:|\n| Immunoassay only | 74 |\n| Mass spectrometry only | 3,551 |\n| Both | 223 |\n| Neither | 10,464 |\n| **Total** | **14,312** |\n\n```text\nImmunoassay only       | ▏                                         74\nMass spectrometry only | █████████████████                       3,551\nBoth                   | █                                         223\nNeither                | ████████████████████████████████████████ 10,464\n```\n\n## Secreted-to-blood genes ranked by salivary-gland/liver expression\n\nThe ranking was restricted to cohort genes whose HPA `Secretome location` is **“Secreted to blood”**. The ranking score was:\n\n\\[\n\\log_2\\left(\\frac{\\text{salivary gland nTPM}+1}{\\text{liver nTPM}+1}\\right)\n\\]\n\nTies were ordered by Ensembl ID. There were more than twelve eligible genes; the top twelve are shown.\n\n| Rank | Ensembl ID | Gene | Salivary gland nTPM | Liver nTPM | Pancreas nTPM | Kidney nTPM | log2 ratio | Specificity category | Blood immunoassay pg/L | Blood MS pg/L |\n|---:|---|---|---:|---:|---:|---:|---:|---|---:|---:|\n| 1 | ENSG00000134827 | TCN1 | 816.7 | 0.4 | 4.6 | 0.2 | 9.190001002962777 | Tissue enriched | — | 3,700,000 |\n| 2 | ENSG00000012223 | LTF | 1,063 | 3.2 | 17.4 | 99.6 | 7.984893107609792 | Group enriched | — | 470,000,000 |\n| 3 | ENSG00000110195 | FOLR1 | 206.7 | 0.2 | 6.7 | 142.6 | 7.435323000123492 | Tissue enriched | 448,000 | 25,000 |\n| 4 | ENSG00000189058 | APOD | 1,584.2 | 8.5 | 269.7 | 66.6 | 7.382521643637036 | Tissue enhanced | 98,900,000,000 | 6,300,000,000 |\n| 5 | ENSG00000090382 | LYZ | 21,193.7 | 128.8 | 59.7 | 30.2 | 7.351269352374190 | Tissue enhanced | 1,500,000,000 | 690,000,000 |\n| 6 | ENSG00000189377 | CXCL17 | 146.4 | 0.1 | 43.2 | 0.2 | 7.066089190457772 | Group enriched | 400,000,000 | 53,000 |\n| 7 | ENSG00000124102 | PI3 | 528.5 | 3.2 | 1.6 | 1.5 | 6.978097546109940 | Tissue enhanced | — | 3,100,000 |\n| 8 | ENSG00000151882 | CCL28 | 283 | 1.6 | 7.3 | 2.6 | 6.771235496250952 | Tissue enriched | 700,000,000 | 10,000,000 |\n| 9 | ENSG00000161055 | SCGB3A1 | 829.3 | 8.3 | 17.5 | 1.4 | 6.480258171836152 | Group enriched | — | 4,200,000 |\n| 10 | ENSG00000064886 | CHI3L2 | 133.9 | 0.9 | 0.8 | 2.9 | 6.149747119807068 | Tissue enhanced | — | 540,000 |\n| 11 | ENSG00000124205 | EDN3 | 64.3 | 0 | 8.3 | 0.1 | 6.029011086659068 | Tissue enhanced | 30,900 | — |\n| 12 | ENSG00000124107 | SLPI | 14,071.9 | 250.9 | 34.1 | 333 | 5.803924722823561 | Group enriched | 26,400,000 | 20,000,000 |\n\nAn em dash indicates that no numeric concentration was available in the corresponding HPA master-table field.\n\n## Four-tissue expression heatmap\n\nValues are consensus nTPM. The symbols provide a visual scale within this table; the numeric values above are the exact HPA values.\n\nLegend: `▁` lowest, `▂`, `▃`, `▄`, `▅`, `▆`, `▇`, `█` highest among the displayed values.\n\n| Gene | Salivary gland | Liver | Pancreas | Kidney |\n|---|---:|---:|---:|---:|\n| TCN1 | **816.7 █** | 0.4 ▂ | 4.6 ▂ | 0.2 ▁ |\n| LTF | **1,063 █** | 3.2 ▂ | 17.4 ▃ | 99.6 ▄ |\n| FOLR1 | **206.7 ▇** | 0.2 ▁ | 6.7 ▂ | 142.6 ▅ |\n| APOD | **1,584.2 █** | 8.5 ▃ | 269.7 ▆ | 66.6 ▄ |\n| LYZ | **21,193.7 █** | 128.8 ▅ | 59.7 ▄ | 30.2 ▃ |\n| CXCL17 | **146.4 ▇** | 0.1 ▁ | 43.2 ▄ | 0.2 ▁ |\n| PI3 | **528.5 █** | 3.2 ▂ | 1.6 ▂ | 1.5 ▂ |\n| CCL28 | **283 ▇** | 1.6 ▂ | 7.3 ▂ | 2.6 ▂ |\n| SCGB3A1 | **829.3 █** | 8.3 ▃ | 17.5 ▃ | 1.4 ▂ |\n| CHI3L2 | **133.9 ▇** | 0.9 ▂ | 0.8 ▂ | 2.9 ▂ |\n| EDN3 | **64.3 ▆** | 0 ▁ | 8.3 ▃ | 0.1 ▁ |\n| SLPI | **14,071.9 █** | 250.9 ▆ | 34.1 ▃ | 333 ▆ |",
+ "stop": "completed",
+ "tool_call_count": 10,
+ "seconds": 194.412,
+ "model_calls": 9,
+ "cost_usd": 0.01811164
+}

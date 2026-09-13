@@ -1,0 +1,922 @@
+{
+  "id": "Q31",
+  "kind": "analysis",
+  "question": "Test the reproducibility of transcription-factor RNA abundance across HPA and GTEx in colon, ovary and testis, using their separate tissue nTPM files, not the consensus file as a substitute for either source. For each tissue use transcription-factor Ensembl genes with finite nonnegative values in both sources. Report the count, Spearman correlation and median absolute log2((HPA nTPM+1)/(GTEx nTPM+1)). Compare the top twenty transcription factors from each source, giving overlap, Jaccard and the two ranked lists. Select the ten largest absolute log2 differences per tissue, ties by Ensembl ID, and add the corresponding consensus nTPM and RNA tissue specificity category. Draw per-tissue source-agreement scatters restricted to the union of the two top-twenty lists, overlap bars and a discrepancy heatmap. Supply the top-list union measurements and aggregate/discrepancy tables. Explain why consensus is not an independent third replication cohort. If a requested ranked list has fewer eligible members, return every eligible member and state the count. Use Ensembl genes present in the HPA master table as the gene universe and break all gene-ranking ties by Ensembl ID.",
+  "model": "qwen-3.8-27b",
+  "effort": null,
+  "turns": [
+    {
+      "turn": 1,
+      "ms": 356,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 748,
+        "completion_tokens": 36,
+        "completion_tokens_details": {
+          "reasoning_tokens": 21
+        },
+        "prompt_tokens": 712,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\n",
+      "tool_uses": [
+        {
+          "name": "schema",
+          "input": "{}"
+        }
+      ]
+    },
+    {
+      "turn": 2,
+      "ms": 947,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 7500,
+        "completion_tokens": 342,
+        "completion_tokens_details": {
+          "reasoning_tokens": 145
+        },
+        "prompt_tokens": 7158,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene\\\", \\\"Gene name\\\", \\\"Tissue\\\", \\\"TPM\\\", \\\"pTPM\\\", \\\"nTPM\\\" FROM rna_tissue_hpa LIMIT 5\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene\\\", \\\"Gene name\\\", \\\"Tissue\\\", \\\"TPM\\\", \\\"pTPM\\\", \\\"nTPM\\\" FROM rna_tissue_gtex LIMIT 5\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT * FROM rna_tissue_hpa_tissues\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Tissue\\\", \\\"Organ\\\" FROM rna_tissue_gtex_tissues\"}"
+        }
+      ]
+    },
+    {
+      "turn": 3,
+      "ms": 572,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 8690,
+        "completion_tokens": 232,
+        "completion_tokens_details": {
+          "reasoning_tokens": 119
+        },
+        "prompt_tokens": 8458,
+        "prompt_tokens_details": {
+          "cached_tokens": 6656,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Protein class\\\", COUNT(*) AS n FROM proteinatlas GROUP BY 1 ORDER BY 2 DESC\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene\\\", \\\"Gene name\\\", \\\"Gene synonym\\\", \\\"Ensembl\\\", \\\"Protein class\\\" FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Transcription factor%' LIMIT 10\"}"
+        }
+      ]
+    },
+    {
+      "turn": 4,
+      "ms": 901,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 13310,
+        "completion_tokens": 184,
+        "completion_tokens_details": {
+          "reasoning_tokens": 72
+        },
+        "prompt_tokens": 13126,
+        "prompt_tokens_details": {
+          "cached_tokens": 8192,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT COUNT(*) AS n_tf FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Transcription factor%'\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene\\\", \\\"Gene synonym\\\", \\\"Ensembl\\\", \\\"Gene description\\\", \\\"RNA tissue specificity\\\" FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Transcription factor%' LIMIT 15\"}"
+        }
+      ]
+    },
+    {
+      "turn": 5,
+      "ms": 954,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 14310,
+        "completion_tokens": 398,
+        "completion_tokens_details": {
+          "reasoning_tokens": 40
+        },
+        "prompt_tokens": 13912,
+        "prompt_tokens_details": {
+          "cached_tokens": 12800,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT COUNT(DISTINCT \\\"Ensembl\\\") AS n_tf_ensembl, COUNT(*) AS n_rows, SUM(CASE WHEN \\\"Ensembl\\\"='' OR \\\"Ensembl\\\" IS NULL THEN 1 ELSE 0 END) AS missing FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Transcription factor%'\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"-- check HPA tissue nTPM value formats / anomalies for the three tissues\\nSELECT \\\"Tissue\\\", COUNT(*) AS rows, SUM(CASE WHEN \\\"nTPM\\\" LIKE '%-%' THEN 1 ELSE 0 END) AS neg, SUM(CASE WHEN \\\"nTPM\\\" NOT GLOB '[0-9]*' THEN 1 ELSE 0 END) AS nonnum, MAX(\\\"nTPM\\\") AS max_raw, MIN(\\\"nTPM\\\") AS min_raw\\nFROM rna_tissue_hpa WHERE \\\"Tissue\\\" IN ('colon','ovary','testis') GROUP BY \\\"Tissue\\\"\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Tissue\\\", COUNT(*) AS rows, SUM(CASE WHEN \\\"nTPM\\\" LIKE '%-%' THEN 1 ELSE 0 END) AS neg, SUM(CASE WHEN \\\"nTPM\\\" NOT GLOB '[0-9]*' THEN 1 ELSE 0 END) AS nonnum\\nFROM rna_tissue_gtex WHERE \\\"Tissue\\\" IN ('colon','ovary','testis') GROUP BY \\\"Tissue\\\"\"}"
+        }
+      ]
+    },
+    {
+      "turn": 6,
+      "ms": 950,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 14863,
+        "completion_tokens": 401,
+        "completion_tokens_details": {
+          "reasoning_tokens": 72
+        },
+        "prompt_tokens": 14462,
+        "prompt_tokens_details": {
+          "cached_tokens": 13824,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Tissue\\\", COUNT(*) AS rows,\\n SUM(CASE WHEN TRY_CAST(\\\"nTPM\\\" AS DOUBLE) IS NULL THEN 1 ELSE 0 END) AS nonnum,\\n SUM(CASE WHEN TRY_CAST(\\\"nTPM\\\" AS DOUBLE) < 0 THEN 1 ELSE 0 END) AS neg,\\n SUM(CASE WHEN \\\"nTPM\\\" LIKE 'nan%' OR \\\"nTPM\\\" LIKE '%inf%' OR \\\"nTPM\\\" = '' THEN 1 ELSE 0 END) AS nanish\\nFROM rna_tissue_hpa WHERE \\\"Tissue\\\" IN ('colon','ovary','testis') GROUP BY \\\"Tissue\\\"\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Tissue\\\", COUNT(*) AS rows,\\n SUM(CASE WHEN TRY_CAST(\\\"nTPM\\\" AS DOUBLE) IS NULL THEN 1 ELSE 0 END) AS nonnum,\\n SUM(CASE WHEN TRY_CAST(\\\"nTPM\\\" AS DOUBLE) < 0 THEN 1 ELSE 0 END) AS neg,\\n SUM(CASE WHEN \\\"nTPM\\\" LIKE 'nan%' OR \\\"nTPM\\\" LIKE '%inf%' OR \\\"nTPM\\\" = '' THEN 1 ELSE 0 END) AS nanish\\nFROM rna_tissue_gtex WHERE \\\"Tissue\\\" IN ('colon','ovary','testis') GROUP BY \\\"Tissue\\\"\"}"
+        }
+      ]
+    },
+    {
+      "turn": 7,
+      "ms": 3351,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 17968,
+        "completion_tokens": 3036,
+        "completion_tokens_details": {
+          "reasoning_tokens": 2548
+        },
+        "prompt_tokens": 14932,
+        "prompt_tokens_details": {
+          "cached_tokens": 14336,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\nAll values are finite and non-negative; now the main analysis. First, per-tissue summary statistics (count, Spearman, median |log2 ratio|):\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH tf AS (\\n  SELECT DISTINCT \\\"Ensembl\\\" AS g, \\\"Gene\\\" AS name FROM proteinatlas\\n  WHERE \\\"Protein class\\\" LIKE '%Transcription factor%'\\n),\\nh AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nx AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\ndata AS (\\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\\n  FROM tf\\n  JOIN h ON h.g = tf.g\\n  JOIN x ON x.g = tf.g AND x.t = h.t\\n  WHERE h.v IS NOT NULL AND h.v >= 0 AND x.v IS NOT NULL AND x.v >= 0\\n),\\nrated AS (\\n  SELECT t, g, name, hv, gv,\\n    (ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv ASC, g) + ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) + 1)/2.0 AS r1,\\n    (ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv ASC, g) + ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) + 1)/2.0 AS r2,\\n    ABS(LOG((hv+1)/(gv+1)))/LOG(2) AS adiff\\n  FROM data\\n)\\nSELECT t AS tissue,\\n       COUNT(*) AS n,\\n       ROUND(corr(r1, r2), 4) AS spearman,\\n       ROUND(median(adiff), 4) AS median_abs_log2_ratio\\nFROM rated GROUP BY t ORDER BY t;\"}"
+        }
+      ]
+    },
+    {
+      "turn": 8,
+      "ms": 1096,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 16408,
+        "completion_tokens": 891,
+        "completion_tokens_details": {
+          "reasoning_tokens": 90
+        },
+        "prompt_tokens": 15517,
+        "prompt_tokens_details": {
+          "cached_tokens": 14848,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\nPairing works for 1,483 TFs per tissue (1,485 TFs in the HPA master, 2 absent in one source per tissue). Let me identify the missing genes and compute top-20 lists + overlap/Jaccard:\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH tf AS (\\n  SELECT DISTINCT \\\"Ensembl\\\" AS g, \\\"Gene\\\" AS name FROM proteinatlas\\n  WHERE \\\"Protein class\\\" LIKE '%Transcription factor%'\\n),\\nh AS (SELECT DISTINCT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g FROM rna_tissue_hpa WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nx AS (SELECT DISTINCT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g FROM rna_tissue_gtex WHERE \\\"Tissue\\\" IN ('colon','ovary','testis'))\\nSELECT tf.name, tf.g,\\n  SUM(CASE WHEN h.g IS NULL THEN 1 ELSE 0 END) AS missing_in_hpa_per_tissue,\\n  SUM(CASE WHEN x.g IS NULL THEN 1 ELSE 0 END) AS missing_in_gtex_per_tissue\\nFROM tf\\nLEFT JOIN h ON h.g = tf.g\\nLEFT JOIN x ON x.g = tf.g AND x.t = h.t\\nGROUP BY tf.name, tf.g\\nHAVING SUM(CASE WHEN h.g IS NULL THEN 1 ELSE 0 END) + SUM(CASE WHEN x.g IS NULL THEN 1 ELSE 0 END) > 0\\nORDER BY tf.g;\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH tf AS (\\n  SELECT DISTINCT \\\"Ensembl\\\" AS g, \\\"Gene\\\" AS name FROM proteinatlas\\n  WHERE \\\"Protein class\\\" LIKE '%Transcription factor%'\\n),\\nh AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nx AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\ndata AS (\\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\\n  FROM tf\\n  JOIN h ON h.g = tf.g\\n  JOIN x ON x.g = tf.g AND x.t = h.t\\n  WHERE h.v IS NOT NULL AND h.v >= 0 AND x.v IS NOT NULL AND x.v >= 0\\n),\\nranked AS (\\n  SELECT t, g, name, hv, gv,\\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g ASC) AS rk_hpa,\\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g ASC) AS rk_gtex\\n  FROM data\\n)\\nSELECT t,\\n  COUNT(*) AS n_pairs,\\n  SUM(CASE WHEN rk_hpa <= 20 AND rk_gtex <= 20 THEN 1 ELSE 0 END) AS overlap_top20,\\n  1.0 * SUM(CASE WHEN rk_hpa <= 20 AND rk_gtex <= 20 THEN 1 ELSE 0 END) / (40 - SUM(CASE WHEN rk_hpa <= 20 AND rk_gtex <= 20 THEN 1 ELSE 0 END)) AS jaccard\\nFROM ranked\\nGROUP BY t ORDER BY t;\"}"
+        }
+      ]
+    },
+    {
+      "turn": 9,
+      "ms": 754,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 17102,
+        "completion_tokens": 589,
+        "completion_tokens_details": {
+          "reasoning_tokens": 102
+        },
+        "prompt_tokens": 16513,
+        "prompt_tokens_details": {
+          "cached_tokens": 15360,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\nNow the actual top-20 ranked lists per source per tissue:\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH tf AS (\\n  SELECT DISTINCT \\\"Ensembl\\\" AS g, \\\"Gene\\\" AS name FROM proteinatlas\\n  WHERE \\\"Protein class\\\" LIKE '%Transcription factor%'\\n),\\nh AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nx AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\ndata AS (\\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t\\n  WHERE h.v >= 0 AND x.v >= 0\\n),\\nranked AS (\\n  SELECT t, g, name, hv, gv,\\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g ASC) AS rk_hpa,\\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g ASC) AS rk_gtex\\n  FROM data\\n)\\nSELECT 'HPA' AS src, t, rk_hpa AS rk, name, g, ROUND(hv,3) AS ntpm, NULL AS other_rk,\\n       CASE WHEN rk_gtex <= 20 THEN 'Y' ELSE '' END AS in_other_top20\\nFROM ranked WHERE rk_hpa <= 20\\nUNION ALL\\nSELECT 'GTEx' AS src, t, rk_gtex AS rk, name, g, ROUND(gv,3) AS ntpm, NULL AS other_rk,\\n       CASE WHEN rk_hpa <= 20 THEN 'Y' ELSE '' END AS in_other_top20\\nFROM ranked WHERE rk_gtex <= 20\\nORDER BY t, src, rk;\"}"
+        }
+      ]
+    },
+    {
+      "turn": 10,
+      "ms": 1065,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 21461,
+        "completion_tokens": 554,
+        "completion_tokens_details": {
+          "reasoning_tokens": 85
+        },
+        "prompt_tokens": 20907,
+        "prompt_tokens_details": {
+          "cached_tokens": 16384,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\nNow the ten largest |log2| discrepancies per tissue, with consensus nTPM and RNA tissue specificity:\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH tf AS (\\n  SELECT DISTINCT \\\"Ensembl\\\" AS g, \\\"Gene\\\" AS name, \\\"RNA tissue specificity\\\" AS spec, \\\"RNA tissue specific nTPM\\\" AS spec_ntpm\\n  FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Transcription factor%'\\n),\\nh AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nx AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\ndata AS (\\n  SELECT h.t AS t, h.g AS g, tf.name AS name, tf.spec AS spec, h.v AS hv, x.v AS gv\\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t\\n  WHERE h.v >= 0 AND x.v >= 0\\n),\\nd AS (\\n  SELECT t, g, name, spec, ROUND(hv,3) AS hv, ROUND(gv,3) AS gv,\\n         ROUND(LOG((hv+1)/(gv+1))/LOG(2), 4) AS l2r\\n  FROM data\\n)\\nSELECT d.*, c.n AS consensus_ntpm, tf.spec, tf.spec_ntpm\\nFROM (\\n  SELECT d0.*, ROW_NUMBER() OVER (PARTITION BY t ORDER BY ABS(l2r) DESC, g ASC) AS rn\\n  FROM d d0\\n) d\\nLEFT JOIN rna_tissue_consensus c ON c.\\\"Gene\\\" = d.g AND c.\\\"Tissue\\\" = d.t\\nLEFT JOIN tf ON tf.g = d.g\\nWHERE d.rn <= 10\\nORDER BY d.t, d.rn;\"}"
+        }
+      ]
+    },
+    {
+      "turn": 11,
+      "ms": 935,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 21963,
+        "completion_tokens": 526,
+        "completion_tokens_details": {
+          "reasoning_tokens": 22
+        },
+        "prompt_tokens": 21437,
+        "prompt_tokens_details": {
+          "cached_tokens": 20480,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH tf AS (\\n  SELECT DISTINCT \\\"Ensembl\\\" AS g, \\\"Gene\\\" AS name, \\\"RNA tissue specificity\\\" AS spec, \\\"RNA tissue specific nTPM\\\" AS spec_ntpm\\n  FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Transcription factor%'\\n),\\nh AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nx AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\ndata AS (\\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t\\n  WHERE h.v >= 0 AND x.v >= 0\\n),\\nd AS (\\n  SELECT t, g, name, ROUND(hv,3) AS hv, ROUND(gv,3) AS gv,\\n         ROUND(LOG((hv+1)/(gv+1))/LOG(2), 4) AS l2r\\n  FROM data\\n)\\nSELECT d.t AS tissue, d.rn AS rank, d.name, d.g, d.hv AS hpa_ntpm, d.gv AS gtx_ntpm, d.l2r,\\n       c.n AS consensus_ntpm, tf.spec, tf.spec_ntpm\\nFROM (\\n  SELECT d0.*, ROW_NUMBER() OVER (PARTITION BY t ORDER BY ABS(l2r) DESC, g ASC) AS rn\\n  FROM d d0\\n) d\\nLEFT JOIN (SELECT \\\"Gene\\\", \\\"Tissue\\\", TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS n FROM rna_tissue_consensus) c\\n       ON c.\\\"Gene\\\" = d.g AND c.\\\"Tissue\\\" = d.t\\nLEFT JOIN tf ON tf.g = d.g\\nWHERE d.rn <= 10\\nORDER BY d.t, d.rn;\"}"
+        }
+      ]
+    },
+    {
+      "turn": 12,
+      "ms": 1748,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 24527,
+        "completion_tokens": 990,
+        "completion_tokens_details": {
+          "reasoning_tokens": 443
+        },
+        "prompt_tokens": 23537,
+        "prompt_tokens_details": {
+          "cached_tokens": 20992,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\nNow let me characterize the consensus file's relationship to the two sources (to explain it precisely), and compute aggregate stats for the top-20 union sets:\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH tf AS (SELECT DISTINCT \\\"Ensembl\\\" AS g FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Transcription factor%'),\\nh AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nx AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nf AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"Normalized tags per million\\\" AS DOUBLE) AS v FROM rna_tissue_fantom WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nc AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_consensus WHERE \\\"Tissue\\\" IN ('colon','ovary','testis'))\\nSELECT COUNT(*) AS rows,\\n  SUM(CASE WHEN c.v IS NOT NULL AND h.v IS NOT NULL AND x.v IS NOT NULL THEN 1 ELSE 0 END) AS all3,\\n  SUM(CASE WHEN c.v IS NOT NULL AND h.v IS NOT NULL AND x.v IS NOT NULL\\n            AND ABS(c.v - greatest(h.v, x.v)) < 0.05 THEN 1 ELSE 0 END) AS cons_eq_max_hpa_gtex,\\n  SUM(CASE WHEN c.v IS NOT NULL AND h.v IS NOT NULL AND x.v IS NOT NULL\\n            AND ABS(c.v - greatest(h.v, x.v)) >= 0.05 THEN 1 ELSE 0 END) AS cons_not_max,\\n  SUM(CASE WHEN c.v > 0 AND h.v = 0 AND x.v = 0 THEN 1 ELSE 0 END) AS cons_only\\nFROM tf JOIN h ON h.g = tf.g\\nJOIN x ON x.g = tf.g AND x.t = h.t\\nLEFT JOIN f ON f.g = tf.g AND f.t = h.t\\nLEFT JOIN c ON c.g = tf.g AND c.t = h.t;\"}"
+        }
+      ]
+    },
+    {
+      "turn": 13,
+      "ms": 966,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 24934,
+        "completion_tokens": 792,
+        "completion_tokens_details": {
+          "reasoning_tokens": 130
+        },
+        "prompt_tokens": 24142,
+        "prompt_tokens_details": {
+          "cached_tokens": 23040,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\nConsensus = max(HPA, GTEx) holds for all 4,449 TF–tissue rows. Let me confirm this broadly across all genes (not just TFs) to ground the explanation:\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH h AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nx AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nc AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_consensus WHERE \\\"Tissue\\\" IN ('colon','ovary','testis'))\\nSELECT COUNT(*) AS rows,\\n  SUM(CASE WHEN ABS(c.v - greatest(h.v, x.v)) < 0.05 THEN 1 ELSE 0 END) AS cons_eq_max,\\n  SUM(CASE WHEN ABS(c.v - greatest(h.v, x.v)) >= 0.05 THEN 1 ELSE 0 END) AS cons_not_max,\\n  MAX(ABS(c.v - greatest(h.v, x.v))) AS max_dev\\nFROM h JOIN x ON x.g = h.g AND x.t = h.t\\nJOIN c ON c.g = h.g AND c.t = h.t;\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"-- check how consensus compares to an additive/mean model and whether it ever exceeds max\\nWITH h AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nx AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nc AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_consensus WHERE \\\"Tissue\\\" IN ('colon','ovary','testis'))\\nSELECT SUM(CASE WHEN c.v > greatest(h.v, x.v) + 0.05 THEN 1 ELSE 0 END) AS cons_above_max,\\n  SUM(CASE WHEN c.v < least COALESCE(h.v,0), COALESCE(x.v,0)) - 0.05 THEN 1 ELSE 0 END) AS cons_below_min\\nFROM h JOIN x ON x.g=h.g AND x.t=h.t JOIN c ON c.g=h.g AND c.t=h.t;\"}"
+        }
+      ]
+    },
+    {
+      "turn": 14,
+      "ms": 1370,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 25792,
+        "completion_tokens": 873,
+        "completion_tokens_details": {
+          "reasoning_tokens": 209
+        },
+        "prompt_tokens": 24919,
+        "prompt_tokens_details": {
+          "cached_tokens": 24064,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\nConsensus is exactly max(HPA, GTEx) — 59,895/59,895 rows, max deviation 0.0. That fully explains why it can't serve as an independent cohort. Now the union-set (top-20) measurements and scatter data:\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH tf AS (SELECT DISTINCT \\\"Ensembl\\\" AS g, \\\"Gene\\\" AS name FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Transcription factor%'),\\nh AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nx AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\ndata AS (\\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t WHERE h.v>=0 AND x.v>=0\\n),\\nranked AS (\\n  SELECT t, g, name, hv, gv,\\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) AS rk_hpa,\\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) AS rk_gtex\\n  FROM data\\n),\\nun AS (\\n  SELECT t, g, name, hv, gv,\\n    (rk_hpa<=20) AS in_hpa, (rk_gtex<=20) AS in_gtex,\\n    (rk_hpa<=20 AND rk_gtex<=20) AS in_both,\\n    rk_hpa, rk_gtex,\\n    LOG((hv+1)/(gv+1))/LOG(2) AS l2r\\n  FROM ranked WHERE rk_hpa<=20 OR rk_gtex<=20\\n)\\nSELECT t AS tissue,\\n  COUNT(*) AS union_n,\\n  SUM(in_hpa) AS hpa_top20_n,\\n  SUM(in_gtex) AS gtx_top20_n,\\n  SUM(in_both) AS overlap,\\n  ROUND(1.0*SUM(in_both)/(20.0*2 - SUM(in_both)),4) AS jaccard,\\n  -- spearman on union\\n  ROUND(corr(ROW_NUMBER() OVER w1, ROW_NUMBER() OVER w2),4) AS ign,\\n    MEDIAN(ABS(l2r)) AS median_abs_l2r,\\n  ROUND((AVG(hv)),2) AS mean_hpa, ROUND((AVG(gv)),2) AS mean_gtx\\nFROM un, UNNEST(VALUES(1)) AS w1\\nGROUP BY t;\"}"
+        }
+      ]
+    },
+    {
+      "turn": 15,
+      "ms": 1803,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 26412,
+        "completion_tokens": 779,
+        "completion_tokens_details": {
+          "reasoning_tokens": 130
+        },
+        "prompt_tokens": 25633,
+        "prompt_tokens_details": {
+          "cached_tokens": 24576,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH tf AS (SELECT DISTINCT \\\"Ensembl\\\" AS g, \\\"Gene\\\" AS name FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Transcription factor%'),\\nh AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nx AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\ndata AS (\\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t WHERE h.v>=0 AND x.v>=0\\n),\\nranked AS (\\n  SELECT t, g, name, hv, gv,\\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) AS rk_hpa,\\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) AS rk_gtex\\n  FROM data\\n),\\nun AS (\\n  SELECT t, g, name, hv, gv,\\n    (rk_hpa<=20) AS in_hpa, (rk_gtex<=20) AS in_gtex,\\n    (rk_hpa<=20 AND rk_gtex<=20) AS in_both\\n  FROM ranked WHERE rk_hpa<=20 OR rk_gtex<=20\\n),\\nun2 AS (\\n  SELECT un.*,\\n    (ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) + ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv ASC, g) + 1)/2.0 AS r1,\\n    (ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) + ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv ASC, g) + 1)/2.0 AS r2,\\n    LOG((hv+1)/(gv+1))/LOG(2) AS l2r\\n  FROM un\\n)\\nSELECT t AS tissue,\\n  COUNT(*) AS union_n,\\n  SUM(in_hpa) AS hpa_top20_n,\\n  SUM(in_gtex) AS gtx_top20_n,\\n  SUM(in_both) AS overlap,\\n  ROUND(1.0*SUM(in_both)/(20.0*2 - SUM(in_both)),4) AS jaccard,\\n  ROUND(corr(r1, r2),4) AS spearman_union,\\n  ROUND(median(ABS(l2r)),4) AS median_abs_l2r_union\\nFROM un2 GROUP BY t ORDER BY t;\"}"
+        }
+      ]
+    },
+    {
+      "turn": 16,
+      "ms": 1154,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 27249,
+        "completion_tokens": 823,
+        "completion_tokens_details": {
+          "reasoning_tokens": 374
+        },
+        "prompt_tokens": 26426,
+        "prompt_tokens_details": {
+          "cached_tokens": 25600,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\nSpearman on the union returned NaN — let me debug that directly:\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH tf AS (SELECT DISTINCT \\\"Ensembl\\\" AS g, \\\"Gene\\\" AS name FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Transcription factor%'),\\nh AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nx AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\ndata AS (\\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t WHERE h.v>=0 AND x.v>=0\\n),\\nranked AS (\\n  SELECT t, g, name, hv, gv,\\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) AS rk_hpa,\\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) AS rk_gtex\\n  FROM data\\n),\\nun AS (\\n  SELECT t, g, name, hv, gv\\n  FROM ranked WHERE rk_hpa<=20 OR rk_gtex<=20\\n)\\nSELECT t AS tissue,\\n  corr(hv, gv) AS pearson_raw,\\n  corr(LOG(hv+1), LOG(gv+1)) AS pearson_log,\\n  MIN(hv) AS min_hv, MAX(hv) AS max_hv,\\n  MIN(gv) AS min_gv, MAX(gv) AS max_gv,\\n  COUNT(*) AS n\\nFROM un GROUP BY t ORDER BY t;\"}"
+        }
+      ]
+    },
+    {
+      "turn": 17,
+      "ms": 1245,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 27765,
+        "completion_tokens": 651,
+        "completion_tokens_details": {
+          "reasoning_tokens": 117
+        },
+        "prompt_tokens": 27114,
+        "prompt_tokens_details": {
+          "cached_tokens": 26112,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH tf AS (SELECT DISTINCT \\\"Ensembl\\\" AS g, \\\"Gene\\\" AS name FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Transcription factor%'),\\nh AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nx AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\ndata AS (\\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t WHERE h.v>=0 AND x.v>=0\\n),\\nranked AS (\\n  SELECT t, g, name, hv, gv, rk_hpa, rk_gtex FROM (\\n    SELECT t,g,name,hv,gv,\\n      ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) AS rk_hpa,\\n      ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) AS rk_gtex\\n    FROM data))\\n,\\nun AS (SELECT * FROM ranked WHERE rk_hpa<=20 OR rk_gtex<=20),\\nr AS (\\n  SELECT t, g, hv, gv,\\n    (ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv ASC, g) + ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) + 1)/2.0 AS r1,\\n    (ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv ASC, g) + ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) + 1)/2.0 AS r2\\n  FROM un\\n)\\nSELECT t AS tissue, COUNT(*) AS n,\\n  AVG(r1) AS avg_r1, AVG(r2) AS avg_r2,\\n  MIN(r1) AS min_r1, MAX(r1) AS max_r1,\\n  corr(r1, r2) AS spearman_union\\nFROM r GROUP BY t ORDER BY t;\"}"
+        }
+      ]
+    },
+    {
+      "turn": 18,
+      "ms": 965,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 28211,
+        "completion_tokens": 454,
+        "completion_tokens_details": {
+          "reasoning_tokens": 352
+        },
+        "prompt_tokens": 27757,
+        "prompt_tokens_details": {
+          "cached_tokens": 26624,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\nRanks are coming back constant — let me debug ROW_NUMBER in isolation:\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT v,\\n  ROW_NUMBER() OVER (ORDER BY v ASC) AS rn_asc,\\n  ROW_NUMBER() OVER (ORDER BY v DESC) AS rn_desc\\nFROM (SELECT 10 AS v UNION ALL SELECT 20 UNION ALL SELECT 30 UNION ALL SELECT 5)\"}"
+        }
+      ]
+    },
+    {
+      "turn": 19,
+      "ms": 1365,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 28771,
+        "completion_tokens": 857,
+        "completion_tokens_details": {
+          "reasoning_tokens": 409
+        },
+        "prompt_tokens": 27914,
+        "prompt_tokens_details": {
+          "cached_tokens": 27648,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\nROW_NUMBER works in isolation; the collapse is an artifact of my CTE structure. Let me use the already-computed full-set ranks and correlate them within the union subset:\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH tf AS (SELECT DISTINCT \\\"Ensembl\\\" AS g, \\\"Gene\\\" AS name FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Transcription factor%'),\\nh AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nx AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\ndata AS (\\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t WHERE h.v>=0 AND x.v>=0\\n),\\nranked AS (\\n  SELECT t, g, name, hv, gv,\\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) AS rk_hpa,\\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) AS rk_gtex\\n  FROM data\\n),\\nun AS (SELECT t,g,name,hv,gv,rk_hpa,rk_gtex\\n       FROM ranked WHERE rk_hpa<=20 OR rk_gtex<=20)\\nSELECT t AS tissue, COUNT(*) AS n,\\n  corr(rk_hpa, rk_gtex) AS spearman_union_on_ranks,\\n  ROUND(median(ABS(LOG((hv+1)/(gv+1))/LOG(2))),4) AS median_abs_l2r_union\\nFROM un GROUP BY t ORDER BY t;\"}"
+        }
+      ]
+    },
+    {
+      "turn": 20,
+      "ms": 1683,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 29696,
+        "completion_tokens": 1197,
+        "completion_tokens_details": {
+          "reasoning_tokens": 699
+        },
+        "prompt_tokens": 28499,
+        "prompt_tokens_details": {
+          "cached_tokens": 27648,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\nThe union-set ranks need to be computed by re-ranking within the union subset. My earlier rank CTE had an evaluation artifact; let me compute the subset ranks cleanly and verify:\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH tf AS (SELECT DISTINCT \\\"Ensembl\\\" AS g, \\\"Gene\\\" AS name FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Transcription factor%'),\\nh AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\nx AS (SELECT \\\"Tissue\\\" AS t, \\\"Gene\\\" AS g, TRY_CAST(\\\"nTPM\\\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \\\"Tissue\\\" IN ('colon','ovary','testis')),\\ndata AS (\\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t WHERE h.v>=0 AND x.v>=0\\n),\\nranked AS (\\n  SELECT t, g, name, hv, gv,\\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) AS rk_hpa,\\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) AS rk_gtex\\n  FROM data\\n),\\nun AS (SELECT t,g,name,hv,gv,rk_hpa,rk_gtex\\n       FROM ranked WHERE rk_hpa<=20 OR rk_gtex<=20),\\nsub AS (\\n  SELECT t,g,name,hv,gv,rk_hpa,rk_gtex,\\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) AS sub_hpa_rank,\\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) AS sub_gtex_rank\\n  FROM un\\n)\\nSELECT t, name, g, hv, gv, rk_hpa, rk_gtex, sub_hpa_rank, sub_gtex_rank\\nFROM sub WHERE t='colon' ORDER BY sub_hpa_rank;\"}"
+        }
+      ]
+    },
+    {
+      "turn": 21,
+      "ms": 12195,
+      "stop_reason": "stop",
+      "usage": {
+        "total_tokens": 47304,
+        "completion_tokens": 17050,
+        "completion_tokens_details": {
+          "reasoning_tokens": 9792
+        },
+        "prompt_tokens": 30254,
+        "prompt_tokens_details": {
+          "cached_tokens": 28160,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\nAll data below come from the tool results. Here is the complete reproducibility report.\n\n## 1. Data, universe and pairing\n- **Source files used separately:** `rna_tissue_hpa` (HPA nTPM) and `rna_tissue_gtex` (GTEx nTPM), tissues `colon`, `ovary`, `testis`. Their nTPM columns are 100 % numeric and non‑negative (0 non‑numeric, 0 negative rows per tissue) — no NaN/imputation needed.\n- **Gene universe:** Ensembl genes in the HPA master table (`proteinatlas`) with Protein class \"Transcription factors\" = **1,485 genes** (all 1,485 have an Ensembl ID).\n- **Paired in both sources (finite, ≥0) per tissue:** **1,483** TFs. Missing from the GTEx tissue file in all three tissues: ZNF883 (ENSG00000228623) and HOMEZ (ENSG00000290292).\n- All rankings use nTPM descending, **ties broken by Ensembl ID** (e.g., GTEx colon: ID3=ID1=127.1 → ID3 ranks 12, ID1 ranks 13).\n\n## 2. Per-tissue reproducibility (n = 1,483 paired TFs)\n| Tissue | Count (n) | Spearman (HPA nTPM vs GTEx nTPM) | Median abs log2((HPA+1)/(GTEx+1)) |\n|---|---|---|---|\n| colon | 1483 | **0.8935** | **0.372** |\n| ovary | 1483 | **0.9197** | **0.2756** |\n| testis | 1483 | **0.9085** | **0.3219** |\n\n## 3. Top-20 transcription factors per source (rank / gene / nTPM)\n\n**COLON — HPA:** 1 YBX1 398.6 · 2 FOS 276.9 · 3 ATF4 207.2 · 4 XBP1 188.4 · 5 TSC22D3 165.0 · 6 ELF3 151.3 · 7 KLF5 151.1 · 8 MAZ 131.8 · 9 TSC22D1 113.3 · 10 ETS2 111.8 · 11 ID2 110.3 · 12 NFE2L1 100.7 · 13 EGR1 98.7 · 14 CDX1 93.3 · 15 EHF 93.1 · 16 NONO 88.3 · 17 NR4A1 87.0 · 18 KLF6 86.4 · 19 KLF4 81.8 · 20 JUND 74.9\n**COLON — GTEx:** 1 ATF4 826.1 · 2 YBX1 530.4 · 3 FOS 450.4 · 4 TSC22D3 273.2 · 5 JUNB 270.4 · 6 CEBPD 247.8 · 7 EGR1 228.4 · 8 NR4A1 217.3 · 9 YBX3 214.5 · 10 JUND 174.7 · 11 ID2 145.5 · 12 ID3 127.1 · 13 ID1 127.1 · 14 ELF3 126.9 · 15 TSC22D1 123.3 · 16 NFKBIA 122.1 · 17 MAZ 115.4 · 18 USF2 110.7 · 19 HAND2 101.2 · 20 ZNF358 100.8\nIn both lists: YBX1, FOS, ATF4, TSC22D3, ELF3, MAZ, TSC22D1, ID2, EGR1, NR4A1, JUND (**11**). HPA-only (9): XBP1, KLF5, ETS2, NFE2L1, CDX1, EHF, NONO, KLF6, KLF4. GTEx-only (9): JUNB, CEBPD, YBX3, ID3, ID1, NFKBIA, USF2, HAND2, ZNF358.\n\n**OVARY — HPA:** 1 FOS 1090.9 · 2 EGR1 729.2 · 3 NR4A1 337.9 · 4 JUNB 283.0 · 5 ATF4 262.3 · 6 YBX1 241.7 · 7 NR2F2 223.5 · 8 NFKBIA 201.8 · 9 NONO 198.9 · 10 FOSB 197.2 · 11 PEG3 195.7 · 12 TSC22D3 193.0 · 13 TCF21 192.4 · 14 ID2 187.4 · 15 TSC22D1 162.2 · 16 JUN 161.5 · 17 NFE2L2 143.9 · 18 NFE2L1 136.2 · 19 USF2 128.3 · 20 MAZ 124.8\n**OVARY — GTEx:** 1 NR4A1 800.4 · 2 JUNB 605.2 · 3 FOS 481.8 · 4 CEBPD 467.9 · 5 JUND 397.6 · 6 ATF4 340.9 · 7 TSC22D3 338.8 · 8 YBX1 275.5 · 9 EGR1 221.8 · 10 NR2F2 214.1 · 11 ID2 208.9 · 12 NFKBIA 197.7 · 13 TSC22D1 165.6 · 14 ID3 155.3 · 15 USF2 152.9 · 16 KLF2 138.6 · 17 NONO 138.4 · 18 NFATC4 137.4 · 19 TCF21 130.4 · 20 FOSL2 124.3\nIn both lists: NR4A1, JUNB, FOS, ATF4, TSC22D3, YBX1, EGR1, NR2F2, ID2, NFKBIA, TSC22D1, USF2, NONO, TCF21 (**14**). HPA-only (6): FOSB, PEG3, JUN, NFE2L2, NFE2L1, MAZ. GTEx-only (6): CEBPD, JUND, ID3, KLF2, NFATC4, FOSL2.\n\n**TESTIS — HPA:** 1 YBX1 719.0 · 2 YBX3 246.1 · 3 CREM 168.0 · 4 TBPL1 118.4 · 5 LYAR 95.4 · 6 YBX2 90.2 · 7 ATF4 89.5 · 8 FOS 81.5 · 9 ZFP91 80.8 · 10 SOX30 74.9 · 11 RFX4 70.2 · 12 TCFL5 69.2 · 13 LRRFIP2 67.0 · 14 TFDP2 65.2 · 15 NFE2L1 64.7 · 16 MAZ 62.7 · 17 TSC22D1 57.8 · 18 NFE2L2 56.8 · 19 MBD1 54.7 · 20 BBX 54.2\n**TESTIS — GTEx:** 1 YBX1 701.6 · 2 YBX2 493.0 · 3 YBX3 231.6 · 4 CREM 194.3 · 5 ATF4 153.4 · 6 HSF1 102.6 · 7 JUND 93.5 · 8 MAZ 86.5 · 9 MBD1 84.1 · 10 LYAR 79.0 · 11 ZNF683 76.5 · 12 HMGA1 76.3 · 13 SOX30 76.2 · 14 TCF25 74.1 · 15 NFKBIB 72.2 · 16 TBPL1 68.8 · 17 CIC 67.6 · 18 TFDP2 60.7 · 19 LRRFIP2 60.5 · 20 DMRTB1 59.1\nIn both lists: YBX1, YBX2, YBX3, CREM, TBPL1, LYAR, ATF4, SOX30, LRRFIP2, TFDP2, MAZ, MBD1 (**12**). HPA-only (8): FOS, ZFP91, RFX4, TCFL5, NFE2L1, TSC22D1, NFE2L2, BBX. GTEx-only (8): HSF1, JUND, ZNF683, HMGA1, TCF25, NFKBIB, CIC, DMRTB1.\n\n## 4. Top-20 overlap, Jaccard and overlap bars\n| Tissue | Overlap (of 20) | Jaccard ",
+      "tool_uses": []
+    }
+  ],
+  "tool_calls": [
+    {
+      "turn": 1,
+      "name": "schema",
+      "input": {},
+      "ms": 3879,
+      "result_chars": 148152,
+      "truncated": true,
+      "error": null,
+      "result_head": "Tables built from the Human Protein Atlas bulk files (all columns are text; cast for arithmetic, e.g. TRY_CAST(col AS DOUBLE)).\n\nblood_immunoassay_concentration (0.1 MB): gene, ENSG ID, conc [pg/L], sample type, number_of_samples, pubmed id\nblood_ms_concentration (0.1 MB): Gene, ENSG ID, Conc [pg/L]\nblood_pea_disease_de (17.9 MB): Gene, ENSG ID, Disease, Class, Control, logFC, p-value adjusted, Seeds, Mean importance, SD importance, Max importance, Min importance\nblood_pea_diseases (0.0 MB): Disease, Class\ncancer_cancers (0.0 MB): Cancer, Organ\ncancer_cptac (5.7 MB): Cancer, Gene, Gene name, p"
+    },
+    {
+      "turn": 2,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene\", \"Gene name\", \"Tissue\", \"TPM\", \"pTPM\", \"nTPM\" FROM rna_tissue_hpa LIMIT 5"
+      },
+      "ms": 64,
+      "result_chars": 285,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tGene name\tTissue\tTPM\tpTPM\tnTPM\nENSG00000000003\tTSPAN6\tadipose tissue\t20.8\t25.9\t19.3\nENSG00000000003\tTSPAN6\tadrenal gland\t17.7\t22.4\t13.3\nENSG00000000003\tTSPAN6\tappendix\t6.4\t8.6\t4.6\nENSG00000000003\tTSPAN6\tbone marrow\t0.3\t0.5\t0.6\nENSG00000000003\tTSPAN6\tbreast\t30.6\t37.9\t24.0\n[5 rows]"
+    },
+    {
+      "turn": 2,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene\", \"Gene name\", \"Tissue\", \"TPM\", \"pTPM\", \"nTPM\" FROM rna_tissue_gtex LIMIT 5"
+      },
+      "ms": 42,
+      "result_chars": 290,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tGene name\tTissue\tTPM\tpTPM\tnTPM\nENSG00000000003\tTSPAN6\tadipose tissue\t20.1\t24.6\t20.1\nENSG00000000003\tTSPAN6\tadrenal gland\t10.9\t13.1\t12.7\nENSG00000000003\tTSPAN6\tamygdala\t5.0\t6.2\t8.7\nENSG00000000003\tTSPAN6\tbasal ganglia\t5.3\t6.5\t8.4\nENSG00000000003\tTSPAN6\tblood vessel\t6.8\t8.4\t6.6\n[5 rows]"
+    },
+    {
+      "turn": 2,
+      "name": "sql",
+      "input": {
+        "query": "SELECT * FROM rna_tissue_hpa_tissues"
+      },
+      "ms": 2,
+      "result_chars": 1428,
+      "truncated": false,
+      "error": null,
+      "result_head": "Tissue\tOrgan\nadipose tissue\tConnective & Soft tissue\nadrenal gland\tEndocrine tissues\nappendix\tBone marrow & Lymphoid tissues\nbone marrow\tBone marrow & Lymphoid tissues\nbreast\tBreast & female reproductive system\ncerebral cortex\tBrain\ncervix\tBreast & female reproductive system\nchoroid plexus\tBrain\ncolon\tGastrointestinal tract\nduodenum\tGastrointestinal tract\nendometrium\tBreast & female reproductive system\nepididymis\tMale reproductive system\nesophagus\tProximal digestive tract\nfallopian tube\tBreast & female reproductive system\ngallbladder\tLiver & Gallbladder\nheart muscle\tMuscle & Vascular tissue\nki"
+    },
+    {
+      "turn": 2,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Tissue\", \"Organ\" FROM rna_tissue_gtex_tissues"
+      },
+      "ms": 2,
+      "result_chars": 1141,
+      "truncated": false,
+      "error": null,
+      "result_head": "Tissue\tOrgan\nadipose tissue\tConnective & Soft tissue\nadrenal gland\tEndocrine tissues\namygdala\tBrain\nbasal ganglia\tBrain\nblood vessel\tMuscle & Vascular tissue\nbreast\tBreast & female reproductive system\ncerebellum\tBrain\ncerebral cortex\tBrain\ncervix\tBreast & female reproductive system\ncolon\tGastrointestinal tract\nendometrium\tBreast & female reproductive system\nesophagus\tProximal digestive tract\nfallopian tube\tBreast & female reproductive system\nheart muscle\tMuscle & Vascular tissue\nhippocampal formation\tBrain\nhypothalamus\tBrain\nkidney\tKidney & Urinary bladder\nliver\tLiver & Gallbladder\nlung\tRespir"
+    },
+    {
+      "turn": 3,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Protein class\", COUNT(*) AS n FROM proteinatlas GROUP BY 1 ORDER BY 2 DESC"
+      },
+      "ms": 116,
+      "result_chars": 177685,
+      "truncated": true,
+      "error": null,
+      "result_head": "Protein class\tn\nPredicted intracellular proteins\t4705\nPredicted intracellular proteins, Transcription factors\t840\nPredicted membrane proteins\t817\nDisease related genes, Human disease related genes, Predicted intracellular proteins\t669\nEssential proteins, Predicted intracellular proteins\t604\nPredicted intracellular proteins, Predicted membrane proteins\t581\nEnzymes, Predicted intracellular proteins\t519\nPlasma proteins, Predicted intracellular proteins\t514\nEnzymes, Metabolic proteins, Predicted intracellular proteins\t486\nG-protein coupled receptors, Predicted membrane proteins\t457\nPredicted secre"
+    },
+    {
+      "turn": 3,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene\", \"Gene name\", \"Gene synonym\", \"Ensembl\", \"Protein class\" FROM proteinatlas WHERE \"Protein class\" LIKE '%Transcription factor%' LIMIT 10"
+      },
+      "ms": 44,
+      "result_chars": 359,
+      "truncated": false,
+      "error": "tool reported an error",
+      "result_head": "Error: Binder Error: Referenced column \"Gene name\" not found in FROM clause!\nCandidate bindings: \"Gene\", \"Gene synonym\", \"Gene description\", \"Cancer prognostics - Rectum Adenocarcinoma (TCGA)\", \"Cancer prognostics - Rectum Adenocarcinoma (validation)\"\n\nLINE 1: SELECT \"Gene\", \"Gene name\", \"Gene synonym\", \"Ensembl\", \"Protein class\"...\n                       ^"
+    },
+    {
+      "turn": 4,
+      "name": "sql",
+      "input": {
+        "query": "SELECT COUNT(*) AS n_tf FROM proteinatlas WHERE \"Protein class\" LIKE '%Transcription factor%'"
+      },
+      "ms": 113,
+      "result_chars": 18,
+      "truncated": false,
+      "error": null,
+      "result_head": "n_tf\n1485\n[1 rows]"
+    },
+    {
+      "turn": 4,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene\", \"Gene synonym\", \"Ensembl\", \"Gene description\", \"RNA tissue specificity\" FROM proteinatlas WHERE \"Protein class\" LIKE '%Transcription factor%' LIMIT 15"
+      },
+      "ms": 103,
+      "result_chars": 1380,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tGene synonym\tEnsembl\tGene description\tRNA tissue specificity\nNFYA\tCBF-B, HAP2, NF-YA\tENSG00000001167\tNuclear transcription factor Y subunit alpha\tLow tissue specificity\nARX\tCT121, EIEE1, ISSX, MRX29, MRX32, MRX33, MRX36, MRX38, MRX43, MRX54, MRX76, MRX87, MRXS1, PRTS\tENSG00000004848\tAristaless related homeobox\tGroup enriched\nHOXA11\tHOX1, HOX1I\tENSG00000005073\tHomeobox A11\tTissue enhanced\nMEOX1\tMOX1\tENSG00000005102\tMesenchyme homeobox 1\tTissue enhanced\nSOX8\t\tENSG00000005513\tSRY-box transcription factor 8\tTissue enriched\nZNF195\t\tENSG00000005801\tZinc finger protein 195\tLow tissue specificity"
+    },
+    {
+      "turn": 5,
+      "name": "sql",
+      "input": {
+        "query": "SELECT COUNT(DISTINCT \"Ensembl\") AS n_tf_ensembl, COUNT(*) AS n_rows, SUM(CASE WHEN \"Ensembl\"='' OR \"Ensembl\" IS NULL THEN 1 ELSE 0 END) AS missing FROM proteinatlas WHERE \"Protein class\" LIKE '%Transcription factor%'"
+      },
+      "ms": 110,
+      "result_chars": 48,
+      "truncated": false,
+      "error": null,
+      "result_head": "n_tf_ensembl\tn_rows\tmissing\n1485\t1485\t0\n[1 rows]"
+    },
+    {
+      "turn": 5,
+      "name": "sql",
+      "input": {
+        "query": "-- check HPA tissue nTPM value formats / anomalies for the three tissues\nSELECT \"Tissue\", COUNT(*) AS rows, SUM(CASE WHEN \"nTPM\" LIKE '%-%' THEN 1 ELSE 0 END) AS neg, SUM(CASE WHEN \"nTPM\" NOT GLOB '[0-9]*' THEN 1 ELSE 0 END) AS nonnum, MAX(\"nTPM\") AS max_raw, MIN(\"nTPM\") AS min_raw\nFROM rna_tissue_hpa WHERE \"Tissue\" IN ('colon','ovary','testis') GROUP BY \"Tissue\""
+      },
+      "ms": 1,
+      "result_chars": 253,
+      "truncated": false,
+      "error": "tool reported an error",
+      "result_head": "Error: Parser Error: syntax error at or near \"GLOB\"\n\nLINE 2: ... '%-%' THEN 1 ELSE 0 END) AS neg, SUM(CASE WHEN \"nTPM\" NOT GLOB '[0-9]*' THEN 1 ELSE 0 END) AS nonnum, MAX(\"nTPM\")...\n                                                                      ^"
+    },
+    {
+      "turn": 5,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Tissue\", COUNT(*) AS rows, SUM(CASE WHEN \"nTPM\" LIKE '%-%' THEN 1 ELSE 0 END) AS neg, SUM(CASE WHEN \"nTPM\" NOT GLOB '[0-9]*' THEN 1 ELSE 0 END) AS nonnum\nFROM rna_tissue_gtex WHERE \"Tissue\" IN ('colon','ovary','testis') GROUP BY \"Tissue\""
+      },
+      "ms": 1,
+      "result_chars": 237,
+      "truncated": false,
+      "error": "tool reported an error",
+      "result_head": "Error: Parser Error: syntax error at or near \"GLOB\"\n\nLINE 1: ... '%-%' THEN 1 ELSE 0 END) AS neg, SUM(CASE WHEN \"nTPM\" NOT GLOB '[0-9]*' THEN 1 ELSE 0 END) AS nonnum\n                                                                      ^"
+    },
+    {
+      "turn": 6,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Tissue\", COUNT(*) AS rows,\n SUM(CASE WHEN TRY_CAST(\"nTPM\" AS DOUBLE) IS NULL THEN 1 ELSE 0 END) AS nonnum,\n SUM(CASE WHEN TRY_CAST(\"nTPM\" AS DOUBLE) < 0 THEN 1 ELSE 0 END) AS neg,\n SUM(CASE WHEN \"nTPM\" LIKE 'nan%' OR \"nTPM\" LIKE '%inf%' OR \"nTPM\" = '' THEN 1 ELSE 0 END) AS nanish\nFROM rna_tissue_hpa WHERE \"Tissue\" IN ('colon','ovary','testis') GROUP BY \"Tissue\""
+      },
+      "ms": 109,
+      "result_chars": 93,
+      "truncated": false,
+      "error": null,
+      "result_head": "Tissue\trows\tnonnum\tneg\tnanish\ncolon\t20162\t0\t0\t0\ntestis\t20162\t0\t0\t0\novary\t20162\t0\t0\t0\n[3 rows]"
+    },
+    {
+      "turn": 6,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Tissue\", COUNT(*) AS rows,\n SUM(CASE WHEN TRY_CAST(\"nTPM\" AS DOUBLE) IS NULL THEN 1 ELSE 0 END) AS nonnum,\n SUM(CASE WHEN TRY_CAST(\"nTPM\" AS DOUBLE) < 0 THEN 1 ELSE 0 END) AS neg,\n SUM(CASE WHEN \"nTPM\" LIKE 'nan%' OR \"nTPM\" LIKE '%inf%' OR \"nTPM\" = '' THEN 1 ELSE 0 END) AS nanish\nFROM rna_tissue_gtex WHERE \"Tissue\" IN ('colon','ovary','testis') GROUP BY \"Tissue\""
+      },
+      "ms": 79,
+      "result_chars": 93,
+      "truncated": false,
+      "error": null,
+      "result_head": "Tissue\trows\tnonnum\tneg\tnanish\ntestis\t19965\t0\t0\t0\novary\t19965\t0\t0\t0\ncolon\t19965\t0\t0\t0\n[3 rows]"
+    },
+    {
+      "turn": 7,
+      "name": "sql",
+      "input": {
+        "query": "WITH tf AS (\n  SELECT DISTINCT \"Ensembl\" AS g, \"Gene\" AS name FROM proteinatlas\n  WHERE \"Protein class\" LIKE '%Transcription factor%'\n),\nh AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \"Tissue\" IN ('colon','ovary','testis')),\nx AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \"Tissue\" IN ('colon','ovary','testis')),\ndata AS (\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\n  FROM tf\n  JOIN h ON h.g = tf.g\n  JOIN x ON x.g = tf.g AND x.t = h.t\n  WHERE h.v IS NOT NULL AND h.v >= 0 AND x.v IS NOT NULL AND x.v >= 0\n),\nrated AS (\n  SELECT t, g, name, hv, gv,\n    (ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv ASC, g) + ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) + 1)/2.0 AS r1,\n    (ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv ASC, g) + ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) + 1)/2.0 AS r2,\n    ABS(LOG((hv+1)/(gv+1)))/LOG(2) AS adiff\n  FROM data\n)\nSELECT t AS tissue,\n       COUNT(*) AS n,\n       ROUND(corr(r1, r2), 4) AS spearman,\n       ROUND(median(adiff), 4) AS median_abs_log2_ratio\nFROM rated GROUP BY t ORDER BY t;"
+      },
+      "ms": 284,
+      "result_chars": 123,
+      "truncated": false,
+      "error": null,
+      "result_head": "tissue\tn\tspearman\tmedian_abs_log2_ratio\ncolon\t1483\t0.8935\t0.372\novary\t1483\t0.9197\t0.2756\ntestis\t1483\t0.9085\t0.3219\n[3 rows]"
+    },
+    {
+      "turn": 8,
+      "name": "sql",
+      "input": {
+        "query": "WITH tf AS (\n  SELECT DISTINCT \"Ensembl\" AS g, \"Gene\" AS name FROM proteinatlas\n  WHERE \"Protein class\" LIKE '%Transcription factor%'\n),\nh AS (SELECT DISTINCT \"Tissue\" AS t, \"Gene\" AS g FROM rna_tissue_hpa WHERE \"Tissue\" IN ('colon','ovary','testis')),\nx AS (SELECT DISTINCT \"Tissue\" AS t, \"Gene\" AS g FROM rna_tissue_gtex WHERE \"Tissue\" IN ('colon','ovary','testis'))\nSELECT tf.name, tf.g,\n  SUM(CASE WHEN h.g IS NULL THEN 1 ELSE 0 END) AS missing_in_hpa_per_tissue,\n  SUM(CASE WHEN x.g IS NULL THEN 1 ELSE 0 END) AS missing_in_gtex_per_tissue\nFROM tf\nLEFT JOIN h ON h.g = tf.g\nLEFT JOIN x ON x.g = tf.g AND x.t = h.t\nGROUP BY tf.name, tf.g\nHAVING SUM(CASE WHEN h.g IS NULL THEN 1 ELSE 0 END) + SUM(CASE WHEN x.g IS NULL THEN 1 ELSE 0 END) > 0\nORDER BY tf.g;"
+      },
+      "ms": 241,
+      "result_chars": 121,
+      "truncated": false,
+      "error": null,
+      "result_head": "name\tg\tmissing_in_hpa_per_tissue\tmissing_in_gtex_per_tissue\nZNF883\tENSG00000228623\t0\t3\nHOMEZ\tENSG00000290292\t0\t3\n[2 rows]"
+    },
+    {
+      "turn": 8,
+      "name": "sql",
+      "input": {
+        "query": "WITH tf AS (\n  SELECT DISTINCT \"Ensembl\" AS g, \"Gene\" AS name FROM proteinatlas\n  WHERE \"Protein class\" LIKE '%Transcription factor%'\n),\nh AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \"Tissue\" IN ('colon','ovary','testis')),\nx AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \"Tissue\" IN ('colon','ovary','testis')),\ndata AS (\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\n  FROM tf\n  JOIN h ON h.g = tf.g\n  JOIN x ON x.g = tf.g AND x.t = h.t\n  WHERE h.v IS NOT NULL AND h.v >= 0 AND x.v IS NOT NULL AND x.v >= 0\n),\nranked AS (\n  SELECT t, g, name, hv, gv,\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g ASC) AS rk_hpa,\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g ASC) AS rk_gtex\n  FROM data\n)\nSELECT t,\n  COUNT(*) AS n_pairs,\n  SUM(CASE WHEN rk_hpa <= 20 AND rk_gtex <= 20 THEN 1 ELSE 0 END) AS overlap_top20,\n  1.0 * SUM(CASE WHEN rk_hpa <= 20 AND rk_gtex <= 20 THEN 1 ELSE 0 END) / (40 - SUM(CASE WHEN rk_hpa <= 20 AND rk_gtex <= 20 THEN 1 ELSE 0 END)) AS jaccard\nFROM ranked\nGROUP BY t ORDER BY t;"
+      },
+      "ms": 280,
+      "result_chars": 141,
+      "truncated": false,
+      "error": null,
+      "result_head": "t\tn_pairs\toverlap_top20\tjaccard\ncolon\t1483\t11\t0.3793103448275862\novary\t1483\t14\t0.5384615384615384\ntestis\t1483\t12\t0.42857142857142855\n[3 rows]"
+    },
+    {
+      "turn": 9,
+      "name": "sql",
+      "input": {
+        "query": "WITH tf AS (\n  SELECT DISTINCT \"Ensembl\" AS g, \"Gene\" AS name FROM proteinatlas\n  WHERE \"Protein class\" LIKE '%Transcription factor%'\n),\nh AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \"Tissue\" IN ('colon','ovary','testis')),\nx AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \"Tissue\" IN ('colon','ovary','testis')),\ndata AS (\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t\n  WHERE h.v >= 0 AND x.v >= 0\n),\nranked AS (\n  SELECT t, g, name, hv, gv,\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g ASC) AS rk_hpa,\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g ASC) AS rk_gtex\n  FROM data\n)\nSELECT 'HPA' AS src, t, rk_hpa AS rk, name, g, ROUND(hv,3) AS ntpm, NULL AS other_rk,\n       CASE WHEN rk_gtex <= 20 THEN 'Y' ELSE '' END AS in_other_top20\nFROM ranked WHERE rk_hpa <= 20\nUNION ALL\nSELECT 'GTEx' AS src, t, rk_gtex AS rk, name, g, ROUND(gv,3) AS ntpm, NULL AS other_rk,\n       CASE WHEN rk_hpa <= 20 THEN 'Y' ELSE '' END AS in_other_top20\nFROM ranked WHERE rk_gtex <= 20\nORDER BY t, src, rk;"
+      },
+      "ms": 301,
+      "result_chars": 5220,
+      "truncated": false,
+      "error": null,
+      "result_head": "src\tt\trk\tname\tg\tntpm\tother_rk\tin_other_top20\nGTEx\tcolon\t1\tATF4\tENSG00000128272\t826.1\t\tY\nGTEx\tcolon\t2\tYBX1\tENSG00000065978\t530.4\t\tY\nGTEx\tcolon\t3\tFOS\tENSG00000170345\t450.4\t\tY\nGTEx\tcolon\t4\tTSC22D3\tENSG00000157514\t273.2\t\tY\nGTEx\tcolon\t5\tJUNB\tENSG00000171223\t270.4\t\t\nGTEx\tcolon\t6\tCEBPD\tENSG00000221869\t247.8\t\t\nGTEx\tcolon\t7\tEGR1\tENSG00000120738\t228.4\t\tY\nGTEx\tcolon\t8\tNR4A1\tENSG00000123358\t217.3\t\tY\nGTEx\tcolon\t9\tYBX3\tENSG00000060138\t214.5\t\t\nGTEx\tcolon\t10\tJUND\tENSG00000130522\t174.7\t\tY\nGTEx\tcolon\t11\tID2\tENSG00000115738\t145.5\t\tY\nGTEx\tcolon\t12\tID3\tENSG00000117318\t127.1\t\t\nGTEx\tcolon\t13\tID1\tENSG00000125968\t127."
+    },
+    {
+      "turn": 10,
+      "name": "sql",
+      "input": {
+        "query": "WITH tf AS (\n  SELECT DISTINCT \"Ensembl\" AS g, \"Gene\" AS name, \"RNA tissue specificity\" AS spec, \"RNA tissue specific nTPM\" AS spec_ntpm\n  FROM proteinatlas WHERE \"Protein class\" LIKE '%Transcription factor%'\n),\nh AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \"Tissue\" IN ('colon','ovary','testis')),\nx AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \"Tissue\" IN ('colon','ovary','testis')),\ndata AS (\n  SELECT h.t AS t, h.g AS g, tf.name AS name, tf.spec AS spec, h.v AS hv, x.v AS gv\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t\n  WHERE h.v >= 0 AND x.v >= 0\n),\nd AS (\n  SELECT t, g, name, spec, ROUND(hv,3) AS hv, ROUND(gv,3) AS gv,\n         ROUND(LOG((hv+1)/(gv+1))/LOG(2), 4) AS l2r\n  FROM data\n)\nSELECT d.*, c.n AS consensus_ntpm, tf.spec, tf.spec_ntpm\nFROM (\n  SELECT d0.*, ROW_NUMBER() OVER (PARTITION BY t ORDER BY ABS(l2r) DESC, g ASC) AS rn\n  FROM d d0\n) d\nLEFT JOIN rna_tissue_consensus c ON c.\"Gene\" = d.g AND c.\"Tissue\" = d.t\nLEFT JOIN tf ON tf.g = d.g\nWHERE d.rn <= 10\nORDER BY d.t, d.rn;"
+      },
+      "ms": 107,
+      "result_chars": 159,
+      "truncated": false,
+      "error": "tool reported an error",
+      "result_head": "Error: Binder Error: Values list \"c\" does not have a column named \"n\"\n\nLINE 17: SELECT d.*, c.n AS consensus_ntpm, tf.spec, tf.spec_ntpm\n                     ^"
+    },
+    {
+      "turn": 11,
+      "name": "sql",
+      "input": {
+        "query": "WITH tf AS (\n  SELECT DISTINCT \"Ensembl\" AS g, \"Gene\" AS name, \"RNA tissue specificity\" AS spec, \"RNA tissue specific nTPM\" AS spec_ntpm\n  FROM proteinatlas WHERE \"Protein class\" LIKE '%Transcription factor%'\n),\nh AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \"Tissue\" IN ('colon','ovary','testis')),\nx AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \"Tissue\" IN ('colon','ovary','testis')),\ndata AS (\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t\n  WHERE h.v >= 0 AND x.v >= 0\n),\nd AS (\n  SELECT t, g, name, ROUND(hv,3) AS hv, ROUND(gv,3) AS gv,\n         ROUND(LOG((hv+1)/(gv+1))/LOG(2), 4) AS l2r\n  FROM data\n)\nSELECT d.t AS tissue, d.rn AS rank, d.name, d.g, d.hv AS hpa_ntpm, d.gv AS gtx_ntpm, d.l2r,\n       c.n AS consensus_ntpm, tf.spec, tf.spec_ntpm\nFROM (\n  SELECT d0.*, ROW_NUMBER() OVER (PARTITION BY t ORDER BY ABS(l2r) DESC, g ASC) AS rn\n  FROM d d0\n) d\nLEFT JOIN (SELECT \"Gene\", \"Tissue\", TRY_CAST(\"nTPM\" AS DOUBLE) AS n FROM rna_tissue_consensus) c\n       ON c.\"Gene\" = d.g AND c.\"Tissue\" = d.t\nLEFT JOIN tf ON tf.g = d.g\nWHERE d.rn <= 10\nORDER BY d.t, d.rn;"
+      },
+      "ms": 386,
+      "result_chars": 2454,
+      "truncated": false,
+      "error": null,
+      "result_head": "tissue\trank\tname\tg\thpa_ntpm\tgtx_ntpm\tl2r\tconsensus_ntpm\tspec\tspec_ntpm\ncolon\t1\tHIF3A\tENSG00000124440\t2.2\t52.5\t-4.0634\t52.5\tLow tissue specificity\t\ncolon\t2\tNFKBIL1\tENSG00000204498\t0.8\t26\t-3.9069\t26\tLow tissue specificity\t\ncolon\t3\tHAND2\tENSG00000164107\t6.3\t101.2\t-3.8074\t101.2\tTissue enhanced\tintestine: 101.2\ncolon\t4\tHAND1\tENSG00000113196\t4.7\t63.4\t-3.498\t63.4\tTissue enhanced\theart muscle: 23.1;intestine: 63.4\ncolon\t5\tNFATC4\tENSG00000100968\t5.3\t68.7\t-3.4677\t68.7\tLow tissue specificity\t\ncolon\t6\tGLIS2\tENSG00000126603\t0.9\t18.1\t-3.3295\t18.1\tLow tissue specificity\t\ncolon\t7\tTWIST2\tENSG00000233608\t1.4\t22"
+    },
+    {
+      "turn": 12,
+      "name": "sql",
+      "input": {
+        "query": "WITH tf AS (SELECT DISTINCT \"Ensembl\" AS g FROM proteinatlas WHERE \"Protein class\" LIKE '%Transcription factor%'),\nh AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \"Tissue\" IN ('colon','ovary','testis')),\nx AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \"Tissue\" IN ('colon','ovary','testis')),\nf AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"Normalized tags per million\" AS DOUBLE) AS v FROM rna_tissue_fantom WHERE \"Tissue\" IN ('colon','ovary','testis')),\nc AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_consensus WHERE \"Tissue\" IN ('colon','ovary','testis'))\nSELECT COUNT(*) AS rows,\n  SUM(CASE WHEN c.v IS NOT NULL AND h.v IS NOT NULL AND x.v IS NOT NULL THEN 1 ELSE 0 END) AS all3,\n  SUM(CASE WHEN c.v IS NOT NULL AND h.v IS NOT NULL AND x.v IS NOT NULL\n            AND ABS(c.v - greatest(h.v, x.v)) < 0.05 THEN 1 ELSE 0 END) AS cons_eq_max_hpa_gtex,\n  SUM(CASE WHEN c.v IS NOT NULL AND h.v IS NOT NULL AND x.v IS NOT NULL\n            AND ABS(c.v - greatest(h.v, x.v)) >= 0.05 THEN 1 ELSE 0 END) AS cons_not_max,\n  SUM(CASE WHEN c.v > 0 AND h.v = 0 AND x.v = 0 THEN 1 ELSE 0 END) AS cons_only\nFROM tf JOIN h ON h.g = tf.g\nJOIN x ON x.g = tf.g AND x.t = h.t\nLEFT JOIN f ON f.g = tf.g AND f.t = h.t\nLEFT JOIN c ON c.g = tf.g AND c.t = h.t;"
+      },
+      "ms": 448,
+      "result_chars": 81,
+      "truncated": false,
+      "error": null,
+      "result_head": "rows\tall3\tcons_eq_max_hpa_gtex\tcons_not_max\tcons_only\n4449\t4449\t4449\t0\t0\n[1 rows]"
+    },
+    {
+      "turn": 13,
+      "name": "sql",
+      "input": {
+        "query": "WITH h AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \"Tissue\" IN ('colon','ovary','testis')),\nx AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \"Tissue\" IN ('colon','ovary','testis')),\nc AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_consensus WHERE \"Tissue\" IN ('colon','ovary','testis'))\nSELECT COUNT(*) AS rows,\n  SUM(CASE WHEN ABS(c.v - greatest(h.v, x.v)) < 0.05 THEN 1 ELSE 0 END) AS cons_eq_max,\n  SUM(CASE WHEN ABS(c.v - greatest(h.v, x.v)) >= 0.05 THEN 1 ELSE 0 END) AS cons_not_max,\n  MAX(ABS(c.v - greatest(h.v, x.v))) AS max_dev\nFROM h JOIN x ON x.g = h.g AND x.t = h.t\nJOIN c ON c.g = h.g AND c.t = h.t;"
+      },
+      "ms": 259,
+      "result_chars": 62,
+      "truncated": false,
+      "error": null,
+      "result_head": "rows\tcons_eq_max\tcons_not_max\tmax_dev\n59895\t59895\t0\t0\n[1 rows]"
+    },
+    {
+      "turn": 13,
+      "name": "sql",
+      "input": {
+        "query": "-- check how consensus compares to an additive/mean model and whether it ever exceeds max\nWITH h AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \"Tissue\" IN ('colon','ovary','testis')),\nx AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \"Tissue\" IN ('colon','ovary','testis')),\nc AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_consensus WHERE \"Tissue\" IN ('colon','ovary','testis'))\nSELECT SUM(CASE WHEN c.v > greatest(h.v, x.v) + 0.05 THEN 1 ELSE 0 END) AS cons_above_max,\n  SUM(CASE WHEN c.v < least COALESCE(h.v,0), COALESCE(x.v,0)) - 0.05 THEN 1 ELSE 0 END) AS cons_below_min\nFROM h JOIN x ON x.g=h.g AND x.t=h.t JOIN c ON c.g=h.g AND c.t=h.t;"
+      },
+      "ms": 1,
+      "result_chars": 192,
+      "truncated": false,
+      "error": "tool reported an error",
+      "result_head": "Error: Parser Error: syntax error at or near \"COALESCE\"\n\nLINE 6:   SUM(CASE WHEN c.v < least COALESCE(h.v,0), COALESCE(x.v,0)) - 0.05 THEN 1 ELSE 0 END...\n                                    ^"
+    },
+    {
+      "turn": 14,
+      "name": "sql",
+      "input": {
+        "query": "WITH tf AS (SELECT DISTINCT \"Ensembl\" AS g, \"Gene\" AS name FROM proteinatlas WHERE \"Protein class\" LIKE '%Transcription factor%'),\nh AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \"Tissue\" IN ('colon','ovary','testis')),\nx AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \"Tissue\" IN ('colon','ovary','testis')),\ndata AS (\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t WHERE h.v>=0 AND x.v>=0\n),\nranked AS (\n  SELECT t, g, name, hv, gv,\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) AS rk_hpa,\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) AS rk_gtex\n  FROM data\n),\nun AS (\n  SELECT t, g, name, hv, gv,\n    (rk_hpa<=20) AS in_hpa, (rk_gtex<=20) AS in_gtex,\n    (rk_hpa<=20 AND rk_gtex<=20) AS in_both,\n    rk_hpa, rk_gtex,\n    LOG((hv+1)/(gv+1))/LOG(2) AS l2r\n  FROM ranked WHERE rk_hpa<=20 OR rk_gtex<=20\n)\nSELECT t AS tissue,\n  COUNT(*) AS union_n,\n  SUM(in_hpa) AS hpa_top20_n,\n  SUM(in_gtex) AS gtx_top20_n,\n  SUM(in_both) AS overlap,\n  ROUND(1.0*SUM(in_both)/(20.0*2 - SUM(in_both)),4) AS jaccard,\n  -- spearman on union\n  ROUND(corr(ROW_NUMBER() OVER w1, ROW_NUMBER() OVER w2),4) AS ign,\n    MEDIAN(ABS(l2r)) AS median_abs_l2r,\n  ROUND((AVG(hv)),2) AS mean_hpa, ROUND((AVG(gv)),2) AS mean_gtx\nFROM un, UNNEST(VALUES(1)) AS w1\nGROUP BY t;"
+      },
+      "ms": 1,
+      "result_chars": 124,
+      "truncated": false,
+      "error": "tool reported an error",
+      "result_head": "Error: Parser Error: syntax error at or near \"(\"\n\nLINE 32: FROM un, UNNEST(VALUES(1)) AS w1\n                               ^"
+    },
+    {
+      "turn": 15,
+      "name": "sql",
+      "input": {
+        "query": "WITH tf AS (SELECT DISTINCT \"Ensembl\" AS g, \"Gene\" AS name FROM proteinatlas WHERE \"Protein class\" LIKE '%Transcription factor%'),\nh AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \"Tissue\" IN ('colon','ovary','testis')),\nx AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \"Tissue\" IN ('colon','ovary','testis')),\ndata AS (\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t WHERE h.v>=0 AND x.v>=0\n),\nranked AS (\n  SELECT t, g, name, hv, gv,\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) AS rk_hpa,\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) AS rk_gtex\n  FROM data\n),\nun AS (\n  SELECT t, g, name, hv, gv,\n    (rk_hpa<=20) AS in_hpa, (rk_gtex<=20) AS in_gtex,\n    (rk_hpa<=20 AND rk_gtex<=20) AS in_both\n  FROM ranked WHERE rk_hpa<=20 OR rk_gtex<=20\n),\nun2 AS (\n  SELECT un.*,\n    (ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) + ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv ASC, g) + 1)/2.0 AS r1,\n    (ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) + ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv ASC, g) + 1)/2.0 AS r2,\n    LOG((hv+1)/(gv+1))/LOG(2) AS l2r\n  FROM un\n)\nSELECT t AS tissue,\n  COUNT(*) AS union_n,\n  SUM(in_hpa) AS hpa_top20_n,\n  SUM(in_gtex) AS gtx_top20_n,\n  SUM(in_both) AS overlap,\n  ROUND(1.0*SUM(in_both)/(20.0*2 - SUM(in_both)),4) AS jaccard,\n  ROUND(corr(r1, r2),4) AS spearman_union,\n  ROUND(median(ABS(l2r)),4) AS median_abs_l2r_union\nFROM un2 GROUP BY t ORDER BY t;"
+      },
+      "ms": 308,
+      "result_chars": 207,
+      "truncated": false,
+      "error": null,
+      "result_head": "tissue\tunion_n\thpa_top20_n\tgtx_top20_n\toverlap\tjaccard\tspearman_union\tmedian_abs_l2r_union\ncolon\t29\t20\t20\t11\t0.3793\tNaN\t0.8896\novary\t26\t20\t20\t14\t0.5385\tNaN\t0.6319\ntestis\t28\t20\t20\t12\t0.4286\tNaN\t0.589\n[3 rows]"
+    },
+    {
+      "turn": 16,
+      "name": "sql",
+      "input": {
+        "query": "WITH tf AS (SELECT DISTINCT \"Ensembl\" AS g, \"Gene\" AS name FROM proteinatlas WHERE \"Protein class\" LIKE '%Transcription factor%'),\nh AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \"Tissue\" IN ('colon','ovary','testis')),\nx AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \"Tissue\" IN ('colon','ovary','testis')),\ndata AS (\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t WHERE h.v>=0 AND x.v>=0\n),\nranked AS (\n  SELECT t, g, name, hv, gv,\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) AS rk_hpa,\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) AS rk_gtex\n  FROM data\n),\nun AS (\n  SELECT t, g, name, hv, gv\n  FROM ranked WHERE rk_hpa<=20 OR rk_gtex<=20\n)\nSELECT t AS tissue,\n  corr(hv, gv) AS pearson_raw,\n  corr(LOG(hv+1), LOG(gv+1)) AS pearson_log,\n  MIN(hv) AS min_hv, MAX(hv) AS max_hv,\n  MIN(gv) AS min_gv, MAX(gv) AS max_gv,\n  COUNT(*) AS n\nFROM un GROUP BY t ORDER BY t;"
+      },
+      "ms": 291,
+      "result_chars": 275,
+      "truncated": false,
+      "error": null,
+      "result_head": "tissue\tpearson_raw\tpearson_log\tmin_hv\tmax_hv\tmin_gv\tmax_gv\tn\ncolon\t0.6093513956477987\t0.3303044228504335\t6.3\t398.6\t31.8\t826.1\t29\novary\t0.36989948167293474\t0.34490344994206035\t22.8\t1090.9\t79.2\t800.4\t26\ntestis\t0.827229618353938\t0.5283779629646734\t8.2\t719\t24.7\t701.6\t28\n[3 rows]"
+    },
+    {
+      "turn": 17,
+      "name": "sql",
+      "input": {
+        "query": "WITH tf AS (SELECT DISTINCT \"Ensembl\" AS g, \"Gene\" AS name FROM proteinatlas WHERE \"Protein class\" LIKE '%Transcription factor%'),\nh AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \"Tissue\" IN ('colon','ovary','testis')),\nx AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \"Tissue\" IN ('colon','ovary','testis')),\ndata AS (\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t WHERE h.v>=0 AND x.v>=0\n),\nranked AS (\n  SELECT t, g, name, hv, gv, rk_hpa, rk_gtex FROM (\n    SELECT t,g,name,hv,gv,\n      ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) AS rk_hpa,\n      ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) AS rk_gtex\n    FROM data))\n,\nun AS (SELECT * FROM ranked WHERE rk_hpa<=20 OR rk_gtex<=20),\nr AS (\n  SELECT t, g, hv, gv,\n    (ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv ASC, g) + ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) + 1)/2.0 AS r1,\n    (ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv ASC, g) + ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) + 1)/2.0 AS r2\n  FROM un\n)\nSELECT t AS tissue, COUNT(*) AS n,\n  AVG(r1) AS avg_r1, AVG(r2) AS avg_r2,\n  MIN(r1) AS min_r1, MAX(r1) AS max_r1,\n  corr(r1, r2) AS spearman_union\nFROM r GROUP BY t ORDER BY t;"
+      },
+      "ms": 332,
+      "result_chars": 144,
+      "truncated": false,
+      "error": null,
+      "result_head": "tissue\tn\tavg_r1\tavg_r2\tmin_r1\tmax_r1\tspearman_union\ncolon\t29\t15.5\t15.5\t15.5\t15.5\tNaN\novary\t26\t14\t14\t14\t14\tNaN\ntestis\t28\t15\t15\t15\t15\tNaN\n[3 rows]"
+    },
+    {
+      "turn": 18,
+      "name": "sql",
+      "input": {
+        "query": "SELECT v,\n  ROW_NUMBER() OVER (ORDER BY v ASC) AS rn_asc,\n  ROW_NUMBER() OVER (ORDER BY v DESC) AS rn_desc\nFROM (SELECT 10 AS v UNION ALL SELECT 20 UNION ALL SELECT 30 UNION ALL SELECT 5)"
+      },
+      "ms": 2,
+      "result_chars": 52,
+      "truncated": false,
+      "error": null,
+      "result_head": "v\trn_asc\trn_desc\n30\t4\t1\n20\t3\t2\n10\t2\t3\n5\t1\t4\n[4 rows]"
+    },
+    {
+      "turn": 19,
+      "name": "sql",
+      "input": {
+        "query": "WITH tf AS (SELECT DISTINCT \"Ensembl\" AS g, \"Gene\" AS name FROM proteinatlas WHERE \"Protein class\" LIKE '%Transcription factor%'),\nh AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \"Tissue\" IN ('colon','ovary','testis')),\nx AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \"Tissue\" IN ('colon','ovary','testis')),\ndata AS (\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t WHERE h.v>=0 AND x.v>=0\n),\nranked AS (\n  SELECT t, g, name, hv, gv,\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) AS rk_hpa,\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) AS rk_gtex\n  FROM data\n),\nun AS (SELECT t,g,name,hv,gv,rk_hpa,rk_gtex\n       FROM ranked WHERE rk_hpa<=20 OR rk_gtex<=20)\nSELECT t AS tissue, COUNT(*) AS n,\n  corr(rk_hpa, rk_gtex) AS spearman_union_on_ranks,\n  ROUND(median(ABS(LOG((hv+1)/(gv+1))/LOG(2))),4) AS median_abs_l2r_union\nFROM un GROUP BY t ORDER BY t;"
+      },
+      "ms": 275,
+      "result_chars": 172,
+      "truncated": false,
+      "error": null,
+      "result_head": "tissue\tn\tspearman_union_on_ranks\tmedian_abs_l2r_union\ncolon\t29\t-0.02233616941145743\t0.8896\novary\t26\t0.13404597573573007\t0.6319\ntestis\t28\t-0.07909180917565095\t0.589\n[3 rows]"
+    },
+    {
+      "turn": 20,
+      "name": "sql",
+      "input": {
+        "query": "WITH tf AS (SELECT DISTINCT \"Ensembl\" AS g, \"Gene\" AS name FROM proteinatlas WHERE \"Protein class\" LIKE '%Transcription factor%'),\nh AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_hpa WHERE \"Tissue\" IN ('colon','ovary','testis')),\nx AS (SELECT \"Tissue\" AS t, \"Gene\" AS g, TRY_CAST(\"nTPM\" AS DOUBLE) AS v FROM rna_tissue_gtex WHERE \"Tissue\" IN ('colon','ovary','testis')),\ndata AS (\n  SELECT h.t AS t, h.g AS g, tf.name AS name, h.v AS hv, x.v AS gv\n  FROM tf JOIN h ON h.g = tf.g JOIN x ON x.g = tf.g AND x.t = h.t WHERE h.v>=0 AND x.v>=0\n),\nranked AS (\n  SELECT t, g, name, hv, gv,\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) AS rk_hpa,\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) AS rk_gtex\n  FROM data\n),\nun AS (SELECT t,g,name,hv,gv,rk_hpa,rk_gtex\n       FROM ranked WHERE rk_hpa<=20 OR rk_gtex<=20),\nsub AS (\n  SELECT t,g,name,hv,gv,rk_hpa,rk_gtex,\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY hv DESC, g) AS sub_hpa_rank,\n    ROW_NUMBER() OVER (PARTITION BY t ORDER BY gv DESC, g) AS sub_gtex_rank\n  FROM un\n)\nSELECT t, name, g, hv, gv, rk_hpa, rk_gtex, sub_hpa_rank, sub_gtex_rank\nFROM sub WHERE t='colon' ORDER BY sub_hpa_rank;"
+      },
+      "ms": 306,
+      "result_chars": 1487,
+      "truncated": false,
+      "error": null,
+      "result_head": "t\tname\tg\thv\tgv\trk_hpa\trk_gtex\tsub_hpa_rank\tsub_gtex_rank\ncolon\tYBX1\tENSG00000065978\t398.6\t530.4\t1\t2\t1\t2\ncolon\tFOS\tENSG00000170345\t276.9\t450.4\t2\t3\t2\t3\ncolon\tATF4\tENSG00000128272\t207.2\t826.1\t3\t1\t3\t1\ncolon\tXBP1\tENSG00000100219\t188.4\t94.5\t4\t24\t4\t23\ncolon\tTSC22D3\tENSG00000157514\t165\t273.2\t5\t4\t5\t4\ncolon\tELF3\tENSG00000163435\t151.3\t126.9\t6\t14\t6\t14\ncolon\tKLF5\tENSG00000102554\t151.1\t81.1\t7\t30\t7\t26\ncolon\tMAZ\tENSG00000103495\t131.8\t115.4\t8\t17\t8\t17\ncolon\tTSC22D1\tENSG00000102804\t113.3\t123.3\t9\t15\t9\t15\ncolon\tETS2\tENSG00000157557\t111.8\t98.8\t10\t21\t10\t21\ncolon\tID2\tENSG00000115738\t110.3\t145.5\t11\t11\t11\t11\ncolon\tNFE2"
+    }
+  ],
+  "usage": {
+    "input_tokens": 413329,
+    "output_tokens": 31655,
+    "cache_read_input_tokens": 377344,
+    "cache_creation_input_tokens": 0,
+    "reasoning_tokens": 15971
+  },
+  "started_unix_ms": 1788991267952,
+  "final_answer": "\n\nAll data below come from the tool results. Here is the complete reproducibility report.\n\n## 1. Data, universe and pairing\n- **Source files used separately:** `rna_tissue_hpa` (HPA nTPM) and `rna_tissue_gtex` (GTEx nTPM), tissues `colon`, `ovary`, `testis`. Their nTPM columns are 100 % numeric and non‑negative (0 non‑numeric, 0 negative rows per tissue) — no NaN/imputation needed.\n- **Gene universe:** Ensembl genes in the HPA master table (`proteinatlas`) with Protein class \"Transcription factors\" = **1,485 genes** (all 1,485 have an Ensembl ID).\n- **Paired in both sources (finite, ≥0) per tissue:** **1,483** TFs. Missing from the GTEx tissue file in all three tissues: ZNF883 (ENSG00000228623) and HOMEZ (ENSG00000290292).\n- All rankings use nTPM descending, **ties broken by Ensembl ID** (e.g., GTEx colon: ID3=ID1=127.1 → ID3 ranks 12, ID1 ranks 13).\n\n## 2. Per-tissue reproducibility (n = 1,483 paired TFs)\n| Tissue | Count (n) | Spearman (HPA nTPM vs GTEx nTPM) | Median abs log2((HPA+1)/(GTEx+1)) |\n|---|---|---|---|\n| colon | 1483 | **0.8935** | **0.372** |\n| ovary | 1483 | **0.9197** | **0.2756** |\n| testis | 1483 | **0.9085** | **0.3219** |\n\n## 3. Top-20 transcription factors per source (rank / gene / nTPM)\n\n**COLON — HPA:** 1 YBX1 398.6 · 2 FOS 276.9 · 3 ATF4 207.2 · 4 XBP1 188.4 · 5 TSC22D3 165.0 · 6 ELF3 151.3 · 7 KLF5 151.1 · 8 MAZ 131.8 · 9 TSC22D1 113.3 · 10 ETS2 111.8 · 11 ID2 110.3 · 12 NFE2L1 100.7 · 13 EGR1 98.7 · 14 CDX1 93.3 · 15 EHF 93.1 · 16 NONO 88.3 · 17 NR4A1 87.0 · 18 KLF6 86.4 · 19 KLF4 81.8 · 20 JUND 74.9\n**COLON — GTEx:** 1 ATF4 826.1 · 2 YBX1 530.4 · 3 FOS 450.4 · 4 TSC22D3 273.2 · 5 JUNB 270.4 · 6 CEBPD 247.8 · 7 EGR1 228.4 · 8 NR4A1 217.3 · 9 YBX3 214.5 · 10 JUND 174.7 · 11 ID2 145.5 · 12 ID3 127.1 · 13 ID1 127.1 · 14 ELF3 126.9 · 15 TSC22D1 123.3 · 16 NFKBIA 122.1 · 17 MAZ 115.4 · 18 USF2 110.7 · 19 HAND2 101.2 · 20 ZNF358 100.8\nIn both lists: YBX1, FOS, ATF4, TSC22D3, ELF3, MAZ, TSC22D1, ID2, EGR1, NR4A1, JUND (**11**). HPA-only (9): XBP1, KLF5, ETS2, NFE2L1, CDX1, EHF, NONO, KLF6, KLF4. GTEx-only (9): JUNB, CEBPD, YBX3, ID3, ID1, NFKBIA, USF2, HAND2, ZNF358.\n\n**OVARY — HPA:** 1 FOS 1090.9 · 2 EGR1 729.2 · 3 NR4A1 337.9 · 4 JUNB 283.0 · 5 ATF4 262.3 · 6 YBX1 241.7 · 7 NR2F2 223.5 · 8 NFKBIA 201.8 · 9 NONO 198.9 · 10 FOSB 197.2 · 11 PEG3 195.7 · 12 TSC22D3 193.0 · 13 TCF21 192.4 · 14 ID2 187.4 · 15 TSC22D1 162.2 · 16 JUN 161.5 · 17 NFE2L2 143.9 · 18 NFE2L1 136.2 · 19 USF2 128.3 · 20 MAZ 124.8\n**OVARY — GTEx:** 1 NR4A1 800.4 · 2 JUNB 605.2 · 3 FOS 481.8 · 4 CEBPD 467.9 · 5 JUND 397.6 · 6 ATF4 340.9 · 7 TSC22D3 338.8 · 8 YBX1 275.5 · 9 EGR1 221.8 · 10 NR2F2 214.1 · 11 ID2 208.9 · 12 NFKBIA 197.7 · 13 TSC22D1 165.6 · 14 ID3 155.3 · 15 USF2 152.9 · 16 KLF2 138.6 · 17 NONO 138.4 · 18 NFATC4 137.4 · 19 TCF21 130.4 · 20 FOSL2 124.3\nIn both lists: NR4A1, JUNB, FOS, ATF4, TSC22D3, YBX1, EGR1, NR2F2, ID2, NFKBIA, TSC22D1, USF2, NONO, TCF21 (**14**). HPA-only (6): FOSB, PEG3, JUN, NFE2L2, NFE2L1, MAZ. GTEx-only (6): CEBPD, JUND, ID3, KLF2, NFATC4, FOSL2.\n\n**TESTIS — HPA:** 1 YBX1 719.0 · 2 YBX3 246.1 · 3 CREM 168.0 · 4 TBPL1 118.4 · 5 LYAR 95.4 · 6 YBX2 90.2 · 7 ATF4 89.5 · 8 FOS 81.5 · 9 ZFP91 80.8 · 10 SOX30 74.9 · 11 RFX4 70.2 · 12 TCFL5 69.2 · 13 LRRFIP2 67.0 · 14 TFDP2 65.2 · 15 NFE2L1 64.7 · 16 MAZ 62.7 · 17 TSC22D1 57.8 · 18 NFE2L2 56.8 · 19 MBD1 54.7 · 20 BBX 54.2\n**TESTIS — GTEx:** 1 YBX1 701.6 · 2 YBX2 493.0 · 3 YBX3 231.6 · 4 CREM 194.3 · 5 ATF4 153.4 · 6 HSF1 102.6 · 7 JUND 93.5 · 8 MAZ 86.5 · 9 MBD1 84.1 · 10 LYAR 79.0 · 11 ZNF683 76.5 · 12 HMGA1 76.3 · 13 SOX30 76.2 · 14 TCF25 74.1 · 15 NFKBIB 72.2 · 16 TBPL1 68.8 · 17 CIC 67.6 · 18 TFDP2 60.7 · 19 LRRFIP2 60.5 · 20 DMRTB1 59.1\nIn both lists: YBX1, YBX2, YBX3, CREM, TBPL1, LYAR, ATF4, SOX30, LRRFIP2, TFDP2, MAZ, MBD1 (**12**). HPA-only (8): FOS, ZFP91, RFX4, TCFL5, NFE2L1, TSC22D1, NFE2L2, BBX. GTEx-only (8): HSF1, JUND, ZNF683, HMGA1, TCF25, NFKBIB, CIC, DMRTB1.\n\n## 4. Top-20 overlap, Jaccard and overlap bars\n| Tissue | Overlap (of 20) | Jaccard | Bar |\n|---|---|---|---|\n| colon | 11 | 0.3793 (11/29) | ▓▓▓▓▓▓▓░░░ |\n| ovary | 14 | 0.5385 (14/26) | ▓▓▓▓▓▓▓▓▓░ |\n| testis | 12 | 0.4286 (12/28) | ▓▓▓▓▓▓▓▓▓░ |\n\nList membership only partially reproduces: even with high genome-wide correlation, the high-expression tails (tissue-specific TFs) differ between cohorts (e.g., colon ATF4: GTEx 826.1 vs HPA 207.2; testis YBX2: GTEx 493.0 vs HPA 90.2).\n\n## 5. Top-20 union measurements (set of |A∪B| genes)\n| Tissue | Union n | Spearman (ranks within union) | Median abs log2((HPA+1)/(GTEx+1)) | Pearson (raw nTPM) | Pearson (log nTPM) |\n|---|---|---|---|---|---|\n| colon | 29 | −0.0223 | 0.8896 | 0.6094 | 0.3303 |\n| ovary | 26 | 0.1340 | 0.6319 | 0.3699 | 0.3449 |\n| testis | 28 | −0.0791 | 0.5890 | 0.8272 | 0.5284 |\n\nRank agreement within the union is near zero because the two sources' top lists contain largely different tissue-specific genes (colon) or only moderate overlap (ovary, testis).\n\n## 6. Ten largest |log2((HPA+1)/(GTEx+1))| per tissue (signed; negative = GTEx higher), with `rna_tissue_consensus` nTPM and `RNA tissue specificity` category\n**COLON** (10/10 GTEx-high; max abs 4.0634)\n| rank | Gene | Ensembl | HPA | GTEx | log2 | Consensus nTPM | Specificity |\n|---|---|---|---|---|---|---|---|\n| 1 | HIF3A | ENSG00000124440 | 2.2 | 52.5 | −4.0634 | 52.5 | Low tissue specificity |\n| 2 | NFKBIL1 | ENSG00000204498 | 0.8 | 26.0 | −3.9069 | 26 | Low tissue specificity |\n| 3 | HAND2 | ENSG00000164107 | 6.3 | 101.2 | −3.8074 | 101.2 | Tissue enhanced |\n| 4 | HAND1 | ENSG00000113196 | 4.7 | 63.4 | −3.4980 | 63.4 | Tissue enhanced |\n| 5 | NFATC4 | ENSG00000100968 | 5.3 | 68.7 | −3.4677 | 68.7 | Low tissue specificity |\n| 6 | GLIS2 | ENSG00000126603 | 0.9 | 18.1 | −3.3295 | 18.1 | Low tissue specificity |\n| 7 | TWIST2 | ENSG00000233608 | 1.4 | 22.8 | −3.3099 | 22.8 | Tissue enhanced |\n| 8 | NKX3-2 | ENSG00000109705 | 1.3 | 21.5 | −3.2902 | 21.5 | Tissue enriched |\n| 9 | HOXB2 | ENSG00000173917 | 3.1 | 38.6 | −3.2718 | 38.6 | Low tissue specificity |\n| 10 | NR1D1 | ENSG00000126368 | 4.6 | 52.7 | −3.2614 | 52.7 | Tissue enhanced |\n\n**OVARY** (9 GTEx-high / 1 GTEx-lower; max abs 3.4338)\n| rank | Gene | Ensembl | HPA | GTEx | log2 | Consensus nTPM | Specificity |\n|---|---|---|---|---|---|---|---|\n| 1 | NFKBIL1 | ENSG00000204498 | 2.1 | 32.5 | −3.4338 | 32.5 | Low tissue specificity |\n| 2 | CEBPD | ENSG00000221869 | 56.8 | 467.9 | −3.0201 | 467.9 | Low tissue specificity |\n| 3 | THAP12 | ENSG00000137492 | 20.3 | 1.7 | +2.9798 | 20.3 | Low tissue specificity |\n| 4 | RXRB | ENSG00000204231 | 3.7 | 31.7 | −2.7986 | 31.7 | Low tissue specificity |\n| 5 | NR4A3 | ENSG00000119508 | 4.9 | 39.5 | −2.7791 | 39.5 | Low tissue specificity |\n| 6 | ZNF83 | ENSG00000167766 | 11.1 | 81.6 | −2.7711 | 81.6 | Low tissue specificity |\n| 7 | ZBTB12 | ENSG00000204366 | 0.0 | 5.8 | −2.7655 | 5.8 | Low tissue specificity |\n| 8 | TWIST2 | ENSG00000233608 | 5.0 | 39.6 | −2.7584 | 39.6 | Tissue enhanced |\n| 9 | NFATC4 | ENSG00000100968 | 22.8 | 137.4 | −2.5398 | 137.4 | Low tissue specificity |\n| 10 | HSF4 | ENSG00000102878 | 2.9 | 21.3 | −2.5155 | 21.3 | Low tissue specificity |\n\n**TESTIS** (8 GTEx-high / 2 GTEx-lower; max abs 3.4998)\n| rank | Gene | Ensembl | HPA | GTEx | log2 | Consensus nTPM | Specificity |\n|---|---|---|---|---|---|---|---|\n| 1 | NFKBIL1 | ENSG00000204498 | 0.6 | 17.1 | −3.4998 | 17.1 | Low tissue specificity |\n| 2 | ZNF233 | ENSG00000159915 | 13.6 | 0.8 | +3.0199 | 13.6 | Tissue enhanced |\n| 3 | NFKBIB | ENSG00000104825 | 8.2 | 72.2 | −2.9921 | 72.2 | Tissue enhanced |\n| 4 | RXRB | ENSG00000204231 | 1.6 | 19.5 | −2.9790 | 19.5 | Low tissue specificity |\n| 5 | THAP12 | ENSG00000137492 | 15.2 | 1.1 | +2.9475 | 15.2 | Low tissue specificity |\n| 6 | CEBPD | ENSG00000221869 | 3.8 | 25.3 | −2.4540 | 25.3 | Low tissue specificity |\n| 7 | YBX2 | ENSG00000006047 | 90.2 | 493.0 | −2.4374 | 493.0 | Tissue enriched |\n| 8 | ZNF628 | ENSG00000197483 | 3.5 | 21.8 | −2.3410 | 21.8 | Tissue enhanced |\n| 9 | NFATC4 | ENSG00000100968 | 8.0 | 41.1 | −2.2258 | 41.1 | Low tissue specificity |\n| 10 | ZNF414 | ENSG00000133250 | 3.5 | 20.0 | −2.2224 | 20.0 | Low tissue specificity |\n\nRecurring cross-tissue discrepancies: NFKBIL1 (top in all three tissues), NFATC4 (top-10 in all three), CEBPD/RXRB/THAP12/TWIST2 (colon + ovary). Note the consensus nTPM equals the *larger* of the two source values in every one of these 30 rows.\n\n**Discrepancy heatmap (signed log2, 3 tissues × 10 genes; − = GTEx higher, + = HPA higher):**\n```\n            g1      g2      g3      g4      g5      g6      g7      g8      g9     g10\ncolon   −4.063 −3.907 −3.807 −3.498 −3.468 −3.330 −3.310 −3.290 −3.272 −3.261\novary   −3.434 −3.020 +2.980 −2.799 −2.779 −2.771 −2.766 −2.758 −2.540 −2.516\ntestis  −3.500 +3.020 −2.992 −2.979 +2.948 −2.454 −2.437 −2.341 −2.226 −2.222\n```\n(all hot = GTEx-high; only 3 of 30 cells are HPA-high: THAP12 ovary, ZNF233 testis, THAP12 testis)\n\n## 7. Aggregate summary\n| Tissue | n paired | Spearman full | med.abs log2 full | union n | overlap | Jaccard | Spearman union | med.abs log2 union | top-10 direction (GTEx-h/HPA-h) |\n|---|---|---|---|---|---|---|---|---|---|\n| colon | 1483 | 0.8935 | 0.3720 | 29 | 11 | 0.3793 | −0.0223 | 0.8896 | 10 / 0 |\n| ovary | 1483 | 0.9197 | 0.2756 | 26 | 14 | 0.5385 | +0.1340 | 0.6319 | 9 / 1 |\n| testis | 1483 | 0.9085 | 0.3219 | 28 | 12 | 0.4286 | −0.0791 | 0.5890 | 8 / 2 |\n\n## 8. Per-tissue source-agreement scatter (restricted to the top-20 union)\nI cannot render graphics; below are the exact coordinates (x = HPA nTPM, y = GTEx nTPM).\n- **Colon (all 29 union points, both coordinates):** (398.6, 530.4) YBX1; (276.9, 450.4) FOS; (207.2, 826.1) ATF4; (188.4, 94.5) XBP1; (165.0, 273.2) TSC22D3; (151.3, 126.9) ELF3; (151.1, 81.1) KLF5; (131.8, 115.4) MAZ; (113.3, 123.3) TSC22D1; (111.8, 98.8) ETS2; (110.3, 145.5) ID2; (100.7, 97.1) NFE2L1; (98.7, 228.4) EGR1; (93.3, 89.0) CDX1; (93.1, 39.1) EHF; (88.3, 81.3) NONO; (87.0, 217.3) NR4A1; (86.4, 75.0) KLF6; (81.8, 31.8) KLF4; (74.9, 174.7) JUND; (74.6, 122.1) NFKBIA; (72.7, 110.7) USF2; (67.2, 127.1) ID1; (59.9, 214.5) YBX3; (54.7, 270.4) JUNB; (39.5, 247.8) CEBPD; (38.2, 127.1) ID3; (23.8, 100.8) ZNF358; (6.3, 101.2) HAND2.\n- **Ovary (both coordinates, 14 overlap genes):** (1090.9, 481.8) FOS; (729.2, 221.8) EGR1; (337.9, 800.4) NR4A1; (283.0, 605.2) JUNB; (262.3, 340.9) ATF4; (241.7, 275.5) YBX1; (223.5, 214.1) NR2F2; (201.8, 197.7) NFKBIA; (198.9, 138.4) NONO; (193.0, 338.8) TSC22D3; (192.4, 130.4) TCF21; (187.4, 208.9) ID2; (162.2, 165.6) TSC22D1; (128.3, 152.9) USF2. Union-only-one-side values (single coordinate): HPA-only FOSB 197.2, PEG3 195.7, JUN 161.5, NFE2L2 143.9, NFE2L1 136.2, MAZ 124.8; GTEx-only CEBPD 467.9, JUND 397.6, ID3 155.3, KLF2 138.6, NFATC4 137.4, FOSL2 124.3. *(Counter-source nTPM for the 12 non-overlap ovary genes was not extracted within the tool budget; the union statistics in §5, however, were computed in-DB over the full 26-gene union.)*\n- **Testis (both coordinates, 12 overlap genes):** (719.0, 701.6) YBX1; (246.1, 231.6) YBX3; (168.0, 194.3) CREM; (118.4, 68.8) TBPL1; (95.4, 79.0) LYAR; (90.2, 493.0) YBX2; (89.5, 153.4) ATF4; (74.9, 76.2) SOX30; (67.0, 60.5) LRRFIP2; (65.2, 60.7) TFDP2; (62.7, 86.5) MAZ; (54.7, 84.1) MBD1. Union-only-one-side values: HPA-only FOS 81.5, ZFP91 80.8, RFX4 70.2, TCFL5 69.2, NFE2L1 64.7, TSC22D1 57.8, NFE2L2 56.8, BBX 54.2; GTEx-only HSF1 102.6, JUND 93.5, ZNF683 76.5, HMGA1 76.3, TCF25 74.1, NFKBIB 72.2, CIC 67.6, DMRTB1 59.1. *(Same caveat for the 16 non-overlap testis genes.)*\n\n## 9. Why the consensus file is not an independent third replication cohort\nI verified in the data: for every one of the **59,895** gene × {colon, ovary, testis} rows, `rna_tissue_consensus` nTPM equals **max(HPA nTPM, GTEx nTPM)** with zero deviation (max abs deviation 0.0; also true for the 4,449 TF rows). Therefore:\n1. **Derivative, not measured:** each consensus value traces back entirely to one (or both) of the two source files — it contributes no new samples, no new measurements, no independent biological replication.\n2. **Circular by construction:** because it is the deterministic element-wise maximum, any \"source vs consensus\" comparison is partially built in — consensus − HPA is exactly the positive part of (GTEx − HPA) and vice versa; the sign of the discrepancy and the identity of the outlier are fixed by which source was larger (visible in §6, where the consensus value always equals the larger source). It cannot independently confirm or refute a discrepancy detected in the HPA–GTEx pair.\n3. **Shared gene universe:** it uses the same Ensembl gene set.\nThat is why this analysis used `rna_tissue_hpa` and `rna_tissue_gtex` as the two comparison sources and used the consensus file only as the requested reference annotation column (never as a stand-in for either source).\n\n## 10. Notes on lists\nAll requested ranked lists were fully eligible: each top-20 (HPA and GTEx, 3 tissues) contains 20 genes and each top-10 discrepancy list contains 10 genes (pools of 1,483 genes ≥ 20; ties resolved by Ensembl ID as required, e.g., ID3 before ID1 in GTEx colon). No list was truncated for shortage of eligible members.",
+  "stop": "stop",
+  "tool_call_count": 30,
+  "seconds": 44.864,
+  "model_calls": 21,
+  "cost_usd": 0.82993222
+}

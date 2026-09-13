@@ -1,0 +1,524 @@
+{
+ "id": "Q38",
+ "kind": "analysis",
+ "question": "Compare lung-enriched and skeletal-muscle-enriched proteins in the Human Protein Atlas, defining both cohorts strictly by RNA tissue specificity = Tissue enriched and the named tissue in RNA tissue specific nTPM. Use consensus RNA nTPM as abundance. For each cohort report its size, the share of FDA approved drug targets and the share secreted to blood, and report intersection size and Jaccard. Select the ten members of each cohort with the highest nTPM in its own tissue, ties by Ensembl ID, and show their nTPM in both tissues and main subcellular locations. Draw cohort-composition bars and a two-tissue abundance heatmap, with the supporting tables. For the union of the selected genes, also report all consensus interaction edges between them and each selected gene's degree within that union, treating edges as undirected, deduplicating and excluding self-edges; draw a degree bar chart. If a requested ranked list has fewer eligible members, return every eligible member and state the count. Use Ensembl genes present in the HPA master table as the gene universe and break all gene-ranking ties by Ensembl ID.",
+ "model": "gpt-5.6-luna",
+ "effort": "low",
+ "turns": [
+  {
+   "turn": 1,
+   "ms": 1309,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 404,
+    "input_tokens_details": {
+     "cache_write_tokens": 0,
+     "cached_tokens": 0
+    },
+    "output_tokens": 27,
+    "output_tokens_details": {
+     "reasoning_tokens": 12
+    },
+    "total_tokens": 431
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "schema",
+     "input": "{}"
+    }
+   ]
+  },
+  {
+   "turn": 2,
+   "ms": 1285,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 453,
+    "input_tokens_details": {
+     "cache_write_tokens": 0,
+     "cached_tokens": 0
+    },
+    "output_tokens": 21,
+    "output_tokens_details": {
+     "reasoning_tokens": 6
+    },
+    "total_tokens": 474
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "schema",
+     "input": "{}"
+    }
+   ]
+  },
+  {
+   "turn": 3,
+   "ms": 2965,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 5967,
+    "input_tokens_details": {
+     "cache_write_tokens": 5964,
+     "cached_tokens": 0
+    },
+    "output_tokens": 227,
+    "output_tokens_details": {
+     "reasoning_tokens": 35
+    },
+    "total_tokens": 6194
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT \\\"RNA tissue specificity\\\", \\\"RNA tissue specific nTPM\\\", \\\"Protein class\\\", \\\"Secretome location\\\" FROM proteinatlas WHERE lower(\\\"RNA tissue specificity\\\")='tissue enriched' LIMIT 20\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT DISTINCT Tissue FROM rna_tissue_consensus WHERE lower(Tissue) LIKE '%lung%' OR lower(Tissue) LIKE '%skeletal%'\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT DISTINCT \\\"Protein class\\\" FROM proteinatlas WHERE lower(\\\"Protein class\\\") LIKE '%drug%' OR lower(\\\"Protein class\\\") LIKE '%fda%'\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT DISTINCT \\\"Secretome location\\\" FROM proteinatlas WHERE \\\"Secretome location\\\" IS NOT NULL LIMIT 30\"}"
+    }
+   ]
+  },
+  {
+   "turn": 4,
+   "ms": 10024,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 10667,
+    "input_tokens_details": {
+     "cache_write_tokens": 4700,
+     "cached_tokens": 5964
+    },
+    "output_tokens": 1093,
+    "output_tokens_details": {
+     "reasoning_tokens": 53
+    },
+    "total_tokens": 11760
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\\\"Gene synonym\\\" gene_name,\\\"RNA tissue specific nTPM\\\" spec,\\\"Protein class\\\" pc,\\\"Secretome location\\\" sl FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *, lower(trim(split_part(spec,':',1))) tissue FROM m WHERE lower(\\\"RNA tissue specificity\\\")='tissue enriched'), x AS (SELECT tissue,count(*) n,sum(CASE WHEN pc LIKE '%FDA approved drug targets%' THEN 1 ELSE 0 END) f,sum(CASE WHEN sl='Secreted to blood' THEN 1 ELSE 0 END) s FROM c WHERE tissue IN ('lung','skeletal muscle') GROUP BY tissue), sets AS (SELECT count(*) inter FROM (SELECT ensg FROM c WHERE tissue='lung' INTERSECT SELECT ensg FROM c WHERE tissue='skeletal muscle')), sizes AS (SELECT sum(n) u FROM x) SELECT * FROM x CROSS JOIN sets CROSS JOIN sizes\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\\\"RNA tissue specific nTPM\\\" spec,\\\"Subcellular main location\\\" mainloc FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *, lower(trim(split_part(spec,':',1))) tissue, TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE lower((SELECT \\\"RNA tissue specificity\\\" FROM proteinatlas p WHERE p.Ensembl=m.ensg LIMIT 1))='tissue enriched'), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c WHERE tissue IN ('lung','skeletal muscle')) SELECT t.tissue,t.ensg,t.Gene,t.own, r.Tissue, r.nTPM,t.mainloc FROM top t LEFT JOIN rna_tissue_consensus r ON r.Gene=t.Gene AND lower(r.Tissue) IN ('lung','skeletal muscle') WHERE rn<=10 ORDER BY t.tissue,t.rn,r.Tissue\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\\\"RNA tissue specific nTPM\\\" spec FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *, lower(trim(split_part(spec,':',1))) tissue, TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE tissue IN ('lung','skeletal muscle')), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c), u AS (SELECT ensg FROM top WHERE rn<=10), e AS (SELECT DISTINCT least(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,greatest(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b,i.datasets FROM interaction_consensus i JOIN u x ON x.ensg=i.ensembl_gene_id_1 JOIN u y ON y.ensg=i.ensembl_gene_id_2 WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2), d AS (SELECT ensg,count(e.a) deg FROM u LEFT JOIN e ON u.ensg=e.a OR u.ensg=e.b GROUP BY ensg) SELECT * FROM e ORDER BY a,b\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\\\"RNA tissue specific nTPM\\\" spec FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *, lower(trim(split_part(spec,':',1))) tissue, TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE tissue IN ('lung','skeletal muscle')), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c), u AS (SELECT ensg FROM top WHERE rn<=10), e AS (SELECT DISTINCT least(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,greatest(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b FROM interaction_consensus i JOIN u x ON x.ensg=i.ensembl_gene_id_1 JOIN u y ON y.ensg=i.ensembl_gene_id_2 WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2), d AS (SELECT u.ensg,count(e.a) degree FROM u LEFT JOIN e ON u.ensg=e.a OR u.ensg=e.b GROUP BY u.ensg) SELECT d.ensg,p.Gene,d.degree FROM d LEFT JOIN proteinatlas p ON p.Ensembl=d.ensg ORDER BY degree DESC,ensg\"}"
+    }
+   ]
+  },
+  {
+   "turn": 5,
+   "ms": 6609,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 12586,
+    "input_tokens_details": {
+     "cache_write_tokens": 1919,
+     "cached_tokens": 10664
+    },
+    "output_tokens": 782,
+    "output_tokens_details": {
+     "reasoning_tokens": 70
+    },
+    "total_tokens": 13368
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\\\"RNA tissue specificity\\\" rs,\\\"RNA tissue specific nTPM\\\" spec,\\\"Protein class\\\" pc,\\\"Secretome location\\\" sl FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *,lower(trim(split_part(spec,':',1))) tissue FROM m WHERE rs='Tissue enriched'), x AS (SELECT tissue,count(*) n,sum(CASE WHEN pc LIKE '%FDA approved drug targets%' THEN 1 ELSE 0 END) f,sum(CASE WHEN sl='Secreted to blood' THEN 1 ELSE 0 END) s FROM c WHERE tissue IN ('lung','skeletal muscle') GROUP BY tissue), z AS (SELECT count(*) inter FROM ((SELECT ensg FROM c WHERE tissue='lung') INTERSECT (SELECT ensg FROM c WHERE tissue='skeletal muscle'))) SELECT *,(SELECT inter FROM z) inter FROM x\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\\\"RNA tissue specificity\\\" rs,\\\"RNA tissue specific nTPM\\\" spec,\\\"Subcellular main location\\\" loc FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *,lower(trim(split_part(spec,':',1))) tissue,TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE rs='Tissue enriched'), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c WHERE tissue IN ('lung','skeletal muscle')) SELECT t.tissue,t.ensg,t.Gene,t.own,coalesce(max(CASE WHEN lower(r.Tissue)='lung' THEN r.nTPM END),0) lung_ntpm,coalesce(max(CASE WHEN lower(r.Tissue)='skeletal muscle' THEN r.nTPM END),0) muscle_ntpm,t.loc FROM top t LEFT JOIN rna_tissue_consensus r ON r.Gene=t.Gene WHERE rn<=10 GROUP BY ALL ORDER BY t.tissue,t.rn\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\\\"RNA tissue specificity\\\" rs,\\\"RNA tissue specific nTPM\\\" spec FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *,lower(trim(split_part(spec,':',1))) tissue,TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE rs='Tissue enriched'), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c WHERE tissue IN ('lung','skeletal muscle')),u AS (SELECT ensg FROM top WHERE rn<=10),e AS (SELECT DISTINCT least(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,greatest(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b,i.datasets FROM interaction_consensus i JOIN u x ON x.ensg=i.ensembl_gene_id_1 JOIN u y ON y.ensg=i.ensembl_gene_id_2 WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2) SELECT * FROM e ORDER BY a,b\"}"
+    }
+   ]
+  },
+  {
+   "turn": 6,
+   "ms": 5162,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 13460,
+    "input_tokens_details": {
+     "cache_write_tokens": 874,
+     "cached_tokens": 12583
+    },
+    "output_tokens": 567,
+    "output_tokens_details": {
+     "reasoning_tokens": 24
+    },
+    "total_tokens": 14027
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\\\"RNA tissue specificity\\\" rs,\\\"RNA tissue specific nTPM\\\" spec,\\\"Subcellular main location\\\" loc FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *,lower(trim(split_part(spec,':',1))) tissue,TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE rs='Tissue enriched'), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c WHERE tissue IN ('lung','skeletal muscle')) SELECT t.tissue,t.ensg,t.Gene,t.own,coalesce(max(CASE WHEN lower(r.Tissue)='lung' THEN TRY_CAST(r.nTPM AS DOUBLE) END),0) lung_ntpm,coalesce(max(CASE WHEN lower(r.Tissue)='skeletal muscle' THEN TRY_CAST(r.nTPM AS DOUBLE) END),0) muscle_ntpm,t.loc FROM top t LEFT JOIN rna_tissue_consensus r ON r.Gene=t.Gene WHERE rn<=10 GROUP BY ALL ORDER BY t.tissue,t.rn\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT * FROM interaction_consensus LIMIT 5\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\\\"RNA tissue specificity\\\" rs,\\\"RNA tissue specific nTPM\\\" spec FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *,lower(trim(split_part(spec,':',1))) tissue,TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE rs='Tissue enriched'), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c WHERE tissue IN ('lung','skeletal muscle')),u AS (SELECT ensg FROM top WHERE rn<=10),e AS (SELECT DISTINCT least(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,greatest(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b,i.datasets FROM interaction_consensus i JOIN u x ON x.ensg=i.ensembl_gene_id_1 JOIN u y ON y.ensg=i.ensembl_gene_id_2 WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2) SELECT * FROM e\"}"
+    }
+   ]
+  },
+  {
+   "turn": 7,
+   "ms": 2892,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 14264,
+    "input_tokens_details": {
+     "cache_write_tokens": 804,
+     "cached_tokens": 13457
+    },
+    "output_tokens": 283,
+    "output_tokens_details": {
+     "reasoning_tokens": 10
+    },
+    "total_tokens": 14547
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\\\"RNA tissue specificity\\\" rs,\\\"RNA tissue specific nTPM\\\" spec,\\\"Subcellular main location\\\" loc FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *,lower(trim(split_part(spec,':',1))) tissue,TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE rs='Tissue enriched'), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c WHERE tissue IN ('lung','skeletal muscle')) SELECT t.tissue,t.ensg,t.Gene,t.own,coalesce(max(CASE WHEN lower(r.Tissue)='lung' THEN TRY_CAST(r.nTPM AS DOUBLE) END),0) lung_ntpm,coalesce(max(CASE WHEN lower(r.Tissue)='skeletal muscle' THEN TRY_CAST(r.nTPM AS DOUBLE) END),0) muscle_ntpm,t.loc FROM top t LEFT JOIN rna_tissue_consensus r ON r.Gene=t.Gene WHERE t.rn<=10 GROUP BY t.tissue,t.ensg,t.Gene,t.own,t.loc,t.rn ORDER BY t.tissue,t.rn\"}"
+    }
+   ]
+  },
+  {
+   "turn": 8,
+   "ms": 1601,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 15083,
+    "input_tokens_details": {
+     "cache_write_tokens": 819,
+     "cached_tokens": 14261
+    },
+    "output_tokens": 55,
+    "output_tokens_details": {
+     "reasoning_tokens": 17
+    },
+    "total_tokens": 15138
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT * FROM rna_tissue_consensus WHERE lower(Tissue)='lung' LIMIT 3\"}"
+    }
+   ]
+  },
+  {
+   "turn": 9,
+   "ms": 2741,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 15210,
+    "input_tokens_details": {
+     "cache_write_tokens": 127,
+     "cached_tokens": 15080
+    },
+    "output_tokens": 272,
+    "output_tokens_details": {
+     "reasoning_tokens": 8
+    },
+    "total_tokens": 15482
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\\\"RNA tissue specificity\\\" rs,\\\"RNA tissue specific nTPM\\\" spec,\\\"Subcellular main location\\\" loc FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *,lower(trim(split_part(spec,':',1))) tissue,TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE rs='Tissue enriched'), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c WHERE tissue IN ('lung','skeletal muscle')) SELECT t.tissue,t.ensg,t.Gene,t.own,max(CASE WHEN lower(r.Tissue)='lung' THEN TRY_CAST(r.nTPM AS DOUBLE) END) lung_ntpm,max(CASE WHEN lower(r.Tissue)='skeletal muscle' THEN TRY_CAST(r.nTPM AS DOUBLE) END) muscle_ntpm,t.loc FROM top t LEFT JOIN rna_tissue_consensus r ON r.Gene=t.ensg WHERE t.rn<=10 GROUP BY t.tissue,t.ensg,t.Gene,t.own,t.loc,t.rn ORDER BY t.tissue,t.rn\"}"
+    }
+   ]
+  },
+  {
+   "turn": 10,
+   "ms": 18194,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 16100,
+    "input_tokens_details": {
+     "cache_write_tokens": 890,
+     "cached_tokens": 15207
+    },
+    "output_tokens": 2384,
+    "output_tokens_details": {
+     "reasoning_tokens": 75
+    },
+    "total_tokens": 18484
+   },
+   "text": "## Cohort definition\n\nUsing the HPA master table as the gene universe, I defined cohorts as genes satisfying:\n\n- `RNA tissue specificity = Tissue enriched`\n- The named tissue in `RNA tissue specific nTPM` is exactly `lung` or `skeletal muscle`\n- Abundance values are consensus RNA nTPM from `rna_tissue_consensus`\n- Ranking ties are resolved by Ensembl gene ID\n\n### Cohort summary\n\n| Cohort | Size | FDA-approved drug targets | Share FDA-approved targets | Secreted to blood | Share secreted to blood |\n|---|---:|---:|---:|---:|---:|\n| Lung-enriched | 17 | 1 | 5.8824% | 1 | 5.8824% |\n| Skeletal-muscle-enriched | 53 | 3 | 5.6604% | 0 | 0% |\n\nThe two cohorts have no overlapping Ensembl genes.\n\n- Intersection: **0**\n- Union size: **70**\n- Jaccard index: **0 / 70 = 0**\n\n### Cohort-composition bars\n\nEach bar shows the number of genes in the cohort.\n\n```text\nLung-enriched              █████████████████ 17\nSkeletal-muscle-enriched  █████████████████████████████████████████████████████ 53\n```\n\nFor the two categorical annotations:\n\n```text\nFDA-approved drug target\nLung                  █ 1\nNot FDA target        ████████████████ 16\n\nSkeletal muscle       ███ 3\nNot FDA target        ██████████████████████████████████████████████████ 50\n\nSecreted to blood\nLung                  █ 1\nNot secreted          ████████████████ 16\n\nSkeletal muscle       0\nNot secreted          █████████████████████████████████████████████████████ 53\n```\n\n## Top ten genes by abundance in their enriched tissue\n\nAll requested ranked lists contained at least ten eligible members.\n\n`Main subcellular location` is reported exactly as available in the HPA master table; blank values indicate no main location was returned.\n\n| Cohort | Rank | Ensembl ID | Gene | Own-tissue nTPM | Lung nTPM | Skeletal muscle nTPM | Main subcellular location |\n|---|---:|---|---|---:|---:|---:|---|\n| Lung | 1 | ENSG00000168484 | SFTPC | 17,411.2 | 17,411.2 | 1.7 | — |\n| Lung | 2 | ENSG00000185303 | SFTPA2 | 10,182.2 | 10,182.2 | 0.8 | — |\n| Lung | 3 | ENSG00000122852 | SFTPA1 | 6,679.7 | 6,679.7 | 0.6 | — |\n| Lung | 4 | ENSG00000168878 | SFTPB | 3,361.2 | 3,361.2 | 0.9 | — |\n| Lung | 5 | ENSG00000149021 | SCGB1A1 | 2,893.8 | 2,893.8 | 0.3 | — |\n| Lung | 6 | ENSG00000164265 | SCGB3A2 | 1,193.6 | 1,193.6 | 2.0 | — |\n| Lung | 7 | ENSG00000131400 | NAPSA | 983.7 | 983.7 | 0.2 | — |\n| Lung | 8 | ENSG00000157765 | SLC34A2 | 709.6 | 709.6 | 0.1 | Plasma membrane |\n| Lung | 9 | ENSG00000204305 | AGER | 687.2 | 687.2 | 0.9 | Plasma membrane, Cell Junctions |\n| Lung | 10 | ENSG00000133661 | SFTPD | 479.1 | 479.1 | 0.1 | — |\n| Skeletal muscle | 1 | ENSG00000143632 | ACTA1 | 123,974.2 | 5.9 | 123,974.2 | — |\n| Skeletal muscle | 2 | ENSG00000109061 | MYH1 | 7,384.5 | 0.3 | 7,384.5 | Focal adhesion sites |\n| Skeletal muscle | 3 | ENSG00000164879 | CA3 | 4,941.5 | 23.0 | 4,941.5 | — |\n| Skeletal muscle | 4 | ENSG00000158022 | TRIM63 | 1,847.0 | 0.5 | 1,847.0 | — |\n| Skeletal muscle | 5 | ENSG00000248746 | ACTN3 | 1,567.3 | 0.1 | 1,567.3 | Actin filaments, Focal adhesion sites |\n| Skeletal muscle | 6 | ENSG00000182676 | PPP1R27 | 1,144.3 | 0.1 | 1,144.3 | Plasma membrane, Cytosol |\n| Skeletal muscle | 7 | ENSG00000168333 | PPDPFL | 741.2 | 0.1 | 741.2 | — |\n| Skeletal muscle | 8 | ENSG00000101306 | MYLK2 | 686.1 | 0.0 | 686.1 | Endoplasmic reticulum |\n| Skeletal muscle | 9 | ENSG00000156804 | FBXO32 | 604.9 | 3.4 | 604.9 | Nucleoplasm, Cytosol |\n| Skeletal muscle | 10 | ENSG00000255112 | CHMP1B | 344.7 | 28.0 | 344.7 | Nucleoplasm, Midbody |\n\n## Two-tissue abundance heatmap\n\nValues are consensus RNA nTPM. The scale is qualitative within this table; numerical values are shown above.\n\n```text\nLung-selected genes                         Lung       Skeletal muscle\nSFTPC                                       ██████████  17,411.2       1.7\nSFTPA2                                      ██████      10,182.2       0.8\nSFTPA1                                      ████         6,679.7       0.6\nSFTPB                              ",
+   "tool_uses": []
+  }
+ ],
+ "tool_calls": [
+  {
+   "turn": 1,
+   "name": "schema",
+   "input": {},
+   "ms": 60056,
+   "result_chars": 47,
+   "truncated": false,
+   "error": "MCP error -32001: Request timed out",
+   "result_head": "Tool error: MCP error -32001: Request timed out"
+  },
+  {
+   "turn": 2,
+   "name": "schema",
+   "input": {},
+   "ms": 38116,
+   "result_chars": 148152,
+   "truncated": true,
+   "error": null,
+   "result_head": "Tables built from the Human Protein Atlas bulk files (all columns are text; cast for arithmetic, e.g. TRY_CAST(col AS DOUBLE)).\n\nblood_immunoassay_concentration (0.1 MB): gene, ENSG ID, conc [pg/L], sample type, number_of_samples, pubmed id\nblood_ms_concentration (0.1 MB): Gene, ENSG ID, Conc [pg/L]\nblood_pea_disease_de (17.9 MB): Gene, ENSG ID, Disease, Class, Control, logFC, p-value adjusted, Seeds, Mean importance, SD importance, Max importance, Min importance\nblood_pea_diseases (0.0 MB): Disease, Class\ncancer_cancers (0.0 MB): Cancer, Organ\ncancer_cptac (5.7 MB): Cancer, Gene, Gene name, p"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"RNA tissue specificity\", \"RNA tissue specific nTPM\", \"Protein class\", \"Secretome location\" FROM proteinatlas WHERE lower(\"RNA tissue specificity\")='tissue enriched' LIMIT 20"
+   },
+   "ms": 630,
+   "result_chars": 2859,
+   "truncated": false,
+   "error": null,
+   "result_head": "RNA tissue specificity\tRNA tissue specific nTPM\tProtein class\tSecretome location\nTissue enriched\tliver: 1585.8\tCancer-related genes, Disease related genes, Human disease related genes, Plasma proteins, Predicted intracellular proteins, Predicted secreted proteins\tSecreted to blood\nTissue enriched\tepididymis: 25.7\tEnzymes, Predicted intracellular proteins, Predicted membrane proteins, Transporters\t\nTissue enriched\tliver: 140.4\tDisease related genes, Human disease related genes, Metabolic proteins, Plasma proteins, Potential drug targets, Predicted intracellular proteins, Transporters\t\nTissue en"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "SELECT DISTINCT Tissue FROM rna_tissue_consensus WHERE lower(Tissue) LIKE '%lung%' OR lower(Tissue) LIKE '%skeletal%'"
+   },
+   "ms": 665,
+   "result_chars": 36,
+   "truncated": false,
+   "error": null,
+   "result_head": "Tissue\nlung\nskeletal muscle\n[2 rows]"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "SELECT DISTINCT \"Protein class\" FROM proteinatlas WHERE lower(\"Protein class\") LIKE '%drug%' OR lower(\"Protein class\") LIKE '%fda%'"
+   },
+   "ms": 868,
+   "result_chars": 102655,
+   "truncated": true,
+   "error": null,
+   "result_head": "Protein class\nDisease related genes, Enzymes, Potential drug targets, Predicted intracellular proteins\nDisease related genes, FDA approved drug targets, Predicted intracellular proteins, Transporters\nCancer-related genes, Disease related genes, Enzymes, FDA approved drug targets, Human disease related genes, Plasma proteins, Predicted intracellular proteins\nDisease related genes, Human disease related genes, Potential drug targets, Predicted membrane proteins, Transporters\nCancer-related genes, Enzymes, FDA approved drug targets, Metabolic proteins, Plasma proteins, Predicted intracellular pro"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "SELECT DISTINCT \"Secretome location\" FROM proteinatlas WHERE \"Secretome location\" IS NOT NULL LIMIT 30"
+   },
+   "ms": 807,
+   "result_chars": 304,
+   "truncated": false,
+   "error": null,
+   "result_head": "Secretome location\nSecreted to blood\nSecreted in female reproductive system\nSecreted in other tissues\nSecreted - unknown location\nIntracellular and membrane\nSecreted to extracellular matrix\nSecreted to digestive system\nSecreted in brain\nImmunoglobulin genes\nSecreted in male reproductive system\n[10 rows]"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\"Gene synonym\" gene_name,\"RNA tissue specific nTPM\" spec,\"Protein class\" pc,\"Secretome location\" sl FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *, lower(trim(split_part(spec,':',1))) tissue FROM m WHERE lower(\"RNA tissue specificity\")='tissue enriched'), x AS (SELECT tissue,count(*) n,sum(CASE WHEN pc LIKE '%FDA approved drug targets%' THEN 1 ELSE 0 END) f,sum(CASE WHEN sl='Secreted to blood' THEN 1 ELSE 0 END) s FROM c WHERE tissue IN ('lung','skeletal muscle') GROUP BY tissue), sets AS (SELECT count(*) inter FROM (SELECT ensg FROM c WHERE tissue='lung' INTERSECT SELECT ensg FROM c WHERE tissue='skeletal muscle')), sizes AS (SELECT sum(n) u FROM x) SELECT * FROM x CROSS JOIN sets CROSS JOIN sizes"
+   },
+   "ms": 242,
+   "result_chars": 343,
+   "truncated": false,
+   "error": "tool reported an error",
+   "result_head": "Error: Binder Error: Referenced column \"RNA tissue specificity\" not found in FROM clause!\nCandidate bindings: \"Gene\", \"spec\", \"sl\"\n\nLINE 1: ... lower(trim(split_part(spec,':',1))) tissue FROM m WHERE lower(\"RNA tissue specificity\")='tissue enriched'), x AS (SELECT...\n                                                                          ^"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\"RNA tissue specific nTPM\" spec,\"Subcellular main location\" mainloc FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *, lower(trim(split_part(spec,':',1))) tissue, TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE lower((SELECT \"RNA tissue specificity\" FROM proteinatlas p WHERE p.Ensembl=m.ensg LIMIT 1))='tissue enriched'), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c WHERE tissue IN ('lung','skeletal muscle')) SELECT t.tissue,t.ensg,t.Gene,t.own, r.Tissue, r.nTPM,t.mainloc FROM top t LEFT JOIN rna_tissue_consensus r ON r.Gene=t.Gene AND lower(r.Tissue) IN ('lung','skeletal muscle') WHERE rn<=10 ORDER BY t.tissue,t.rn,r.Tissue"
+   },
+   "ms": 1741,
+   "result_chars": 1092,
+   "truncated": false,
+   "error": null,
+   "result_head": "tissue\tensg\tGene\town\tTissue\tnTPM\tmainloc\nlung\tENSG00000168484\tSFTPC\t17411.2\t\t\t\nlung\tENSG00000185303\tSFTPA2\t10182.2\t\t\t\nlung\tENSG00000122852\tSFTPA1\t6679.7\t\t\t\nlung\tENSG00000168878\tSFTPB\t3361.2\t\t\t\nlung\tENSG00000149021\tSCGB1A1\t2893.8\t\t\t\nlung\tENSG00000164265\tSCGB3A2\t1193.6\t\t\t\nlung\tENSG00000131400\tNAPSA\t983.7\t\t\t\nlung\tENSG00000157765\tSLC34A2\t709.6\t\t\tPlasma membrane\nlung\tENSG00000204305\tAGER\t687.2\t\t\tPlasma membrane, Cell Junctions\nlung\tENSG00000133661\tSFTPD\t479.1\t\t\t\nskeletal muscle\tENSG00000143632\tACTA1\t123974.2\t\t\t\nskeletal muscle\tENSG00000109061\tMYH1\t7384.5\t\t\tFocal adhesion sites\nskeletal muscle\tENSG0"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\"RNA tissue specific nTPM\" spec FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *, lower(trim(split_part(spec,':',1))) tissue, TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE tissue IN ('lung','skeletal muscle')), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c), u AS (SELECT ensg FROM top WHERE rn<=10), e AS (SELECT DISTINCT least(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,greatest(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b,i.datasets FROM interaction_consensus i JOIN u x ON x.ensg=i.ensembl_gene_id_1 JOIN u y ON y.ensg=i.ensembl_gene_id_2 WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2), d AS (SELECT ensg,count(e.a) deg FROM u LEFT JOIN e ON u.ensg=e.a OR u.ensg=e.b GROUP BY ensg) SELECT * FROM e ORDER BY a,b"
+   },
+   "ms": 796,
+   "result_chars": 18,
+   "truncated": false,
+   "error": null,
+   "result_head": "(no rows)\n[0 rows]"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\"RNA tissue specific nTPM\" spec FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *, lower(trim(split_part(spec,':',1))) tissue, TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE tissue IN ('lung','skeletal muscle')), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c), u AS (SELECT ensg FROM top WHERE rn<=10), e AS (SELECT DISTINCT least(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,greatest(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b FROM interaction_consensus i JOIN u x ON x.ensg=i.ensembl_gene_id_1 JOIN u y ON y.ensg=i.ensembl_gene_id_2 WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2), d AS (SELECT u.ensg,count(e.a) degree FROM u LEFT JOIN e ON u.ensg=e.a OR u.ensg=e.b GROUP BY u.ensg) SELECT d.ensg,p.Gene,d.degree FROM d LEFT JOIN proteinatlas p ON p.Ensembl=d.ensg ORDER BY degree DESC,ensg"
+   },
+   "ms": 1255,
+   "result_chars": 506,
+   "truncated": false,
+   "error": null,
+   "result_head": "ensg\tGene\tdegree\nENSG00000065978\tYBX1\t0\nENSG00000099875\tMKNK2\t0\nENSG00000109061\tMYH1\t0\nENSG00000122852\tSFTPA1\t0\nENSG00000127184\tCOX7C\t0\nENSG00000131400\tNAPSA\t0\nENSG00000133112\tTPT1\t0\nENSG00000135821\tGLUL\t0\nENSG00000143632\tACTA1\t0\nENSG00000149021\tSCGB1A1\t0\nENSG00000157765\tSLC34A2\t0\nENSG00000158022\tTRIM63\t0\nENSG00000164265\tSCGB3A2\t0\nENSG00000164879\tCA3\t0\nENSG00000168484\tSFTPC\t0\nENSG00000168878\tSFTPB\t0\nENSG00000175899\tA2M\t0\nENSG00000185303\tSFTPA2\t0\nENSG00000204305\tAGER\t0\nENSG00000248746\tACTN3\t0\n[20 rows]"
+  },
+  {
+   "turn": 5,
+   "name": "sql",
+   "input": {
+    "query": "WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\"RNA tissue specificity\" rs,\"RNA tissue specific nTPM\" spec,\"Protein class\" pc,\"Secretome location\" sl FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *,lower(trim(split_part(spec,':',1))) tissue FROM m WHERE rs='Tissue enriched'), x AS (SELECT tissue,count(*) n,sum(CASE WHEN pc LIKE '%FDA approved drug targets%' THEN 1 ELSE 0 END) f,sum(CASE WHEN sl='Secreted to blood' THEN 1 ELSE 0 END) s FROM c WHERE tissue IN ('lung','skeletal muscle') GROUP BY tissue), z AS (SELECT count(*) inter FROM ((SELECT ensg FROM c WHERE tissue='lung') INTERSECT (SELECT ensg FROM c WHERE tissue='skeletal muscle'))) SELECT *,(SELECT inter FROM z) inter FROM x"
+   },
+   "ms": 626,
+   "result_chars": 66,
+   "truncated": false,
+   "error": null,
+   "result_head": "tissue\tn\tf\ts\tinter\nskeletal muscle\t53\t3\t0\t0\nlung\t17\t1\t1\t0\n[2 rows]"
+  },
+  {
+   "turn": 5,
+   "name": "sql",
+   "input": {
+    "query": "WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\"RNA tissue specificity\" rs,\"RNA tissue specific nTPM\" spec,\"Subcellular main location\" loc FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *,lower(trim(split_part(spec,':',1))) tissue,TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE rs='Tissue enriched'), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c WHERE tissue IN ('lung','skeletal muscle')) SELECT t.tissue,t.ensg,t.Gene,t.own,coalesce(max(CASE WHEN lower(r.Tissue)='lung' THEN r.nTPM END),0) lung_ntpm,coalesce(max(CASE WHEN lower(r.Tissue)='skeletal muscle' THEN r.nTPM END),0) muscle_ntpm,t.loc FROM top t LEFT JOIN rna_tissue_consensus r ON r.Gene=t.Gene WHERE rn<=10 GROUP BY ALL ORDER BY t.tissue,t.rn"
+   },
+   "ms": 215,
+   "result_chars": 126,
+   "truncated": false,
+   "error": "tool reported an error",
+   "result_head": "Error: Binder Error: Cannot mix values of type VARCHAR and INTEGER_LITERAL in COALESCE operator - an explicit cast is required"
+  },
+  {
+   "turn": 5,
+   "name": "sql",
+   "input": {
+    "query": "WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\"RNA tissue specificity\" rs,\"RNA tissue specific nTPM\" spec FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *,lower(trim(split_part(spec,':',1))) tissue,TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE rs='Tissue enriched'), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c WHERE tissue IN ('lung','skeletal muscle')),u AS (SELECT ensg FROM top WHERE rn<=10),e AS (SELECT DISTINCT least(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,greatest(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b,i.datasets FROM interaction_consensus i JOIN u x ON x.ensg=i.ensembl_gene_id_1 JOIN u y ON y.ensg=i.ensembl_gene_id_2 WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2) SELECT * FROM e ORDER BY a,b"
+   },
+   "ms": 682,
+   "result_chars": 18,
+   "truncated": false,
+   "error": null,
+   "result_head": "(no rows)\n[0 rows]"
+  },
+  {
+   "turn": 6,
+   "name": "sql",
+   "input": {
+    "query": "WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\"RNA tissue specificity\" rs,\"RNA tissue specific nTPM\" spec,\"Subcellular main location\" loc FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *,lower(trim(split_part(spec,':',1))) tissue,TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE rs='Tissue enriched'), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c WHERE tissue IN ('lung','skeletal muscle')) SELECT t.tissue,t.ensg,t.Gene,t.own,coalesce(max(CASE WHEN lower(r.Tissue)='lung' THEN TRY_CAST(r.nTPM AS DOUBLE) END),0) lung_ntpm,coalesce(max(CASE WHEN lower(r.Tissue)='skeletal muscle' THEN TRY_CAST(r.nTPM AS DOUBLE) END),0) muscle_ntpm,t.loc FROM top t LEFT JOIN rna_tissue_consensus r ON r.Gene=t.Gene WHERE rn<=10 GROUP BY ALL ORDER BY t.tissue,t.rn"
+   },
+   "ms": 213,
+   "result_chars": 381,
+   "truncated": false,
+   "error": "tool reported an error",
+   "result_head": "Error: Binder Error: column \"rn\" must appear in the GROUP BY clause or must be part of an aggregate function.\nGROUP BY ALL will only group entries in the SELECT list. Add it to the SELECT list or GROUP BY this entry explicitly.\n\nLINE 1: ... ON r.Gene=t.Gene WHERE rn<=10 GROUP BY ALL ORDER BY t.tissue,t.rn\n                                                                         ^"
+  },
+  {
+   "turn": 6,
+   "name": "sql",
+   "input": {
+    "query": "SELECT * FROM interaction_consensus LIMIT 5"
+   },
+   "ms": 37,
+   "result_chars": 292,
+   "truncated": false,
+   "error": null,
+   "result_head": "ensembl_gene_id_1\tensembl_gene_id_2\tdatasets\nENSG00000000419\tENSG00000166333\tintact_biogrid\nENSG00000000419\tENSG00000179085\tintact_biogrid\nENSG00000000457\tENSG00000092820\tintact_biogrid\nENSG00000000457\tENSG00000122218\tbiogrid_opencell\nENSG00000000457\tENSG00000158623\tbiogrid_opencell\n[5 rows]"
+  },
+  {
+   "turn": 6,
+   "name": "sql",
+   "input": {
+    "query": "WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\"RNA tissue specificity\" rs,\"RNA tissue specific nTPM\" spec FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *,lower(trim(split_part(spec,':',1))) tissue,TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE rs='Tissue enriched'), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c WHERE tissue IN ('lung','skeletal muscle')),u AS (SELECT ensg FROM top WHERE rn<=10),e AS (SELECT DISTINCT least(i.ensembl_gene_id_1,i.ensembl_gene_id_2) a,greatest(i.ensembl_gene_id_1,i.ensembl_gene_id_2) b,i.datasets FROM interaction_consensus i JOIN u x ON x.ensg=i.ensembl_gene_id_1 JOIN u y ON y.ensg=i.ensembl_gene_id_2 WHERE i.ensembl_gene_id_1<>i.ensembl_gene_id_2) SELECT * FROM e"
+   },
+   "ms": 480,
+   "result_chars": 18,
+   "truncated": false,
+   "error": null,
+   "result_head": "(no rows)\n[0 rows]"
+  },
+  {
+   "turn": 7,
+   "name": "sql",
+   "input": {
+    "query": "WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\"RNA tissue specificity\" rs,\"RNA tissue specific nTPM\" spec,\"Subcellular main location\" loc FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *,lower(trim(split_part(spec,':',1))) tissue,TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE rs='Tissue enriched'), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c WHERE tissue IN ('lung','skeletal muscle')) SELECT t.tissue,t.ensg,t.Gene,t.own,coalesce(max(CASE WHEN lower(r.Tissue)='lung' THEN TRY_CAST(r.nTPM AS DOUBLE) END),0) lung_ntpm,coalesce(max(CASE WHEN lower(r.Tissue)='skeletal muscle' THEN TRY_CAST(r.nTPM AS DOUBLE) END),0) muscle_ntpm,t.loc FROM top t LEFT JOIN rna_tissue_consensus r ON r.Gene=t.Gene WHERE t.rn<=10 GROUP BY t.tissue,t.ensg,t.Gene,t.own,t.loc,t.rn ORDER BY t.tissue,t.rn"
+   },
+   "ms": 915,
+   "result_chars": 1138,
+   "truncated": false,
+   "error": null,
+   "result_head": "tissue\tensg\tGene\town\tlung_ntpm\tmuscle_ntpm\tloc\nlung\tENSG00000168484\tSFTPC\t17411.2\t0\t0\t\nlung\tENSG00000185303\tSFTPA2\t10182.2\t0\t0\t\nlung\tENSG00000122852\tSFTPA1\t6679.7\t0\t0\t\nlung\tENSG00000168878\tSFTPB\t3361.2\t0\t0\t\nlung\tENSG00000149021\tSCGB1A1\t2893.8\t0\t0\t\nlung\tENSG00000164265\tSCGB3A2\t1193.6\t0\t0\t\nlung\tENSG00000131400\tNAPSA\t983.7\t0\t0\t\nlung\tENSG00000157765\tSLC34A2\t709.6\t0\t0\tPlasma membrane\nlung\tENSG00000204305\tAGER\t687.2\t0\t0\tPlasma membrane, Cell Junctions\nlung\tENSG00000133661\tSFTPD\t479.1\t0\t0\t\nskeletal muscle\tENSG00000143632\tACTA1\t123974.2\t0\t0\t\nskeletal muscle\tENSG00000109061\tMYH1\t7384.5\t0\t0\tFocal adhesi"
+  },
+  {
+   "turn": 8,
+   "name": "sql",
+   "input": {
+    "query": "SELECT * FROM rna_tissue_consensus WHERE lower(Tissue)='lung' LIMIT 3"
+   },
+   "ms": 222,
+   "result_chars": 128,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tGene name\tTissue\tnTPM\nENSG00000000003\tTSPAN6\tlung\t7.9\nENSG00000000005\tTNMD\tlung\t0.0\nENSG00000000419\tDPM1\tlung\t27.1\n[3 rows]"
+  },
+  {
+   "turn": 9,
+   "name": "sql",
+   "input": {
+    "query": "WITH m AS (SELECT DISTINCT Ensembl ensg,Gene,\"RNA tissue specificity\" rs,\"RNA tissue specific nTPM\" spec,\"Subcellular main location\" loc FROM proteinatlas WHERE Ensembl IS NOT NULL), c AS (SELECT *,lower(trim(split_part(spec,':',1))) tissue,TRY_CAST(trim(split_part(spec,':',2)) AS DOUBLE) own FROM m WHERE rs='Tissue enriched'), top AS (SELECT *,row_number() over(partition by tissue order by own DESC,ensg) rn FROM c WHERE tissue IN ('lung','skeletal muscle')) SELECT t.tissue,t.ensg,t.Gene,t.own,max(CASE WHEN lower(r.Tissue)='lung' THEN TRY_CAST(r.nTPM AS DOUBLE) END) lung_ntpm,max(CASE WHEN lower(r.Tissue)='skeletal muscle' THEN TRY_CAST(r.nTPM AS DOUBLE) END) muscle_ntpm,t.loc FROM top t LEFT JOIN rna_tissue_consensus r ON r.Gene=t.ensg WHERE t.rn<=10 GROUP BY t.tissue,t.ensg,t.Gene,t.own,t.loc,t.rn ORDER BY t.tissue,t.rn"
+   },
+   "ms": 1179,
+   "result_chars": 1266,
+   "truncated": false,
+   "error": null,
+   "result_head": "tissue\tensg\tGene\town\tlung_ntpm\tmuscle_ntpm\tloc\nlung\tENSG00000168484\tSFTPC\t17411.2\t17411.2\t1.7\t\nlung\tENSG00000185303\tSFTPA2\t10182.2\t10182.2\t0.8\t\nlung\tENSG00000122852\tSFTPA1\t6679.7\t6679.7\t0.6\t\nlung\tENSG00000168878\tSFTPB\t3361.2\t3361.2\t0.9\t\nlung\tENSG00000149021\tSCGB1A1\t2893.8\t2893.8\t0.3\t\nlung\tENSG00000164265\tSCGB3A2\t1193.6\t1193.6\t2\t\nlung\tENSG00000131400\tNAPSA\t983.7\t983.7\t0.2\t\nlung\tENSG00000157765\tSLC34A2\t709.6\t709.6\t0.1\tPlasma membrane\nlung\tENSG00000204305\tAGER\t687.2\t687.2\t0.9\tPlasma membrane, Cell Junctions\nlung\tENSG00000133661\tSFTPD\t479.1\t479.1\t0.1\t\nskeletal muscle\tENSG00000143632\tACTA1\t123974.2"
+  }
+ ],
+ "usage": {
+  "input_tokens": 104194,
+  "output_tokens": 5711,
+  "cache_read_input_tokens": 87216,
+  "cache_creation_input_tokens": 0,
+  "reasoning_tokens": 310
+ },
+ "started_unix_ms": 1789296275667,
+ "final_answer": "## Cohort definition\n\nUsing the HPA master table as the gene universe, I defined cohorts as genes satisfying:\n\n- `RNA tissue specificity = Tissue enriched`\n- The named tissue in `RNA tissue specific nTPM` is exactly `lung` or `skeletal muscle`\n- Abundance values are consensus RNA nTPM from `rna_tissue_consensus`\n- Ranking ties are resolved by Ensembl gene ID\n\n### Cohort summary\n\n| Cohort | Size | FDA-approved drug targets | Share FDA-approved targets | Secreted to blood | Share secreted to blood |\n|---|---:|---:|---:|---:|---:|\n| Lung-enriched | 17 | 1 | 5.8824% | 1 | 5.8824% |\n| Skeletal-muscle-enriched | 53 | 3 | 5.6604% | 0 | 0% |\n\nThe two cohorts have no overlapping Ensembl genes.\n\n- Intersection: **0**\n- Union size: **70**\n- Jaccard index: **0 / 70 = 0**\n\n### Cohort-composition bars\n\nEach bar shows the number of genes in the cohort.\n\n```text\nLung-enriched              █████████████████ 17\nSkeletal-muscle-enriched  █████████████████████████████████████████████████████ 53\n```\n\nFor the two categorical annotations:\n\n```text\nFDA-approved drug target\nLung                  █ 1\nNot FDA target        ████████████████ 16\n\nSkeletal muscle       ███ 3\nNot FDA target        ██████████████████████████████████████████████████ 50\n\nSecreted to blood\nLung                  █ 1\nNot secreted          ████████████████ 16\n\nSkeletal muscle       0\nNot secreted          █████████████████████████████████████████████████████ 53\n```\n\n## Top ten genes by abundance in their enriched tissue\n\nAll requested ranked lists contained at least ten eligible members.\n\n`Main subcellular location` is reported exactly as available in the HPA master table; blank values indicate no main location was returned.\n\n| Cohort | Rank | Ensembl ID | Gene | Own-tissue nTPM | Lung nTPM | Skeletal muscle nTPM | Main subcellular location |\n|---|---:|---|---|---:|---:|---:|---|\n| Lung | 1 | ENSG00000168484 | SFTPC | 17,411.2 | 17,411.2 | 1.7 | — |\n| Lung | 2 | ENSG00000185303 | SFTPA2 | 10,182.2 | 10,182.2 | 0.8 | — |\n| Lung | 3 | ENSG00000122852 | SFTPA1 | 6,679.7 | 6,679.7 | 0.6 | — |\n| Lung | 4 | ENSG00000168878 | SFTPB | 3,361.2 | 3,361.2 | 0.9 | — |\n| Lung | 5 | ENSG00000149021 | SCGB1A1 | 2,893.8 | 2,893.8 | 0.3 | — |\n| Lung | 6 | ENSG00000164265 | SCGB3A2 | 1,193.6 | 1,193.6 | 2.0 | — |\n| Lung | 7 | ENSG00000131400 | NAPSA | 983.7 | 983.7 | 0.2 | — |\n| Lung | 8 | ENSG00000157765 | SLC34A2 | 709.6 | 709.6 | 0.1 | Plasma membrane |\n| Lung | 9 | ENSG00000204305 | AGER | 687.2 | 687.2 | 0.9 | Plasma membrane, Cell Junctions |\n| Lung | 10 | ENSG00000133661 | SFTPD | 479.1 | 479.1 | 0.1 | — |\n| Skeletal muscle | 1 | ENSG00000143632 | ACTA1 | 123,974.2 | 5.9 | 123,974.2 | — |\n| Skeletal muscle | 2 | ENSG00000109061 | MYH1 | 7,384.5 | 0.3 | 7,384.5 | Focal adhesion sites |\n| Skeletal muscle | 3 | ENSG00000164879 | CA3 | 4,941.5 | 23.0 | 4,941.5 | — |\n| Skeletal muscle | 4 | ENSG00000158022 | TRIM63 | 1,847.0 | 0.5 | 1,847.0 | — |\n| Skeletal muscle | 5 | ENSG00000248746 | ACTN3 | 1,567.3 | 0.1 | 1,567.3 | Actin filaments, Focal adhesion sites |\n| Skeletal muscle | 6 | ENSG00000182676 | PPP1R27 | 1,144.3 | 0.1 | 1,144.3 | Plasma membrane, Cytosol |\n| Skeletal muscle | 7 | ENSG00000168333 | PPDPFL | 741.2 | 0.1 | 741.2 | — |\n| Skeletal muscle | 8 | ENSG00000101306 | MYLK2 | 686.1 | 0.0 | 686.1 | Endoplasmic reticulum |\n| Skeletal muscle | 9 | ENSG00000156804 | FBXO32 | 604.9 | 3.4 | 604.9 | Nucleoplasm, Cytosol |\n| Skeletal muscle | 10 | ENSG00000255112 | CHMP1B | 344.7 | 28.0 | 344.7 | Nucleoplasm, Midbody |\n\n## Two-tissue abundance heatmap\n\nValues are consensus RNA nTPM. The scale is qualitative within this table; numerical values are shown above.\n\n```text\nLung-selected genes                         Lung       Skeletal muscle\nSFTPC                                       ██████████  17,411.2       1.7\nSFTPA2                                      ██████      10,182.2       0.8\nSFTPA1                                      ████         6,679.7       0.6\nSFTPB                                       ██           3,361.2       0.9\nSCGB1A1                                     ██           2,893.8       0.3\nSCGB3A2                                     █            1,193.6       2.0\nNAPSA                                       █              983.7       0.2\nSLC34A2                                     █              709.6       0.1\nAGER                                        █              687.2       0.9\nSFTPD                                       ▏              479.1       0.1\n\nSkeletal-muscle-selected genes\nACTA1                                       ▏                5.9  ██████████ 123,974.2\nMYH1                                        ▏                0.3  █            7,384.5\nCA3                                         ▏               23.0  █            4,941.5\nTRIM63                                      ▏                0.5  ▏            1,847.0\nACTN3                                       ▏                0.1  ▏            1,567.3\nPPP1R27                                     ▏                0.1  ▏            1,144.3\nPPDPFL                                      ▏                0.1  ▏              741.2\nMYLK2                                       ▏                0.0  ▏              686.1\nFBXO32                                      ▏                3.4  ▏              604.9\nCHMP1B                                      ▏               28.0  ▏              344.7\n```\n\n## Consensus interaction network within the selected union\n\nThe selected union contains 20 genes. I treated interaction edges as undirected, removed self-edges, and deduplicated reciprocal or repeated edges.\n\n- Consensus interaction edges among the 20 selected genes: **0**\n- Therefore, every selected gene has degree **0**\n\n| Ensembl ID | Gene | Degree |\n|---|---|---:|\n| ENSG00000168484 | SFTPC | 0 |\n| ENSG00000185303 | SFTPA2 | 0 |\n| ENSG00000122852 | SFTPA1 | 0 |\n| ENSG00000168878 | SFTPB | 0 |\n| ENSG00000149021 | SCGB1A1 | 0 |\n| ENSG00000164265 | SCGB3A2 | 0 |\n| ENSG00000131400 | NAPSA | 0 |\n| ENSG00000157765 | SLC34A2 | 0 |\n| ENSG00000204305 | AGER | 0 |\n| ENSG00000133661 | SFTPD | 0 |\n| ENSG00000143632 | ACTA1 | 0 |\n| ENSG00000109061 | MYH1 | 0 |\n| ENSG00000164879 | CA3 | 0 |\n| ENSG00000158022 | TRIM63 | 0 |\n| ENSG00000248746 | ACTN3 | 0 |\n| ENSG00000182676 | PPP1R27 | 0 |\n| ENSG00000168333 | PPDPFL | 0 |\n| ENSG00000101306 | MYLK2 | 0 |\n| ENSG00000156804 | FBXO32 | 0 |\n| ENSG00000255112 | CHMP1B | 0 |\n\n### Degree bar chart\n\n```text\nSFTPC    0\nSFTPA2   0\nSFTPA1   0\nSFTPB    0\nSCGB1A1  0\nSCGB3A2  0\nNAPSA    0\nSLC34A2  0\nAGER     0\nSFTPD    0\nACTA1    0\nMYH1     0\nCA3      0\nTRIM63   0\nACTN3    0\nPPP1R27  0\nPPDPFL   0\nMYLK2    0\nFBXO32   0\nCHMP1B   0\n```",
+ "stop": "completed",
+ "tool_call_count": 19,
+ "seconds": 162.545,
+ "model_calls": 10,
+ "cost_usd": 0.02943632
+}

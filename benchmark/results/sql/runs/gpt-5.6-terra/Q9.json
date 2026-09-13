@@ -1,0 +1,392 @@
+{
+ "id": "Q9",
+ "kind": "analysis",
+ "question": "Take the genes with region-enriched RNA expression in cerebellum and those region-enriched in cerebral cortex. Give the size of each set. Compute the Spearman correlation of nTPM across all brain regions between the two sets' mean profiles. Draw a heatmap of the twenty cerebellum-enriched genes with the highest cerebellum nTPM across all brain regions. Provide the table.",
+ "model": "gpt-5.6-terra",
+ "effort": "low",
+ "turns": [
+  {
+   "turn": 1,
+   "ms": 1021,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 254,
+    "input_tokens_details": {
+     "cache_write_tokens": 0,
+     "cached_tokens": 0
+    },
+    "output_tokens": 26,
+    "output_tokens_details": {
+     "reasoning_tokens": 11
+    },
+    "total_tokens": 280
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "schema",
+     "input": "{}"
+    }
+   ]
+  },
+  {
+   "turn": 2,
+   "ms": 1475,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 302,
+    "input_tokens_details": {
+     "cache_write_tokens": 0,
+     "cached_tokens": 0
+    },
+    "output_tokens": 22,
+    "output_tokens_details": {
+     "reasoning_tokens": 7
+    },
+    "total_tokens": 324
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "schema",
+     "input": "{}"
+    }
+   ]
+  },
+  {
+   "turn": 3,
+   "ms": 2342,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 5817,
+    "input_tokens_details": {
+     "cache_write_tokens": 5814,
+     "cached_tokens": 0
+    },
+    "output_tokens": 196,
+    "output_tokens_details": {
+     "reasoning_tokens": 42
+    },
+    "total_tokens": 6013
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT \\\"RNA brain regional specificity\\\" AS specificity, COUNT(*) AS n FROM proteinatlas GROUP BY 1 ORDER BY 1\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT \\\"Brain region\\\" FROM rna_brain_region_hpa_brain_regions ORDER BY 1\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT Gene, \\\"RNA brain regional specificity\\\", \\\"RNA brain regional specific nTPM\\\" FROM proteinatlas WHERE \\\"RNA brain regional specificity\\\"='Region enriched' AND \\\"RNA brain regional specific nTPM\\\" LIKE '%cerebell%' LIMIT 20\"}"
+    }
+   ]
+  },
+  {
+   "turn": 4,
+   "ms": 11082,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 6477,
+    "input_tokens_details": {
+     "cache_write_tokens": 660,
+     "cached_tokens": 5814
+    },
+    "output_tokens": 1381,
+    "output_tokens_details": {
+     "reasoning_tokens": 403
+    },
+    "total_tokens": 7858
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH sets AS (SELECT Gene, CASE WHEN \\\"RNA brain regional specific nTPM\\\" LIKE 'cerebellum:%' THEN 'cerebellum' WHEN \\\"RNA brain regional specific nTPM\\\" LIKE 'cerebral cortex:%' THEN 'cerebral cortex' END AS set_name FROM proteinatlas WHERE \\\"RNA brain regional specificity\\\"='Region enriched' AND (\\\"RNA brain regional specific nTPM\\\" LIKE 'cerebellum:%' OR \\\"RNA brain regional specific nTPM\\\" LIKE 'cerebral cortex:%')), profiles AS (SELECT s.set_name, b.\\\"Brain region\\\" AS region, AVG(TRY_CAST(b.nTPM AS DOUBLE)) AS mean_ntpm FROM sets s JOIN rna_brain_region_hpa b ON s.Gene=b.Gene GROUP BY 1,2), wide AS (SELECT region, MAX(mean_ntpm) FILTER (WHERE set_name='cerebellum') AS cerebellum_mean, MAX(mean_ntpm) FILTER (WHERE set_name='cerebral cortex') AS cortex_mean FROM profiles GROUP BY 1), ranked AS (SELECT *, RANK() OVER (ORDER BY cerebellum_mean) AS rc, RANK() OVER (ORDER BY cortex_mean) AS rx FROM wide) SELECT (SELECT COUNT(*) FROM sets WHERE set_name='cerebellum') AS cerebellum_set_size, (SELECT COUNT(*) FROM sets WHERE set_name='cerebral cortex') AS cerebral_cortex_set_size, CORR(rc, rx) AS spearman_rho, COUNT(*) AS brain_regions FROM ranked\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH top AS (SELECT Gene, Gene_name, cerebellum_ntpm FROM (SELECT p.Gene, p.\\\"Gene synonym\\\" AS Gene_name, TRY_CAST(REGEXP_EXTRACT(p.\\\"RNA brain regional specific nTPM\\\", 'cerebellum: ([0-9.]+)', 1) AS DOUBLE) AS cerebellum_ntpm, ROW_NUMBER() OVER (ORDER BY TRY_CAST(REGEXP_EXTRACT(p.\\\"RNA brain regional specific nTPM\\\", 'cerebellum: ([0-9.]+)', 1) AS DOUBLE) DESC, p.Gene) AS rn FROM proteinatlas p WHERE p.\\\"RNA brain regional specificity\\\"='Region enriched' AND p.\\\"RNA brain regional specific nTPM\\\" LIKE 'cerebellum:%') WHERE rn<=20) SELECT t.Gene, t.cerebellum_ntpm, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='amygdala') AS amygdala, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='basal ganglia') AS basal_ganglia, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='cerebellum') AS cerebellum, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='cerebral cortex') AS cerebral_cortex, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='choroid plexus') AS choroid_plexus, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='hippocampal formation') AS hippocampal_formation, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='hypothalamus') AS hypothalamus, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='medulla oblongata') AS medulla_oblongata, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='midbrain') AS midbrain, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='pons') AS pons, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='spinal cord') AS spinal_cord, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='thalamus') AS thalamus, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='white matter') AS white_matter FROM top t JOIN rna_brain_region_hpa b ON b.Gene=t.Gene GROUP BY t.Gene,t.cerebellum_ntpm ORDER BY t.cerebellum_ntpm DESC,t.Gene\"}"
+    }
+   ]
+  },
+  {
+   "turn": 5,
+   "ms": 2448,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 7923,
+    "input_tokens_details": {
+     "cache_write_tokens": 1446,
+     "cached_tokens": 6474
+    },
+    "output_tokens": 157,
+    "output_tokens_details": {
+     "reasoning_tokens": 57
+    },
+    "total_tokens": 8080
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT Gene, \\\"RNA brain regional specific nTPM\\\", REGEXP_EXTRACT(\\\"RNA brain regional specific nTPM\\\", 'cerebellum: ([0-9.]+)', 1) AS x FROM proteinatlas WHERE \\\"RNA brain regional specificity\\\"='Region enriched' AND \\\"RNA brain regional specific nTPM\\\" LIKE 'cerebellum:%' ORDER BY 1 LIMIT 5\"}"
+    }
+   ]
+  },
+  {
+   "turn": 6,
+   "ms": 1610,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 8190,
+    "input_tokens_details": {
+     "cache_write_tokens": 267,
+     "cached_tokens": 7920
+    },
+    "output_tokens": 70,
+    "output_tokens_details": {
+     "reasoning_tokens": 32
+    },
+    "total_tokens": 8260
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT * FROM rna_brain_region_hpa WHERE Gene='RIMS1' LIMIT 3\"}"
+    }
+   ]
+  },
+  {
+   "turn": 7,
+   "ms": 2327,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 8277,
+    "input_tokens_details": {
+     "cache_write_tokens": 87,
+     "cached_tokens": 8187
+    },
+    "output_tokens": 130,
+    "output_tokens_details": {
+     "reasoning_tokens": 99
+    },
+    "total_tokens": 8407
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT * FROM rna_brain_region_hpa LIMIT 3\"}"
+    }
+   ]
+  },
+  {
+   "turn": 8,
+   "ms": 8520,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 8516,
+    "input_tokens_details": {
+     "cache_write_tokens": 239,
+     "cached_tokens": 8274
+    },
+    "output_tokens": 1148,
+    "output_tokens_details": {
+     "reasoning_tokens": 201
+    },
+    "total_tokens": 9664
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH sets AS (SELECT Ensembl, CASE WHEN \\\"RNA brain regional specific nTPM\\\" LIKE 'cerebellum:%' THEN 'cerebellum' WHEN \\\"RNA brain regional specific nTPM\\\" LIKE 'cerebral cortex:%' THEN 'cerebral cortex' END AS set_name FROM proteinatlas WHERE \\\"RNA brain regional specificity\\\"='Region enriched' AND (\\\"RNA brain regional specific nTPM\\\" LIKE 'cerebellum:%' OR \\\"RNA brain regional specific nTPM\\\" LIKE 'cerebral cortex:%')), profiles AS (SELECT s.set_name, b.\\\"Brain region\\\" AS region, AVG(TRY_CAST(b.nTPM AS DOUBLE)) AS mean_ntpm FROM sets s JOIN rna_brain_region_hpa b ON s.Ensembl=b.Gene GROUP BY 1,2), wide AS (SELECT region, MAX(mean_ntpm) FILTER (WHERE set_name='cerebellum') AS cerebellum_mean, MAX(mean_ntpm) FILTER (WHERE set_name='cerebral cortex') AS cortex_mean FROM profiles GROUP BY 1), ranked AS (SELECT *, RANK() OVER (ORDER BY cerebellum_mean) AS rc, RANK() OVER (ORDER BY cortex_mean) AS rx FROM wide) SELECT (SELECT COUNT(*) FROM sets WHERE set_name='cerebellum') AS cerebellum_set_size, (SELECT COUNT(*) FROM sets WHERE set_name='cerebral cortex') AS cerebral_cortex_set_size, CORR(rc, rx) AS spearman_rho, COUNT(*) AS brain_regions FROM ranked\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH top AS (SELECT Gene, Ensembl, TRY_CAST(REGEXP_EXTRACT(\\\"RNA brain regional specific nTPM\\\", 'cerebellum: ([0-9.]+)', 1) AS DOUBLE) AS cerebellum_ntpm FROM proteinatlas WHERE \\\"RNA brain regional specificity\\\"='Region enriched' AND \\\"RNA brain regional specific nTPM\\\" LIKE 'cerebellum:%' QUALIFY ROW_NUMBER() OVER (ORDER BY TRY_CAST(REGEXP_EXTRACT(\\\"RNA brain regional specific nTPM\\\", 'cerebellum: ([0-9.]+)', 1) AS DOUBLE) DESC, Gene)<=20) SELECT t.Gene, t.cerebellum_ntpm, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='amygdala') AS amygdala, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='basal ganglia') AS basal_ganglia, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='cerebellum') AS cerebellum, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='cerebral cortex') AS cerebral_cortex, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='choroid plexus') AS choroid_plexus, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='hippocampal formation') AS hippocampal_formation, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='hypothalamus') AS hypothalamus, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='medulla oblongata') AS medulla_oblongata, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='midbrain') AS midbrain, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='pons') AS pons, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='spinal cord') AS spinal_cord, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='thalamus') AS thalamus, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\\\"Brain region\\\"='white matter') AS white_matter FROM top t JOIN rna_brain_region_hpa b ON b.Gene=t.Ensembl GROUP BY t.Gene,t.cerebellum_ntpm ORDER BY t.cerebellum_ntpm DESC,t.Gene\"}"
+    }
+   ]
+  },
+  {
+   "turn": 9,
+   "ms": 22349,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 10941,
+    "input_tokens_details": {
+     "cache_write_tokens": 2425,
+     "cached_tokens": 8513
+    },
+    "output_tokens": 3546,
+    "output_tokens_details": {
+     "reasoning_tokens": 608
+    },
+    "total_tokens": 14487
+   },
+   "text": "## Results\n\nUsing HPA **RNA brain regional specificity = “Region enriched”**:\n\n| Region-enriched set | Number of genes |\n|---|---:|\n| Cerebellum | **64** |\n| Cerebral cortex | **32** |\n\nAcross the 13 HPA brain regions, the Spearman correlation between the two sets’ mean nTPM profiles is:\n\n\\[\n\\mathbf{\\rho = 0.2802197802197803}\n\\]\n\n## Heatmap — top 20 cerebellum-enriched genes\n\nCells are binned by nTPM: ⬜ <10, 🟦 10–<30, 🟩 30–<100, 🟨 100–<300, 🟧 300–<1,000, 🟥 ≥1,000.\n\n| Gene | Amy | BG | Cer | Ctx | CP | Hip | Hyp | MO | Mid | Pons | SC | Tha | WM |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n| ZIC1 | 🟩 | 🟨 | 🟥 | 🟩 | 🟩 | 🟩 | 🟩 | 🟨 | 🟨 | 🟨 | 🟩 | 🟨 | 🟨 |\n| RIMS1 | 🟩 | 🟨 | 🟧 | 🟨 | ⬜ | 🟨 | 🟩 | 🟩 | 🟩 | 🟨 | 🟩 | 🟩 | 🟨 |\n| TIAM1 | 🟩 | 🟩 | 🟧 | 🟩 | ⬜ | 🟩 | 🟩 | 🟩 | 🟩 | 🟩 | 🟩 | 🟩 | 🟩 |\n| SHF | 🟩 | 🟩 | 🟨 | 🟩 | 🟦 | 🟩 | 🟩 | 🟩 | 🟩 | 🟩 | 🟦 | 🟩 | 🟩 |\n| CBLN1 | ⬜ | ⬜ | 🟨 | 🟦 | ⬜ | ⬜ | 🟩 | 🟦 | 🟩 | 🟦 | 🟦 | 🟦 | 🟦 |\n| FAT2 | ⬜ | 🟦 | 🟨 | 🟦 | ⬜ | ⬜ | ⬜ | 🟦 | ⬜ | 🟩 | ⬜ | ⬜ | ⬜ |\n| CBLN3 | ⬜ | ⬜ | 🟨 | 🟦 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟦 | ⬜ | ⬜ | ⬜ |\n| TSPAN9 | 🟦 | 🟦 | 🟨 | 🟦 | 🟦 | ⬜ | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟩 | 🟦 |\n| MTCL1 | 🟦 | 🟦 | 🟨 | 🟩 | ⬜ | ⬜ | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 |\n| SEL1L3 | 🟦 | 🟦 | 🟨 | 🟩 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 |\n| MDGA1 | 🟦 | 🟦 | 🟨 | 🟦 | ⬜ | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | ⬜ | 🟦 | 🟦 |\n| CA4 | 🟦 | 🟦 | 🟨 | 🟩 | 🟦 | 🟦 | ⬜ | ⬜ | 🟦 | 🟩 | ⬜ | 🟦 | 🟦 |\n| GRM4 | 🟦 | 🟦 | 🟨 | 🟦 | ⬜ | ⬜ | ⬜ | ⬜ | 🟦 | 🟦 | ⬜ | 🟦 | ⬜ |\n| SLC1A6 | 🟦 | 🟦 | 🟨 | 🟦 | ⬜ | 🟩 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 |\n| GABRA6 | ⬜ | ⬜ | 🟨 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟦 | ⬜ | ⬜ | ⬜ |\n| NEUROD1 | ⬜ | ⬜ | 🟨 | 🟦 | ⬜ | 🟦 | ⬜ | ⬜ | ⬜ | 🟦 | ⬜ | ⬜ | ⬜ |\n| PKIB | ⬜ | ⬜ | 🟨 | ⬜ | ⬜ | ⬜ | 🟦 | 🟦 | 🟦 | 🟦 | ⬜ | 🟦 | ⬜ |\n| EXPH5 | ⬜ | ⬜ | 🟨 | ⬜ | 🟩 | ⬜ | ⬜ | ⬜ | 🟦 | 🟦 | ⬜ | ⬜ | 🟦 |\n| RELN | 🟦 | ⬜ | 🟨 | 🟦 | ⬜ | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | ⬜ | ⬜ |\n| POLB | 🟦 | 🟦 | 🟨 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 |\n\nAbbreviations: Amy, amygdala; BG, basal ganglia; Cer, cerebellum; Ctx, cerebral cortex; CP, choroid plexus; Hip, hippocampal formation; Hyp, hypothalamus; MO, medulla oblongata; Mid, midbrain; SC, spinal cord; Tha, thalamus; WM, white matter.\n\n## Exact nTPM table\n\n| Gene | Amy | BG | Cer | Ctx | CP | Hip | Hyp | MO | Mid | Pons | SC | Tha | WM |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n| ZIC1 | 68.3 | 121.5 | 1312.8 | 86.3 | 96.6 | 42.8 | 96.7 | 159.5 | 132.9 | 159.8 | 64.2 | 253.6 | 106.9 |\n| RIMS1 | 92.8 | 112.8 | 849.8 | 127.8 | 8.6 | 116.5 | 97.2 | 66.9 | 97.8 | 111.2 | 50.9 | 90.4 | 109.1 |\n| TIAM1 | 66.5 | 54.4 | 330.3 | 75.4 | 9.0 | 80.4 | 38.8 | 38.4 | 51.9 | 52.4 | 40.1 | 61.2 | 40.0 |\n| SHF | 44.3 | 52.1 | 282.3 | 63.2 | 10.3 | 50.4 | 50.6 | 33.9 | 42.6 | 41.9 | 29.1 | 33.1 | 35.9 |\n| CBLN1 | 3.5 | 9.8 | 239.1 | 14.5 | 1.9 | 2.0 | 53.5 | 21.7 | 36.5 | 27.4 | 10.8 | 25.5 | 11.2 |\n| FAT2 | 2.1 | 10.6 | 234.2 | 12.6 | 1.3 | 1.9 | 3.7 | 18.2 | 8.0 | 38.0 | 2.9 | 2.7 | 7.1 |\n| CBLN3 | 4.1 | 4.4 | 199.9 | 13.3 | 2.9 | 3.2 | 5.5 | 6.7 | 9.0 | 16.7 | 5.4 | 4.8 | 8.3 |\n| TSPAN9 | 19.3 | 21.3 | 198.7 | 24.5 | 16.6 | 8.9 | 22.9 | 22.1 | 23.9 | 27.2 | 14.4 | 33.1 | 12.0 |\n| MTCL1 | 10.2 | 13.1 | 176.1 | 33.8 | 5.8 | 7.8 | 13.8 | 19.7 | 16.6 | 26.9 | 16.5 | 10.0 | 25.5 |\n| SEL1L3 | 13.7 | 24.8 | 175.6 | 30.4 | 22.9 | 20.0 | 13.4 | 10.3 | 15.4 | 14.5 | 10.7 | 21.9 | 17.0 |\n| MDGA1 | 15.4 | 14.4 | 175.0 | 20.1 | 4.9 | 25.2 | 17.3 | 16.0 | 16.6 | 23.2 | 8.9 | 11.1 | 13.0 |\n| CA4 | 18.7 | 18.3 | 173.8 | 37.9 | 10.3 | 20.7 | 9.9 | 9.0 | 19.4 | 32.5 | 7.5 | 12.8 | 13.0 |\n| GRM4 | 10.1 | 26.1 | 171.5 | 11.8 | 1.4 | 7.1 | 6.2 | 9.3 | 11.1 | 14.4 | 5.2 | 17.3 | 7.5 |\n| SLC1A6 | 20.4 | 25.0 | 159.2 | 29.5 | 8.6 | 30.2 | 18.8 | 12.0 | 15.6 | 21.0 | 12.2 | 18.7 | 15.5 |\n| GABRA6 | 0.8 | 1.1 | 150.4 | 6.1 | 0.1 | 0.6 | 1.1 | 0.7 | 3.2 | 10.6 | 1.2 | 1.0 | 5.0 |\n| NEUROD1 | 6.9 | 4.8 | 149.5 | 16.7 | 1.1 | 23.8 | 1.1 |",
+   "tool_uses": []
+  }
+ ],
+ "tool_calls": [
+  {
+   "turn": 1,
+   "name": "schema",
+   "input": {},
+   "ms": 60070,
+   "result_chars": 47,
+   "truncated": false,
+   "error": "MCP error -32001: Request timed out",
+   "result_head": "Tool error: MCP error -32001: Request timed out"
+  },
+  {
+   "turn": 2,
+   "name": "schema",
+   "input": {},
+   "ms": 41996,
+   "result_chars": 148152,
+   "truncated": true,
+   "error": null,
+   "result_head": "Tables built from the Human Protein Atlas bulk files (all columns are text; cast for arithmetic, e.g. TRY_CAST(col AS DOUBLE)).\n\nblood_immunoassay_concentration (0.1 MB): gene, ENSG ID, conc [pg/L], sample type, number_of_samples, pubmed id\nblood_ms_concentration (0.1 MB): Gene, ENSG ID, Conc [pg/L]\nblood_pea_disease_de (17.9 MB): Gene, ENSG ID, Disease, Class, Control, logFC, p-value adjusted, Seeds, Mean importance, SD importance, Max importance, Min importance\nblood_pea_diseases (0.0 MB): Disease, Class\ncancer_cancers (0.0 MB): Cancer, Organ\ncancer_cptac (5.7 MB): Cancer, Gene, Gene name, p"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"RNA brain regional specificity\" AS specificity, COUNT(*) AS n FROM proteinatlas GROUP BY 1 ORDER BY 1"
+   },
+   "ms": 1071,
+   "result_chars": 128,
+   "truncated": false,
+   "error": null,
+   "result_head": "specificity\tn\nGroup enriched\t186\nLow region specificity\t16768\nNot detected\t2330\nRegion enhanced\t469\nRegion enriched\t409\n[5 rows]"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"Brain region\" FROM rna_brain_region_hpa_brain_regions ORDER BY 1"
+   },
+   "ms": 19,
+   "result_chars": 188,
+   "truncated": false,
+   "error": null,
+   "result_head": "Brain region\namygdala\nbasal ganglia\ncerebellum\ncerebral cortex\nchoroid plexus\nhippocampal formation\nhypothalamus\nmedulla oblongata\nmidbrain\npons\nspinal cord\nthalamus\nwhite matter\n[13 rows]"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "SELECT Gene, \"RNA brain regional specificity\", \"RNA brain regional specific nTPM\" FROM proteinatlas WHERE \"RNA brain regional specificity\"='Region enriched' AND \"RNA brain regional specific nTPM\" LIKE '%cerebell%' LIMIT 20"
+   },
+   "ms": 1343,
+   "result_chars": 857,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tRNA brain regional specificity\tRNA brain regional specific nTPM\nTSPAN9\tRegion enriched\tcerebellum: 198.7\nCDON\tRegion enriched\tcerebellum: 23.1\nPOLB\tRegion enriched\tcerebellum: 134.1\nRIMS1\tRegion enriched\tcerebellum: 849.8\nFAT2\tRegion enriched\tcerebellum: 234.2\nSEL1L3\tRegion enriched\tcerebellum: 175.6\nVSX1\tRegion enriched\tcerebellum: 29.8\nCBLN1\tRegion enriched\tcerebellum: 239.1\nZP2\tRegion enriched\tcerebellum: 11.2\nSLC1A6\tRegion enriched\tcerebellum: 159.2\nCA9\tRegion enriched\tcerebellum: 11.9\nCRTAM\tRegion enriched\tcerebellum: 79.0\nEXPH5\tRegion enriched\tcerebellum: 144.1\nMDGA1\tRegion enriched"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "WITH sets AS (SELECT Gene, CASE WHEN \"RNA brain regional specific nTPM\" LIKE 'cerebellum:%' THEN 'cerebellum' WHEN \"RNA brain regional specific nTPM\" LIKE 'cerebral cortex:%' THEN 'cerebral cortex' END AS set_name FROM proteinatlas WHERE \"RNA brain regional specificity\"='Region enriched' AND (\"RNA brain regional specific nTPM\" LIKE 'cerebellum:%' OR \"RNA brain regional specific nTPM\" LIKE 'cerebral cortex:%')), profiles AS (SELECT s.set_name, b.\"Brain region\" AS region, AVG(TRY_CAST(b.nTPM AS DOUBLE)) AS mean_ntpm FROM sets s JOIN rna_brain_region_hpa b ON s.Gene=b.Gene GROUP BY 1,2), wide AS (SELECT region, MAX(mean_ntpm) FILTER (WHERE set_name='cerebellum') AS cerebellum_mean, MAX(mean_ntpm) FILTER (WHERE set_name='cerebral cortex') AS cortex_mean FROM profiles GROUP BY 1), ranked AS (SELECT *, RANK() OVER (ORDER BY cerebellum_mean) AS rc, RANK() OVER (ORDER BY cortex_mean) AS rx FROM wide) SELECT (SELECT COUNT(*) FROM sets WHERE set_name='cerebellum') AS cerebellum_set_size, (SELECT COUNT(*) FROM sets WHERE set_name='cerebral cortex') AS cerebral_cortex_set_size, CORR(rc, rx) AS spearman_rho, COUNT(*) AS brain_regions FROM ranked"
+   },
+   "ms": 2784,
+   "result_chars": 106,
+   "truncated": false,
+   "error": null,
+   "result_head": "cerebellum_set_size\tcerebral_cortex_set_size\tspearman_rho\tbrain_regions\n64\t32\t0.28278383197593\t13\n[1 rows]"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "WITH top AS (SELECT Gene, Gene_name, cerebellum_ntpm FROM (SELECT p.Gene, p.\"Gene synonym\" AS Gene_name, TRY_CAST(REGEXP_EXTRACT(p.\"RNA brain regional specific nTPM\", 'cerebellum: ([0-9.]+)', 1) AS DOUBLE) AS cerebellum_ntpm, ROW_NUMBER() OVER (ORDER BY TRY_CAST(REGEXP_EXTRACT(p.\"RNA brain regional specific nTPM\", 'cerebellum: ([0-9.]+)', 1) AS DOUBLE) DESC, p.Gene) AS rn FROM proteinatlas p WHERE p.\"RNA brain regional specificity\"='Region enriched' AND p.\"RNA brain regional specific nTPM\" LIKE 'cerebellum:%') WHERE rn<=20) SELECT t.Gene, t.cerebellum_ntpm, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='amygdala') AS amygdala, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='basal ganglia') AS basal_ganglia, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='cerebellum') AS cerebellum, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='cerebral cortex') AS cerebral_cortex, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='choroid plexus') AS choroid_plexus, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='hippocampal formation') AS hippocampal_formation, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='hypothalamus') AS hypothalamus, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='medulla oblongata') AS medulla_oblongata, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='midbrain') AS midbrain, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='pons') AS pons, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='spinal cord') AS spinal_cord, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='thalamus') AS thalamus, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='white matter') AS white_matter FROM top t JOIN rna_brain_region_hpa b ON b.Gene=t.Gene GROUP BY t.Gene,t.cerebellum_ntpm ORDER BY t.cerebellum_ntpm DESC,t.Gene"
+   },
+   "ms": 3788,
+   "result_chars": 18,
+   "truncated": false,
+   "error": null,
+   "result_head": "(no rows)\n[0 rows]"
+  },
+  {
+   "turn": 5,
+   "name": "sql",
+   "input": {
+    "query": "SELECT Gene, \"RNA brain regional specific nTPM\", REGEXP_EXTRACT(\"RNA brain regional specific nTPM\", 'cerebellum: ([0-9.]+)', 1) AS x FROM proteinatlas WHERE \"RNA brain regional specificity\"='Region enriched' AND \"RNA brain regional specific nTPM\" LIKE 'cerebellum:%' ORDER BY 1 LIMIT 5"
+   },
+   "ms": 1375,
+   "result_chars": 188,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tRNA brain regional specific nTPM\tx\nAVPR2\tcerebellum: 9.3\t9.3\nBARHL2\tcerebellum: 56.8\t56.8\nBTG1\tcerebellum: 74.3\t74.3\nC20orf204\tcerebellum: 8.3\t8.3\nCA4\tcerebellum: 173.8\t173.8\n[5 rows]"
+  },
+  {
+   "turn": 6,
+   "name": "sql",
+   "input": {
+    "query": "SELECT * FROM rna_brain_region_hpa WHERE Gene='RIMS1' LIMIT 3"
+   },
+   "ms": 748,
+   "result_chars": 18,
+   "truncated": false,
+   "error": null,
+   "result_head": "(no rows)\n[0 rows]"
+  },
+  {
+   "turn": 7,
+   "name": "sql",
+   "input": {
+    "query": "SELECT * FROM rna_brain_region_hpa LIMIT 3"
+   },
+   "ms": 489,
+   "result_chars": 190,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tGene name\tBrain region\tTPM\tpTPM\tnTPM\nENSG00000000003\tTSPAN6\tamygdala\t4.5\t6.1\t7.0\nENSG00000000003\tTSPAN6\tbasal ganglia\t6.8\t10.2\t7.6\nENSG00000000003\tTSPAN6\tcerebellum\t6.5\t9.2\t7.2\n[3 rows]"
+  },
+  {
+   "turn": 8,
+   "name": "sql",
+   "input": {
+    "query": "WITH sets AS (SELECT Ensembl, CASE WHEN \"RNA brain regional specific nTPM\" LIKE 'cerebellum:%' THEN 'cerebellum' WHEN \"RNA brain regional specific nTPM\" LIKE 'cerebral cortex:%' THEN 'cerebral cortex' END AS set_name FROM proteinatlas WHERE \"RNA brain regional specificity\"='Region enriched' AND (\"RNA brain regional specific nTPM\" LIKE 'cerebellum:%' OR \"RNA brain regional specific nTPM\" LIKE 'cerebral cortex:%')), profiles AS (SELECT s.set_name, b.\"Brain region\" AS region, AVG(TRY_CAST(b.nTPM AS DOUBLE)) AS mean_ntpm FROM sets s JOIN rna_brain_region_hpa b ON s.Ensembl=b.Gene GROUP BY 1,2), wide AS (SELECT region, MAX(mean_ntpm) FILTER (WHERE set_name='cerebellum') AS cerebellum_mean, MAX(mean_ntpm) FILTER (WHERE set_name='cerebral cortex') AS cortex_mean FROM profiles GROUP BY 1), ranked AS (SELECT *, RANK() OVER (ORDER BY cerebellum_mean) AS rc, RANK() OVER (ORDER BY cortex_mean) AS rx FROM wide) SELECT (SELECT COUNT(*) FROM sets WHERE set_name='cerebellum') AS cerebellum_set_size, (SELECT COUNT(*) FROM sets WHERE set_name='cerebral cortex') AS cerebral_cortex_set_size, CORR(rc, rx) AS spearman_rho, COUNT(*) AS brain_regions FROM ranked"
+   },
+   "ms": 2233,
+   "result_chars": 108,
+   "truncated": false,
+   "error": null,
+   "result_head": "cerebellum_set_size\tcerebral_cortex_set_size\tspearman_rho\tbrain_regions\n64\t32\t0.2802197802197803\t13\n[1 rows]"
+  },
+  {
+   "turn": 8,
+   "name": "sql",
+   "input": {
+    "query": "WITH top AS (SELECT Gene, Ensembl, TRY_CAST(REGEXP_EXTRACT(\"RNA brain regional specific nTPM\", 'cerebellum: ([0-9.]+)', 1) AS DOUBLE) AS cerebellum_ntpm FROM proteinatlas WHERE \"RNA brain regional specificity\"='Region enriched' AND \"RNA brain regional specific nTPM\" LIKE 'cerebellum:%' QUALIFY ROW_NUMBER() OVER (ORDER BY TRY_CAST(REGEXP_EXTRACT(\"RNA brain regional specific nTPM\", 'cerebellum: ([0-9.]+)', 1) AS DOUBLE) DESC, Gene)<=20) SELECT t.Gene, t.cerebellum_ntpm, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='amygdala') AS amygdala, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='basal ganglia') AS basal_ganglia, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='cerebellum') AS cerebellum, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='cerebral cortex') AS cerebral_cortex, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='choroid plexus') AS choroid_plexus, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='hippocampal formation') AS hippocampal_formation, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='hypothalamus') AS hypothalamus, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='medulla oblongata') AS medulla_oblongata, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='midbrain') AS midbrain, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='pons') AS pons, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='spinal cord') AS spinal_cord, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='thalamus') AS thalamus, MAX(TRY_CAST(b.nTPM AS DOUBLE)) FILTER (WHERE b.\"Brain region\"='white matter') AS white_matter FROM top t JOIN rna_brain_region_hpa b ON b.Gene=t.Ensembl GROUP BY t.Gene,t.cerebellum_ntpm ORDER BY t.cerebellum_ntpm DESC,t.Gene"
+   },
+   "ms": 2117,
+   "result_chars": 1631,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tcerebellum_ntpm\tamygdala\tbasal_ganglia\tcerebellum\tcerebral_cortex\tchoroid_plexus\thippocampal_formation\thypothalamus\tmedulla_oblongata\tmidbrain\tpons\tspinal_cord\tthalamus\twhite_matter\nZIC1\t1312.8\t68.3\t121.5\t1312.8\t86.3\t96.6\t42.8\t96.7\t159.5\t132.9\t159.8\t64.2\t253.6\t106.9\nRIMS1\t849.8\t92.8\t112.8\t849.8\t127.8\t8.6\t116.5\t97.2\t66.9\t97.8\t111.2\t50.9\t90.4\t109.1\nTIAM1\t330.3\t66.5\t54.4\t330.3\t75.4\t9\t80.4\t38.8\t38.4\t51.9\t52.4\t40.1\t61.2\t40\nSHF\t282.3\t44.3\t52.1\t282.3\t63.2\t10.3\t50.4\t50.6\t33.9\t42.6\t41.9\t29.1\t33.1\t35.9\nCBLN1\t239.1\t3.5\t9.8\t239.1\t14.5\t1.9\t2\t53.5\t21.7\t36.5\t27.4\t10.8\t25.5\t11.2\nFAT2\t234.2\t2.1\t10.6\t234.2"
+  }
+ ],
+ "usage": {
+  "input_tokens": 56697,
+  "output_tokens": 6676,
+  "cache_read_input_tokens": 45182,
+  "cache_creation_input_tokens": 0,
+  "reasoning_tokens": 1460
+ },
+ "started_unix_ms": 1789298126708,
+ "final_answer": "## Results\n\nUsing HPA **RNA brain regional specificity = “Region enriched”**:\n\n| Region-enriched set | Number of genes |\n|---|---:|\n| Cerebellum | **64** |\n| Cerebral cortex | **32** |\n\nAcross the 13 HPA brain regions, the Spearman correlation between the two sets’ mean nTPM profiles is:\n\n\\[\n\\mathbf{\\rho = 0.2802197802197803}\n\\]\n\n## Heatmap — top 20 cerebellum-enriched genes\n\nCells are binned by nTPM: ⬜ <10, 🟦 10–<30, 🟩 30–<100, 🟨 100–<300, 🟧 300–<1,000, 🟥 ≥1,000.\n\n| Gene | Amy | BG | Cer | Ctx | CP | Hip | Hyp | MO | Mid | Pons | SC | Tha | WM |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n| ZIC1 | 🟩 | 🟨 | 🟥 | 🟩 | 🟩 | 🟩 | 🟩 | 🟨 | 🟨 | 🟨 | 🟩 | 🟨 | 🟨 |\n| RIMS1 | 🟩 | 🟨 | 🟧 | 🟨 | ⬜ | 🟨 | 🟩 | 🟩 | 🟩 | 🟨 | 🟩 | 🟩 | 🟨 |\n| TIAM1 | 🟩 | 🟩 | 🟧 | 🟩 | ⬜ | 🟩 | 🟩 | 🟩 | 🟩 | 🟩 | 🟩 | 🟩 | 🟩 |\n| SHF | 🟩 | 🟩 | 🟨 | 🟩 | 🟦 | 🟩 | 🟩 | 🟩 | 🟩 | 🟩 | 🟦 | 🟩 | 🟩 |\n| CBLN1 | ⬜ | ⬜ | 🟨 | 🟦 | ⬜ | ⬜ | 🟩 | 🟦 | 🟩 | 🟦 | 🟦 | 🟦 | 🟦 |\n| FAT2 | ⬜ | 🟦 | 🟨 | 🟦 | ⬜ | ⬜ | ⬜ | 🟦 | ⬜ | 🟩 | ⬜ | ⬜ | ⬜ |\n| CBLN3 | ⬜ | ⬜ | 🟨 | 🟦 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟦 | ⬜ | ⬜ | ⬜ |\n| TSPAN9 | 🟦 | 🟦 | 🟨 | 🟦 | 🟦 | ⬜ | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟩 | 🟦 |\n| MTCL1 | 🟦 | 🟦 | 🟨 | 🟩 | ⬜ | ⬜ | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 |\n| SEL1L3 | 🟦 | 🟦 | 🟨 | 🟩 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 |\n| MDGA1 | 🟦 | 🟦 | 🟨 | 🟦 | ⬜ | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | ⬜ | 🟦 | 🟦 |\n| CA4 | 🟦 | 🟦 | 🟨 | 🟩 | 🟦 | 🟦 | ⬜ | ⬜ | 🟦 | 🟩 | ⬜ | 🟦 | 🟦 |\n| GRM4 | 🟦 | 🟦 | 🟨 | 🟦 | ⬜ | ⬜ | ⬜ | ⬜ | 🟦 | 🟦 | ⬜ | 🟦 | ⬜ |\n| SLC1A6 | 🟦 | 🟦 | 🟨 | 🟦 | ⬜ | 🟩 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 |\n| GABRA6 | ⬜ | ⬜ | 🟨 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 🟦 | ⬜ | ⬜ | ⬜ |\n| NEUROD1 | ⬜ | ⬜ | 🟨 | 🟦 | ⬜ | 🟦 | ⬜ | ⬜ | ⬜ | 🟦 | ⬜ | ⬜ | ⬜ |\n| PKIB | ⬜ | ⬜ | 🟨 | ⬜ | ⬜ | ⬜ | 🟦 | 🟦 | 🟦 | 🟦 | ⬜ | 🟦 | ⬜ |\n| EXPH5 | ⬜ | ⬜ | 🟨 | ⬜ | 🟩 | ⬜ | ⬜ | ⬜ | 🟦 | 🟦 | ⬜ | ⬜ | 🟦 |\n| RELN | 🟦 | ⬜ | 🟨 | 🟦 | ⬜ | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | ⬜ | ⬜ |\n| POLB | 🟦 | 🟦 | 🟨 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 | 🟦 |\n\nAbbreviations: Amy, amygdala; BG, basal ganglia; Cer, cerebellum; Ctx, cerebral cortex; CP, choroid plexus; Hip, hippocampal formation; Hyp, hypothalamus; MO, medulla oblongata; Mid, midbrain; SC, spinal cord; Tha, thalamus; WM, white matter.\n\n## Exact nTPM table\n\n| Gene | Amy | BG | Cer | Ctx | CP | Hip | Hyp | MO | Mid | Pons | SC | Tha | WM |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n| ZIC1 | 68.3 | 121.5 | 1312.8 | 86.3 | 96.6 | 42.8 | 96.7 | 159.5 | 132.9 | 159.8 | 64.2 | 253.6 | 106.9 |\n| RIMS1 | 92.8 | 112.8 | 849.8 | 127.8 | 8.6 | 116.5 | 97.2 | 66.9 | 97.8 | 111.2 | 50.9 | 90.4 | 109.1 |\n| TIAM1 | 66.5 | 54.4 | 330.3 | 75.4 | 9.0 | 80.4 | 38.8 | 38.4 | 51.9 | 52.4 | 40.1 | 61.2 | 40.0 |\n| SHF | 44.3 | 52.1 | 282.3 | 63.2 | 10.3 | 50.4 | 50.6 | 33.9 | 42.6 | 41.9 | 29.1 | 33.1 | 35.9 |\n| CBLN1 | 3.5 | 9.8 | 239.1 | 14.5 | 1.9 | 2.0 | 53.5 | 21.7 | 36.5 | 27.4 | 10.8 | 25.5 | 11.2 |\n| FAT2 | 2.1 | 10.6 | 234.2 | 12.6 | 1.3 | 1.9 | 3.7 | 18.2 | 8.0 | 38.0 | 2.9 | 2.7 | 7.1 |\n| CBLN3 | 4.1 | 4.4 | 199.9 | 13.3 | 2.9 | 3.2 | 5.5 | 6.7 | 9.0 | 16.7 | 5.4 | 4.8 | 8.3 |\n| TSPAN9 | 19.3 | 21.3 | 198.7 | 24.5 | 16.6 | 8.9 | 22.9 | 22.1 | 23.9 | 27.2 | 14.4 | 33.1 | 12.0 |\n| MTCL1 | 10.2 | 13.1 | 176.1 | 33.8 | 5.8 | 7.8 | 13.8 | 19.7 | 16.6 | 26.9 | 16.5 | 10.0 | 25.5 |\n| SEL1L3 | 13.7 | 24.8 | 175.6 | 30.4 | 22.9 | 20.0 | 13.4 | 10.3 | 15.4 | 14.5 | 10.7 | 21.9 | 17.0 |\n| MDGA1 | 15.4 | 14.4 | 175.0 | 20.1 | 4.9 | 25.2 | 17.3 | 16.0 | 16.6 | 23.2 | 8.9 | 11.1 | 13.0 |\n| CA4 | 18.7 | 18.3 | 173.8 | 37.9 | 10.3 | 20.7 | 9.9 | 9.0 | 19.4 | 32.5 | 7.5 | 12.8 | 13.0 |\n| GRM4 | 10.1 | 26.1 | 171.5 | 11.8 | 1.4 | 7.1 | 6.2 | 9.3 | 11.1 | 14.4 | 5.2 | 17.3 | 7.5 |\n| SLC1A6 | 20.4 | 25.0 | 159.2 | 29.5 | 8.6 | 30.2 | 18.8 | 12.0 | 15.6 | 21.0 | 12.2 | 18.7 | 15.5 |\n| GABRA6 | 0.8 | 1.1 | 150.4 | 6.1 | 0.1 | 0.6 | 1.1 | 0.7 | 3.2 | 10.6 | 1.2 | 1.0 | 5.0 |\n| NEUROD1 | 6.9 | 4.8 | 149.5 | 16.7 | 1.1 | 23.8 | 1.1 | 1.8 | 5.2 | 12.1 | 1.6 | 1.4 | 4.2 |\n| PKIB | 6.0 | 4.9 | 146.1 | 7.2 | 4.2 | 9.6 | 11.8 | 15.4 | 13.0 | 26.8 | 5.2 | 11.0 | 7.1 |\n| EXPH5 | 6.0 | 8.5 | 144.1 | 8.0 | 30.4 | 7.6 | 7.5 | 6.8 | 11.1 | 12.8 | 5.5 | 7.0 | 10.2 |\n| RELN | 11.4 | 9.3 | 141.5 | 14.8 | 5.6 | 13.1 | 18.7 | 12.3 | 14.4 | 18.5 | 14.8 | 5.4 | 4.9 |\n| POLB | 17.0 | 18.7 | 134.1 | 21.3 | 12.6 | 18.2 | 24.6 | 18.3 | 18.7 | 22.1 | 19.5 | 18.9 | 21.8 |",
+ "stop": "completed",
+ "tool_call_count": 12,
+ "seconds": 171.227,
+ "model_calls": 9,
+ "cost_usd": 0.20254239999999998
+}

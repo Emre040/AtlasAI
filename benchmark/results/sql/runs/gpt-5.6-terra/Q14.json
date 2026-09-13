@@ -1,0 +1,378 @@
+{
+ "id": "Q14",
+ "kind": "analysis",
+ "question": "Which transcription factors have cell type enriched RNA expression, and in which single cell types? Give the number of such transcription factors per cell type as a bar chart of the fifteen cell types with the most. For the cell type with the most, list its transcription factors with their nCPM, the distribution of their RNA tissue specificity categories as a bar chart, and which of them have a validated prognostic association in any TCGA cohort. Provide the table.",
+ "model": "gpt-5.6-terra",
+ "effort": "low",
+ "turns": [
+  {
+   "turn": 1,
+   "ms": 1028,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 264,
+    "input_tokens_details": {
+     "cache_write_tokens": 0,
+     "cached_tokens": 0
+    },
+    "output_tokens": 24,
+    "output_tokens_details": {
+     "reasoning_tokens": 9
+    },
+    "total_tokens": 288
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "schema",
+     "input": "{}"
+    }
+   ]
+  },
+  {
+   "turn": 2,
+   "ms": 2756,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 5781,
+    "input_tokens_details": {
+     "cache_write_tokens": 5778,
+     "cached_tokens": 0
+    },
+    "output_tokens": 181,
+    "output_tokens_details": {
+     "reasoning_tokens": 62
+    },
+    "total_tokens": 5962
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT DISTINCT \\\"Protein class\\\" FROM proteinatlas WHERE \\\"Protein class\\\" ILIKE '%Transcription%' LIMIT 50\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT DISTINCT \\\"RNA single cell type specificity\\\" FROM proteinatlas ORDER BY 1\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT \\\"RNA single cell type specificity\\\", COUNT(*) n FROM proteinatlas GROUP BY 1 ORDER BY n DESC\"}"
+    }
+   ]
+  },
+  {
+   "turn": 3,
+   "ms": 2047,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 7142,
+    "input_tokens_details": {
+     "cache_write_tokens": 1361,
+     "cached_tokens": 5778
+    },
+    "output_tokens": 105,
+    "output_tokens_details": {
+     "reasoning_tokens": 31
+    },
+    "total_tokens": 7247
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT Gene, \\\"RNA single cell type specific nCPM\\\", \\\"RNA tissue specificity\\\", \\\"RNA tissue cell type enrichment\\\" FROM proteinatlas WHERE \\\"Protein class\\\" ILIKE '%Transcription factors%' AND \\\"RNA single cell type specificity\\\"='Cell type enriched' LIMIT 20\"}"
+    }
+   ]
+  },
+  {
+   "turn": 4,
+   "ms": 1971,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 7981,
+    "input_tokens_details": {
+     "cache_write_tokens": 839,
+     "cached_tokens": 7139
+    },
+    "output_tokens": 133,
+    "output_tokens_details": {
+     "reasoning_tokens": 30
+    },
+    "total_tokens": 8114
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH tf AS (SELECT Gene, regexp_extract(\\\"RNA single cell type specific nCPM\\\", '^(.*):', 1) AS cell_type FROM proteinatlas WHERE \\\"Protein class\\\" ILIKE '%Transcription factors%' AND \\\"RNA single cell type specificity\\\"='Cell type enriched') SELECT cell_type, COUNT(*) AS transcription_factors FROM tf GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 15\"}"
+    }
+   ]
+  },
+  {
+   "turn": 5,
+   "ms": 4412,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 8248,
+    "input_tokens_details": {
+     "cache_write_tokens": 267,
+     "cached_tokens": 7978
+    },
+    "output_tokens": 510,
+    "output_tokens_details": {
+     "reasoning_tokens": 134
+    },
+    "total_tokens": 8758
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH n AS (SELECT Gene, \\\"RNA single cell type specific nCPM\\\" AS cell_type_nCPM, \\\"RNA tissue specificity\\\" AS tissue_specificity FROM proteinatlas WHERE \\\"Protein class\\\" ILIKE '%Transcription factors%' AND \\\"RNA single cell type specificity\\\"='Cell type enriched' AND regexp_extract(\\\"RNA single cell type specific nCPM\\\", '^(.*):', 1)='Neutrophils') SELECT n.Gene, n.cell_type_nCPM, n.tissue_specificity, COALESCE(string_agg(CASE WHEN c.\\\"validated prognostic - favorable\\\"='True' THEN c.Cancer || ' (favorable)' WHEN c.\\\"validated prognostic - unfavorable\\\"='True' THEN c.Cancer || ' (unfavorable)' END, '; ' ORDER BY c.Cancer), 'None') AS validated_TCGA_association FROM n LEFT JOIN cancer_prognostic_data c ON n.Gene=c.Gene GROUP BY n.Gene,n.cell_type_nCPM,n.tissue_specificity ORDER BY TRY_CAST(regexp_extract(n.cell_type_nCPM, '([0-9.]+)$', 1) AS DOUBLE) DESC, n.Gene\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH n AS (SELECT \\\"RNA tissue specificity\\\" category FROM proteinatlas WHERE \\\"Protein class\\\" ILIKE '%Transcription factors%' AND \\\"RNA single cell type specificity\\\"='Cell type enriched' AND regexp_extract(\\\"RNA single cell type specific nCPM\\\", '^(.*):', 1)='Neutrophils') SELECT category, COUNT(*) AS n FROM n GROUP BY 1 ORDER BY n DESC, category\"}"
+    }
+   ]
+  },
+  {
+   "turn": 6,
+   "ms": 1879,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 8985,
+    "input_tokens_details": {
+     "cache_write_tokens": 737,
+     "cached_tokens": 8245
+    },
+    "output_tokens": 125,
+    "output_tokens_details": {
+     "reasoning_tokens": 21
+    },
+    "total_tokens": 9110
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT Gene, Cancer, \\\"validated prognostic - favorable\\\", \\\"validated prognostic - unfavorable\\\" FROM cancer_prognostic_data WHERE Gene IN ('ELF2','NFKBIZ','BCL6','STAT5B','ZNF438','ZNF429','ZNF281','ZNF746') AND (\\\"validated prognostic - favorable\\\" <> '' OR \\\"validated prognostic - unfavorable\\\" <> '') LIMIT 100\"}"
+    }
+   ]
+  },
+  {
+   "turn": 7,
+   "ms": 1856,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 9127,
+    "input_tokens_details": {
+     "cache_write_tokens": 142,
+     "cached_tokens": 8982
+    },
+    "output_tokens": 151,
+    "output_tokens_details": {
+     "reasoning_tokens": 67
+    },
+    "total_tokens": 9278
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT COUNT(*) AS n_transcription_factors, COUNT(DISTINCT regexp_extract(\\\"RNA single cell type specific nCPM\\\", '^(.*):', 1)) AS n_cell_types FROM proteinatlas WHERE \\\"Protein class\\\" ILIKE '%Transcription factors%' AND \\\"RNA single cell type specificity\\\"='Cell type enriched'\"}"
+    }
+   ]
+  },
+  {
+   "turn": 8,
+   "ms": 2532,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 9305,
+    "input_tokens_details": {
+     "cache_write_tokens": 178,
+     "cached_tokens": 9124
+    },
+    "output_tokens": 203,
+    "output_tokens_details": {
+     "reasoning_tokens": 92
+    },
+    "total_tokens": 9508
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH tf AS (SELECT Gene, regexp_extract(\\\"RNA single cell type specific nCPM\\\", '^(.*):', 1) AS cell_type FROM proteinatlas WHERE \\\"Protein class\\\" ILIKE '%Transcription factors%' AND \\\"RNA single cell type specificity\\\"='Cell type enriched') SELECT cell_type, COUNT(*) AS n, string_agg(Gene, ', ' ORDER BY Gene) AS transcription_factors FROM tf GROUP BY 1 ORDER BY cell_type\"}"
+    }
+   ]
+  },
+  {
+   "turn": 9,
+   "ms": 10551,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 10268,
+    "input_tokens_details": {
+     "cache_write_tokens": 963,
+     "cached_tokens": 9302
+    },
+    "output_tokens": 1505,
+    "output_tokens_details": {
+     "reasoning_tokens": 269
+    },
+    "total_tokens": 11773
+   },
+   "text": "I identified **92 Human Protein Atlas–classified transcription factors** with **“Cell type enriched”** RNA single-cell-type specificity, across **49 single cell types**.\n\n## Transcription factors with cell-type-enriched RNA expression\n\n| Single cell type | Transcription factors |\n|---|---|\n| Adipocytes | ZNF740 |\n| Adrenal medulla cells | DRGX, PHOX2A, PHOX2B |\n| B-cells | PAX5 |\n| Brain excitatory neurons | NEUROD6 |\n| Breast lactating cells | ELF5, NKX3-2 |\n| Cardiomyocytes | ARGFX, NFXL1, NKX2-5, ZFP69, ZNF606 |\n| Corticotrophs | TBX19 |\n| Early primary spermatocytes | DMRTC2, PRDM9 |\n| Early spermatids | KLF17, SHOX2, ZNF668, ZNF829, ZSCAN29 |\n| Epididymal principal cells | DDIT3, ZNF417 |\n| Esophageal apical cells | HOPX, PAX9, ZNF426 |\n| Extravillous trophoblasts | ASCL2, MYCN |\n| Goblet cells | ATOH1 |\n| Gonadotrophs | MKX |\n| Hepatocytes | ATF5, NR1I3 |\n| Kupffer cells | SPIC |\n| Late primary spermatocytes | LYAR |\n| Late spermatids | E2F2, ETV2, HBP1, PLAGL2, TBR1, ZNF628 |\n| Medullary thymic epithelial cells | PAX1 |\n| Melanocytes | ALX1 |\n| Mesothelial cells | POU4F3 |\n| Myosatellite cells | MYF5, PAX7 |\n| Müller glia | NR2E1 |\n| Neuroendocrine cells | FEV, LHX5 |\n| Neutrophil progenitors | CEBPE |\n| **Neutrophils** | **BCL6, ELF2, NFKBIZ, STAT5B, ZNF281, ZNF429, ZNF438, ZNF746** |\n| Oligodendrocyte progenitor cells | MYT1 |\n| Oligodendrocytes | ST18 |\n| Oocytes | FIGLA, FOXR1, LHX8, NEUROG1, TBPL2, ZNF256 |\n| Pancreatic acinar cells | PTF1A, RBPJL |\n| Paneth cells | POU5F2 |\n| Pituitary stem cells | LHX3 |\n| Plasma cells | ZNF215 |\n| Platelets | ZNF547, ZNF778 |\n| Prostatic glandular cells | NKX3-1, ZNF827 |\n| Proximal tubule cells | GLIS1 |\n| Retinal bipolar cells | PRDM8, VSX1 |\n| Retinal ganglion cells | POU4F2 |\n| Retinal horizontal cells | ONECUT3 |\n| Rod photoreceptor cells | NR2E3 |\n| Sertoli cells | ZNF711 |\n| Smooth muscle cells | HAND1 |\n| Somatotrophs | TBXT |\n| Syncytiotrophoblasts | NFYB |\n| T-cells | PBX4 |\n| Thymic myoid cells | MYF6, ZBED1 |\n| Tuft cells | HMX2, HMX3, POU2F3 |\n| Vascular endothelial cells | MEOX1 |\n| pDCs | IRF7 |\n\n## Fifteen cell types with the most such transcription factors\n\n*Ties at two transcription factors were ordered alphabetically to retain fifteen cell types.*\n\n```text\nNeutrophils                 8 | ████████\nLate spermatids             6 | ██████\nOocytes                     6 | ██████\nCardiomyocytes              5 | █████\nEarly spermatids            5 | █████\nAdrenal medulla cells       3 | ███\nEsophageal apical cells     3 | ███\nTuft cells                  3 | ███\nBreast lactating cells      2 | ██\nEarly primary spermatocytes 2 | ██\nEpididymal principal cells  2 | ██\nExtravillous trophoblasts   2 | ██\nHepatocytes                 2 | ██\nMyosatellite cells          2 | ██\nNeuroendocrine cells        2 | ██\n```\n\n## Neutrophils—the cell type with the most\n\n| Transcription factor | nCPM in neutrophils | RNA tissue-specificity category | Validated prognostic association in any TCGA cohort |\n|---|---:|---|---|\n| ELF2 | 4,633.5 | Low tissue specificity | None |\n| NFKBIZ | 3,464.1 | Tissue enriched | None |\n| BCL6 | 2,731.6 | Tissue enhanced | None |\n| STAT5B | 1,497.8 | Low tissue specificity | None |\n| ZNF438 | 1,433.6 | Low tissue specificity | None |\n| ZNF429 | 489.9 | Low tissue specificity | None |\n| ZNF281 | 385.3 | Tissue enhanced | None |\n| ZNF746 | 109.4 | Low tissue specificity | None |\n\n### RNA tissue-specificity distribution among the eight neutrophil-enriched transcription factors\n\n```text\nLow tissue specificity  5 | █████\nTissue enhanced         2 | ██\nTissue enriched         1 | █\n```\n\n**Validated TCGA prognosis:** none of the eight neutrophil-enriched transcription factors has a validated favorable or unfavorable prognostic association in the available TCGA cohort data.",
+   "tool_uses": []
+  }
+ ],
+ "tool_calls": [
+  {
+   "turn": 1,
+   "name": "schema",
+   "input": {},
+   "ms": 40085,
+   "result_chars": 148152,
+   "truncated": true,
+   "error": null,
+   "result_head": "Tables built from the Human Protein Atlas bulk files (all columns are text; cast for arithmetic, e.g. TRY_CAST(col AS DOUBLE)).\n\nblood_immunoassay_concentration (0.1 MB): gene, ENSG ID, conc [pg/L], sample type, number_of_samples, pubmed id\nblood_ms_concentration (0.1 MB): Gene, ENSG ID, Conc [pg/L]\nblood_pea_disease_de (17.9 MB): Gene, ENSG ID, Disease, Class, Control, logFC, p-value adjusted, Seeds, Mean importance, SD importance, Max importance, Min importance\nblood_pea_diseases (0.0 MB): Disease, Class\ncancer_cancers (0.0 MB): Cancer, Organ\ncancer_cptac (5.7 MB): Cancer, Gene, Gene name, p"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT DISTINCT \"Protein class\" FROM proteinatlas WHERE \"Protein class\" ILIKE '%Transcription%' LIMIT 50"
+   },
+   "ms": 1513,
+   "result_chars": 6219,
+   "truncated": false,
+   "error": null,
+   "result_head": "Protein class\nPlasma proteins, Predicted intracellular proteins, Transcription factors\nHuman disease related genes, Plasma proteins, Predicted intracellular proteins, Transcription factors\nHuman disease related genes, Predicted intracellular proteins, Transcription factors\nDisease related genes, Human disease related genes, Nuclear receptors, Predicted intracellular proteins, Transcription factors\nMetabolic proteins, Predicted intracellular proteins, Transcription factors\nCancer-related genes, Disease related genes, Essential proteins, Plasma proteins, Predicted intracellular proteins, Transcr"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT DISTINCT \"RNA single cell type specificity\" FROM proteinatlas ORDER BY 1"
+   },
+   "ms": 2063,
+   "result_chars": 133,
+   "truncated": false,
+   "error": null,
+   "result_head": "RNA single cell type specificity\nCell type enhanced\nCell type enriched\nGroup enriched\nLow cell type specificity\nNot detected\n[5 rows]"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"RNA single cell type specificity\", COUNT(*) n FROM proteinatlas GROUP BY 1 ORDER BY n DESC"
+   },
+   "ms": 1932,
+   "result_chars": 161,
+   "truncated": false,
+   "error": null,
+   "result_head": "RNA single cell type specificity\tn\nCell type enhanced\t13393\nGroup enriched\t1995\nCell type enriched\t1906\nLow cell type specificity\t1590\nNot detected\t1278\n[5 rows]"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "SELECT Gene, \"RNA single cell type specific nCPM\", \"RNA tissue specificity\", \"RNA tissue cell type enrichment\" FROM proteinatlas WHERE \"Protein class\" ILIKE '%Transcription factors%' AND \"RNA single cell type specificity\"='Cell type enriched' LIMIT 20"
+   },
+   "ms": 1041,
+   "result_chars": 2224,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tRNA single cell type specific nCPM\tRNA tissue specificity\tRNA tissue cell type enrichment\nMEOX1\tVascular endothelial cells: 62.3\tTissue enhanced\tAdipose subcutaneous - Endothelial cells, Adipose visceral - Endothelial cells, Breast - Endothelial cells, Colon - Endothelial cells, Lung - Fibroblasts_2\nE2F2\tLate spermatids: 32.5\tGroup enriched\tAdrenal gland - Mitotic cells (Adrenal gland), Lung - Mitotic cells (Lung), Minor Salivary Gland - Mitotic cells (Minor salivary gland), Spleen - Mitotic cells (Spleen), Stomach - Mitotic cells (Stomach), Testis - Early spermatids, Testis - Late sperma"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "WITH tf AS (SELECT Gene, regexp_extract(\"RNA single cell type specific nCPM\", '^(.*):', 1) AS cell_type FROM proteinatlas WHERE \"Protein class\" ILIKE '%Transcription factors%' AND \"RNA single cell type specificity\"='Cell type enriched') SELECT cell_type, COUNT(*) AS transcription_factors FROM tf GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 15"
+   },
+   "ms": 1334,
+   "result_chars": 352,
+   "truncated": false,
+   "error": null,
+   "result_head": "cell_type\ttranscription_factors\nNeutrophils\t8\nLate spermatids\t6\nOocytes\t6\nCardiomyocytes\t5\nEarly spermatids\t5\nAdrenal medulla cells\t3\nEsophageal apical cells\t3\nTuft cells\t3\nBreast lactating cells\t2\nEarly primary spermatocytes\t2\nEpididymal principal cells\t2\nExtravillous trophoblasts\t2\nHepatocytes\t2\nMyosatellite cells\t2\nNeuroendocrine cells\t2\n[15 rows]"
+  },
+  {
+   "turn": 5,
+   "name": "sql",
+   "input": {
+    "query": "WITH n AS (SELECT Gene, \"RNA single cell type specific nCPM\" AS cell_type_nCPM, \"RNA tissue specificity\" AS tissue_specificity FROM proteinatlas WHERE \"Protein class\" ILIKE '%Transcription factors%' AND \"RNA single cell type specificity\"='Cell type enriched' AND regexp_extract(\"RNA single cell type specific nCPM\", '^(.*):', 1)='Neutrophils') SELECT n.Gene, n.cell_type_nCPM, n.tissue_specificity, COALESCE(string_agg(CASE WHEN c.\"validated prognostic - favorable\"='True' THEN c.Cancer || ' (favorable)' WHEN c.\"validated prognostic - unfavorable\"='True' THEN c.Cancer || ' (unfavorable)' END, '; ' ORDER BY c.Cancer), 'None') AS validated_TCGA_association FROM n LEFT JOIN cancer_prognostic_data c ON n.Gene=c.Gene GROUP BY n.Gene,n.cell_type_nCPM,n.tissue_specificity ORDER BY TRY_CAST(regexp_extract(n.cell_type_nCPM, '([0-9.]+)$', 1) AS DOUBLE) DESC, n.Gene"
+   },
+   "ms": 1875,
+   "result_chars": 486,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tcell_type_nCPM\ttissue_specificity\tvalidated_TCGA_association\nELF2\tNeutrophils: 4633.5\tLow tissue specificity\tNone\nNFKBIZ\tNeutrophils: 3464.1\tTissue enriched\tNone\nBCL6\tNeutrophils: 2731.6\tTissue enhanced\tNone\nSTAT5B\tNeutrophils: 1497.8\tLow tissue specificity\tNone\nZNF438\tNeutrophils: 1433.6\tLow tissue specificity\tNone\nZNF429\tNeutrophils: 489.9\tLow tissue specificity\tNone\nZNF281\tNeutrophils: 385.3\tTissue enhanced\tNone\nZNF746\tNeutrophils: 109.4\tLow tissue specificity\tNone\n[8 rows]"
+  },
+  {
+   "turn": 5,
+   "name": "sql",
+   "input": {
+    "query": "WITH n AS (SELECT \"RNA tissue specificity\" category FROM proteinatlas WHERE \"Protein class\" ILIKE '%Transcription factors%' AND \"RNA single cell type specificity\"='Cell type enriched' AND regexp_extract(\"RNA single cell type specific nCPM\", '^(.*):', 1)='Neutrophils') SELECT category, COUNT(*) AS n FROM n GROUP BY 1 ORDER BY n DESC, category"
+   },
+   "ms": 957,
+   "result_chars": 80,
+   "truncated": false,
+   "error": null,
+   "result_head": "category\tn\nLow tissue specificity\t5\nTissue enhanced\t2\nTissue enriched\t1\n[3 rows]"
+  },
+  {
+   "turn": 6,
+   "name": "sql",
+   "input": {
+    "query": "SELECT Gene, Cancer, \"validated prognostic - favorable\", \"validated prognostic - unfavorable\" FROM cancer_prognostic_data WHERE Gene IN ('ELF2','NFKBIZ','BCL6','STAT5B','ZNF438','ZNF429','ZNF281','ZNF746') AND (\"validated prognostic - favorable\" <> '' OR \"validated prognostic - unfavorable\" <> '') LIMIT 100"
+   },
+   "ms": 651,
+   "result_chars": 18,
+   "truncated": false,
+   "error": null,
+   "result_head": "(no rows)\n[0 rows]"
+  },
+  {
+   "turn": 7,
+   "name": "sql",
+   "input": {
+    "query": "SELECT COUNT(*) AS n_transcription_factors, COUNT(DISTINCT regexp_extract(\"RNA single cell type specific nCPM\", '^(.*):', 1)) AS n_cell_types FROM proteinatlas WHERE \"Protein class\" ILIKE '%Transcription factors%' AND \"RNA single cell type specificity\"='Cell type enriched'"
+   },
+   "ms": 869,
+   "result_chars": 51,
+   "truncated": false,
+   "error": null,
+   "result_head": "n_transcription_factors\tn_cell_types\n92\t49\n[1 rows]"
+  },
+  {
+   "turn": 8,
+   "name": "sql",
+   "input": {
+    "query": "WITH tf AS (SELECT Gene, regexp_extract(\"RNA single cell type specific nCPM\", '^(.*):', 1) AS cell_type FROM proteinatlas WHERE \"Protein class\" ILIKE '%Transcription factors%' AND \"RNA single cell type specificity\"='Cell type enriched') SELECT cell_type, COUNT(*) AS n, string_agg(Gene, ', ' ORDER BY Gene) AS transcription_factors FROM tf GROUP BY 1 ORDER BY cell_type"
+   },
+   "ms": 904,
+   "result_chars": 1643,
+   "truncated": false,
+   "error": null,
+   "result_head": "cell_type\tn\ttranscription_factors\nAdipocytes\t1\tZNF740\nAdrenal medulla cells\t3\tDRGX, PHOX2A, PHOX2B\nB-cells\t1\tPAX5\nBrain excitatory neurons\t1\tNEUROD6\nBreast lactating cells\t2\tELF5, NKX3-2\nCardiomyocytes\t5\tARGFX, NFXL1, NKX2-5, ZFP69, ZNF606\nCorticotrophs\t1\tTBX19\nEarly primary spermatocytes\t2\tDMRTC2, PRDM9\nEarly spermatids\t5\tKLF17, SHOX2, ZNF668, ZNF829, ZSCAN29\nEpididymal principal cells\t2\tDDIT3, ZNF417\nEsophageal apical cells\t3\tHOPX, PAX9, ZNF426\nExtravillous trophoblasts\t2\tASCL2, MYCN\nGoblet cells\t1\tATOH1\nGonadotrophs\t1\tMKX\nHepatocytes\t2\tATF5, NR1I3\nKupffer cells\t1\tSPIC\nLate primary spermatoc"
+  }
+ ],
+ "usage": {
+  "input_tokens": 67101,
+  "output_tokens": 2937,
+  "cache_read_input_tokens": 56548,
+  "cache_creation_input_tokens": 0,
+  "reasoning_tokens": 715
+ },
+ "started_unix_ms": 1789298998980,
+ "final_answer": "I identified **92 Human Protein Atlas–classified transcription factors** with **“Cell type enriched”** RNA single-cell-type specificity, across **49 single cell types**.\n\n## Transcription factors with cell-type-enriched RNA expression\n\n| Single cell type | Transcription factors |\n|---|---|\n| Adipocytes | ZNF740 |\n| Adrenal medulla cells | DRGX, PHOX2A, PHOX2B |\n| B-cells | PAX5 |\n| Brain excitatory neurons | NEUROD6 |\n| Breast lactating cells | ELF5, NKX3-2 |\n| Cardiomyocytes | ARGFX, NFXL1, NKX2-5, ZFP69, ZNF606 |\n| Corticotrophs | TBX19 |\n| Early primary spermatocytes | DMRTC2, PRDM9 |\n| Early spermatids | KLF17, SHOX2, ZNF668, ZNF829, ZSCAN29 |\n| Epididymal principal cells | DDIT3, ZNF417 |\n| Esophageal apical cells | HOPX, PAX9, ZNF426 |\n| Extravillous trophoblasts | ASCL2, MYCN |\n| Goblet cells | ATOH1 |\n| Gonadotrophs | MKX |\n| Hepatocytes | ATF5, NR1I3 |\n| Kupffer cells | SPIC |\n| Late primary spermatocytes | LYAR |\n| Late spermatids | E2F2, ETV2, HBP1, PLAGL2, TBR1, ZNF628 |\n| Medullary thymic epithelial cells | PAX1 |\n| Melanocytes | ALX1 |\n| Mesothelial cells | POU4F3 |\n| Myosatellite cells | MYF5, PAX7 |\n| Müller glia | NR2E1 |\n| Neuroendocrine cells | FEV, LHX5 |\n| Neutrophil progenitors | CEBPE |\n| **Neutrophils** | **BCL6, ELF2, NFKBIZ, STAT5B, ZNF281, ZNF429, ZNF438, ZNF746** |\n| Oligodendrocyte progenitor cells | MYT1 |\n| Oligodendrocytes | ST18 |\n| Oocytes | FIGLA, FOXR1, LHX8, NEUROG1, TBPL2, ZNF256 |\n| Pancreatic acinar cells | PTF1A, RBPJL |\n| Paneth cells | POU5F2 |\n| Pituitary stem cells | LHX3 |\n| Plasma cells | ZNF215 |\n| Platelets | ZNF547, ZNF778 |\n| Prostatic glandular cells | NKX3-1, ZNF827 |\n| Proximal tubule cells | GLIS1 |\n| Retinal bipolar cells | PRDM8, VSX1 |\n| Retinal ganglion cells | POU4F2 |\n| Retinal horizontal cells | ONECUT3 |\n| Rod photoreceptor cells | NR2E3 |\n| Sertoli cells | ZNF711 |\n| Smooth muscle cells | HAND1 |\n| Somatotrophs | TBXT |\n| Syncytiotrophoblasts | NFYB |\n| T-cells | PBX4 |\n| Thymic myoid cells | MYF6, ZBED1 |\n| Tuft cells | HMX2, HMX3, POU2F3 |\n| Vascular endothelial cells | MEOX1 |\n| pDCs | IRF7 |\n\n## Fifteen cell types with the most such transcription factors\n\n*Ties at two transcription factors were ordered alphabetically to retain fifteen cell types.*\n\n```text\nNeutrophils                 8 | ████████\nLate spermatids             6 | ██████\nOocytes                     6 | ██████\nCardiomyocytes              5 | █████\nEarly spermatids            5 | █████\nAdrenal medulla cells       3 | ███\nEsophageal apical cells     3 | ███\nTuft cells                  3 | ███\nBreast lactating cells      2 | ██\nEarly primary spermatocytes 2 | ██\nEpididymal principal cells  2 | ██\nExtravillous trophoblasts   2 | ██\nHepatocytes                 2 | ██\nMyosatellite cells          2 | ██\nNeuroendocrine cells        2 | ██\n```\n\n## Neutrophils—the cell type with the most\n\n| Transcription factor | nCPM in neutrophils | RNA tissue-specificity category | Validated prognostic association in any TCGA cohort |\n|---|---:|---|---|\n| ELF2 | 4,633.5 | Low tissue specificity | None |\n| NFKBIZ | 3,464.1 | Tissue enriched | None |\n| BCL6 | 2,731.6 | Tissue enhanced | None |\n| STAT5B | 1,497.8 | Low tissue specificity | None |\n| ZNF438 | 1,433.6 | Low tissue specificity | None |\n| ZNF429 | 489.9 | Low tissue specificity | None |\n| ZNF281 | 385.3 | Tissue enhanced | None |\n| ZNF746 | 109.4 | Low tissue specificity | None |\n\n### RNA tissue-specificity distribution among the eight neutrophil-enriched transcription factors\n\n```text\nLow tissue specificity  5 | █████\nTissue enhanced         2 | ██\nTissue enriched         1 | █\n```\n\n**Validated TCGA prognosis:** none of the eight neutrophil-enriched transcription factors has a validated favorable or unfavorable prognostic association in the available TCGA cohort data.",
+ "stop": "completed",
+ "tool_call_count": 11,
+ "seconds": 82.268,
+ "model_calls": 9,
+ "cost_usd": 0.18075560000000002
+}

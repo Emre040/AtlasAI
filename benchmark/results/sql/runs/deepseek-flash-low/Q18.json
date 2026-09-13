@@ -1,0 +1,504 @@
+{
+ "id": "Q18",
+ "kind": "analysis",
+ "question": "Take the genes with region enriched RNA expression in hypothalamus. For each, compute the ratio of hypothalamus nTPM to cerebral cortex nTPM and draw a bar chart of the fifteen highest, a heatmap of those fifteen across all brain regions on a log scale, the tissue outside the brain with the highest consensus nTPM for each gene, and a bar chart of the cohort's main subcellular locations. Provide the table.",
+ "model": "deepseek-flash",
+ "effort": "low",
+ "turns": [
+  {
+   "turn": 1,
+   "ms": 1193,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 529,
+    "completion_tokens": 37,
+    "total_tokens": 566,
+    "prompt_tokens_details": {
+     "cached_tokens": 384
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 8
+    },
+    "prompt_cache_hit_tokens": 384,
+    "prompt_cache_miss_tokens": 145
+   },
+   "text": "I'll start by exploring the available tables.",
+   "tool_uses": [
+    {
+     "name": "schema",
+     "input": "{}"
+    }
+   ]
+  },
+  {
+   "turn": 2,
+   "ms": 3987,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 6145,
+    "completion_tokens": 510,
+    "total_tokens": 6655,
+    "prompt_tokens_details": {
+     "cached_tokens": 512
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 317
+    },
+    "prompt_cache_hit_tokens": 512,
+    "prompt_cache_miss_tokens": 5633
+   },
+   "text": "Let me explore the key columns for brain regional specificity.",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT \\\"RNA brain regional specificity\\\", COUNT(*) FROM proteinatlas GROUP BY 1\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT * FROM proteinatlas WHERE \\\"RNA brain regional specificity\\\" = 'Region enriched' LIMIT 5\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT * FROM rna_brain_region_hpa_brain_regions\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT * FROM rna_brain_region_hpa LIMIT 3\"}"
+    }
+   ]
+  },
+  {
+   "turn": 3,
+   "ms": 2980,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 11746,
+    "completion_tokens": 504,
+    "total_tokens": 12250,
+    "prompt_tokens_details": {
+     "cached_tokens": 6528
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 315
+    },
+    "prompt_cache_hit_tokens": 6528,
+    "prompt_cache_miss_tokens": 5218
+   },
+   "text": "I found the structure. \"Region enriched\" genes list their specific region(s) in \"RNA brain regional specific nTPM\". Let me find those enriched in hypothalamus.",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT Gene, \\\"RNA brain regional distribution\\\", \\\"RNA brain regional specificity score\\\", \\\"RNA brain regional specific nTPM\\\"\\nFROM proteinatlas\\nWHERE \\\"RNA brain regional specificity\\\" = 'Region enriched'\\nAND \\\"RNA brain regional specific nTPM\\\" LIKE '%hypothalamus%'\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT \\\"RNA brain regional specificity\\\", COUNT(*) FROM proteinatlas\\nWHERE \\\"RNA brain regional specific nTPM\\\" LIKE '%hypothalamus%' GROUP BY 1\"}"
+    }
+   ]
+  },
+  {
+   "turn": 4,
+   "ms": 4803,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 13086,
+    "completion_tokens": 1045,
+    "total_tokens": 14131,
+    "prompt_tokens_details": {
+     "cached_tokens": 12160
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 778
+    },
+    "prompt_cache_hit_tokens": 12160,
+    "prompt_cache_miss_tokens": 926
+   },
+   "text": "38 genes are region-enriched in hypothalamus. Now let me compute hypothalamus/cerebral cortex nTPM ratios using the brain region dataset.",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\": \"WITH genes AS (\\n  SELECT Gene, \\\"Gene name\\\" FROM proteinatlas\\n  WHERE \\\"RNA brain regional specificity\\\" = 'Region enriched'\\n  AND \\\"RNA brain regional specific nTPM\\\" LIKE '%hypothalamus%'\\n),\\nhyp AS (\\n  SELECT Gene, TRY_CAST(nTPM AS DOUBLE) AS ntpm FROM rna_brain_region_hpa WHERE \\\"Brain region\\\"='hypothalamus'\\n),\\nctx AS (\\n  SELECT Gene, TRY_CAST(nTPM AS DOUBLE) AS ntpm FROM rna_brain_region_hpa WHERE \\\"Brain region\\\"='cerebral cortex'\\n)\\nSELECT g.\\\"Gene name\\\", hyp.ntpm AS hypo_ntpm, ctx.ntpm AS ctx_ntpm, ROUND(hyp.ntpm/ctx.ntpm,3) AS ratio\\nFROM genes g\\nJOIN hyp ON hyp.Gene=g.Gene\\nJOIN ctx ON ctx.Gene=g.Gene\\nORDER BY ratio DESC\"}"
+    }
+   ]
+  },
+  {
+   "turn": 5,
+   "ms": 2727,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 14221,
+    "completion_tokens": 493,
+    "total_tokens": 14714,
+    "prompt_tokens_details": {
+     "cached_tokens": 14080
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 231
+    },
+    "prompt_cache_hit_tokens": 14080,
+    "prompt_cache_miss_tokens": 141
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\": \"WITH genes AS (\\n  SELECT Gene AS ensg, Gene_name FROM (\\n     SELECT Gene, \\\"Gene name\\\" AS Gene_name FROM proteinatlas\\n     WHERE \\\"RNA brain regional specificity\\\" = 'Region enriched'\\n     AND \\\"RNA brain regional specific nTPM\\\" LIKE '%hypothalamus%'\\n  )\\n),\\nhyp AS (\\n  SELECT Gene, TRY_CAST(nTPM AS DOUBLE) AS ntpm FROM rna_brain_region_hpa WHERE \\\"Brain region\\\"='hypothalamus'\\n),\\nctx AS (\\n  SELECT Gene, TRY_CAST(nTPM AS DOUBLE) AS ntpm FROM rna_brain_region_hpa WHERE \\\"Brain region\\\"='cerebral cortex'\\n)\\nSELECT g.Gene_name, hyp.ntpm AS hypo_ntpm, ctx.ntpm AS ctx_ntpm, ROUND(hyp.ntpm/NULLIF(ctx.ntpm,0),3) AS ratio\\nFROM genes g\\nJOIN hyp ON hyp.Gene=g.ensg\\nJOIN ctx ON ctx.Gene=g.ensg\\nORDER BY ratio DESC\"}"
+    }
+   ]
+  },
+  {
+   "turn": 6,
+   "ms": 3001,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 14807,
+    "completion_tokens": 566,
+    "total_tokens": 15373,
+    "prompt_tokens_details": {
+     "cached_tokens": 14592
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 294
+    },
+    "prompt_cache_hit_tokens": 14592,
+    "prompt_cache_miss_tokens": 215
+   },
+   "text": "proteinatlas uses \"Gene\" for the symbol and \"Ensembl\" for the ID. Let me fix the join.",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\": \"WITH genes AS (\\n  SELECT Gene AS sym, Ensembl AS ensg FROM proteinatlas\\n  WHERE \\\"RNA brain regional specificity\\\" = 'Region enriched'\\n  AND \\\"RNA brain regional specific nTPM\\\" LIKE '%hypothalamus%'\\n),\\nhyp AS (\\n  SELECT Gene, TRY_CAST(nTPM AS DOUBLE) AS ntpm FROM rna_brain_region_hpa WHERE \\\"Brain region\\\"='hypothalamus'\\n),\\nctx AS (\\n  SELECT Gene, TRY_CAST(nTPM AS DOUBLE) AS ntpm FROM rna_brain_region_hpa WHERE \\\"Brain region\\\"='cerebral cortex'\\n)\\nSELECT g.sym, hyp.ntpm AS hypo_ntpm, ctx.ntpm AS ctx_ntpm, ROUND(hyp.ntpm/NULLIF(ctx.ntpm,0),3) AS ratio\\nFROM genes g\\nJOIN hyp ON hyp.Gene=g.ensg\\nJOIN ctx ON ctx.Gene=g.ensg\\nORDER BY ratio DESC\"}"
+    }
+   ]
+  },
+  {
+   "turn": 7,
+   "ms": 4556,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 15976,
+    "completion_tokens": 1045,
+    "total_tokens": 17021,
+    "prompt_tokens_details": {
+     "cached_tokens": 15360
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 411
+    },
+    "prompt_cache_hit_tokens": 15360,
+    "prompt_cache_miss_tokens": 616
+   },
+   "text": "Top 15 by ratio identified. Now let me gather the heatmap data, subcellular locations, and the consensus tissue info.",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\": \"WITH genes AS (\\n  SELECT Gene AS sym, Ensembl AS ensg FROM proteinatlas\\n  WHERE \\\"RNA brain regional specificity\\\" = 'Region enriched'\\n  AND \\\"RNA brain regional specific nTPM\\\" LIKE '%hypothalamus%'\\n),\\nr AS (\\n SELECT h.\\\"Brain region\\\", g.sym, h.nTPM FROM rna_brain_region_hpa h JOIN genes g ON g.ensg=h.Gene\\n)\\nSELECT \\\"Brain region\\\",\\n MAX(CASE WHEN sym='GHRH' THEN nTPM END) AS GHRH,\\n MAX(CASE WHEN sym='HCRT' THEN nTPM END) AS HCRT,\\n MAX(CASE WHEN sym='OXT' THEN nTPM END) AS OXT,\\n MAX(CASE WHEN sym='HDC' THEN nTPM END) AS HDC,\\n MAX(CASE WHEN sym='BSX' THEN nTPM END) AS BSX,\\n MAX(CASE WHEN sym='NR5A1' THEN nTPM END) AS NR5A1,\\n MAX(CASE WHEN sym='GAL' THEN nTPM END) AS GAL,\\n MAX(CASE WHEN sym='MYL2' THEN nTPM END) AS MYL2,\\n MAX(CASE WHEN sym='NKX2-4' THEN nTPM END) AS \\\"NKX2-4\\\",\\n MAX(CASE WHEN sym='MC3R' THEN nTPM END) AS MC3R,\\n MAX(CASE WHEN sym='AVP' THEN nTPM END) AS AVP,\\n MAX(CASE WHEN sym='NPVF' THEN nTPM END) AS NPVF,\\n MAX(CASE WHEN sym='PRG4' THEN nTPM END) AS PRG4,\\n MAX(CASE WHEN sym='GSX1' THEN nTPM END) AS GSX1,\\n MAX(CASE WHEN sym='FEZF1' THEN nTPM END) AS FEZF1\\nFROM r GROUP BY \\\"Brain region\\\" ORDER BY \\\"Brain region\\\"\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT DISTINCT Organ FROM rna_tissue_consensus_tissues ORDER BY 1\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT Gene, \\\"Subcellular main location\\\", \\\"Subcellular additional location\\\" FROM proteinatlas\\nWHERE Gene IN ('GHRH','HCRT','OXT','HDC','BSX','NR5A1','GAL','MYL2','NKX2-4','MC3R','AVP','NPVF','PRG4','GSX1','FEZF1')\"}"
+    }
+   ]
+  },
+  {
+   "turn": 8,
+   "ms": 3404,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 18138,
+    "completion_tokens": 644,
+    "total_tokens": 18782,
+    "prompt_tokens_details": {
+     "cached_tokens": 16896
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 284
+    },
+    "prompt_cache_hit_tokens": 16896,
+    "prompt_cache_miss_tokens": 1242
+   },
+   "text": "Now let me get the consensus tissue data (outside brain) and check the join keys.",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT * FROM rna_tissue_consensus LIMIT 3\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\": \"WITH genes AS (\\n  SELECT Gene AS sym, Ensembl AS ensg FROM proteinatlas\\n  WHERE \\\"RNA brain regional specificity\\\" = 'Region enriched'\\n  AND \\\"RNA brain regional specific nTPM\\\" LIKE '%hypothalamus%'\\n),\\nfifteen AS (SELECT * FROM genes WHERE sym IN ('GHRH','HCRT','OXT','HDC','BSX','NR5A1','GAL','MYL2','NKX2-4','MC3R','AVP','NPVF','PRG4','GSX1','FEZF1')),\\nt AS (\\n SELECT c.Gene AS ensg, c.Tissue, TRY_CAST(c.nTPM AS DOUBLE) AS ntpm\\n FROM rna_tissue_consensus c\\n JOIN rna_tissue_consensus_tissues t ON t.Tissue=c.Tissue\\n WHERE t.Organ <> 'Brain'\\n),\\nranked AS (\\n SELECT f.sym, t.Tissue, t.ntpm, ROW_NUMBER() OVER (PARTITION BY f.sym ORDER BY t.ntpm DESC) rn\\n FROM fifteen f JOIN t ON t.ensg=f.ensg\\n)\\nSELECT sym, Tissue, ntpm FROM ranked WHERE rn=1 ORDER BY ntpm DESC\"}"
+    }
+   ]
+  },
+  {
+   "turn": 9,
+   "ms": 7288,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 19047,
+    "completion_tokens": 1437,
+    "total_tokens": 20484,
+    "prompt_tokens_details": {
+     "cached_tokens": 18688
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 1172
+    },
+    "prompt_cache_hit_tokens": 18688,
+    "prompt_cache_miss_tokens": 359
+   },
+   "text": "Let me check the subcellular data more fully and get counts for the cohort.",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT Gene, \\\"Subcellular location\\\", \\\"Subcellular main location\\\", \\\"Secretome location\\\"\\nFROM proteinatlas\\nWHERE Gene IN ('GHRH','HCRT','OXT','HDC','BSX','NR5A1','GAL','MYL2','NKX2-4','MC3R','AVP','NPVF','PRG4','GSX1','FEZF1')\\nORDER BY Gene\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\": \"WITH genes AS (\\n  SELECT Gene AS sym FROM proteinatlas\\n  WHERE \\\"RNA brain regional specificity\\\" = 'Region enriched'\\n  AND \\\"RNA brain regional specific nTPM\\\" LIKE '%hypothalamus%'\\n)\\nSELECT COALESCE(NULLIF(\\\"Subcellular main location\\\",''),'Not detected / no main location') AS loc, COUNT(*) \\nFROM proteinatlas p JOIN genes g ON g.sym=p.Gene\\nGROUP BY 1 ORDER BY 2 DESC\"}"
+    }
+   ]
+  },
+  {
+   "turn": 10,
+   "ms": 15627,
+   "stop_reason": "stop",
+   "usage": {
+    "prompt_tokens": 20769,
+    "completion_tokens": 4709,
+    "total_tokens": 25478,
+    "prompt_tokens_details": {
+     "cached_tokens": 20480
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 1873
+    },
+    "prompt_cache_hit_tokens": 20480,
+    "prompt_cache_miss_tokens": 289
+   },
+   "text": "I now have all the data needed. Here's the complete analysis.\n\n## Step 1 — Selecting the cohort\n\nUsing `proteinatlas`, genes with **\"RNA brain regional specificity\" = 'Region enriched'** whose enriched region is the **hypothalamus** (`\"RNA brain regional specific nTPM\"` lists `hypothalamus: …`) = **38 genes**.\n\n## Step 2 — Hypothalamus : cerebral cortex nTPM ratio\n\nUsing `rna_brain_region_hpa` (nTPM for `hypothalamus` and `cerebral cortex`), the ratio (hypo/ctx) for all 38 genes, sorted, gives the **fifteen highest**:\n\n| Rank | Gene | Hypothalamus nTPM | Cerebral cortex nTPM | Ratio |\n|---|---|---|---|---|\n| 1 | GHRH | 428.5 | 0.5 | 857.00 |\n| 2 | HCRT | 901.9 | 1.1 | 819.91 |\n| 3 | OXT | 2524.3 | 3.3 | 764.94 |\n| 4 | HDC | 227.7 | 0.6 | 379.50 |\n| 5 | BSX | 24.3 | 0.1 | 243.00 |\n| 6 | NR5A1 | 37.9 | 0.3 | 126.33 |\n| 7 | GAL | 1423.8 | 11.3 | 126.00 |\n| 8 | MYL2 | 12.4 | 0.1 | 124.00 |\n| 9 | NKX2-4 | 8.8 | 0.1 | 88.00 |\n| 10 | MC3R | 31.3 | 0.4 | 78.25 |\n| 11 | AVP | 15977.0 | 210.3 | 75.97 |\n| 12 | NPVF | 7.3 | 0.1 | 73.00 |\n| 13 | PRG4 | 66.4 | 1.0 | 66.40 |\n| 14 | GSX1 | 15.6 | 0.3 | 52.00 |\n| 15 | FEZF1 | 270.1 | 5.5 | 49.11 |\n\n**(Chart 1 — Bar chart of the fifteen highest ratios):** plot the Ratio column above in descending order (GHRH→FEZF1), bar heights 857 down to 49.1.\n\n## Step 3 — Heatmap data (those 15 genes × all 13 brain regions), nTPM\n\nRender on a **log scale** (0 values fall to the floor).\n\n| Region | GHRH | HCRT | OXT | HDC | BSX | NR5A1 | GAL | MYL2 | NKX2-4 | MC3R | AVP | NPVF | PRG4 | GSX1 | FEZF1 |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n| amygdala | 0.3 | 0.7 | 1.1 | 0.2 | 0.1 | 0.3 | 5.2 | 0.1 | 0.1 | 3.0 | 17.4 | 0.0 | 0.1 | 0.4 | 6.4 |\n| basal ganglia | 0.7 | 3.5 | 17.5 | 12.6 | 1.2 | 0.2 | 6.1 | 0.0 | 0.3 | 1.6 | 50.4 | 0.0 | 0.2 | 0.7 | 7.1 |\n| cerebellum | 0.3 | 0.7 | 1.5 | 0.2 | 0.1 | 0.3 | 2.4 | 0.0 | 0.0 | 0.0 | 2.9 | 0.0 | 1.0 | 0.1 | 1.0 |\n| cerebral cortex | 0.5 | 1.1 | 3.3 | 0.6 | 0.1 | 0.3 | 11.3 | 0.1 | 0.1 | 0.4 | 210.3 | 0.1 | 1.0 | 0.3 | 5.5 |\n| choroid plexus | 0.0 | 0.1 | 2.1 | 1.8 | 0.1 | 0.0 | 1.8 | 0.0 | 0.0 | 0.0 | 1.1 | 0.0 | 8.4 | 0.1 | 0.8 |\n| hippocampal formation | 0.4 | 0.4 | 0.8 | 0.6 | 0.0 | 0.4 | 4.8 | 0.0 | 0.0 | 1.6 | 2.6 | 0.0 | 0.1 | 0.3 | 1.4 |\n| **hypothalamus** | 428.5 | 901.9 | 2524.3 | 227.7 | 24.3 | 37.9 | 1423.8 | 12.4 | 8.8 | 31.3 | 15977.0 | 7.3 | 66.4 | 15.6 | 270.1 |\n| medulla oblongata | 0.1 | 0.6 | 0.9 | 0.2 | 0.0 | 0.2 | 107.1 | 1.3 | 0.3 | 0.2 | 0.8 | 0.0 | 0.2 | 0.5 | 1.7 |\n| midbrain | 0.5 | 6.1 | 1.9 | 27.6 | 1.7 | 0.1 | 10.1 | 2.0 | 0.6 | 1.4 | 1.6 | 0.4 | 0.2 | 0.1 | 6.7 |\n| pons | 0.3 | 3.1 | 0.9 | 0.1 | 0.0 | 0.7 | 30.9 | 0.7 | 0.3 | 0.2 | 0.9 | 0.0 | 0.4 | 0.1 | 1.5 |\n| spinal cord | 0.1 | 0.2 | 3.2 | 0.0 | 0.0 | 0.1 | 1.4 | 0.2 | 0.1 | 0.2 | 2.2 | 0.0 | 0.5 | 0.1 | 1.1 |\n| thalamus | 0.5 | 109.8 | 16.5 | 36.0 | 3.6 | 0.1 | 23.6 | 0.2 | 1.1 | 0.4 | 1.1 | 0.1 | 0.3 | 0.8 | 3.5 |\n| white matter | 0.6 | 0.7 | 0.8 | 0.3 | 0.0 | 0.2 | 5.6 | 0.1 | 0.2 | 0.1 | 1.4 | 0.1 | 0.3 | 0.3 | 2.4 |\n\n## Step 4 — Highest consensus nTPM tissue **outside the brain** (per gene)\n\nFrom `rna_tissue_consensus`, excluding `Organ = 'Brain'`:\n\n| Gene | Top non-brain tissue | Consensus nTPM |\n|---|---|---|\n| MYL2 | heart muscle | 27634.5 |\n| GAL | pituitary gland | 957.4 |\n| NPVF | retina | 204.2 |\n| NR5A1 | adrenal gland | 182.1 |\n| PRG4 | liver | 173.7 |\n| HDC | epididymis | 43.4 |\n| OXT | liver | 19.1 |\n| GHRH | heart muscle | 11.7 |\n| AVP | pituitary gland | 5.8 |\n| FEZF1 | testis | 4.2 |\n| NKX2-4 | testis | 1.1 |\n| BSX | testis | 0.2 |\n| MC3R | testis | 0.1 |\n| HCRT | adipose tissue | 0.1 |\n| GSX1 | adipose tissue | 0.0 |\n\n## Step 5 — Main subcellular locations of the cohort (the 15 genes)\n\nFrom `proteinatlas.\"Subcellular main location\"`:\n\n| Main location | Count | Genes |\n|---|---|---|\n| (none reported) | 8 | AVP, OXT, NPVF, PRG4, GHRH, MC3R, HCRT, BSX |\n| Golgi apparatus | 2 | GAL, GSX1 |\n| Nucleoplasm | 2 | NR5A1, FEZF1 |\n| Nuclear bodies | 2",
+   "tool_uses": []
+  }
+ ],
+ "tool_calls": [
+  {
+   "turn": 1,
+   "name": "schema",
+   "input": {},
+   "ms": 46163,
+   "result_chars": 148152,
+   "truncated": true,
+   "error": null,
+   "result_head": "Tables built from the Human Protein Atlas bulk files (all columns are text; cast for arithmetic, e.g. TRY_CAST(col AS DOUBLE)).\n\nblood_immunoassay_concentration (0.1 MB): gene, ENSG ID, conc [pg/L], sample type, number_of_samples, pubmed id\nblood_ms_concentration (0.1 MB): Gene, ENSG ID, Conc [pg/L]\nblood_pea_disease_de (17.9 MB): Gene, ENSG ID, Disease, Class, Control, logFC, p-value adjusted, Seeds, Mean importance, SD importance, Max importance, Min importance\nblood_pea_diseases (0.0 MB): Disease, Class\ncancer_cancers (0.0 MB): Cancer, Organ\ncancer_cptac (5.7 MB): Cancer, Gene, Gene name, p"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"RNA brain regional specificity\", COUNT(*) FROM proteinatlas GROUP BY 1"
+   },
+   "ms": 755,
+   "result_chars": 158,
+   "truncated": false,
+   "error": null,
+   "result_head": "RNA brain regional specificity\tcount_star()\nGroup enriched\t186\nNot detected\t2330\nRegion enriched\t409\nLow region specificity\t16768\nRegion enhanced\t469\n[5 rows]"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT * FROM proteinatlas WHERE \"RNA brain regional specificity\" = 'Region enriched' LIMIT 5"
+   },
+   "ms": 911,
+   "result_chars": 14897,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tGene synonym\tEnsembl\tGene description\tUniprot\tChromosome\tPosition\tProtein class\tBiological process\tMolecular function\tDisease involvement\tEvidence\tHPA evidence\tUniProt evidence\tNeXtProt evidence\tRNA tissue specificity\tRNA tissue distribution\tRNA tissue specificity score\tRNA tissue specific nTPM\tRNA single cell type specificity\tRNA single cell type distribution\tRNA single cell type specificity score\tRNA single cell type specific nCPM\tRNA single cell type group specificity\tRNA single cell type group distribution\tRNA single cell type group specificity score\tRNA single cell type group specifi"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT * FROM rna_brain_region_hpa_brain_regions"
+   },
+   "ms": 19,
+   "result_chars": 188,
+   "truncated": false,
+   "error": null,
+   "result_head": "Brain region\namygdala\nbasal ganglia\ncerebellum\ncerebral cortex\nchoroid plexus\nhippocampal formation\nhypothalamus\nmedulla oblongata\nmidbrain\npons\nspinal cord\nthalamus\nwhite matter\n[13 rows]"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT * FROM rna_brain_region_hpa LIMIT 3"
+   },
+   "ms": 117,
+   "result_chars": 190,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tGene name\tBrain region\tTPM\tpTPM\tnTPM\nENSG00000000003\tTSPAN6\tamygdala\t4.5\t6.1\t7.0\nENSG00000000003\tTSPAN6\tbasal ganglia\t6.8\t10.2\t7.6\nENSG00000000003\tTSPAN6\tcerebellum\t6.5\t9.2\t7.2\n[3 rows]"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "SELECT Gene, \"RNA brain regional distribution\", \"RNA brain regional specificity score\", \"RNA brain regional specific nTPM\"\nFROM proteinatlas\nWHERE \"RNA brain regional specificity\" = 'Region enriched'\nAND \"RNA brain regional specific nTPM\" LIKE '%hypothalamus%'"
+   },
+   "ms": 802,
+   "result_chars": 1797,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tRNA brain regional distribution\tRNA brain regional specificity score\tRNA brain regional specific nTPM\nISL1\tDetected in many\t6\thypothalamus: 24.2\nGAL\tDetected in all\t13\thypothalamus: 1423.8\nPGR\tDetected in all\t5\thypothalamus: 19.4\nGZMB\tDetected in some\t9\thypothalamus: 14.2\nAVP\tDetected in many\t76\thypothalamus: 15977.0\nOXT\tDetected in many\t144\thypothalamus: 2524.3\nNOMO1\tDetected in all\t5\thypothalamus: 14.0\nCLC\tDetected in single\t4\thypothalamus: 1.7\nNPVF\tDetected in single\t15\thypothalamus: 7.3\nMYL2\tDetected in some\t6\thypothalamus: 12.4\nPOMC\tDetected in all\t9\thypothalamus: 68.4\nPRG4\tDetected "
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"RNA brain regional specificity\", COUNT(*) FROM proteinatlas\nWHERE \"RNA brain regional specific nTPM\" LIKE '%hypothalamus%' GROUP BY 1"
+   },
+   "ms": 853,
+   "result_chars": 108,
+   "truncated": false,
+   "error": null,
+   "result_head": "RNA brain regional specificity\tcount_star()\nRegion enriched\t38\nGroup enriched\t33\nRegion enhanced\t39\n[3 rows]"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "WITH genes AS (\n  SELECT Gene, \"Gene name\" FROM proteinatlas\n  WHERE \"RNA brain regional specificity\" = 'Region enriched'\n  AND \"RNA brain regional specific nTPM\" LIKE '%hypothalamus%'\n),\nhyp AS (\n  SELECT Gene, TRY_CAST(nTPM AS DOUBLE) AS ntpm FROM rna_brain_region_hpa WHERE \"Brain region\"='hypothalamus'\n),\nctx AS (\n  SELECT Gene, TRY_CAST(nTPM AS DOUBLE) AS ntpm FROM rna_brain_region_hpa WHERE \"Brain region\"='cerebral cortex'\n)\nSELECT g.\"Gene name\", hyp.ntpm AS hypo_ntpm, ctx.ntpm AS ctx_ntpm, ROUND(hyp.ntpm/ctx.ntpm,3) AS ratio\nFROM genes g\nJOIN hyp ON hyp.Gene=g.Gene\nJOIN ctx ON ctx.Gene=g.Gene\nORDER BY ratio DESC"
+   },
+   "ms": 326,
+   "result_chars": 330,
+   "truncated": false,
+   "error": "tool reported an error",
+   "result_head": "Error: Binder Error: Referenced column \"Gene name\" not found in FROM clause!\nCandidate bindings: \"Gene\", \"Gene synonym\", \"Gene description\", \"Cancer prognostics - Rectum Adenocarcinoma (TCGA)\", \"Cancer prognostics - Rectum Adenocarcinoma (validation)\"\n\nLINE 2:   SELECT Gene, \"Gene name\" FROM proteinatlas\n                       ^"
+  },
+  {
+   "turn": 5,
+   "name": "sql",
+   "input": {
+    "query": "WITH genes AS (\n  SELECT Gene AS ensg, Gene_name FROM (\n     SELECT Gene, \"Gene name\" AS Gene_name FROM proteinatlas\n     WHERE \"RNA brain regional specificity\" = 'Region enriched'\n     AND \"RNA brain regional specific nTPM\" LIKE '%hypothalamus%'\n  )\n),\nhyp AS (\n  SELECT Gene, TRY_CAST(nTPM AS DOUBLE) AS ntpm FROM rna_brain_region_hpa WHERE \"Brain region\"='hypothalamus'\n),\nctx AS (\n  SELECT Gene, TRY_CAST(nTPM AS DOUBLE) AS ntpm FROM rna_brain_region_hpa WHERE \"Brain region\"='cerebral cortex'\n)\nSELECT g.Gene_name, hyp.ntpm AS hypo_ntpm, ctx.ntpm AS ctx_ntpm, ROUND(hyp.ntpm/NULLIF(ctx.ntpm,0),3) AS ratio\nFROM genes g\nJOIN hyp ON hyp.Gene=g.ensg\nJOIN ctx ON ctx.Gene=g.ensg\nORDER BY ratio DESC"
+   },
+   "ms": 346,
+   "result_chars": 349,
+   "truncated": false,
+   "error": "tool reported an error",
+   "result_head": "Error: Binder Error: Referenced column \"Gene name\" not found in FROM clause!\nCandidate bindings: \"Gene\", \"Gene synonym\", \"Gene description\", \"Cancer prognostics - Rectum Adenocarcinoma (TCGA)\", \"Cancer prognostics - Rectum Adenocarcinoma (validation)\"\n\nLINE 3:      SELECT Gene, \"Gene name\" AS Gene_name FROM proteinatlas\n                          ^"
+  },
+  {
+   "turn": 6,
+   "name": "sql",
+   "input": {
+    "query": "WITH genes AS (\n  SELECT Gene AS sym, Ensembl AS ensg FROM proteinatlas\n  WHERE \"RNA brain regional specificity\" = 'Region enriched'\n  AND \"RNA brain regional specific nTPM\" LIKE '%hypothalamus%'\n),\nhyp AS (\n  SELECT Gene, TRY_CAST(nTPM AS DOUBLE) AS ntpm FROM rna_brain_region_hpa WHERE \"Brain region\"='hypothalamus'\n),\nctx AS (\n  SELECT Gene, TRY_CAST(nTPM AS DOUBLE) AS ntpm FROM rna_brain_region_hpa WHERE \"Brain region\"='cerebral cortex'\n)\nSELECT g.sym, hyp.ntpm AS hypo_ntpm, ctx.ntpm AS ctx_ntpm, ROUND(hyp.ntpm/NULLIF(ctx.ntpm,0),3) AS ratio\nFROM genes g\nJOIN hyp ON hyp.Gene=g.ensg\nJOIN ctx ON ctx.Gene=g.ensg\nORDER BY ratio DESC"
+   },
+   "ms": 1858,
+   "result_chars": 792,
+   "truncated": false,
+   "error": null,
+   "result_head": "sym\thypo_ntpm\tctx_ntpm\tratio\nGHRH\t428.5\t0.5\t857\nHCRT\t901.9\t1.1\t819.909\nOXT\t2524.3\t3.3\t764.939\nHDC\t227.7\t0.6\t379.5\nBSX\t24.3\t0.1\t243\nNR5A1\t37.9\t0.3\t126.333\nGAL\t1423.8\t11.3\t126\nMYL2\t12.4\t0.1\t124\nNKX2-4\t8.8\t0.1\t88\nMC3R\t31.3\t0.4\t78.25\nAVP\t15977\t210.3\t75.972\nNPVF\t7.3\t0.1\t73\nPRG4\t66.4\t1\t66.4\nGSX1\t15.6\t0.3\t52\nFEZF1\t270.1\t5.5\t49.109\nAGRP\t255.7\t7\t36.529\nGZMB\t14.2\t0.5\t28.4\nGHSR\t32.7\t1.4\t23.357\nPOMC\t68.4\t3\t22.8\nCLC\t1.7\t0.1\t17\nNPY\t885.4\t53.7\t16.488\nKISS1\t19.3\t1.3\t14.846\nADGRF4\t4.1\t0.3\t13.667\nSHISAL2A\t18.1\t1.4\t12.929\nPGR\t19.4\t1.6\t12.125\nRADX\t54.2\t5.5\t9.855\nSOX3\t9.5\t1\t9.5\nZCCHC12\t631.4\t68.3\t9.245\nNR0B1\t10.7\t"
+  },
+  {
+   "turn": 7,
+   "name": "sql",
+   "input": {
+    "query": "WITH genes AS (\n  SELECT Gene AS sym, Ensembl AS ensg FROM proteinatlas\n  WHERE \"RNA brain regional specificity\" = 'Region enriched'\n  AND \"RNA brain regional specific nTPM\" LIKE '%hypothalamus%'\n),\nr AS (\n SELECT h.\"Brain region\", g.sym, h.nTPM FROM rna_brain_region_hpa h JOIN genes g ON g.ensg=h.Gene\n)\nSELECT \"Brain region\",\n MAX(CASE WHEN sym='GHRH' THEN nTPM END) AS GHRH,\n MAX(CASE WHEN sym='HCRT' THEN nTPM END) AS HCRT,\n MAX(CASE WHEN sym='OXT' THEN nTPM END) AS OXT,\n MAX(CASE WHEN sym='HDC' THEN nTPM END) AS HDC,\n MAX(CASE WHEN sym='BSX' THEN nTPM END) AS BSX,\n MAX(CASE WHEN sym='NR5A1' THEN nTPM END) AS NR5A1,\n MAX(CASE WHEN sym='GAL' THEN nTPM END) AS GAL,\n MAX(CASE WHEN sym='MYL2' THEN nTPM END) AS MYL2,\n MAX(CASE WHEN sym='NKX2-4' THEN nTPM END) AS \"NKX2-4\",\n MAX(CASE WHEN sym='MC3R' THEN nTPM END) AS MC3R,\n MAX(CASE WHEN sym='AVP' THEN nTPM END) AS AVP,\n MAX(CASE WHEN sym='NPVF' THEN nTPM END) AS NPVF,\n MAX(CASE WHEN sym='PRG4' THEN nTPM END) AS PRG4,\n MAX(CASE WHEN sym='GSX1' THEN nTPM END) AS GSX1,\n MAX(CASE WHEN sym='FEZF1' THEN nTPM END) AS FEZF1\nFROM r GROUP BY \"Brain region\" ORDER BY \"Brain region\""
+   },
+   "ms": 1950,
+   "result_chars": 1083,
+   "truncated": false,
+   "error": null,
+   "result_head": "Brain region\tGHRH\tHCRT\tOXT\tHDC\tBSX\tNR5A1\tGAL\tMYL2\tNKX2-4\tMC3R\tAVP\tNPVF\tPRG4\tGSX1\tFEZF1\namygdala\t0.3\t0.7\t1.1\t0.2\t0.1\t0.3\t5.2\t0.1\t0.1\t3.0\t17.4\t0.0\t0.1\t0.4\t6.4\nbasal ganglia\t0.7\t3.5\t17.5\t12.6\t1.2\t0.2\t6.1\t0.0\t0.3\t1.6\t50.4\t0.0\t0.2\t0.7\t7.1\ncerebellum\t0.3\t0.7\t1.5\t0.2\t0.1\t0.3\t2.4\t0.0\t0.0\t0.0\t2.9\t0.0\t1.0\t0.1\t1.0\ncerebral cortex\t0.5\t1.1\t3.3\t0.6\t0.1\t0.3\t11.3\t0.1\t0.1\t0.4\t210.3\t0.1\t1.0\t0.3\t5.5\nchoroid plexus\t0.0\t0.1\t2.1\t1.8\t0.1\t0.0\t1.8\t0.0\t0.0\t0.0\t1.1\t0.0\t8.4\t0.1\t0.8\nhippocampal formation\t0.4\t0.4\t0.8\t0.6\t0.0\t0.4\t4.8\t0.0\t0.0\t1.6\t2.6\t0.0\t0.1\t0.3\t1.4\nhypothalamus\t428.5\t901.9\t2524.3\t227.7\t24.3\t37.9\t1423.8\t12.4"
+  },
+  {
+   "turn": 7,
+   "name": "sql",
+   "input": {
+    "query": "SELECT DISTINCT Organ FROM rna_tissue_consensus_tissues ORDER BY 1"
+   },
+   "ms": 90,
+   "result_chars": 311,
+   "truncated": false,
+   "error": null,
+   "result_head": "Organ\nBone marrow & Lymphoid tissues\nBrain\nBreast & female reproductive system\nConnective & Soft tissue\nEndocrine tissues\nEye\nGastrointestinal tract\nKidney & Urinary bladder\nLiver & Gallbladder\nMale reproductive system\nMuscle & Vascular tissue\nPancreas\nProximal digestive tract\nRespiratory system\nSkin\n[15 rows]"
+  },
+  {
+   "turn": 7,
+   "name": "sql",
+   "input": {
+    "query": "SELECT Gene, \"Subcellular main location\", \"Subcellular additional location\" FROM proteinatlas\nWHERE Gene IN ('GHRH','HCRT','OXT','HDC','BSX','NR5A1','GAL','MYL2','NKX2-4','MC3R','AVP','NPVF','PRG4','GSX1','FEZF1')"
+   },
+   "ms": 1157,
+   "result_chars": 310,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tSubcellular main location\tSubcellular additional location\nGAL\tGolgi apparatus\tVesicles\nAVP\t\t\nOXT\t\t\nNPVF\t\t\nNR5A1\tNucleoplasm\tCytosol\nHDC\tNuclear bodies\t\nMYL2\tMicrotubules\t\nPRG4\t\t\nGHRH\t\t\nMC3R\t\t\nNKX2-4\tNuclear bodies\t\nFEZF1\tNucleoplasm\tCytosol\nHCRT\t\t\nGSX1\tGolgi apparatus\tNucleoplasm, Cytosol\nBSX\t\t\n[15 rows]"
+  },
+  {
+   "turn": 8,
+   "name": "sql",
+   "input": {
+    "query": "SELECT * FROM rna_tissue_consensus LIMIT 3"
+   },
+   "ms": 263,
+   "result_chars": 156,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tGene name\tTissue\tnTPM\nENSG00000000003\tTSPAN6\tadipose tissue\t20.1\nENSG00000000003\tTSPAN6\tadrenal gland\t13.3\nENSG00000000003\tTSPAN6\tamygdala\t8.7\n[3 rows]"
+  },
+  {
+   "turn": 8,
+   "name": "sql",
+   "input": {
+    "query": "WITH genes AS (\n  SELECT Gene AS sym, Ensembl AS ensg FROM proteinatlas\n  WHERE \"RNA brain regional specificity\" = 'Region enriched'\n  AND \"RNA brain regional specific nTPM\" LIKE '%hypothalamus%'\n),\nfifteen AS (SELECT * FROM genes WHERE sym IN ('GHRH','HCRT','OXT','HDC','BSX','NR5A1','GAL','MYL2','NKX2-4','MC3R','AVP','NPVF','PRG4','GSX1','FEZF1')),\nt AS (\n SELECT c.Gene AS ensg, c.Tissue, TRY_CAST(c.nTPM AS DOUBLE) AS ntpm\n FROM rna_tissue_consensus c\n JOIN rna_tissue_consensus_tissues t ON t.Tissue=c.Tissue\n WHERE t.Organ <> 'Brain'\n),\nranked AS (\n SELECT f.sym, t.Tissue, t.ntpm, ROW_NUMBER() OVER (PARTITION BY f.sym ORDER BY t.ntpm DESC) rn\n FROM fifteen f JOIN t ON t.ensg=f.ensg\n)\nSELECT sym, Tissue, ntpm FROM ranked WHERE rn=1 ORDER BY ntpm DESC"
+   },
+   "ms": 2193,
+   "result_chars": 332,
+   "truncated": false,
+   "error": null,
+   "result_head": "sym\tTissue\tntpm\nMYL2\theart muscle\t27634.5\nGAL\tpituitary gland\t957.4\nNPVF\tretina\t204.2\nNR5A1\tadrenal gland\t182.1\nPRG4\tliver\t173.7\nHDC\tepididymis\t43.4\nOXT\tliver\t19.1\nGHRH\theart muscle\t11.7\nAVP\tpituitary gland\t5.8\nFEZF1\ttestis\t4.2\nNKX2-4\ttestis\t1.1\nBSX\ttestis\t0.2\nMC3R\ttestis\t0.1\nHCRT\tadipose tissue\t0.1\nGSX1\tadipose tissue\t0\n[15 rows]"
+  },
+  {
+   "turn": 9,
+   "name": "sql",
+   "input": {
+    "query": "SELECT Gene, \"Subcellular location\", \"Subcellular main location\", \"Secretome location\"\nFROM proteinatlas\nWHERE Gene IN ('GHRH','HCRT','OXT','HDC','BSX','NR5A1','GAL','MYL2','NKX2-4','MC3R','AVP','NPVF','PRG4','GSX1','FEZF1')\nORDER BY Gene"
+   },
+   "ms": 830,
+   "result_chars": 578,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tSubcellular location\tSubcellular main location\tSecretome location\nAVP\t\t\tSecreted to blood\nBSX\t\t\t\nFEZF1\tNucleoplasm,Cytosol\tNucleoplasm\t\nGAL\tGolgi apparatus,Vesicles\tGolgi apparatus\tSecreted to blood\nGHRH\t\t\tSecreted in other tissues\nGSX1\tNucleoplasm,Golgi apparatus,Cytosol\tGolgi apparatus\t\nHCRT\t\t\tSecreted to blood\nHDC\tNuclear bodies\tNuclear bodies\t\nMC3R\t\t\t\nMYL2\tMicrotubules\tMicrotubules\t\nNKX2-4\tNuclear bodies\tNuclear bodies\t\nNPVF\t\t\tSecreted in other tissues\nNR5A1\tNucleoplasm,Cytosol\tNucleoplasm\t\nOXT\t\t\tSecreted to blood\nPRG4\t\t\tSecreted to extracellular matrix\n[15 rows]"
+  },
+  {
+   "turn": 9,
+   "name": "sql",
+   "input": {
+    "query": "WITH genes AS (\n  SELECT Gene AS sym FROM proteinatlas\n  WHERE \"RNA brain regional specificity\" = 'Region enriched'\n  AND \"RNA brain regional specific nTPM\" LIKE '%hypothalamus%'\n)\nSELECT COALESCE(NULLIF(\"Subcellular main location\",''),'Not detected / no main location') AS loc, COUNT(*) \nFROM proteinatlas p JOIN genes g ON g.sym=p.Gene\nGROUP BY 1 ORDER BY 2 DESC"
+   },
+   "ms": 3751,
+   "result_chars": 230,
+   "truncated": false,
+   "error": null,
+   "result_head": "loc\tcount_star()\nNot detected / no main location\t18\nNucleoplasm\t5\nGolgi apparatus\t3\nNuclear bodies\t3\nNuclear speckles\t2\nVesicles\t2\nEndoplasmic reticulum\t1\nMicrotubules\t1\nMitochondria\t1\nGolgi apparatus, Vesicles\t1\nCalyx\t1\n[11 rows]"
+  }
+ ],
+ "usage": {
+  "input_tokens": 134464,
+  "output_tokens": 10990,
+  "cache_read_input_tokens": 119680,
+  "cache_creation_input_tokens": 0,
+  "reasoning_tokens": 5683
+ },
+ "started_unix_ms": 1789267837380,
+ "final_answer": "I now have all the data needed. Here's the complete analysis.\n\n## Step 1 — Selecting the cohort\n\nUsing `proteinatlas`, genes with **\"RNA brain regional specificity\" = 'Region enriched'** whose enriched region is the **hypothalamus** (`\"RNA brain regional specific nTPM\"` lists `hypothalamus: …`) = **38 genes**.\n\n## Step 2 — Hypothalamus : cerebral cortex nTPM ratio\n\nUsing `rna_brain_region_hpa` (nTPM for `hypothalamus` and `cerebral cortex`), the ratio (hypo/ctx) for all 38 genes, sorted, gives the **fifteen highest**:\n\n| Rank | Gene | Hypothalamus nTPM | Cerebral cortex nTPM | Ratio |\n|---|---|---|---|---|\n| 1 | GHRH | 428.5 | 0.5 | 857.00 |\n| 2 | HCRT | 901.9 | 1.1 | 819.91 |\n| 3 | OXT | 2524.3 | 3.3 | 764.94 |\n| 4 | HDC | 227.7 | 0.6 | 379.50 |\n| 5 | BSX | 24.3 | 0.1 | 243.00 |\n| 6 | NR5A1 | 37.9 | 0.3 | 126.33 |\n| 7 | GAL | 1423.8 | 11.3 | 126.00 |\n| 8 | MYL2 | 12.4 | 0.1 | 124.00 |\n| 9 | NKX2-4 | 8.8 | 0.1 | 88.00 |\n| 10 | MC3R | 31.3 | 0.4 | 78.25 |\n| 11 | AVP | 15977.0 | 210.3 | 75.97 |\n| 12 | NPVF | 7.3 | 0.1 | 73.00 |\n| 13 | PRG4 | 66.4 | 1.0 | 66.40 |\n| 14 | GSX1 | 15.6 | 0.3 | 52.00 |\n| 15 | FEZF1 | 270.1 | 5.5 | 49.11 |\n\n**(Chart 1 — Bar chart of the fifteen highest ratios):** plot the Ratio column above in descending order (GHRH→FEZF1), bar heights 857 down to 49.1.\n\n## Step 3 — Heatmap data (those 15 genes × all 13 brain regions), nTPM\n\nRender on a **log scale** (0 values fall to the floor).\n\n| Region | GHRH | HCRT | OXT | HDC | BSX | NR5A1 | GAL | MYL2 | NKX2-4 | MC3R | AVP | NPVF | PRG4 | GSX1 | FEZF1 |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n| amygdala | 0.3 | 0.7 | 1.1 | 0.2 | 0.1 | 0.3 | 5.2 | 0.1 | 0.1 | 3.0 | 17.4 | 0.0 | 0.1 | 0.4 | 6.4 |\n| basal ganglia | 0.7 | 3.5 | 17.5 | 12.6 | 1.2 | 0.2 | 6.1 | 0.0 | 0.3 | 1.6 | 50.4 | 0.0 | 0.2 | 0.7 | 7.1 |\n| cerebellum | 0.3 | 0.7 | 1.5 | 0.2 | 0.1 | 0.3 | 2.4 | 0.0 | 0.0 | 0.0 | 2.9 | 0.0 | 1.0 | 0.1 | 1.0 |\n| cerebral cortex | 0.5 | 1.1 | 3.3 | 0.6 | 0.1 | 0.3 | 11.3 | 0.1 | 0.1 | 0.4 | 210.3 | 0.1 | 1.0 | 0.3 | 5.5 |\n| choroid plexus | 0.0 | 0.1 | 2.1 | 1.8 | 0.1 | 0.0 | 1.8 | 0.0 | 0.0 | 0.0 | 1.1 | 0.0 | 8.4 | 0.1 | 0.8 |\n| hippocampal formation | 0.4 | 0.4 | 0.8 | 0.6 | 0.0 | 0.4 | 4.8 | 0.0 | 0.0 | 1.6 | 2.6 | 0.0 | 0.1 | 0.3 | 1.4 |\n| **hypothalamus** | 428.5 | 901.9 | 2524.3 | 227.7 | 24.3 | 37.9 | 1423.8 | 12.4 | 8.8 | 31.3 | 15977.0 | 7.3 | 66.4 | 15.6 | 270.1 |\n| medulla oblongata | 0.1 | 0.6 | 0.9 | 0.2 | 0.0 | 0.2 | 107.1 | 1.3 | 0.3 | 0.2 | 0.8 | 0.0 | 0.2 | 0.5 | 1.7 |\n| midbrain | 0.5 | 6.1 | 1.9 | 27.6 | 1.7 | 0.1 | 10.1 | 2.0 | 0.6 | 1.4 | 1.6 | 0.4 | 0.2 | 0.1 | 6.7 |\n| pons | 0.3 | 3.1 | 0.9 | 0.1 | 0.0 | 0.7 | 30.9 | 0.7 | 0.3 | 0.2 | 0.9 | 0.0 | 0.4 | 0.1 | 1.5 |\n| spinal cord | 0.1 | 0.2 | 3.2 | 0.0 | 0.0 | 0.1 | 1.4 | 0.2 | 0.1 | 0.2 | 2.2 | 0.0 | 0.5 | 0.1 | 1.1 |\n| thalamus | 0.5 | 109.8 | 16.5 | 36.0 | 3.6 | 0.1 | 23.6 | 0.2 | 1.1 | 0.4 | 1.1 | 0.1 | 0.3 | 0.8 | 3.5 |\n| white matter | 0.6 | 0.7 | 0.8 | 0.3 | 0.0 | 0.2 | 5.6 | 0.1 | 0.2 | 0.1 | 1.4 | 0.1 | 0.3 | 0.3 | 2.4 |\n\n## Step 4 — Highest consensus nTPM tissue **outside the brain** (per gene)\n\nFrom `rna_tissue_consensus`, excluding `Organ = 'Brain'`:\n\n| Gene | Top non-brain tissue | Consensus nTPM |\n|---|---|---|\n| MYL2 | heart muscle | 27634.5 |\n| GAL | pituitary gland | 957.4 |\n| NPVF | retina | 204.2 |\n| NR5A1 | adrenal gland | 182.1 |\n| PRG4 | liver | 173.7 |\n| HDC | epididymis | 43.4 |\n| OXT | liver | 19.1 |\n| GHRH | heart muscle | 11.7 |\n| AVP | pituitary gland | 5.8 |\n| FEZF1 | testis | 4.2 |\n| NKX2-4 | testis | 1.1 |\n| BSX | testis | 0.2 |\n| MC3R | testis | 0.1 |\n| HCRT | adipose tissue | 0.1 |\n| GSX1 | adipose tissue | 0.0 |\n\n## Step 5 — Main subcellular locations of the cohort (the 15 genes)\n\nFrom `proteinatlas.\"Subcellular main location\"`:\n\n| Main location | Count | Genes |\n|---|---|---|\n| (none reported) | 8 | AVP, OXT, NPVF, PRG4, GHRH, MC3R, HCRT, BSX |\n| Golgi apparatus | 2 | GAL, GSX1 |\n| Nucleoplasm | 2 | NR5A1, FEZF1 |\n| Nuclear bodies | 2 | HDC, NKX2-4 |\n| Microtubules | 1 | MYL2 |\n\n**(Chart 2 — Bar chart):** \"No main location\" = 8; Golgi apparatus = 2; Nucleoplasm = 2; Nuclear bodies = 2; Microtubules = 1. (Note: 8 of the 15 are secreted proteins — AVP, OXT, NPVF, GHRH, HCRT are \"Secreted to blood/other tissues\", PRG4 is secreted to ECM — so they have no intracellular main location.)\n\n## Consolidated table (the fifteen)\n\n| Gene | Hypo nTPM | Cortex nTPM | Ratio (hypo/ctx) | Top non-brain tissue (nTPM) | Main subcellular location |\n|---|---|---|---|---|---|\n| GHRH | 428.5 | 0.5 | 857.00 | heart muscle (11.7) | none (secreted) |\n| HCRT | 901.9 | 1.1 | 819.91 | adipose tissue (0.1) | none (secreted) |\n| OXT | 2524.3 | 3.3 | 764.94 | liver (19.1) | none (secreted) |\n| HDC | 227.7 | 0.6 | 379.50 | epididymis (43.4) | Nuclear bodies |\n| BSX | 24.3 | 0.1 | 243.00 | testis (0.2) | none |\n| NR5A1 | 37.9 | 0.3 | 126.33 | adrenal gland (182.1) | Nucleoplasm |\n| GAL | 1423.8 | 11.3 | 126.00 | pituitary gland (957.4) | Golgi apparatus |\n| MYL2 | 12.4 | 0.1 | 124.00 | heart muscle (27634.5) | Microtubules |\n| NKX2-4 | 8.8 | 0.1 | 88.00 | testis (1.1) | Nuclear bodies |\n| MC3R | 31.3 | 0.4 | 78.25 | testis (0.1) | none |\n| AVP | 15977.0 | 210.3 | 75.97 | pituitary gland (5.8) | none (secreted) |\n| NPVF | 7.3 | 0.1 | 73.00 | retina (204.2) | none (secreted) |\n| PRG4 | 66.4 | 1.0 | 66.40 | liver (173.7) | none (secreted) |\n| GSX1 | 15.6 | 0.3 | 52.00 | adipose tissue (0.0) | Golgi apparatus |\n| FEZF1 | 270.1 | 5.5 | 49.11 | testis (4.2) | Nucleoplasm |\n\n**Notes on method/limits:** Ratios use the HPA brain-region nTPM values (cell values with one decimal); the ratio for genes with cortex nTPM = 0 (only SIX6, outside the top 15) is undefined. \"Outside the brain\" was defined by the `Organ` label in `rna_tissue_consensus_tissues` (so pituitary gland → Endocrine tissues and retina → Eye count as non-brain). I cannot literally render the PNG images from this interface, so the two bar charts and the heatmap are given as the underlying values above.",
+ "stop": "stop",
+ "tool_call_count": 17,
+ "seconds": 111.965,
+ "model_calls": 10,
+ "cost_usd": 0.07534648
+}

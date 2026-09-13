@@ -1,0 +1,557 @@
+{
+ "id": "Q36",
+ "kind": "analysis",
+ "question": "Using HPA cell-line analysis scores, compare every PROGENy signature with every CytoSig signature across cell lines measured by both. For each signature pair use finite z-scores, require at least thirty shared cell lines, and calculate Spearman correlation without filtering on the supplied significance label. Report the number of eligible pairs and the ten largest absolute correlations, with signed rho and matched-cell-line count; break ties by PROGENy name then CytoSig name. For the strongest pair fit an ordinary least-squares line predicting CytoSig z-score from PROGENy z-score on the same matched lines. Report slope, intercept and R-squared, then the twelve cell lines with the largest absolute residual, ties alphabetically. Give their scores, prediction, residual and primary disease from the cell-line metadata, without exporting patient metadata. Draw the correlation heatmap and a score scatter of the twelve largest-residual cell lines with the fitted line, plus residual bars; supply the correlation matrix and the twelve-cell-line table and avoid treating correlated inferred signatures as proof of pathway causality. If a requested ranked list has fewer eligible members, return every eligible member and state the count.",
+ "model": "deepseek-flash",
+ "effort": "low",
+ "turns": [
+  {
+   "turn": 1,
+   "ms": 969,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 677,
+    "completion_tokens": 47,
+    "total_tokens": 724,
+    "prompt_tokens_details": {
+     "cached_tokens": 384
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 15
+    },
+    "prompt_cache_hit_tokens": 384,
+    "prompt_cache_miss_tokens": 293
+   },
+   "text": "I'll start by exploring the available tables and their columns.",
+   "tool_uses": [
+    {
+     "name": "schema",
+     "input": "{}"
+    }
+   ]
+  },
+  {
+   "turn": 2,
+   "ms": 1667,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 6303,
+    "completion_tokens": 164,
+    "total_tokens": 6467,
+    "prompt_tokens_details": {
+     "cached_tokens": 640
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 40
+    },
+    "prompt_cache_hit_tokens": 640,
+    "prompt_cache_miss_tokens": 5663
+   },
+   "text": "Let me explore the key table.",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT analysis_type, COUNT(*) n, COUNT(DISTINCT name) n_names, COUNT(DISTINCT cell_line) n_cells FROM cell_line_analysis_data GROUP BY analysis_type ORDER BY n DESC;\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT DISTINCT analysis_type FROM cell_line_analysis_data ORDER BY 1;\"}"
+    }
+   ]
+  },
+  {
+   "turn": 3,
+   "ms": 1761,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 6539,
+    "completion_tokens": 221,
+    "total_tokens": 6760,
+    "prompt_tokens_details": {
+     "cached_tokens": 6400
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 41
+    },
+    "prompt_cache_hit_tokens": 6400,
+    "prompt_cache_miss_tokens": 139
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT DISTINCT name FROM cell_line_analysis_data WHERE analysis_type='PROGENy' ORDER BY 1;\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT DISTINCT name FROM cell_line_analysis_data WHERE analysis_type='CytoSig' ORDER BY 1;\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT * FROM cell_line_analysis_data LIMIT 5;\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT DISTINCT significant FROM cell_line_analysis_data;\"}"
+    }
+   ]
+  },
+  {
+   "turn": 4,
+   "ms": 9089,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 7130,
+    "completion_tokens": 1834,
+    "total_tokens": 8964,
+    "prompt_tokens_details": {
+     "cached_tokens": 6656
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 1636
+    },
+    "prompt_cache_hit_tokens": 6656,
+    "prompt_cache_miss_tokens": 474
+   },
+   "text": "The key table is `cell_line_analysis_data`. Now let me check value quality and compute the pairwise Spearman correlations.",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT z_score FROM cell_line_analysis_data WHERE TRY_CAST(z_score AS DOUBLE) IS NULL AND z_score IS NOT NULL GROUP BY z_score LIMIT 20;\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT analysis_type, COUNT(*) total, COUNT(TRY_CAST(z_score AS DOUBLE)) finite FROM cell_line_analysis_data GROUP BY analysis_type;\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT COUNT(*) FROM (SELECT DISTINCT cell_line, analysis_type, name FROM cell_line_analysis_data);\"}"
+    }
+   ]
+  },
+  {
+   "turn": 5,
+   "ms": 2874,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 9041,
+    "completion_tokens": 691,
+    "total_tokens": 9732,
+    "prompt_tokens_details": {
+     "cached_tokens": 8832
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 46
+    },
+    "prompt_cache_hit_tokens": 8832,
+    "prompt_cache_miss_tokens": 209
+   },
+   "text": "All z-scores are finite and there are no duplicate (cell_line, analysis_type, name) rows. Now the pairwise Spearman computation:",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\": \"WITH p AS (\\n  SELECT cell_line, name AS pname, TRY_CAST(z_score AS DOUBLE) AS zp\\n  FROM cell_line_analysis_data WHERE analysis_type='PROGENy'\\n),\\nc AS (\\n  SELECT cell_line, name AS cname, TRY_CAST(z_score AS DOUBLE) AS zc\\n  FROM cell_line_analysis_data WHERE analysis_type='CytoSig'\\n),\\nm AS (\\n  SELECT p.pname, c.cname, p.cell_line, zp, zc\\n  FROM p JOIN c ON p.cell_line = c.cell_line\\n),\\nr AS (\\n  SELECT pname, cname,\\n    RANK() OVER (PARTITION BY pname,cname ORDER BY zp)\\n      + (COUNT(*) OVER (PARTITION BY pname,cname,zp) - 1)/2.0 AS rp,\\n    RANK() OVER (PARTITION BY pname,cname ORDER BY zc)\\n      + (COUNT(*) OVER (PARTITION BY pname,cname,zc) - 1)/2.0 AS rc\\n  FROM m\\n)\\nSELECT pname, cname, COUNT(*) AS n, corr(rp, rc) AS rho\\nFROM r\\nGROUP BY pname, cname\\nHAVING COUNT(*) >= 30\\nORDER BY ABS(corr(rp,rc)) DESC\\nLIMIT 15;\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\": \"WITH p AS (\\n  SELECT cell_line, name AS pname, TRY_CAST(z_score AS DOUBLE) AS zp\\n  FROM cell_line_analysis_data WHERE analysis_type='PROGENy'\\n),\\nc AS (\\n  SELECT cell_line, name AS cname, TRY_CAST(z_score AS DOUBLE) AS zc\\n  FROM cell_line_analysis_data WHERE analysis_type='CytoSig'\\n),\\nm AS (\\n  SELECT p.pname, c.cname, p.cell_line, zp, zc\\n  FROM p JOIN c ON p.cell_line = c.cell_line\\n),\\nr AS (\\n  SELECT pname, cname,\\n    RANK() OVER (PARTITION BY pname,cname ORDER BY zp)\\n      + (COUNT(*) OVER (PARTITION BY pname,cname,zp) - 1)/2.0 AS rp,\\n    RANK() OVER (PARTITION BY pname,cname ORDER BY zc)\\n      + (COUNT(*) OVER (PARTITION BY pname,cname,zc) - 1)/2.0 AS rc\\n  FROM m\\n)\\nSELECT COUNT(*) AS eligible_pairs FROM (\\n  SELECT pname, cname FROM r GROUP BY pname, cname HAVING COUNT(*) >= 30\\n) t;\"}"
+    }
+   ]
+  },
+  {
+   "turn": 6,
+   "ms": 5481,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 10064,
+    "completion_tokens": 1302,
+    "total_tokens": 11366,
+    "prompt_tokens_details": {
+     "cached_tokens": 9728
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 676
+    },
+    "prompt_cache_hit_tokens": 9728,
+    "prompt_cache_miss_tokens": 336
+   },
+   "text": "All 602 pairs are eligible (each has 1206 shared lines). Let me verify the minimum n and confirm no strongly negative pair would enter the top-10 by absolute value:",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\": \"WITH p AS (SELECT cell_line, name AS pname, TRY_CAST(z_score AS DOUBLE) zp FROM cell_line_analysis_data WHERE analysis_type='PROGENy'),\\nc AS (SELECT cell_line, name AS cname, TRY_CAST(z_score AS DOUBLE) zc FROM cell_line_analysis_data WHERE analysis_type='CytoSig'),\\nm AS (SELECT p.pname,c.cname,p.cell_line,zp,zc FROM p JOIN c ON p.cell_line=c.cell_line),\\nr AS (SELECT pname,cname,\\n   RANK() OVER (PARTITION BY pname,cname ORDER BY zp)+(COUNT(*) OVER (PARTITION BY pname,cname,zp)-1)/2.0 rp,\\n   RANK() OVER (PARTITION BY pname,cname ORDER BY zc)+(COUNT(*) OVER (PARTITION BY pname,cname,zc)-1)/2.0 rc FROM m)\\nSELECT MIN(n) min_n, MAX(n) max_n FROM (SELECT pname,cname,COUNT(*) n FROM r GROUP BY pname,cname);\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\": \"WITH p AS (SELECT cell_line, name AS pname, TRY_CAST(z_score AS DOUBLE) zp FROM cell_line_analysis_data WHERE analysis_type='PROGENy'),\\nc AS (SELECT cell_line, name AS cname, TRY_CAST(z_score AS DOUBLE) zc FROM cell_line_analysis_data WHERE analysis_type='CytoSig'),\\nm AS (SELECT p.pname,c.cname,p.cell_line,zp,zc FROM p JOIN c ON p.cell_line=c.cell_line),\\nr AS (SELECT pname,cname,\\n   RANK() OVER (PARTITION BY pname,cname ORDER BY zp)+(COUNT(*) OVER (PARTITION BY pname,cname,zp)-1)/2.0 rp,\\n   RANK() OVER (PARTITION BY pname,cname ORDER BY zc)+(COUNT(*) OVER (PARTITION BY pname,cname,zc)-1)/2.0 rc FROM m)\\nSELECT pname,cname,COUNT(*) n, corr(rp,rc) rho FROM r GROUP BY pname,cname ORDER BY rho ASC LIMIT 5;\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT COUNT(DISTINCT cell_line) FROM cell_line_analysis_data WHERE analysis_type='PROGENy';\\nSELECT COUNT(DISTINCT cell_line) FROM cell_line_analysis_data WHERE analysis_type='CytoSig';\"}"
+    }
+   ]
+  },
+  {
+   "turn": 7,
+   "ms": 2367,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 11536,
+    "completion_tokens": 349,
+    "total_tokens": 11885,
+    "prompt_tokens_details": {
+     "cached_tokens": 11264
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 125
+    },
+    "prompt_cache_hit_tokens": 11264,
+    "prompt_cache_miss_tokens": 272
+   },
+   "text": "All 602 pairs are eligible (n = 1206 each). Now the OLS fit for the strongest pair (TGFb → TGFB1):",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\": \"WITH p AS (SELECT cell_line, TRY_CAST(z_score AS DOUBLE) zp FROM cell_line_analysis_data WHERE analysis_type='PROGENy' AND name='TGFb'),\\nc AS (SELECT cell_line, TRY_CAST(z_score AS DOUBLE) zc FROM cell_line_analysis_data WHERE analysis_type='CytoSig' AND name='TGFB1'),\\nm AS (SELECT p.cell_line, zp, zc FROM p JOIN c USING(cell_line))\\nSELECT COUNT(*) n, regr_slope(zc,zp) slope, regr_intercept(zc,zp) intercept, regr_r2(zc,zp) r2,\\n       avg(zp) xbar, avg(zc) ybar FROM m;\"}"
+    }
+   ]
+  },
+  {
+   "turn": 8,
+   "ms": 2714,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 11963,
+    "completion_tokens": 526,
+    "total_tokens": 12489,
+    "prompt_tokens_details": {
+     "cached_tokens": 11776
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 277
+    },
+    "prompt_cache_hit_tokens": 11776,
+    "prompt_cache_miss_tokens": 187
+   },
+   "text": "Now the residuals and the twelve lines with the largest absolute residual (tie-break alphabetically):",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\": \"WITH p AS (SELECT cell_line, TRY_CAST(z_score AS DOUBLE) zp FROM cell_line_analysis_data WHERE analysis_type='PROGENy' AND name='TGFb'),\\nc AS (SELECT cell_line, TRY_CAST(z_score AS DOUBLE) zc FROM cell_line_analysis_data WHERE analysis_type='CytoSig' AND name='TGFB1'),\\nm AS (SELECT p.cell_line, zp, zc FROM p JOIN c USING(cell_line)),\\nf AS (SELECT cell_line, zp, zc, 4.163335025330625*zp + 0.7709464451483072 AS pred FROM m)\\nSELECT cell_line, zp AS progeny_tgfb, zc AS cytosig_tgfb1, pred,\\n       zc - pred AS residual, ABS(zc - pred) AS absres\\nFROM f ORDER BY absres DESC, cell_line ASC LIMIT 12;\"}"
+    }
+   ]
+  },
+  {
+   "turn": 9,
+   "ms": 1544,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 12984,
+    "completion_tokens": 169,
+    "total_tokens": 13153,
+    "prompt_tokens_details": {
+     "cached_tokens": 12416
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 33
+    },
+    "prompt_cache_hit_tokens": 12416,
+    "prompt_cache_miss_tokens": 568
+   },
+   "text": "Now the primary disease for these twelve cell lines from the metadata table:",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\": \"SELECT \\\"Cell line\\\", \\\"Primary disease\\\", \\\"Cancer cell line\\\" FROM rna_cell_lines\\nWHERE \\\"Cell line\\\" IN ('SALE','NCI-H650','OVSAHO','PrEC LH','T24','SNU-349','JHH-2','KYSE-520','CAL-51','NHAHTDD','NCE-G 61','IA-LM')\\nORDER BY \\\"Cell line\\\";\"}"
+    }
+   ]
+  },
+  {
+   "turn": 10,
+   "ms": 3245,
+   "stop_reason": "tool_calls",
+   "usage": {
+    "prompt_tokens": 13303,
+    "completion_tokens": 585,
+    "total_tokens": 13888,
+    "prompt_tokens_details": {
+     "cached_tokens": 13056
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 311
+    },
+    "prompt_cache_hit_tokens": 13056,
+    "prompt_cache_miss_tokens": 247
+   },
+   "text": "Now let me pull the full 602-pair correlation matrix:",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\": \"WITH p AS (SELECT cell_line, name AS pname, TRY_CAST(z_score AS DOUBLE) zp FROM cell_line_analysis_data WHERE analysis_type='PROGENy'),\\nc AS (SELECT cell_line, name AS cname, TRY_CAST(z_score AS DOUBLE) zc FROM cell_line_analysis_data WHERE analysis_type='CytoSig'),\\nm AS (SELECT p.pname,c.cname,p.cell_line,zp,zc FROM p JOIN c ON p.cell_line=c.cell_line),\\nr AS (SELECT pname,cname,\\n   RANK() OVER (PARTITION BY pname,cname ORDER BY zp)+(COUNT(*) OVER (PARTITION BY pname,cname,zp)-1)/2.0 rp,\\n   RANK() OVER (PARTITION BY pname,cname ORDER BY zc)+(COUNT(*) OVER (PARTITION BY pname,cname,zc)-1)/2.0 rc FROM m)\\nSELECT pname, cname, corr(rp,rc) rho FROM r GROUP BY pname,cname ORDER BY pname, cname;\"}"
+    }
+   ]
+  },
+  {
+   "turn": 11,
+   "ms": 69529,
+   "stop_reason": "stop",
+   "usage": {
+    "prompt_tokens": 23524,
+    "completion_tokens": 20501,
+    "total_tokens": 44025,
+    "prompt_tokens_details": {
+     "cached_tokens": 13824
+    },
+    "completion_tokens_details": {
+     "reasoning_tokens": 14778
+    },
+    "prompt_cache_hit_tokens": 13824,
+    "prompt_cache_miss_tokens": 9700
+   },
+   "text": "# PROGENy × CytoSig signature correlations (HPA cell-line analysis)\n\n## Method\n- Source: `cell_line_analysis_data` (`cell_line`, `analysis_type`, `name`, `z_score`, `significant`). PROGENy = 14 signatures, CytoSig = 43 signatures, 1,206 cell lines each; every `z_score` parses as a finite number and there are no duplicate (cell_line, type, name) rows.\n- For each PROGENy–CytoSig pair I kept only shared cell lines with finite z on both sides, computed average ranks (tie-corrected) within each pair, and took the Pearson correlation of those ranks = **Spearman rho**. The `significant` label was **not** used for filtering.\n\n**All 14 × 43 = 602 signature pairs are eligible** (every pair has the full 1,206 shared cell lines, i.e. min = max n = 1206 ≥ 30). So every requested ranked list is complete: 602 / 602 pairs, top‑10 of 10 present, 12 of 12 residuals present.\n\n## Ten largest |rho| pairs (all positive; tie-break by PROGENy then CytoSig)\n\n| # | PROGENy | CytoSig | n | rho |\n|---|---------|---------|---|-----|\n| 1 | TGFb | TGFB1 | 1206 | 0.874882 |\n| 2 | JAK-STAT | IFNG | 1206 | 0.820681 |\n| 3 | JAK-STAT | IFN1 | 1206 | 0.816118 |\n| 4 | JAK-STAT | IL27 | 1206 | 0.759324 |\n| 5 | NFkB | TNFA | 1206 | 0.754149 |\n| 6 | TNFa | TNFA | 1206 | 0.711563 |\n| 7 | NFkB | IL1A | 1206 | 0.706051 |\n| 8 | TGFb | GCSF | 1206 | 0.688814 |\n| 9 | TNFa | OSM | 1206 | 0.688141 |\n| 10 | TNFa | CXCL12 | 1206 | 0.684830 |\n\nThe largest negative correlation is TGFb–IL17A (rho = −0.586), so it does not enter the top‑10 by absolute value.\n\n## OLS fit for the strongest pair — CytoSig `TGFB1` from PROGENy `TGFb` (n = 1206)\n- **slope = 4.163335**\n- **intercept = 0.770946**\n- **R² = 0.760554**  (note: this is the raw-value OLS R², distinct from rho² = 0.76542 from the rank correlation)\n\n## Twelve cell lines with the largest |residual| (residual = TGFB1_z − prediction)\n\n| Cell line | PROGENy TGFb z | CytoSig TGFB1 z | prediction | residual | \\|residual\\| | Primary disease |\n|---|---|---|---|---|---|---|\n| SALE | −1.546 | 6.194 | −5.6656 | +11.8596 | 11.8596 | Non-cancerous |\n| NCI-H650 | −2.142 | 3.430 | −8.1469 | +11.5769 | 11.5769 | Lung cancer |\n| OVSAHO | 1.621 | −3.766 | 7.5197 | −11.2857 | 11.2857 | Ovarian cancer |\n| PrEC LH | −1.364 | 6.349 | −4.9078 | +11.2568 | 11.2568 | Non-cancerous |\n| T24 | −1.172 | 6.319 | −4.1085 | +10.4275 | 10.4275 | Bladder cancer |\n| SNU-349 | 1.546 | 17.463 | 7.2075 | +10.2555 | 10.2555 | Kidney cancer |\n| JHH-2 | 1.648 | 17.705 | 7.6321 | +10.0729 | 10.0729 | Liver cancer |\n| KYSE-520 | 2.461 | 1.015 | 11.0169 | −10.0019 | 10.0019 | Esophageal cancer |\n| CAL-51 | 1.515 | −2.862 | 7.0784 | −9.9404 | 9.9404 | Breast cancer |\n| NHAHTDD | 1.406 | 16.530 | 6.6246 | +9.9054 | 9.9054 | Non-cancerous |\n| NCE-G 61 | 1.005 | 14.582 | 4.9551 | +9.6269 | 9.6269 | Brain cancer |\n| IA-LM | −1.040 | 5.912 | −3.5589 | +9.4709 | 9.4709 | Lung cancer |\n\n(Only the disease field is taken from the cell-line metadata; no patient-identifying metadata is reported.)\n\n## Correlation matrix (14 PROGENy rows × 43 CytoSig columns, rho)\n\nCytoSig column order: Activin A, BDNF, BMP2, BMP4, BMP6, CD40L, CXCL12, EGF, FGF2, GCSF, GDF11, GMCSF, HGF, IFN1, IFNG, IFNL, IL10, IL12, IL13, IL15, IL17A, IL1A, IL1B, IL2, IL21, IL22, IL27, IL3, IL36, IL4, IL6, LIF, LTA, MCSF, NO, OSM, TGFB1, TGFB3, TNFA, TRAIL, TWEAK, VEGFA, WNT3A.\n\n```\nAndrogen  0.400 0.468 0.358 0.403-0.118 0.317 0.508 0.324 0.340 0.457 0.097 0.401 0.185 0.190 0.052-0.093-0.045-0.160 0.262 0.162-0.090 0.065-0.092 0.217 0.061 0.182-0.086 0.271-0.059-0.256 0.227 0.105 0.137 0.480 0.461 0.331 0.333 0.103 0.129-0.164-0.156 0.325 0.353\nEGFR      0.242 0.658 0.098 0.308-0.349 0.311 0.577 0.442 0.527 0.441-0.127 0.478 0.480 0.235 0.026 0.034-0.163-0.190 0.364 0.309-0.013 0.269-0.024 0.602 0.216 0.583-0.135 0.611 0.006-0.191 0.092-0.161 0.251 0.446 0.538 0.546 0.294-0.021 0.280-0.201 0.182 0.175 0.303\nEstrogen -0.010-0.136 0.099-0.123 0.322-0.037-0.093-0.254-0.116 0.000 0.015 0.113 0.027-0.345-0.368-0.190 0.03",
+   "tool_uses": []
+  }
+ ],
+ "tool_calls": [
+  {
+   "turn": 1,
+   "name": "schema",
+   "input": {},
+   "ms": 31313,
+   "result_chars": 148152,
+   "truncated": true,
+   "error": null,
+   "result_head": "Tables built from the Human Protein Atlas bulk files (all columns are text; cast for arithmetic, e.g. TRY_CAST(col AS DOUBLE)).\n\nblood_immunoassay_concentration (0.1 MB): gene, ENSG ID, conc [pg/L], sample type, number_of_samples, pubmed id\nblood_ms_concentration (0.1 MB): Gene, ENSG ID, Conc [pg/L]\nblood_pea_disease_de (17.9 MB): Gene, ENSG ID, Disease, Class, Control, logFC, p-value adjusted, Seeds, Mean importance, SD importance, Max importance, Min importance\nblood_pea_diseases (0.0 MB): Disease, Class\ncancer_cancers (0.0 MB): Cancer, Organ\ncancer_cptac (5.7 MB): Cancer, Gene, Gene name, p"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT analysis_type, COUNT(*) n, COUNT(DISTINCT name) n_names, COUNT(DISTINCT cell_line) n_cells FROM cell_line_analysis_data GROUP BY analysis_type ORDER BY n DESC;"
+   },
+   "ms": 292,
+   "result_chars": 84,
+   "truncated": false,
+   "error": null,
+   "result_head": "analysis_type\tn\tn_names\tn_cells\nCytoSig\t51858\t43\t1206\nPROGENy\t16884\t14\t1206\n[2 rows]"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT DISTINCT analysis_type FROM cell_line_analysis_data ORDER BY 1;"
+   },
+   "ms": 197,
+   "result_chars": 38,
+   "truncated": false,
+   "error": null,
+   "result_head": "analysis_type\nCytoSig\nPROGENy\n[2 rows]"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "SELECT DISTINCT name FROM cell_line_analysis_data WHERE analysis_type='PROGENy' ORDER BY 1;"
+   },
+   "ms": 291,
+   "result_chars": 98,
+   "truncated": false,
+   "error": null,
+   "result_head": "name\nAndrogen\nEGFR\nEstrogen\nHypoxia\nJAK-STAT\nMAPK\nNFkB\nPI3K\nTGFb\nTNFa\nTrail\nVEGF\nWNT\np53\n[14 rows]"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "SELECT DISTINCT name FROM cell_line_analysis_data WHERE analysis_type='CytoSig' ORDER BY 1;"
+   },
+   "ms": 215,
+   "result_chars": 235,
+   "truncated": false,
+   "error": null,
+   "result_head": "name\nActivin A\nBDNF\nBMP2\nBMP4\nBMP6\nCD40L\nCXCL12\nEGF\nFGF2\nGCSF\nGDF11\nGMCSF\nHGF\nIFN1\nIFNG\nIFNL\nIL10\nIL12\nIL13\nIL15\nIL17A\nIL1A\nIL1B\nIL2\nIL21\nIL22\nIL27\nIL3\nIL36\nIL4\nIL6\nLIF\nLTA\nMCSF\nNO\nOSM\nTGFB1\nTGFB3\nTNFA\nTRAIL\nTWEAK\nVEGFA\nWNT3A\n[43 rows]"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "SELECT * FROM cell_line_analysis_data LIMIT 5;"
+   },
+   "ms": 76,
+   "result_chars": 258,
+   "truncated": false,
+   "error": null,
+   "result_head": "cell_line\tanalysis_type\tname\tz_score\tsignificant\n143B\tCytoSig\tActivin A\t-4.401\tSignificant\n143B\tCytoSig\tBDNF\t1.921\tNon-significant\n143B\tCytoSig\tBMP2\t-1.017\tNon-significant\n143B\tCytoSig\tBMP4\t-15.032\tSignificant\n143B\tCytoSig\tBMP6\t1.045\tNon-significant\n[5 rows]"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "SELECT DISTINCT significant FROM cell_line_analysis_data;"
+   },
+   "ms": 296,
+   "result_chars": 48,
+   "truncated": false,
+   "error": null,
+   "result_head": "significant\nSignificant\nNon-significant\n[2 rows]"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "SELECT z_score FROM cell_line_analysis_data WHERE TRY_CAST(z_score AS DOUBLE) IS NULL AND z_score IS NOT NULL GROUP BY z_score LIMIT 20;"
+   },
+   "ms": 280,
+   "result_chars": 18,
+   "truncated": false,
+   "error": null,
+   "result_head": "(no rows)\n[0 rows]"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "SELECT analysis_type, COUNT(*) total, COUNT(TRY_CAST(z_score AS DOUBLE)) finite FROM cell_line_analysis_data GROUP BY analysis_type;"
+   },
+   "ms": 389,
+   "result_chars": 75,
+   "truncated": false,
+   "error": null,
+   "result_head": "analysis_type\ttotal\tfinite\nPROGENy\t16884\t16884\nCytoSig\t51858\t51858\n[2 rows]"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "SELECT COUNT(*) FROM (SELECT DISTINCT cell_line, analysis_type, name FROM cell_line_analysis_data);"
+   },
+   "ms": 408,
+   "result_chars": 27,
+   "truncated": false,
+   "error": null,
+   "result_head": "count_star()\n68742\n[1 rows]"
+  },
+  {
+   "turn": 5,
+   "name": "sql",
+   "input": {
+    "query": "WITH p AS (\n  SELECT cell_line, name AS pname, TRY_CAST(z_score AS DOUBLE) AS zp\n  FROM cell_line_analysis_data WHERE analysis_type='PROGENy'\n),\nc AS (\n  SELECT cell_line, name AS cname, TRY_CAST(z_score AS DOUBLE) AS zc\n  FROM cell_line_analysis_data WHERE analysis_type='CytoSig'\n),\nm AS (\n  SELECT p.pname, c.cname, p.cell_line, zp, zc\n  FROM p JOIN c ON p.cell_line = c.cell_line\n),\nr AS (\n  SELECT pname, cname,\n    RANK() OVER (PARTITION BY pname,cname ORDER BY zp)\n      + (COUNT(*) OVER (PARTITION BY pname,cname,zp) - 1)/2.0 AS rp,\n    RANK() OVER (PARTITION BY pname,cname ORDER BY zc)\n      + (COUNT(*) OVER (PARTITION BY pname,cname,zc) - 1)/2.0 AS rc\n  FROM m\n)\nSELECT pname, cname, COUNT(*) AS n, corr(rp, rc) AS rho\nFROM r\nGROUP BY pname, cname\nHAVING COUNT(*) >= 30\nORDER BY ABS(corr(rp,rc)) DESC\nLIMIT 15;"
+   },
+   "ms": 3333,
+   "result_chars": 550,
+   "truncated": false,
+   "error": null,
+   "result_head": "pname\tcname\tn\trho\nTGFb\tTGFB1\t1206\t0.8748824736426698\nJAK-STAT\tIFNG\t1206\t0.8206812556497841\nJAK-STAT\tIFN1\t1206\t0.8161184371972542\nJAK-STAT\tIL27\t1206\t0.7593239934257292\nNFkB\tTNFA\t1206\t0.7541487166858271\nTNFa\tTNFA\t1206\t0.7115629117859399\nNFkB\tIL1A\t1206\t0.7060505147780665\nTGFb\tGCSF\t1206\t0.6888144611620022\nTNFa\tOSM\t1206\t0.6881409602521906\nTNFa\tCXCL12\t1206\t0.6848295319604645\nTGFb\tBMP2\t1206\t0.6654706674373461\nEGFR\tBDNF\t1206\t0.6581926528622675\nTNFa\tIL1A\t1206\t0.655639929543323\nTGFb\tMCSF\t1206\t0.6485527276875522\nTGFb\tGMCSF\t1206\t0.640681950311393\n[15 rows]"
+  },
+  {
+   "turn": 5,
+   "name": "sql",
+   "input": {
+    "query": "WITH p AS (\n  SELECT cell_line, name AS pname, TRY_CAST(z_score AS DOUBLE) AS zp\n  FROM cell_line_analysis_data WHERE analysis_type='PROGENy'\n),\nc AS (\n  SELECT cell_line, name AS cname, TRY_CAST(z_score AS DOUBLE) AS zc\n  FROM cell_line_analysis_data WHERE analysis_type='CytoSig'\n),\nm AS (\n  SELECT p.pname, c.cname, p.cell_line, zp, zc\n  FROM p JOIN c ON p.cell_line = c.cell_line\n),\nr AS (\n  SELECT pname, cname,\n    RANK() OVER (PARTITION BY pname,cname ORDER BY zp)\n      + (COUNT(*) OVER (PARTITION BY pname,cname,zp) - 1)/2.0 AS rp,\n    RANK() OVER (PARTITION BY pname,cname ORDER BY zc)\n      + (COUNT(*) OVER (PARTITION BY pname,cname,zc) - 1)/2.0 AS rc\n  FROM m\n)\nSELECT COUNT(*) AS eligible_pairs FROM (\n  SELECT pname, cname FROM r GROUP BY pname, cname HAVING COUNT(*) >= 30\n) t;"
+   },
+   "ms": 7324,
+   "result_chars": 27,
+   "truncated": false,
+   "error": null,
+   "result_head": "eligible_pairs\n602\n[1 rows]"
+  },
+  {
+   "turn": 6,
+   "name": "sql",
+   "input": {
+    "query": "WITH p AS (SELECT cell_line, name AS pname, TRY_CAST(z_score AS DOUBLE) zp FROM cell_line_analysis_data WHERE analysis_type='PROGENy'),\nc AS (SELECT cell_line, name AS cname, TRY_CAST(z_score AS DOUBLE) zc FROM cell_line_analysis_data WHERE analysis_type='CytoSig'),\nm AS (SELECT p.pname,c.cname,p.cell_line,zp,zc FROM p JOIN c ON p.cell_line=c.cell_line),\nr AS (SELECT pname,cname,\n   RANK() OVER (PARTITION BY pname,cname ORDER BY zp)+(COUNT(*) OVER (PARTITION BY pname,cname,zp)-1)/2.0 rp,\n   RANK() OVER (PARTITION BY pname,cname ORDER BY zc)+(COUNT(*) OVER (PARTITION BY pname,cname,zc)-1)/2.0 rc FROM m)\nSELECT MIN(n) min_n, MAX(n) max_n FROM (SELECT pname,cname,COUNT(*) n FROM r GROUP BY pname,cname);"
+   },
+   "ms": 6733,
+   "result_chars": 30,
+   "truncated": false,
+   "error": null,
+   "result_head": "min_n\tmax_n\n1206\t1206\n[1 rows]"
+  },
+  {
+   "turn": 6,
+   "name": "sql",
+   "input": {
+    "query": "WITH p AS (SELECT cell_line, name AS pname, TRY_CAST(z_score AS DOUBLE) zp FROM cell_line_analysis_data WHERE analysis_type='PROGENy'),\nc AS (SELECT cell_line, name AS cname, TRY_CAST(z_score AS DOUBLE) zc FROM cell_line_analysis_data WHERE analysis_type='CytoSig'),\nm AS (SELECT p.pname,c.cname,p.cell_line,zp,zc FROM p JOIN c ON p.cell_line=c.cell_line),\nr AS (SELECT pname,cname,\n   RANK() OVER (PARTITION BY pname,cname ORDER BY zp)+(COUNT(*) OVER (PARTITION BY pname,cname,zp)-1)/2.0 rp,\n   RANK() OVER (PARTITION BY pname,cname ORDER BY zc)+(COUNT(*) OVER (PARTITION BY pname,cname,zc)-1)/2.0 rc FROM m)\nSELECT pname,cname,COUNT(*) n, corr(rp,rc) rho FROM r GROUP BY pname,cname ORDER BY rho ASC LIMIT 5;"
+   },
+   "ms": 4804,
+   "result_chars": 207,
+   "truncated": false,
+   "error": null,
+   "result_head": "pname\tcname\tn\trho\nTGFb\tIL17A\t1206\t-0.5863791416594547\nTrail\tGMCSF\t1206\t-0.5796270373771781\nTrail\tCXCL12\t1206\t-0.5296368195159862\nNFkB\tBMP6\t1206\t-0.5244395377745126\nTGFb\tIL12\t1206\t-0.5172607648934262\n[5 rows]"
+  },
+  {
+   "turn": 6,
+   "name": "sql",
+   "input": {
+    "query": "SELECT COUNT(DISTINCT cell_line) FROM cell_line_analysis_data WHERE analysis_type='PROGENy';\nSELECT COUNT(DISTINCT cell_line) FROM cell_line_analysis_data WHERE analysis_type='CytoSig';"
+   },
+   "ms": 404,
+   "result_chars": 39,
+   "truncated": false,
+   "error": null,
+   "result_head": "count(DISTINCT cell_line)\n1206\n[1 rows]"
+  },
+  {
+   "turn": 7,
+   "name": "sql",
+   "input": {
+    "query": "WITH p AS (SELECT cell_line, TRY_CAST(z_score AS DOUBLE) zp FROM cell_line_analysis_data WHERE analysis_type='PROGENy' AND name='TGFb'),\nc AS (SELECT cell_line, TRY_CAST(z_score AS DOUBLE) zc FROM cell_line_analysis_data WHERE analysis_type='CytoSig' AND name='TGFB1'),\nm AS (SELECT p.cell_line, zp, zc FROM p JOIN c USING(cell_line))\nSELECT COUNT(*) n, regr_slope(zc,zp) slope, regr_intercept(zc,zp) intercept, regr_r2(zc,zp) r2,\n       avg(zp) xbar, avg(zc) ybar FROM m;"
+   },
+   "ms": 404,
+   "result_chars": 140,
+   "truncated": false,
+   "error": null,
+   "result_head": "n\tslope\tintercept\tr2\txbar\tybar\n1206\t4.163335025330625\t0.7709464451483072\t0.7605543774875702\t-0.06510447761194013\t0.4998946932006634\n[1 rows]"
+  },
+  {
+   "turn": 8,
+   "name": "sql",
+   "input": {
+    "query": "WITH p AS (SELECT cell_line, TRY_CAST(z_score AS DOUBLE) zp FROM cell_line_analysis_data WHERE analysis_type='PROGENy' AND name='TGFb'),\nc AS (SELECT cell_line, TRY_CAST(z_score AS DOUBLE) zc FROM cell_line_analysis_data WHERE analysis_type='CytoSig' AND name='TGFB1'),\nm AS (SELECT p.cell_line, zp, zc FROM p JOIN c USING(cell_line)),\nf AS (SELECT cell_line, zp, zc, 4.163335025330625*zp + 0.7709464451483072 AS pred FROM m)\nSELECT cell_line, zp AS progeny_tgfb, zc AS cytosig_tgfb1, pred,\n       zc - pred AS residual, ABS(zc - pred) AS absres\nFROM f ORDER BY absres DESC, cell_line ASC LIMIT 12;"
+   },
+   "ms": 433,
+   "result_chars": 977,
+   "truncated": false,
+   "error": null,
+   "result_head": "cell_line\tprogeny_tgfb\tcytosig_tgfb1\tpred\tresidual\tabsres\nSALE\t-1.546\t6.194\t-5.665569504012839\t11.859569504012839\t11.859569504012839\nNCI-H650\t-2.142\t3.43\t-8.14691717910989\t11.57691717910989\t11.57691717910989\nOVSAHO\t1.621\t-3.766\t7.519712521209249\t-11.285712521209248\t11.285712521209248\nPrEC LH\t-1.364\t6.349\t-4.907842529402665\t11.256842529402665\t11.256842529402665\nT24\t-1.172\t6.319\t-4.108482204539185\t10.427482204539185\t10.427482204539185\nSNU-349\t1.546\t17.463\t7.207462394309453\t10.255537605690549\t10.255537605690549\nJHH-2\t1.648\t17.705\t7.632122566893176\t10.072877433106822\t10.072877433106822\nKYSE-520\t2."
+  },
+  {
+   "turn": 9,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"Cell line\", \"Primary disease\", \"Cancer cell line\" FROM rna_cell_lines\nWHERE \"Cell line\" IN ('SALE','NCI-H650','OVSAHO','PrEC LH','T24','SNU-349','JHH-2','KYSE-520','CAL-51','NHAHTDD','NCE-G 61','IA-LM')\nORDER BY \"Cell line\";"
+   },
+   "ms": 88,
+   "result_chars": 351,
+   "truncated": false,
+   "error": null,
+   "result_head": "Cell line\tPrimary disease\tCancer cell line\nCAL-51\tBreast cancer\tYes\nIA-LM\tLung cancer\tYes\nJHH-2\tLiver cancer\tYes\nKYSE-520\tEsophageal cancer\tYes\nNCE-G 61\tBrain cancer\tYes\nNCI-H650\tLung cancer\tYes\nNHAHTDD\tNon-cancerous\tNo\nOVSAHO\tOvarian cancer\tYes\nPrEC LH\tNon-cancerous\tNo\nSALE\tNon-cancerous\tNo\nSNU-349\tKidney cancer\tYes\nT24\tBladder cancer\tYes\n[12 rows]"
+  },
+  {
+   "turn": 10,
+   "name": "sql",
+   "input": {
+    "query": "WITH p AS (SELECT cell_line, name AS pname, TRY_CAST(z_score AS DOUBLE) zp FROM cell_line_analysis_data WHERE analysis_type='PROGENy'),\nc AS (SELECT cell_line, name AS cname, TRY_CAST(z_score AS DOUBLE) zc FROM cell_line_analysis_data WHERE analysis_type='CytoSig'),\nm AS (SELECT p.pname,c.cname,p.cell_line,zp,zc FROM p JOIN c ON p.cell_line=c.cell_line),\nr AS (SELECT pname,cname,\n   RANK() OVER (PARTITION BY pname,cname ORDER BY zp)+(COUNT(*) OVER (PARTITION BY pname,cname,zp)-1)/2.0 rp,\n   RANK() OVER (PARTITION BY pname,cname ORDER BY zc)+(COUNT(*) OVER (PARTITION BY pname,cname,zc)-1)/2.0 rc FROM m)\nSELECT pname, cname, corr(rp,rc) rho FROM r GROUP BY pname,cname ORDER BY pname, cname;"
+   },
+   "ms": 2835,
+   "result_chars": 18783,
+   "truncated": false,
+   "error": null,
+   "result_head": "pname\tcname\trho\nAndrogen\tActivin A\t0.3997483997690515\nAndrogen\tBDNF\t0.4677818941842877\nAndrogen\tBMP2\t0.35818077459424924\nAndrogen\tBMP4\t0.4025001451943403\nAndrogen\tBMP6\t-0.11769137831584864\nAndrogen\tCD40L\t0.3167859451193252\nAndrogen\tCXCL12\t0.5079548954543698\nAndrogen\tEGF\t0.32446533556833795\nAndrogen\tFGF2\t0.3404047137370273\nAndrogen\tGCSF\t0.45687166460235284\nAndrogen\tGDF11\t0.09662320314346531\nAndrogen\tGMCSF\t0.4008294267933669\nAndrogen\tHGF\t0.18457593071333386\nAndrogen\tIFN1\t0.19018156968827082\nAndrogen\tIFNG\t0.05248544822188169\nAndrogen\tIFNL\t-0.0931123019431758\nAndrogen\tIL10\t-0.04462056428288583\nAnd"
+  }
+ ],
+ "usage": {
+  "input_tokens": 113064,
+  "output_tokens": 26389,
+  "cache_read_input_tokens": 94976,
+  "cache_creation_input_tokens": 0,
+  "reasoning_tokens": 17978
+ },
+ "started_unix_ms": 1789268236244,
+ "final_answer": "# PROGENy × CytoSig signature correlations (HPA cell-line analysis)\n\n## Method\n- Source: `cell_line_analysis_data` (`cell_line`, `analysis_type`, `name`, `z_score`, `significant`). PROGENy = 14 signatures, CytoSig = 43 signatures, 1,206 cell lines each; every `z_score` parses as a finite number and there are no duplicate (cell_line, type, name) rows.\n- For each PROGENy–CytoSig pair I kept only shared cell lines with finite z on both sides, computed average ranks (tie-corrected) within each pair, and took the Pearson correlation of those ranks = **Spearman rho**. The `significant` label was **not** used for filtering.\n\n**All 14 × 43 = 602 signature pairs are eligible** (every pair has the full 1,206 shared cell lines, i.e. min = max n = 1206 ≥ 30). So every requested ranked list is complete: 602 / 602 pairs, top‑10 of 10 present, 12 of 12 residuals present.\n\n## Ten largest |rho| pairs (all positive; tie-break by PROGENy then CytoSig)\n\n| # | PROGENy | CytoSig | n | rho |\n|---|---------|---------|---|-----|\n| 1 | TGFb | TGFB1 | 1206 | 0.874882 |\n| 2 | JAK-STAT | IFNG | 1206 | 0.820681 |\n| 3 | JAK-STAT | IFN1 | 1206 | 0.816118 |\n| 4 | JAK-STAT | IL27 | 1206 | 0.759324 |\n| 5 | NFkB | TNFA | 1206 | 0.754149 |\n| 6 | TNFa | TNFA | 1206 | 0.711563 |\n| 7 | NFkB | IL1A | 1206 | 0.706051 |\n| 8 | TGFb | GCSF | 1206 | 0.688814 |\n| 9 | TNFa | OSM | 1206 | 0.688141 |\n| 10 | TNFa | CXCL12 | 1206 | 0.684830 |\n\nThe largest negative correlation is TGFb–IL17A (rho = −0.586), so it does not enter the top‑10 by absolute value.\n\n## OLS fit for the strongest pair — CytoSig `TGFB1` from PROGENy `TGFb` (n = 1206)\n- **slope = 4.163335**\n- **intercept = 0.770946**\n- **R² = 0.760554**  (note: this is the raw-value OLS R², distinct from rho² = 0.76542 from the rank correlation)\n\n## Twelve cell lines with the largest |residual| (residual = TGFB1_z − prediction)\n\n| Cell line | PROGENy TGFb z | CytoSig TGFB1 z | prediction | residual | \\|residual\\| | Primary disease |\n|---|---|---|---|---|---|---|\n| SALE | −1.546 | 6.194 | −5.6656 | +11.8596 | 11.8596 | Non-cancerous |\n| NCI-H650 | −2.142 | 3.430 | −8.1469 | +11.5769 | 11.5769 | Lung cancer |\n| OVSAHO | 1.621 | −3.766 | 7.5197 | −11.2857 | 11.2857 | Ovarian cancer |\n| PrEC LH | −1.364 | 6.349 | −4.9078 | +11.2568 | 11.2568 | Non-cancerous |\n| T24 | −1.172 | 6.319 | −4.1085 | +10.4275 | 10.4275 | Bladder cancer |\n| SNU-349 | 1.546 | 17.463 | 7.2075 | +10.2555 | 10.2555 | Kidney cancer |\n| JHH-2 | 1.648 | 17.705 | 7.6321 | +10.0729 | 10.0729 | Liver cancer |\n| KYSE-520 | 2.461 | 1.015 | 11.0169 | −10.0019 | 10.0019 | Esophageal cancer |\n| CAL-51 | 1.515 | −2.862 | 7.0784 | −9.9404 | 9.9404 | Breast cancer |\n| NHAHTDD | 1.406 | 16.530 | 6.6246 | +9.9054 | 9.9054 | Non-cancerous |\n| NCE-G 61 | 1.005 | 14.582 | 4.9551 | +9.6269 | 9.6269 | Brain cancer |\n| IA-LM | −1.040 | 5.912 | −3.5589 | +9.4709 | 9.4709 | Lung cancer |\n\n(Only the disease field is taken from the cell-line metadata; no patient-identifying metadata is reported.)\n\n## Correlation matrix (14 PROGENy rows × 43 CytoSig columns, rho)\n\nCytoSig column order: Activin A, BDNF, BMP2, BMP4, BMP6, CD40L, CXCL12, EGF, FGF2, GCSF, GDF11, GMCSF, HGF, IFN1, IFNG, IFNL, IL10, IL12, IL13, IL15, IL17A, IL1A, IL1B, IL2, IL21, IL22, IL27, IL3, IL36, IL4, IL6, LIF, LTA, MCSF, NO, OSM, TGFB1, TGFB3, TNFA, TRAIL, TWEAK, VEGFA, WNT3A.\n\n```\nAndrogen  0.400 0.468 0.358 0.403-0.118 0.317 0.508 0.324 0.340 0.457 0.097 0.401 0.185 0.190 0.052-0.093-0.045-0.160 0.262 0.162-0.090 0.065-0.092 0.217 0.061 0.182-0.086 0.271-0.059-0.256 0.227 0.105 0.137 0.480 0.461 0.331 0.333 0.103 0.129-0.164-0.156 0.325 0.353\nEGFR      0.242 0.658 0.098 0.308-0.349 0.311 0.577 0.442 0.527 0.441-0.127 0.478 0.480 0.235 0.026 0.034-0.163-0.190 0.364 0.309-0.013 0.269-0.024 0.602 0.216 0.583-0.135 0.611 0.006-0.191 0.092-0.161 0.251 0.446 0.538 0.546 0.294-0.021 0.280-0.201 0.182 0.175 0.303\nEstrogen -0.010-0.136 0.099-0.123 0.322-0.037-0.093-0.254-0.116 0.000 0.015 0.113 0.027-0.345-0.368-0.190 0.033 0.019 0.191 0.067-0.293-0.393-0.303-0.102-0.241-0.262-0.346-0.133-0.307 0.070-0.025 0.085 0.047 0.062-0.089-0.244 0.147 0.059-0.316-0.220-0.348 0.083 0.115\nHypoxia   0.301 0.126 0.341 0.285-0.062 0.267 0.410 0.100 0.198 0.387 0.177 0.382 0.356 0.102 0.034-0.136 0.221-0.107 0.048 0.212-0.331 0.131-0.072 0.172 0.084 0.100 0.042 0.236-0.032-0.202 0.262 0.106 0.339 0.419 0.362 0.246 0.448 0.318 0.221-0.170-0.158 0.101 0.284\nJAK-STAT  0.148 0.227 0.188 0.301-0.386 0.207 0.346 0.156 0.292 0.227 0.196-0.038 0.052 0.816 0.821 0.507 0.084-0.229-0.111-0.023 0.015 0.486 0.367 0.033 0.244 0.254 0.759 0.200 0.294-0.097 0.309 0.213 0.059 0.275 0.285 0.386 0.044 0.169 0.525 0.255 0.271-0.001 0.109\nMAPK      0.100 0.528 0.030 0.138-0.330 0.147 0.422 0.563 0.451 0.337-0.185 0.443 0.513 0.169-0.062-0.090-0.256-0.065 0.226 0.252-0.104 0.236-0.011 0.515 0.155 0.462-0.138 0.469 0.082-0.358 0.113-0.226 0.266 0.321 0.347 0.381 0.197-0.075 0.153-0.173 0.165 0.245 0.244\nNFkB      0.209 0.330 0.244 0.333-0.524 0.431 0.478 0.378 0.434 0.348 0.163 0.254 0.338 0.460 0.450 0.066 0.054-0.181-0.057 0.291-0.039 0.706 0.534 0.258 0.286 0.417 0.409 0.337 0.445-0.253 0.396 0.180 0.348 0.382 0.407 0.499 0.253 0.161 0.754 0.226 0.363 0.125 0.216\nPI3K      0.063 0.189-0.017-0.116 0.086 0.205 0.088 0.312-0.229 0.151 0.028 0.457 0.285 0.029-0.062-0.473-0.194 0.070 0.015 0.458-0.018-0.124-0.010 0.128 0.017 0.007-0.115 0.135-0.070-0.363-0.165-0.013 0.158-0.077 0.084-0.010 0.253-0.334 0.118-0.132 0.026 0.064 0.107\nTGFb      0.599 0.282 0.665 0.503 0.238 0.594 0.619-0.034 0.071 0.689 0.447 0.641 0.467 0.226 0.090-0.281 0.308-0.517 0.328 0.258-0.586-0.137-0.348 0.053-0.128-0.012-0.150 0.210-0.420-0.138 0.055 0.143 0.350 0.649 0.622 0.194 0.875 0.411 0.237-0.100-0.437 0.028 0.625\nTNFa      0.386 0.568 0.356 0.536-0.479 0.590 0.685 0.409 0.589 0.537 0.166 0.368 0.313 0.511 0.397 0.066 0.066-0.342 0.137 0.270-0.113 0.656 0.356 0.392 0.312 0.515 0.221 0.473 0.247-0.237 0.412 0.114 0.250 0.600 0.613 0.688 0.378 0.205 0.712 0.103 0.203 0.157 0.398\nTrail    -0.368-0.392-0.334-0.397 0.043-0.375-0.530-0.300-0.229-0.507-0.012-0.580-0.330-0.248-0.062 0.196 0.005 0.180-0.352-0.310 0.270-0.035 0.280-0.370-0.079-0.331 0.156-0.413 0.249 0.242-0.123 0.130-0.361-0.440-0.446-0.377-0.463-0.035-0.256 0.276 0.100-0.046-0.314\nVEGF      0.008 0.117-0.088 0.068-0.095-0.035 0.099 0.112 0.062 0.129-0.152 0.151 0.135-0.011-0.041 0.069-0.042 0.077 0.207 0.045 0.169 0.100-0.075 0.298 0.077 0.287 0.000 0.293-0.059-0.029-0.070-0.094 0.122-0.015 0.135 0.226 0.007-0.070 0.035-0.170 0.206-0.131-0.070\nWNT       0.202 0.385 0.080 0.281-0.222 0.318 0.310 0.314 0.173 0.263 0.071 0.127 0.048 0.274 0.126-0.115-0.068-0.201 0.110 0.043-0.038 0.165-0.043 0.203 0.090 0.252-0.095 0.151 0.024-0.071 0.015-0.161-0.016 0.243 0.290 0.233 0.144-0.086 0.239 0.076 0.010 0.026 0.241\np53       0.127 0.197 0.137 0.289-0.100 0.129 0.172 0.095 0.284 0.031 0.013 0.004-0.217 0.038 0.003 0.020 0.015-0.074 0.276-0.036 0.026 0.049-0.144 0.052-0.095 0.037-0.099-0.005-0.076 0.066 0.214-0.003-0.071 0.163 0.148 0.155-0.050 0.114-0.046-0.023-0.148 0.120 0.112\n```\n\n### Heatmap (ASCII rendering of the matrix above)\nLegend: `X` ≥ 0.8, `x` 0.6–0.8, `+` 0.4–0.6, `-` 0.2–0.4, `.` −0.2–0.2, `:` −0.4–(−0.2), `=` < −0.4. Columns in the order listed above.\n\n```\n             Ac Bn B2 B4 B6 CD CX EG F2 GC Gd GM HG I1 IG IL10 12 13 15 17A 1A 1B L2 21 22 27 L3 36 L4 L6 LF LT MC NO OS TG1 TG3 TN TR TW VE W3\nAndrogen     -  +  -  +  .  -  +  -  -  +  .  +  .  .  .  .  .  .  -  .  .  .  .  -  .  .  .  -  .  :  -  .  .  +  +  -  -  .  .  .  .  -  -\nEGFR         -  x  .  -  :  -  +  +  +  +  .  +  +  -  .  .  .  .  -  -  .  -  .  x  -  +  .  x  .  .  .  .  -  +  +  +  -  .  -  :  .  .  -\nEstrogen     .  .  .  .  -  .  .  :  .  .  .  .  .  :  :  .  .  .  .  .  :  :  :  .  :  :  :  .  :  .  .  .  .  .  .  :  .  .  :  :  :  .  .\nHypoxia      -  .  -  -  .  -  +  .  .  -  .  -  -  .  .  .  -  .  .  -  :  .  .  .  .  .  .  -  .  :  -  .  -  +  -  +  -  -  .  .  .  -\nJAK-STAT     .  -  .  -  :  -  -  .  -  -  .  .  .  X  X  +  .  :  .  .  .  +  -  .  -  -  x  -  -  .  -  -  .  -  -  -  .  .  +  -  -  .  .\nMAPK         .  +  .  .  :  .  +  +  +  -  .  +  +  .  .  .  :  .  -  -  .  -  .  +  .  +  .  +  .  :  .  :  -  -  -  -  .  .  .  .  .  -  -\nNFkB         -  -  -  -  =  +  +  -  +  -  .  -  -  +  +  .  .  .  .  -  .  x  +  -  -  +  +  -  +  :  -  .  -  -  +  +  -  .  x  -  -  .  -\nPI3K         .  .  .  .  .  -  .  -  :  .  .  +  -  .  .  =  .  .  .  +  .  .  .  .  .  .  .  .  .  :  .  .  .  .  .  .  -  :  .  .  .  .  .\nTGFb         +  -  x  +  -  +  x  .  .  x  +  x  +  -  .  :  -  =  -  -  =  .  :  .  .  .  .  -  =  .  .  .  -  x  x  .  X  +  -  .  =  .  x\nTNFa         -  +  -  +  =  +  x  +  +  +  .  -  -  +  -  .  .  :  .  -  .  x  -  -  -  +  -  +  -  :  +  .  -  x  x  x  -  -  x  .  -  .  -\nTrail        :  :  :  :  .  :  =  :  :  =  .  =  :  :  .  .  .  .  :  :  -  .  -  :  .  :  .  =  -  -  .  .  :  =  =  :  =  .  :  -  .  .  :\nVEGF         .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  -  .  .  .  .  -  .  -  .  -  .  .  .  .  .  .  .  -  .  .  .  .  -  .  .\nWNT          -  -  .  -  :  -  -  -  .  -  .  .  .  -  .  .  .  :  .  .  .  .  .  -  .  -  .  .  .  .  .  .  -  .  -  -  .  .  -  .  .  .  -\np53          .  .  .  -  .  .  .  .  -  .  .  .  :  .  .  .  .  .  -  .  .  .  .  .  .  .  .  .  .  .  -  .  .  .  .  .  .  .  .  .  .  .  .\n```\n\n## Scatter: twelve largest-residual lines with the fitted line y = 4.1633·x + 0.7709\n`o` = cell line, `*` = fitted line; x = PROGENy TGFb z, y = CytoSig TGFB1 z.\n\n```\n18 |                                          o JHH-2\n17 |                                      o SNU-349\n16 |                                     o NHAHTDD\n15 |                                 o NCE-G 61\n14 |\n13 |\n12 |\n11 |                                                 *\n10 |\n 9 |                                            *\n 8 |\n 7 |                                       *\n 6 |    o SALE o PrEC LH o T24 o IA-LM\n 5 |                                  *\n 4 |\n 3 |  o NCI-H650                    *\n 2 |\n 1 |  KYSE-520(o)               *\n 0 |                          *\n-1 |                    *\n-2 |              *\n-3 |          *                      o CAL-51\n-4 |        *                          o OVSAHO\n-5 |     *\n   +------------------------------------------------\n    -2.5   -1.5   -0.5    0.5    1.5    2.5\n```\n\n## Residual bars (signed residual, TGFB1 z − prediction)\n```\nSALE       +11.86 |########################\nNCI-H650   +11.58 |#######################\nOVSAHO     -11.29 |#######################|\nPrEC LH    +11.26 |#######################\nT24        +10.43 |#####################\nSNU-349    +10.26 |####################|\nJHH-2      +10.07 |####################|\nKYSE-520   -10.00 |####################|\nCAL-51      -9.94 |###################|\nNHAHTDD     +9.91 |###################|\nNCE-G 61    +9.63 |###################\nIA-LM       +9.47 |##################\n                 -12        0        +12\n```\n\n## Note on interpretation\nThese rho values describe co-variation between two **inferred** activity signatures (PROGENy pathway scores vs. CytoSig cytokine-response scores) in the HPA cell-line panel. A high correlation is consistent with shared underlying biology (e.g. TGFb/TGFB1, JAK-STAT/IFN), but correlation of inferred signature scores is **not** evidence of causal pathway signalling; it may reflect shared driver genes, co-regulated modules, or the composition of the cell-line panel.",
+ "stop": "stop",
+ "tool_call_count": 19,
+ "seconds": 161.379,
+ "model_calls": 11,
+ "cost_usd": 0.08591130400000001
+}

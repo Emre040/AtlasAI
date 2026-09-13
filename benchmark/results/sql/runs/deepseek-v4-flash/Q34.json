@@ -1,0 +1,780 @@
+{
+  "id": "Q34",
+  "kind": "analysis",
+  "question": "Compare normal and cancer immunohistochemistry for genes in the HPA Predicted membrane proteins class in colon, breast and lung. In the normal IHC data use colon glandular cells, breast glandular cells and lung alveolar cells, keeping only Enhanced or Supported reliability; if several eligible records remain for one gene/tissue, take the highest ordinal level. Score High=3, Medium=2, Low=1 and Not detected=0. In cancer IHC use colorectal cancer, breast cancer and lung cancer; calculate (3*High+2*Medium+Low)/(High+Medium+Low+Not detected), retaining cancer rows with at least five observations. For each tissue/cancer pair report the number of genes with both measurements, the median cancer-minus-normal score and the fraction with an increase of at least one score unit. For colon select twelve genes with the largest increase, ties by Ensembl ID, and show the normal level/reliability, cancer counts, weighted score, change and colon consensus nTPM. Draw paired-score scatters for those twelve genes, comparison bars and a heatmap of these genes across all three tissue/cancer pairs, leaving unavailable cells missing. Supply the tables; describe these as ordinal summaries of different samples, not paired-patient measurements. If a requested ranked list has fewer eligible members, return every eligible member and state the count. Use Ensembl genes present in the HPA master table as the gene universe and break all gene-ranking ties by Ensembl ID.",
+  "model": "deepseek-v4-flash",
+  "effort": null,
+  "turns": [
+    {
+      "turn": 1,
+      "ms": 4077,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 805,
+        "completion_tokens": 552,
+        "total_tokens": 1357,
+        "prompt_tokens_details": {
+          "cached_tokens": 384
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 516
+        },
+        "prompt_cache_hit_tokens": 384,
+        "prompt_cache_miss_tokens": 421
+      },
+      "text": "I'll start by examining the available data schema.",
+      "tool_uses": [
+        {
+          "name": "schema",
+          "input": "{}"
+        }
+      ]
+    },
+    {
+      "turn": 2,
+      "ms": 4943,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6936,
+        "completion_tokens": 765,
+        "total_tokens": 7701,
+        "prompt_tokens_details": {
+          "cached_tokens": 1280
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 454
+        },
+        "prompt_cache_hit_tokens": 1280,
+        "prompt_cache_miss_tokens": 5656
+      },
+      "text": "Let me explore the key tables and data values in parallel.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT DISTINCT \\\"Protein class\\\" FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Predicted membrane%' LIMIT 20\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT DISTINCT Tissue, \\\"Cell type\\\", Level, Reliability FROM normal_ihc_data WHERE \\\"Cell type\\\" ILIKE '%glandular%' OR \\\"Cell type\\\" ILIKE '%alveolar%' ORDER BY Tissue, \\\"Cell type\\\" LIMIT 60\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT DISTINCT Cancer FROM cancer_data WHERE Cancer ILIKE '%colon%' OR Cancer ILIKE '%breast%' OR Cancer ILIKE '%lung%' OR Cancer ILIKE '%colorectal%' ORDER BY Cancer\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT DISTINCT Tissue FROM normal_ihc_data WHERE Tissue ILIKE '%colon%' OR Tissue ILIKE '%breast%' OR Tissue ILIKE '%lung%' ORDER BY Tissue\"}"
+        }
+      ]
+    },
+    {
+      "turn": 3,
+      "ms": 3725,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 9063,
+        "completion_tokens": 492,
+        "total_tokens": 9555,
+        "prompt_tokens_details": {
+          "cached_tokens": 7680
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 237
+        },
+        "prompt_cache_hit_tokens": 7680,
+        "prompt_cache_miss_tokens": 1383
+      },
+      "text": "Let me examine the cell types used for Colon, Breast, Lung in the normal IHC data, and check cancer_data structure.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT DISTINCT Tissue, \\\"Cell type\\\" FROM normal_ihc_data WHERE Tissue IN ('Colon','Breast','Lung') ORDER BY Tissue, \\\"Cell type\\\"\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT * FROM cancer_data WHERE Cancer='colorectal cancer' AND Gene IN ('EGFR','CDH1') LIMIT 5\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT COUNT(*) AS n FROM normal_ihc_data WHERE Tissue='Colon'\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT DISTINCT \\\"Cell type\\\" FROM normal_ihc_data WHERE Tissue='Lung' ORDER BY \\\"Cell type\\\"\"}"
+        }
+      ]
+    },
+    {
+      "turn": 4,
+      "ms": 3117,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 9789,
+        "completion_tokens": 396,
+        "total_tokens": 10185,
+        "prompt_tokens_details": {
+          "cached_tokens": 9472
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 232
+        },
+        "prompt_cache_hit_tokens": 9472,
+        "prompt_cache_miss_tokens": 317
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT Gene, \\\"Gene name\\\", Cancer, High, Medium, Low, \\\"Not detected\\\" FROM cancer_data LIMIT 20\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT COUNT(*) FROM cancer_data WHERE Cancer='colorectal cancer'\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene name\\\", Count(*) FROM cancer_data WHERE Cancer='colorectal cancer' GROUP BY \\\"Gene name\\\" LIMIT 5\"}"
+        }
+      ]
+    },
+    {
+      "turn": 5,
+      "ms": 12343,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 10737,
+        "completion_tokens": 1779,
+        "total_tokens": 12516,
+        "prompt_tokens_details": {
+          "cached_tokens": 10112
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1514
+        },
+        "prompt_cache_hit_tokens": 10112,
+        "prompt_cache_miss_tokens": 625
+      },
+      "text": "Now let me explore data details for the analysis.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT Gene, \\\"Gene name\\\", Tissue, \\\"Cell type\\\", Level, Reliability FROM normal_ihc_data WHERE Tissue='Colon' AND \\\"Cell type\\\"='glandular cells' LIMIT 15\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT DISTINCT Tissue FROM rna_tissue_consensus WHERE Tissue ILIKE '%colon%' OR Tissue ILIKE '%breast%' OR Tissue ILIKE '%lung%' ORDER BY Tissue\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT COUNT(*) AS rows_total, COUNT(DISTINCT Ensembl) AS distinct_ens FROM proteinatlas\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT COUNT(*) AS n FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Predicted membrane proteins%'\"}"
+        }
+      ]
+    },
+    {
+      "turn": 6,
+      "ms": 13823,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 12952,
+        "completion_tokens": 1959,
+        "total_tokens": 14911,
+        "prompt_tokens_details": {
+          "cached_tokens": 12416
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1608
+        },
+        "prompt_cache_hit_tokens": 12416,
+        "prompt_cache_miss_tokens": 536
+      },
+      "text": "Let me verify value domains and row multiplicities in the relevant subsets.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT DISTINCT Level FROM normal_ihc_data WHERE Reliability IN ('Enhanced','Supported') AND ((Tissue='Colon' AND \\\"Cell type\\\"='glandular cells') OR (Tissue='Breast' AND \\\"Cell type\\\"='glandular cells') OR (Tissue='Lung' AND \\\"Cell type\\\"='alveolar cells'))\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT DISTINCT Reliability FROM normal_ihc_data WHERE Tissue='Colon' AND \\\"Cell type\\\"='glandular cells'\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene\\\", COUNT(*) AS recs, COUNT(DISTINCT Level) AS levels FROM normal_ihc_data WHERE Tissue='Colon' AND \\\"Cell type\\\"='glandular cells' AND Reliability IN ('Enhanced','Supported') GROUP BY \\\"Gene\\\" HAVING COUNT(*) > 1 ORDER BY recs DESC LIMIT 10\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT Gene, \\\"Gene name\\\", Cancer, High, Medium, Low, \\\"Not detected\\\" FROM cancer_data WHERE Cancer='colorectal cancer' AND Gene='ENSG00000000003'\"}"
+        }
+      ]
+    },
+    {
+      "turn": 7,
+      "ms": 19498,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 15029,
+        "completion_tokens": 3068,
+        "total_tokens": 18097,
+        "prompt_tokens_details": {
+          "cached_tokens": 14848
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 2676
+        },
+        "prompt_cache_hit_tokens": 14848,
+        "prompt_cache_miss_tokens": 181
+      },
+      "text": "Now let me verify multiplicities in all three normal cell-type subsets and run the main pair-summary computation.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT 'Colon/gland' AS set, COUNT(*) AS genes, SUM(CASE WHEN rec>1 THEN 1 ELSE 0 END) AS multi FROM (\\n SELECT \\\"Gene\\\", COUNT(*) AS rec FROM normal_ihc_data\\n WHERE Reliability IN ('Enhanced','Supported') AND Tissue='Colon' AND \\\"Cell type\\\"='glandular cells'\\n GROUP BY \\\"Gene\\\"\\n) x\\nUNION ALL\\nSELECT 'Breast/gland', COUNT(*), SUM(CASE WHEN rec>1 THEN 1 ELSE 0 END) FROM (\\n SELECT \\\"Gene\\\", COUNT(*) AS rec FROM normal_ihc_data\\n WHERE Reliability IN ('Enhanced','Supported') AND Tissue='Breast' AND \\\"Cell type\\\"='glandular cells'\\n GROUP BY \\\"Gene\\\"\\n) x\\nUNION ALL\\nSELECT 'Lung/alveolar', COUNT(*), SUM(CASE WHEN rec>1 THEN 1 ELSE 0 END) FROM (\\n SELECT \\\"Gene\\\", COUNT(*) AS rec FROM normal_ihc_data\\n WHERE Reliability IN ('Enhanced','Supported') AND Tissue='Lung' AND \\\"Cell type\\\"='alveolar cells'\\n GROUP BY \\\"Gene\\\"\\n) x\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene\\\", \\\"Gene name\\\", Tissue, \\\"Cell type\\\", Level, Reliability FROM normal_ihc_data\\nWHERE \\\"Gene\\\"='ENSG00000000003' AND Tissue='Colon' AND \\\"Cell type\\\"='glandular cells' AND Reliability IN ('Enhanced','Supported')\"}"
+        }
+      ]
+    },
+    {
+      "turn": 8,
+      "ms": 4937,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 18165,
+        "completion_tokens": 875,
+        "total_tokens": 19040,
+        "prompt_tokens_details": {
+          "cached_tokens": 18048
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 114
+        },
+        "prompt_cache_hit_tokens": 18048,
+        "prompt_cache_miss_tokens": 117
+      },
+      "text": "Now let me run the main pair-summary computation.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH uni AS (\\n  SELECT Ensembl AS ensg FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Predicted membrane proteins%'\\n),\\nnorm AS (\\n  SELECT \\\"Gene\\\" AS ensg,\\n    MAX(CASE WHEN Tissue='Colon' THEN ord END) AS colon_score,\\n    MAX(CASE WHEN Tissue='Breast' THEN ord END) AS breast_score,\\n    MAX(CASE WHEN Tissue='Lung' THEN ord END) AS lung_score\\n  FROM (\\n    SELECT \\\"Gene\\\", Tissue,\\n      CASE Level WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END AS ord\\n    FROM normal_ihc_data\\n    WHERE Reliability IN ('Enhanced','Supported')\\n      AND ((Tissue='Colon' AND \\\"Cell type\\\"='glandular cells')\\n        OR (Tissue='Breast' AND \\\"Cell type\\\"='glandular cells')\\n        OR (Tissue='Lung' AND \\\"Cell type\\\"='alveolar cells'))\\n  ) s GROUP BY \\\"Gene\\\"\\n),\\ncanc AS (\\n  SELECT \\\"Gene\\\" AS ensg,\\n    MAX(CASE WHEN Cancer='colorectal cancer' AND obs>=5 THEN wsum*1.0/obs END) AS crc,\\n    MAX(CASE WHEN Cancer='breast cancer' AND obs>=5 THEN wsum*1.0/obs END) AS brca,\\n    MAX(CASE WHEN Cancer='lung cancer' AND obs>=5 THEN wsum*1.0/obs END) AS lu\\n  FROM (\\n    SELECT \\\"Gene\\\", Cancer,\\n      (3*TRY_CAST(High AS INT)+2*TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)) AS wsum,\\n      TRY_CAST(High AS INT)+TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)+TRY_CAST(\\\"Not detected\\\" AS INT) AS obs\\n    FROM cancer_data\\n    WHERE Cancer IN ('colorectal cancer','breast cancer','lung cancer')\\n  ) s GROUP BY \\\"Gene\\\"\\n)\\nSELECT 'Colon vs colorectal' AS pair,\\n  COUNT(*) AS n_both,\\n  MEDIAN(crc - colon_score) AS median_diff,\\n  ROUND(SUM(CASE WHEN (crc - colon_score) >= 1 THEN 1 ELSE 0 END)*1.0/COUNT(*),4) AS frac_inc\\nFROM uni JOIN norm USING(ensg) JOIN canc USING(ensg)\\nWHERE colon_score IS NOT NULL AND crc IS NOT NULL\\nUNION ALL\\nSELECT 'Breast vs breast cancer',\\n  COUNT(*), MEDIAN(brca - breast_score),\\n  ROUND(SUM(CASE WHEN (brca - breast_score) >= 1 THEN 1 ELSE 0 END)*1.0/COUNT(*),4)\\nFROM uni JOIN norm USING(ensg) JOIN canc USING(ensg)\\nWHERE breast_score IS NOT NULL AND brca IS NOT NULL\\nUNION ALL\\nSELECT 'Lung vs lung cancer',\\n  COUNT(*), MEDIAN(lu - lung_score),\\n  ROUND(SUM(CASE WHEN (lu - lung_score) >= 1 THEN 1 ELSE 0 END)*1.0/COUNT(*),4)\\nFROM uni JOIN norm USING(ensg) JOIN canc USING(ensg)\\nWHERE lung_score IS NOT NULL AND lu IS NOT NULL\"}"
+        }
+      ]
+    },
+    {
+      "turn": 9,
+      "ms": 10232,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 19114,
+        "completion_tokens": 1392,
+        "total_tokens": 20506,
+        "prompt_tokens_details": {
+          "cached_tokens": 18944
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 832
+        },
+        "prompt_cache_hit_tokens": 18944,
+        "prompt_cache_miss_tokens": 170
+      },
+      "text": "The summary statistics are computed. Now let me build the colon detail (normal reliability info plus cancer counts) and rank to select the twelve genes.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH uni AS (\\n  SELECT Ensembl AS ensg, Gene AS gname FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Predicted membrane proteins%'\\n),\\nnorm AS (\\n  SELECT \\\"Gene\\\" AS ensg, Level, Reliability,\\n    CASE Level WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END AS ord\\n  FROM normal_ihc_data\\n  WHERE Reliability IN ('Enhanced','Supported') AND Tissue='Colon' AND \\\"Cell type\\\"='glandular cells'\\n),\\ncanc AS (\\n  SELECT \\\"Gene\\\" AS ensg, TRY_CAST(High AS INT) AS High, TRY_CAST(Medium AS INT) AS Medium,\\n         TRY_CAST(Low AS INT) AS Low, TRY_CAST(\\\"Not detected\\\" AS INT) AS ND,\\n         (3*TRY_CAST(High AS INT)+2*TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)) AS wsum,\\n         TRY_CAST(High AS INT)+TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)+TRY_CAST(\\\"Not detected\\\" AS INT) AS obs\\n  FROM cancer_data WHERE Cancer='colorectal cancer'\\n),\\nrna AS (\\n  SELECT Gene AS ensg, TRY_CAST(nTPM AS DOUBLE) AS colon_nTPM FROM rna_tissue_consensus WHERE Tissue='colon'\\n)\\nSELECT u.ensg, u.gname, n.Level AS norm_level, n.Reliability AS norm_rel, n.ord AS norm_score,\\n       c.High, c.Medium, c.Low, c.ND, c.obs,\\n       ROUND(c.wsum*1.0/c.obs,3) AS wscore,\\n       ROUND(c.wsum*1.0/c.obs - n.ord,3) AS diff,\\n       COALESCE(r.colon_nTPM, -999) AS colon_ntpm\\nFROM uni u\\nJOIN norm n ON u.ensg=n.ensg\\nJOIN canc c ON u.ensg=c.ensg AND c.obs>=5\\nLEFT JOIN rna r ON u.ensg=r.ensg\\nORDER BY diff DESC, u.ensg ASC\\nLIMIT 15\"}"
+        }
+      ]
+    },
+    {
+      "turn": 10,
+      "ms": 11891,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 21155,
+        "completion_tokens": 2052,
+        "total_tokens": 23207,
+        "prompt_tokens_details": {
+          "cached_tokens": 20480
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1100
+        },
+        "prompt_cache_hit_tokens": 20480,
+        "prompt_cache_miss_tokens": 675
+      },
+      "text": "Now let me extract the full 3-tissue/cancer score matrix for these twelve genes (for the scatters, bars and heatmap), and confirm the twelve selected genes.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH uni AS (\\n  SELECT Ensembl AS ensg, Gene AS gname FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Predicted membrane proteins%'\\n),\\nnorm AS (\\n  SELECT \\\"Gene\\\" AS ensg,\\n    MAX(CASE WHEN Tissue='Colon' THEN ord END) AS colon_score,\\n    MAX(CASE WHEN Tissue='Breast' THEN ord END) AS breast_score,\\n    MAX(CASE WHEN Tissue='Lung' THEN ord END) AS lung_score,\\n    MAX(CASE WHEN Tissue='Colon' THEN Level||' / '||Reliability END) AS colon_lr,\\n    MAX(CASE WHEN Tissue='Breast' THEN Level||' / '||Reliability END) AS breast_lr,\\n    MAX(CASE WHEN Tissue='Lung' THEN Level||' / '||Reliability END) AS lung_lr\\n  FROM (\\n    SELECT \\\"Gene\\\", Tissue, Level, Reliability,\\n      CASE Level WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END AS ord\\n    FROM normal_ihc_data\\n    WHERE Reliability IN ('Enhanced','Supported')\\n      AND ((Tissue='Colon' AND \\\"Cell type\\\"='glandular cells')\\n        OR (Tissue='Breast' AND \\\"Cell type\\\"='glandular cells')\\n        OR (Tissue='Lung' AND \\\"Cell type\\\"='alveolar cells'))\\n  ) s GROUP BY \\\"Gene\\\"\\n),\\ncanc AS (\\n  SELECT \\\"Gene\\\" AS ensg,\\n    MAX(CASE WHEN Cancer='colorectal cancer' AND obs>=5 THEN wsum*1.0/obs END) AS crc,\\n    MAX(CASE WHEN Cancer='breast cancer' AND obs>=5 THEN wsum*1.0/obs END) AS brca,\\n    MAX(CASE WHEN Cancer='lung cancer' AND obs>=5 THEN wsum*1.0/obs END) AS lu,\\n    MAX(CASE WHEN Cancer='colorectal cancer' THEN TRY_CAST(High AS INT)||','||TRY_CAST(Medium AS INT)||','||TRY_CAST(Low AS INT)||','||TRY_CAST(\\\"Not detected\\\" AS INT) END) AS crc_counts\\n  FROM (\\n    SELECT \\\"Gene\\\", Cancer,\\n      (3*TRY_CAST(High AS INT)+2*TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)) AS wsum,\\n      TRY_CAST(High AS INT)+TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)+TRY_CAST(\\\"Not detected\\\" AS INT) AS obs,\\n      High, Medium, Low, \\\"Not detected\\\"\\n    FROM cancer_data\\n    WHERE Cancer IN ('colorectal cancer','breast cancer','lung cancer')\\n  ) s GROUP BY \\\"Gene\\\"\\n),\\nrna AS (SELECT Gene AS ensg, TRY_CAST(nTPM AS DOUBLE) AS colon_ntpm FROM rna_tissue_consensus WHERE Tissue='colon'),\\nsel AS (\\n  SELECT u.ensg, u.gname, n.colon_score, n.colon_lr, c.crc, c.crc_counts, ROUND(c.crc-n.colon_score,3) AS diff\\n  FROM uni u JOIN norm n ON u.ensg=n.ensg JOIN canc c ON u.ensg=c.ensg\\n  WHERE n.colon_score IS NOT NULL AND c.crc IS NOT NULL\\n  ORDER BY (c.crc-n.colon_score) DESC, u.ensg ASC LIMIT 12\\n)\\nSELECT s.ensg, s.gname, s.colon_score, s.colon_lr, s.crc, s.crc_counts, s.diff,\\n       n.breast_score, n.lung_score, c.brca, c.lu, r.colon_ntpm\\nFROM sel s\\nJOIN norm n ON s.ensg=n.ensg\\nJOIN canc c ON s.ensg=c.ensg\\nLEFT JOIN rna r ON s.ensg=r.ensg\\nORDER BY s.diff DESC, s.ensg ASC\"}"
+        }
+      ]
+    },
+    {
+      "turn": 11,
+      "ms": 11115,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 23948,
+        "completion_tokens": 1675,
+        "total_tokens": 25623,
+        "prompt_tokens_details": {
+          "cached_tokens": 23168
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 856
+        },
+        "prompt_cache_hit_tokens": 23168,
+        "prompt_cache_miss_tokens": 780
+      },
+      "text": "Let me generate the clean, rounded score matrix for the twelve genes across all three tissue/cancer pairs (for the scatters, bars and heatmap).",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH uni AS (\\n  SELECT Ensembl AS ensg, Gene AS gname FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Predicted membrane proteins%'\\n),\\nnorm AS (\\n  SELECT \\\"Gene\\\" AS ensg,\\n    MAX(CASE WHEN Tissue='Colon' THEN ord END) AS cs, MAX(CASE WHEN Tissue='Breast' THEN ord END) AS bs,\\n    MAX(CASE WHEN Tissue='Lung' THEN ord END) AS ls\\n  FROM (\\n    SELECT \\\"Gene\\\", Tissue,\\n      CASE Level WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END AS ord\\n    FROM normal_ihc_data\\n    WHERE Reliability IN ('Enhanced','Supported')\\n      AND ((Tissue='Colon' AND \\\"Cell type\\\"='glandular cells')\\n        OR (Tissue='Breast' AND \\\"Cell type\\\"='glandular cells')\\n        OR (Tissue='Lung' AND \\\"Cell type\\\"='alveolar cells'))\\n  ) s GROUP BY \\\"Gene\\\"\\n),\\ncanc AS (\\n  SELECT \\\"Gene\\\" AS ensg,\\n    MAX(CASE WHEN Cancer='colorectal cancer' AND obs>=5 THEN ROUND(wsum*1.0/obs,3) END) AS crc,\\n    MAX(CASE WHEN Cancer='breast cancer' AND obs>=5 THEN ROUND(wsum*1.0/obs,3) END) AS brca,\\n    MAX(CASE WHEN Cancer='lung cancer' AND obs>=5 THEN ROUND(wsum*1.0/obs,3) END) AS lu\\n  FROM (\\n    SELECT \\\"Gene\\\", Cancer,\\n      (3*TRY_CAST(High AS INT)+2*TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)) AS wsum,\\n      TRY_CAST(High AS INT)+TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)+TRY_CAST(\\\"Not detected\\\" AS INT) AS obs\\n    FROM cancer_data\\n    WHERE Cancer IN ('colorectal cancer','breast cancer','lung cancer')\\n  ) s GROUP BY \\\"Gene\\\"\\n),\\nsel AS (\\n  SELECT u.ensg, u.gname, n.cs, c.crc, ROUND(c.crc-n.cs,3) AS diff\\n  FROM uni u JOIN norm n ON u.ensg=n.ensg JOIN canc c ON u.ensg=c.ensg\\n  WHERE n.cs IS NOT NULL AND c.crc IS NOT NULL\\n  ORDER BY (c.crc-n.cs) DESC, u.ensg ASC LIMIT 12\\n)\\nSELECT s.ensg, s.gname, s.cs AS norm_colon, s.crc AS cancer_colorectal,\\n       ROUND(s.crc-s.cs,3) AS d_colon,\\n       n.bs AS norm_breast, c.brca AS cancer_breast,\\n       CASE WHEN n.bs IS NOT NULL AND c.brca IS NOT NULL THEN ROUND(c.brca-n.bs,3) ELSE NULL END AS d_breast,\\n       n.ls AS norm_lung, c.lu AS cancer_lung,\\n       CASE WHEN n.ls IS NOT NULL AND c.lu IS NOT NULL THEN ROUND(c.lu-n.ls,3) ELSE NULL END AS d_lung\\nFROM sel s\\nJOIN norm n ON s.ensg=n.ensg\\nJOIN canc c ON s.ensg=c.ensg\\nORDER BY s.diff DESC, s.ensg ASC\"}"
+        }
+      ]
+    },
+    {
+      "turn": 12,
+      "ms": 18737,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 26147,
+        "completion_tokens": 3124,
+        "total_tokens": 29271,
+        "prompt_tokens_details": {
+          "cached_tokens": 25600
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1916
+        },
+        "prompt_cache_hit_tokens": 25600,
+        "prompt_cache_miss_tokens": 547
+      },
+      "text": "Let me verify the exact counts/fractions in each pair summary and produce a clean detailed table of the twelve selected colon genes.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH uni AS (\\n  SELECT Ensembl AS ensg FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Predicted membrane proteins%'\\n),\\nnorm AS (\\n  SELECT \\\"Gene\\\" AS ensg,\\n    MAX(CASE WHEN Tissue='Colon' THEN ord END) AS cs, MAX(CASE WHEN Tissue='Breast' THEN ord END) AS bs,\\n    MAX(CASE WHEN Tissue='Lung' THEN ord END) AS ls\\n  FROM (SELECT \\\"Gene\\\", Tissue, CASE Level WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END AS ord\\n    FROM normal_ihc_data\\n    WHERE Reliability IN ('Enhanced','Supported')\\n      AND ((Tissue='Colon' AND \\\"Cell type\\\"='glandular cells') OR (Tissue='Breast' AND \\\"Cell type\\\"='glandular cells') OR (Tissue='Lung' AND \\\"Cell type\\\"='alveolar cells'))) s\\n  GROUP BY \\\"Gene\\\"\\n),\\ncanc AS (\\n  SELECT \\\"Gene\\\" AS ensg,\\n    MAX(CASE WHEN Cancer='colorectal cancer' AND obs>=5 THEN wsum*1.0/obs END) AS crc,\\n    MAX(CASE WHEN Cancer='breast cancer' AND obs>=5 THEN wsum*1.0/obs END) AS brca,\\n    MAX(CASE WHEN Cancer='lung cancer' AND obs>=5 THEN wsum*1.0/obs END) AS lu\\n  FROM (SELECT \\\"Gene\\\", Cancer, (3*TRY_CAST(High AS INT)+2*TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)) AS wsum,\\n     TRY_CAST(High AS INT)+TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)+TRY_CAST(\\\"Not detected\\\" AS INT) AS obs\\n    FROM cancer_data WHERE Cancer IN ('colorectal cancer','breast cancer','lung cancer')) s\\n  GROUP BY \\\"Gene\\\"\\n)\\nSELECT 'Colon vs colorectal' AS pair, COUNT(*) AS n_both,\\n  SUM(CASE WHEN (crc-cs)>=1 THEN 1 ELSE 0 END) AS n_inc,\\n  MEDIAN(crc-cs) AS med\\nFROM uni u JOIN norm n USING(ensg) JOIN canc c USING(ensg) WHERE cs IS NOT NULL AND crc IS NOT NULL\\nUNION ALL SELECT 'Breast vs breast cancer', COUNT(*), SUM(CASE WHEN (brca-bs)>=1 THEN 1 ELSE 0 END), MEDIAN(brca-bs)\\nFROM uni u JOIN norm n USING(ensg) JOIN canc c USING(ensg) WHERE bs IS NOT NULL AND brca IS NOT NULL\\nUNION ALL SELECT 'Lung vs lung cancer', COUNT(*), SUM(CASE WHEN (lu-ls)>=1 THEN 1 ELSE 0 END), MEDIAN(lu-ls)\\nFROM uni u JOIN norm n USING(ensg) JOIN canc c USING(ensg) WHERE ls IS NOT NULL AND lu IS NOT NULL\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT n.\\\"Gene\\\" AS ensg, p.Gene AS gname, n.Level AS norm_level, n.Reliability AS norm_rel,\\n       c.High, c.Medium, c.Low, c.ND, c.obs,\\n       ROUND(c.wsum*1.0/c.obs,3) AS wscore, ROUND(c.wsum*1.0/c.obs - (CASE n.Level WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END),3) AS diff,\\n       r.colon_ntpm\\nFROM (\\n  SELECT \\\"Gene\\\", Level, Reliability,\\n    CASE Level WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END AS ord\\n  FROM normal_ihc_data\\n  WHERE Reliability IN ('Enhanced','Supported') AND Tissue='Colon' AND \\\"Cell type\\\"='glandular cells'\\n) n\\nJOIN proteinatlas p ON p.Ensembl=n.\\\"Gene\\\" AND p.\\\"Protein class\\\" LIKE '%Predicted membrane proteins%'\\nJOIN (\\n  SELECT \\\"Gene\\\", TRY_CAST(High AS INT) High, TRY_CAST(Medium AS INT) Medium, TRY_CAST(Low AS INT) Low,\\n         TRY_CAST(\\\"Not detected\\\" AS INT) ND,\\n         (3*TRY_CAST(High AS INT)+2*TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)) AS wsum,\\n         TRY_CAST(High AS INT)+TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)+TRY_CAST(\\\"Not detected\\\" AS INT) AS obs\\n  FROM cancer_data WHERE Cancer='colorectal cancer'\\n) c ON c.\\\"Gene\\\"=n.\\\"Gene\\\" AND c.obs>=5\\nLEFT JOIN (SELECT Gene, nTPM AS colon_ntpm FROM rna_tissue_consensus WHERE Tissue='colon') r ON r.Gene=n.\\\"Gene\\\"\\nORDER BY (c.wsum*1.0/c.obs - n.ord) DESC, n.\\\"Gene\\\" ASC\\nLIMIT 12\"}"
+        }
+      ]
+    },
+    {
+      "turn": 13,
+      "ms": 7259,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 29835,
+        "completion_tokens": 1228,
+        "total_tokens": 31063,
+        "prompt_tokens_details": {
+          "cached_tokens": 29184
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 386
+        },
+        "prompt_cache_hit_tokens": 29184,
+        "prompt_cache_miss_tokens": 651
+      },
+      "text": "All values are consistent. Let me produce the long-format figure data (pair, gene, normal score, cancer score) for the twelve genes across all three pairs.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH uni AS (\\n  SELECT Ensembl AS ensg, Gene AS gname FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Predicted membrane proteins%'\\n),\\nnorm AS (\\n  SELECT \\\"Gene\\\" AS ensg,\\n    MAX(CASE WHEN Tissue='Colon' THEN ord END) AS cs, MAX(CASE WHEN Tissue='Breast' THEN ord END) AS bs,\\n    MAX(CASE WHEN Tissue='Lung' THEN ord END) AS ls\\n  FROM (SELECT \\\"Gene\\\", Tissue, CASE Level WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END AS ord\\n    FROM normal_ihc_data\\n    WHERE Reliability IN ('Enhanced','Supported')\\n      AND ((Tissue='Colon' AND \\\"Cell type\\\"='glandular cells') OR (Tissue='Breast' AND \\\"Cell type\\\"='glandular cells') OR (Tissue='Lung' AND \\\"Cell type\\\"='alveolar cells'))) s\\n  GROUP BY \\\"Gene\\\"\\n),\\ncanc AS (\\n  SELECT \\\"Gene\\\" AS ensg,\\n    MAX(CASE WHEN Cancer='colorectal cancer' AND obs>=5 THEN ROUND(wsum*1.0/obs,3) END) AS crc,\\n    MAX(CASE WHEN Cancer='breast cancer' AND obs>=5 THEN ROUND(wsum*1.0/obs,3) END) AS brca,\\n    MAX(CASE WHEN Cancer='lung cancer' AND obs>=5 THEN ROUND(wsum*1.0/obs,3) END) AS lu\\n  FROM (SELECT \\\"Gene\\\", Cancer, (3*TRY_CAST(High AS INT)+2*TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)) AS wsum,\\n     TRY_CAST(High AS INT)+TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)+TRY_CAST(\\\"Not detected\\\" AS INT) AS obs\\n    FROM cancer_data WHERE Cancer IN ('colorectal cancer','breast cancer','lung cancer')) s\\n  GROUP BY \\\"Gene\\\"\\n),\\nsel AS (\\n  SELECT u.ensg, u.gname, n.cs, c.crc, ROUND(c.crc-n.cs,3) AS diff\\n  FROM uni u JOIN norm n ON u.ensg=n.ensg JOIN canc c ON u.ensg=c.ensg\\n  WHERE n.cs IS NOT NULL AND c.crc IS NOT NULL\\n  ORDER BY (c.crc-n.cs) DESC, u.ensg ASC LIMIT 12\\n)\\nSELECT 'Colon-colorectal' AS pair, s.ensg, s.gname, n.cs AS normal, c.crc AS cancer, ROUND(c.crc-n.cs,3) AS diff\\nFROM sel s JOIN norm n USING(ensg) JOIN canc c USING(ensg)\\nUNION ALL\\nSELECT 'Breast-breastcancer', s.ensg, s.gname, n.bs, c.brca, ROUND(c.brca-n.bs,3)\\nFROM sel s JOIN norm n USING(ensg) JOIN canc c USING(ensg)\\nWHERE n.bs IS NOT NULL AND c.brca IS NOT NULL\\nUNION ALL\\nSELECT 'Lung-lungcancer', s.ensg, s.gname, n.ls, c.lu, ROUND(c.lu-n.ls,3)\\nFROM sel s JOIN norm n USING(ensg) JOIN canc c USING(ensg)\\nWHERE n.ls IS NOT NULL AND c.lu IS NOT NULL\\nORDER BY pair, diff DESC, ensg\"}"
+        }
+      ]
+    },
+    {
+      "turn": 14,
+      "ms": 27557,
+      "stop_reason": "stop",
+      "usage": {
+        "prompt_tokens": 32000,
+        "completion_tokens": 4710,
+        "total_tokens": 36710,
+        "prompt_tokens_details": {
+          "cached_tokens": 30976
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1876
+        },
+        "prompt_cache_hit_tokens": 30976,
+        "prompt_cache_miss_tokens": 1024
+      },
+      "text": "I now have all the required results. Here is the complete analysis.\n\n## Method (brief)\n\n- **Gene universe**: 5,573 Ensembl genes in the HPA master table (`proteinatlas`) whose `Protein class` contains \"Predicted membrane proteins\".\n- **Normal IHC** (`normal_ihc_data`): Colon glandular cells, Breast glandular cells, Lung alveolar cells; Reliability = Enhanced or Supported only. Level → score: High=3, Medium=2, Low=1, Not detected=0; per gene/tissue the highest ordinal level was taken (each gene/tissue had ≤1 eligible record, so no aggregation was actually needed).\n- **Cancer IHC** (`cancer_data`): colorectal cancer, breast cancer, lung cancer; rows with ≥5 observations (High+Medium+Low+Not detected). Weighted score = (3·High + 2·Medium + Low)/(High+Medium+Low+Not detected).\n- **Change** = cancer weighted score − normal ordinal score, computed only for genes having both measurements.\n- Medians are DuckDB `median()`; fractions are counts of change ≥ 1 divided by the number of genes with both measurements.\n- **Important caveat**: normal IHC and cancer IHC are aggregate ordinal summaries over *different* tissue/cancer specimens; these are not paired-patient measurements, and all score differences are cross-sample ordinal summaries.\n\n## 1. Per tissue/cancer pair summary\n\n| Pair | Genes with both measurements | Median cancer−normal score | Fraction with increase ≥ 1 score unit |\n|---|---|---|---|\n| Colon (glandular) vs colorectal cancer | 1,003 | 0 | 37/1,003 = **0.0369 (3.7%)** |\n| Breast (glandular) vs breast cancer | 1,346 | 0 | 60/1,346 = **0.0446 (4.5%)** |\n| Lung (alveolar) vs lung cancer | 990 | 0 | 72/990 = **0.0727 (7.3%)** |\n\n## 2. Colon: twelve genes with the largest increase (ties broken by Ensembl ID)\n\nRanked by change (descending), then Ensembl ID. All 12 come from the predicted-membrane-protein universe (n = 1,003 ranked members, so the requested list of 12 is full).\n\n| Ensembl ID | Gene | Normal level / reliability | High | Medium | Low | Not detected | Cancer obs | Weighted cancer score | Change | Colon consensus nTPM |\n|---|---|---|---|---|---|---|---|---|---|---|\n| ENSG00000163347 | CLDN1 | Not detected / Enhanced | 6 | 5 | 1 | 0 | 12 | 2.417 | +2.417 | 1.6 |\n| ENSG00000143337 | TOR1AIP1 | Not detected / Enhanced | 2 | 9 | 1 | 0 | 12 | 2.083 | +2.083 | 41.3 |\n| ENSG00000062038 | CDH3 | Not detected / Enhanced | 2 | 7 | 2 | 0 | 11 | 2.000 | +2.000 | 0.4 |\n| ENSG00000102524 | TNFSF13B | Not detected / Enhanced | 0 | 11 | 1 | 0 | 12 | 1.917 | +1.917 | 5.1 |\n| ENSG00000176884 | GRIN1 | Not detected / Enhanced | 2 | 7 | 2 | 1 | 12 | 1.833 | +1.833 | 0.7 |\n| ENSG00000100749 | VRK1 | Not detected / Enhanced | 1 | 8 | 0 | 2 | 11 | 1.727 | +1.727 | 10.2 |\n| ENSG00000150938 | CRIM1 | Not detected / Enhanced | 0 | 9 | 2 | 1 | 12 | 1.667 | +1.667 | 26.9 |\n| ENSG00000185885 | IFITM1 | Low / Enhanced | 7 | 3 | 1 | 0 | 11 | 2.545 | +1.545 | 332.0 |\n| ENSG00000059377 | TBXAS1 | Not detected / Enhanced | 3 | 4 | 1 | 4 | 12 | 1.500 | +1.500 | 8.6 |\n| ENSG00000168003 | SLC3A2 | Not detected / Enhanced | 0 | 7 | 4 | 1 | 12 | 1.500 | +1.500 | 50.0 |\n| ENSG00000169760 | NLGN1 | Not detected / Enhanced | 0 | 5 | 6 | 0 | 11 | 1.455 | +1.455 | 1.6 |\n| ENSG00000081800 | SLC13A1 | Not detected / Enhanced | 0 | 6 | 4 | 2 | 12 | 1.333 | +1.333 | 0.2 |\n\n## 3. Data tables for the requested plots\n\nA text environment cannot render the three figures, so I supply the exact underlying tables (unavailable cells left blank). These are ordinal summary values of different samples, not paired-patient data.\n\n### 3a. Paired-score scatter data (normal score ×, cancer weighted score y)\n\n| Pair | Ensembl ID | Gene | Normal score (x) | Cancer score (y) |\n|---|---|---|---|---|\n| Colon–colorectal | ENSG00000163347 | CLDN1 | 0 | 2.417 |\n| Colon–colorectal | ENSG00000143337 | TOR1AIP1 | 0 | 2.083 |\n| Colon–colorectal | ENSG00000062038 | CDH3 | 0 | 2.000 |\n| Colon–colorectal | ENSG00000102524 | TNFSF13B | 0 | 1.917 |\n| Colon–colorectal | ENSG00000176884 | GRIN1 | 0 ",
+      "tool_uses": []
+    }
+  ],
+  "tool_calls": [
+    {
+      "turn": 1,
+      "name": "schema",
+      "input": {},
+      "ms": 3977,
+      "result_chars": 148152,
+      "truncated": true,
+      "error": null,
+      "result_head": "Tables built from the Human Protein Atlas bulk files (all columns are text; cast for arithmetic, e.g. TRY_CAST(col AS DOUBLE)).\n\nblood_immunoassay_concentration (0.1 MB): gene, ENSG ID, conc [pg/L], sample type, number_of_samples, pubmed id\nblood_ms_concentration (0.1 MB): Gene, ENSG ID, Conc [pg/L]\nblood_pea_disease_de (17.9 MB): Gene, ENSG ID, Disease, Class, Control, logFC, p-value adjusted, Seeds, Mean importance, SD importance, Max importance, Min importance\nblood_pea_diseases (0.0 MB): Disease, Class\ncancer_cancers (0.0 MB): Cancer, Organ\ncancer_cptac (5.7 MB): Cancer, Gene, Gene name, p"
+    },
+    {
+      "turn": 2,
+      "name": "sql",
+      "input": {
+        "query": "SELECT DISTINCT \"Protein class\" FROM proteinatlas WHERE \"Protein class\" LIKE '%Predicted membrane%' LIMIT 20"
+      },
+      "ms": 116,
+      "result_chars": 3137,
+      "truncated": false,
+      "error": null,
+      "result_head": "Protein class\nDisease related genes, Human disease related genes, Potential drug targets, Predicted membrane proteins, Transporters\nCancer-related genes, Enzymes, FDA approved drug targets, Metabolic proteins, Plasma proteins, Predicted intracellular proteins, Predicted membrane proteins, Predicted secreted proteins\nDisease related genes, Enzymes, Human disease related genes, Plasma proteins, Potential drug targets, Predicted intracellular proteins, Predicted membrane proteins, Transporters\nCD markers, FDA approved drug targets, Predicted intracellular proteins, Predicted membrane proteins\nCan"
+    },
+    {
+      "turn": 2,
+      "name": "sql",
+      "input": {
+        "query": "SELECT DISTINCT Tissue, \"Cell type\", Level, Reliability FROM normal_ihc_data WHERE \"Cell type\" ILIKE '%glandular%' OR \"Cell type\" ILIKE '%alveolar%' ORDER BY Tissue, \"Cell type\" LIMIT 60"
+      },
+      "ms": 183,
+      "result_chars": 2566,
+      "truncated": false,
+      "error": null,
+      "result_head": "Tissue\tCell type\tLevel\tReliability\nAdrenal gland\tglandular cells\tNot detected\tUncertain\nAdrenal gland\tglandular cells\tLow\tUncertain\nAdrenal gland\tglandular cells\tMedium\tSupported\nAdrenal gland\tglandular cells\tHigh\tApproved\nAdrenal gland\tglandular cells\tMedium\tEnhanced\nAdrenal gland\tglandular cells\tHigh\tEnhanced\nAdrenal gland\tglandular cells\tNot detected\tEnhanced\nAdrenal gland\tglandular cells\tNot detected\tSupported\nAdrenal gland\tglandular cells\tMedium\tApproved\nAdrenal gland\tglandular cells\tNot detected\tApproved\nAdrenal gland\tglandular cells\tLow\tSupported\nAdrenal gland\tglandular cells\tMedium\tUnc"
+    },
+    {
+      "turn": 2,
+      "name": "sql",
+      "input": {
+        "query": "SELECT DISTINCT Cancer FROM cancer_data WHERE Cancer ILIKE '%colon%' OR Cancer ILIKE '%breast%' OR Cancer ILIKE '%lung%' OR Cancer ILIKE '%colorectal%' ORDER BY Cancer"
+      },
+      "ms": 119,
+      "result_chars": 59,
+      "truncated": false,
+      "error": null,
+      "result_head": "Cancer\nbreast cancer\ncolorectal cancer\nlung cancer\n[3 rows]"
+    },
+    {
+      "turn": 2,
+      "name": "sql",
+      "input": {
+        "query": "SELECT DISTINCT Tissue FROM normal_ihc_data WHERE Tissue ILIKE '%colon%' OR Tissue ILIKE '%breast%' OR Tissue ILIKE '%lung%' ORDER BY Tissue"
+      },
+      "ms": 140,
+      "result_chars": 50,
+      "truncated": false,
+      "error": null,
+      "result_head": "Tissue\nBreast\nColon\nLactating breast\nLung\n[4 rows]"
+    },
+    {
+      "turn": 3,
+      "name": "sql",
+      "input": {
+        "query": "SELECT DISTINCT Tissue, \"Cell type\" FROM normal_ihc_data WHERE Tissue IN ('Colon','Breast','Lung') ORDER BY Tissue, \"Cell type\""
+      },
+      "ms": 118,
+      "result_chars": 453,
+      "truncated": false,
+      "error": null,
+      "result_head": "Tissue\tCell type\nBreast\tadipocytes\nBreast\tglandular cells\nBreast\tmyoepithelial cells\nColon\tendocrine cells\nColon\tendothelial cells\nColon\tenterocytes\nColon\tenterocytes - Gradient\nColon\tenterocytes - Microvilli\nColon\tfibroblasts\nColon\tglandular cells\nColon\tgoblet cells\nColon\tmucosal lymphoid cells\nColon\tperipheral nerve/ganglion\nLung\talveolar cells\nLung\talveolar cells type I\nLung\talveolar cells type II\nLung\tendothelial cells\nLung\tmacrophages\n[18 rows]"
+    },
+    {
+      "turn": 3,
+      "name": "sql",
+      "input": {
+        "query": "SELECT * FROM cancer_data WHERE Cancer='colorectal cancer' AND Gene IN ('EGFR','CDH1') LIMIT 5"
+      },
+      "ms": 67,
+      "result_chars": 18,
+      "truncated": false,
+      "error": null,
+      "result_head": "(no rows)\n[0 rows]"
+    },
+    {
+      "turn": 3,
+      "name": "sql",
+      "input": {
+        "query": "SELECT COUNT(*) AS n FROM normal_ihc_data WHERE Tissue='Colon'"
+      },
+      "ms": 80,
+      "result_chars": 16,
+      "truncated": false,
+      "error": null,
+      "result_head": "n\n43148\n[1 rows]"
+    },
+    {
+      "turn": 3,
+      "name": "sql",
+      "input": {
+        "query": "SELECT DISTINCT \"Cell type\" FROM normal_ihc_data WHERE Tissue='Lung' ORDER BY \"Cell type\""
+      },
+      "ms": 84,
+      "result_chars": 108,
+      "truncated": false,
+      "error": null,
+      "result_head": "Cell type\nalveolar cells\nalveolar cells type I\nalveolar cells type II\nendothelial cells\nmacrophages\n[5 rows]"
+    },
+    {
+      "turn": 4,
+      "name": "sql",
+      "input": {
+        "query": "SELECT Gene, \"Gene name\", Cancer, High, Medium, Low, \"Not detected\" FROM cancer_data LIMIT 20"
+      },
+      "ms": 23,
+      "result_chars": 971,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tGene name\tCancer\tHigh\tMedium\tLow\tNot detected\nENSG00000000003\tTSPAN6\tbreast cancer\t1\t7\t2\t2\nENSG00000000003\tTSPAN6\tcarcinoid\t0\t1\t1\t2\nENSG00000000003\tTSPAN6\tcervical cancer\t11\t1\t0\t0\nENSG00000000003\tTSPAN6\tcolorectal cancer\t0\t6\t2\t2\nENSG00000000003\tTSPAN6\tendometrial cancer\t10\t2\t0\t0\nENSG00000000003\tTSPAN6\tglioma\t0\t0\t0\t11\nENSG00000000003\tTSPAN6\thead and neck cancer\t0\t3\t1\t0\nENSG00000000003\tTSPAN6\tliver cancer\t4\t5\t1\t0\nENSG00000000003\tTSPAN6\tlung cancer\t8\t4\t0\t0\nENSG00000000003\tTSPAN6\tlymphoma\t0\t0\t0\t11\nENSG00000000003\tTSPAN6\tmelanoma\t0\t1\t2\t9\nENSG00000000003\tTSPAN6\tovarian cancer\t8\t3\t0\t0\nENSG000000"
+    },
+    {
+      "turn": 4,
+      "name": "sql",
+      "input": {
+        "query": "SELECT COUNT(*) FROM cancer_data WHERE Cancer='colorectal cancer'"
+      },
+      "ms": 46,
+      "result_chars": 27,
+      "truncated": false,
+      "error": null,
+      "result_head": "count_star()\n15312\n[1 rows]"
+    },
+    {
+      "turn": 4,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene name\", Count(*) FROM cancer_data WHERE Cancer='colorectal cancer' GROUP BY \"Gene name\" LIMIT 5"
+      },
+      "ms": 46,
+      "result_chars": 70,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene name\tcount_star()\nPEA15\t1\nDENND2D\t1\nREL\t1\nKCNJ3\t1\nMSX1\t1\n[5 rows]"
+    },
+    {
+      "turn": 5,
+      "name": "sql",
+      "input": {
+        "query": "SELECT Gene, \"Gene name\", Tissue, \"Cell type\", Level, Reliability FROM normal_ihc_data WHERE Tissue='Colon' AND \"Cell type\"='glandular cells' LIMIT 15"
+      },
+      "ms": 69,
+      "result_chars": 989,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tGene name\tTissue\tCell type\tLevel\tReliability\nENSG00000000003\tTSPAN6\tColon\tglandular cells\tMedium\tApproved\nENSG00000000419\tDPM1\tColon\tglandular cells\tHigh\tApproved\nENSG00000000457\tSCYL3\tColon\tglandular cells\tMedium\tApproved\nENSG00000000460\tC1orf112\tColon\tglandular cells\tNot detected\tUncertain\nENSG00000000938\tFGR\tColon\tglandular cells\tNot detected\tEnhanced\nENSG00000000971\tCFH\tColon\tglandular cells\tNot detected\tSupported\nENSG00000001036\tFUCA2\tColon\tglandular cells\tNot detected\tApproved\nENSG00000001084\tGCLC\tColon\tglandular cells\tMedium\tApproved\nENSG00000001167\tNFYA\tColon\tglandular cells\tMediu"
+    },
+    {
+      "turn": 5,
+      "name": "sql",
+      "input": {
+        "query": "SELECT DISTINCT Tissue FROM rna_tissue_consensus WHERE Tissue ILIKE '%colon%' OR Tissue ILIKE '%breast%' OR Tissue ILIKE '%lung%' ORDER BY Tissue"
+      },
+      "ms": 151,
+      "result_chars": 33,
+      "truncated": false,
+      "error": null,
+      "result_head": "Tissue\nbreast\ncolon\nlung\n[3 rows]"
+    },
+    {
+      "turn": 5,
+      "name": "sql",
+      "input": {
+        "query": "SELECT COUNT(*) AS rows_total, COUNT(DISTINCT Ensembl) AS distinct_ens FROM proteinatlas"
+      },
+      "ms": 97,
+      "result_chars": 44,
+      "truncated": false,
+      "error": null,
+      "result_head": "rows_total\tdistinct_ens\n20162\t20162\n[1 rows]"
+    },
+    {
+      "turn": 5,
+      "name": "sql",
+      "input": {
+        "query": "SELECT COUNT(*) AS n FROM proteinatlas WHERE \"Protein class\" LIKE '%Predicted membrane proteins%'"
+      },
+      "ms": 90,
+      "result_chars": 15,
+      "truncated": false,
+      "error": null,
+      "result_head": "n\n5573\n[1 rows]"
+    },
+    {
+      "turn": 6,
+      "name": "sql",
+      "input": {
+        "query": "SELECT DISTINCT Level FROM normal_ihc_data WHERE Reliability IN ('Enhanced','Supported') AND ((Tissue='Colon' AND \"Cell type\"='glandular cells') OR (Tissue='Breast' AND \"Cell type\"='glandular cells') OR (Tissue='Lung' AND \"Cell type\"='alveolar cells'))"
+      },
+      "ms": 119,
+      "result_chars": 43,
+      "truncated": false,
+      "error": null,
+      "result_head": "Level\nMedium\nLow\nNot detected\nHigh\n[4 rows]"
+    },
+    {
+      "turn": 6,
+      "name": "sql",
+      "input": {
+        "query": "SELECT DISTINCT Reliability FROM normal_ihc_data WHERE Tissue='Colon' AND \"Cell type\"='glandular cells'"
+      },
+      "ms": 83,
+      "result_chars": 58,
+      "truncated": false,
+      "error": null,
+      "result_head": "Reliability\nUncertain\nApproved\nSupported\nEnhanced\n[4 rows]"
+    },
+    {
+      "turn": 6,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene\", COUNT(*) AS recs, COUNT(DISTINCT Level) AS levels FROM normal_ihc_data WHERE Tissue='Colon' AND \"Cell type\"='glandular cells' AND Reliability IN ('Enhanced','Supported') GROUP BY \"Gene\" HAVING COUNT(*) > 1 ORDER BY recs DESC LIMIT 10"
+      },
+      "ms": 92,
+      "result_chars": 18,
+      "truncated": false,
+      "error": null,
+      "result_head": "(no rows)\n[0 rows]"
+    },
+    {
+      "turn": 6,
+      "name": "sql",
+      "input": {
+        "query": "SELECT Gene, \"Gene name\", Cancer, High, Medium, Low, \"Not detected\" FROM cancer_data WHERE Cancer='colorectal cancer' AND Gene='ENSG00000000003'"
+      },
+      "ms": 57,
+      "result_chars": 108,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tGene name\tCancer\tHigh\tMedium\tLow\tNot detected\nENSG00000000003\tTSPAN6\tcolorectal cancer\t0\t6\t2\t2\n[1 rows]"
+    },
+    {
+      "turn": 7,
+      "name": "sql",
+      "input": {
+        "query": "SELECT 'Colon/gland' AS set, COUNT(*) AS genes, SUM(CASE WHEN rec>1 THEN 1 ELSE 0 END) AS multi FROM (\n SELECT \"Gene\", COUNT(*) AS rec FROM normal_ihc_data\n WHERE Reliability IN ('Enhanced','Supported') AND Tissue='Colon' AND \"Cell type\"='glandular cells'\n GROUP BY \"Gene\"\n) x\nUNION ALL\nSELECT 'Breast/gland', COUNT(*), SUM(CASE WHEN rec>1 THEN 1 ELSE 0 END) FROM (\n SELECT \"Gene\", COUNT(*) AS rec FROM normal_ihc_data\n WHERE Reliability IN ('Enhanced','Supported') AND Tissue='Breast' AND \"Cell type\"='glandular cells'\n GROUP BY \"Gene\"\n) x\nUNION ALL\nSELECT 'Lung/alveolar', COUNT(*), SUM(CASE WHEN rec>1 THEN 1 ELSE 0 END) FROM (\n SELECT \"Gene\", COUNT(*) AS rec FROM normal_ihc_data\n WHERE Reliability IN ('Enhanced','Supported') AND Tissue='Lung' AND \"Cell type\"='alveolar cells'\n GROUP BY \"Gene\"\n) x"
+      },
+      "ms": 251,
+      "result_chars": 84,
+      "truncated": false,
+      "error": null,
+      "result_head": "set\tgenes\tmulti\nColon/gland\t4465\t0\nBreast/gland\t5554\t0\nLung/alveolar\t3661\t0\n[3 rows]"
+    },
+    {
+      "turn": 7,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene\", \"Gene name\", Tissue, \"Cell type\", Level, Reliability FROM normal_ihc_data\nWHERE \"Gene\"='ENSG00000000003' AND Tissue='Colon' AND \"Cell type\"='glandular cells' AND Reliability IN ('Enhanced','Supported')"
+      },
+      "ms": 112,
+      "result_chars": 18,
+      "truncated": false,
+      "error": null,
+      "result_head": "(no rows)\n[0 rows]"
+    },
+    {
+      "turn": 8,
+      "name": "sql",
+      "input": {
+        "query": "WITH uni AS (\n  SELECT Ensembl AS ensg FROM proteinatlas WHERE \"Protein class\" LIKE '%Predicted membrane proteins%'\n),\nnorm AS (\n  SELECT \"Gene\" AS ensg,\n    MAX(CASE WHEN Tissue='Colon' THEN ord END) AS colon_score,\n    MAX(CASE WHEN Tissue='Breast' THEN ord END) AS breast_score,\n    MAX(CASE WHEN Tissue='Lung' THEN ord END) AS lung_score\n  FROM (\n    SELECT \"Gene\", Tissue,\n      CASE Level WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END AS ord\n    FROM normal_ihc_data\n    WHERE Reliability IN ('Enhanced','Supported')\n      AND ((Tissue='Colon' AND \"Cell type\"='glandular cells')\n        OR (Tissue='Breast' AND \"Cell type\"='glandular cells')\n        OR (Tissue='Lung' AND \"Cell type\"='alveolar cells'))\n  ) s GROUP BY \"Gene\"\n),\ncanc AS (\n  SELECT \"Gene\" AS ensg,\n    MAX(CASE WHEN Cancer='colorectal cancer' AND obs>=5 THEN wsum*1.0/obs END) AS crc,\n    MAX(CASE WHEN Cancer='breast cancer' AND obs>=5 THEN wsum*1.0/obs END) AS brca,\n    MAX(CASE WHEN Cancer='lung cancer' AND obs>=5 THEN wsum*1.0/obs END) AS lu\n  FROM (\n    SELECT \"Gene\", Cancer,\n      (3*TRY_CAST(High AS INT)+2*TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)) AS wsum,\n      TRY_CAST(High AS INT)+TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)+TRY_CAST(\"Not detected\" AS INT) AS obs\n    FROM cancer_data\n    WHERE Cancer IN ('colorectal cancer','breast cancer','lung cancer')\n  ) s GROUP BY \"Gene\"\n)\nSELECT 'Colon vs colorectal' AS pair,\n  COUNT(*) AS n_both,\n  MEDIAN(crc - colon_score) AS median_diff,\n  ROUND(SUM(CASE WHEN (crc - colon_score) >= 1 THEN 1 ELSE 0 END)*1.0/COUNT(*),4) AS frac_inc\nFROM uni JOIN norm USING(ensg) JOIN canc USING(ensg)\nWHERE colon_score IS NOT NULL AND crc IS NOT NULL\nUNION ALL\nSELECT 'Breast vs breast cancer',\n  COUNT(*), MEDIAN(brca - breast_score),\n  ROUND(SUM(CASE WHEN (brca - breast_score) >= 1 THEN 1 ELSE 0 END)*1.0/COUNT(*),4)\nFROM uni JOIN norm USING(ensg) JOIN canc USING(ensg)\nWHERE breast_score IS NOT NULL AND brca IS NOT NULL\nUNION ALL\nSELECT 'Lung vs lung cancer',\n  COUNT(*), MEDIAN(lu - lung_score),\n  ROUND(SUM(CASE WHEN (lu - lung_score) >= 1 THEN 1 ELSE 0 END)*1.0/COUNT(*),4)\nFROM uni JOIN norm USING(ensg) JOIN canc USING(ensg)\nWHERE lung_score IS NOT NULL AND lu IS NOT NULL"
+      },
+      "ms": 255,
+      "result_chars": 146,
+      "truncated": false,
+      "error": null,
+      "result_head": "pair\tn_both\tmedian_diff\tfrac_inc\nColon vs colorectal\t1003\t0\t0.0369\nBreast vs breast cancer\t1346\t0\t0.0446\nLung vs lung cancer\t990\t0\t0.0727\n[3 rows]"
+    },
+    {
+      "turn": 9,
+      "name": "sql",
+      "input": {
+        "query": "WITH uni AS (\n  SELECT Ensembl AS ensg, Gene AS gname FROM proteinatlas WHERE \"Protein class\" LIKE '%Predicted membrane proteins%'\n),\nnorm AS (\n  SELECT \"Gene\" AS ensg, Level, Reliability,\n    CASE Level WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END AS ord\n  FROM normal_ihc_data\n  WHERE Reliability IN ('Enhanced','Supported') AND Tissue='Colon' AND \"Cell type\"='glandular cells'\n),\ncanc AS (\n  SELECT \"Gene\" AS ensg, TRY_CAST(High AS INT) AS High, TRY_CAST(Medium AS INT) AS Medium,\n         TRY_CAST(Low AS INT) AS Low, TRY_CAST(\"Not detected\" AS INT) AS ND,\n         (3*TRY_CAST(High AS INT)+2*TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)) AS wsum,\n         TRY_CAST(High AS INT)+TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)+TRY_CAST(\"Not detected\" AS INT) AS obs\n  FROM cancer_data WHERE Cancer='colorectal cancer'\n),\nrna AS (\n  SELECT Gene AS ensg, TRY_CAST(nTPM AS DOUBLE) AS colon_nTPM FROM rna_tissue_consensus WHERE Tissue='colon'\n)\nSELECT u.ensg, u.gname, n.Level AS norm_level, n.Reliability AS norm_rel, n.ord AS norm_score,\n       c.High, c.Medium, c.Low, c.ND, c.obs,\n       ROUND(c.wsum*1.0/c.obs,3) AS wscore,\n       ROUND(c.wsum*1.0/c.obs - n.ord,3) AS diff,\n       COALESCE(r.colon_nTPM, -999) AS colon_ntpm\nFROM uni u\nJOIN norm n ON u.ensg=n.ensg\nJOIN canc c ON u.ensg=c.ensg AND c.obs>=5\nLEFT JOIN rna r ON u.ensg=r.ensg\nORDER BY diff DESC, u.ensg ASC\nLIMIT 15"
+      },
+      "ms": 385,
+      "result_chars": 1177,
+      "truncated": false,
+      "error": null,
+      "result_head": "ensg\tgname\tnorm_level\tnorm_rel\tnorm_score\tHigh\tMedium\tLow\tND\tobs\twscore\tdiff\tcolon_ntpm\nENSG00000163347\tCLDN1\tNot detected\tEnhanced\t0\t6\t5\t1\t0\t12\t2.417\t2.417\t1.6\nENSG00000143337\tTOR1AIP1\tNot detected\tEnhanced\t0\t2\t9\t1\t0\t12\t2.083\t2.083\t41.3\nENSG00000062038\tCDH3\tNot detected\tEnhanced\t0\t2\t7\t2\t0\t11\t2\t2\t0.4\nENSG00000102524\tTNFSF13B\tNot detected\tEnhanced\t0\t0\t11\t1\t0\t12\t1.917\t1.917\t5.1\nENSG00000176884\tGRIN1\tNot detected\tEnhanced\t0\t2\t7\t2\t1\t12\t1.833\t1.833\t0.7\nENSG00000100749\tVRK1\tNot detected\tEnhanced\t0\t1\t8\t0\t2\t11\t1.727\t1.727\t10.2\nENSG00000150938\tCRIM1\tNot detected\tEnhanced\t0\t0\t9\t2\t1\t12\t1.667\t1.667\t26.9\nE"
+    },
+    {
+      "turn": 10,
+      "name": "sql",
+      "input": {
+        "query": "WITH uni AS (\n  SELECT Ensembl AS ensg, Gene AS gname FROM proteinatlas WHERE \"Protein class\" LIKE '%Predicted membrane proteins%'\n),\nnorm AS (\n  SELECT \"Gene\" AS ensg,\n    MAX(CASE WHEN Tissue='Colon' THEN ord END) AS colon_score,\n    MAX(CASE WHEN Tissue='Breast' THEN ord END) AS breast_score,\n    MAX(CASE WHEN Tissue='Lung' THEN ord END) AS lung_score,\n    MAX(CASE WHEN Tissue='Colon' THEN Level||' / '||Reliability END) AS colon_lr,\n    MAX(CASE WHEN Tissue='Breast' THEN Level||' / '||Reliability END) AS breast_lr,\n    MAX(CASE WHEN Tissue='Lung' THEN Level||' / '||Reliability END) AS lung_lr\n  FROM (\n    SELECT \"Gene\", Tissue, Level, Reliability,\n      CASE Level WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END AS ord\n    FROM normal_ihc_data\n    WHERE Reliability IN ('Enhanced','Supported')\n      AND ((Tissue='Colon' AND \"Cell type\"='glandular cells')\n        OR (Tissue='Breast' AND \"Cell type\"='glandular cells')\n        OR (Tissue='Lung' AND \"Cell type\"='alveolar cells'))\n  ) s GROUP BY \"Gene\"\n),\ncanc AS (\n  SELECT \"Gene\" AS ensg,\n    MAX(CASE WHEN Cancer='colorectal cancer' AND obs>=5 THEN wsum*1.0/obs END) AS crc,\n    MAX(CASE WHEN Cancer='breast cancer' AND obs>=5 THEN wsum*1.0/obs END) AS brca,\n    MAX(CASE WHEN Cancer='lung cancer' AND obs>=5 THEN wsum*1.0/obs END) AS lu,\n    MAX(CASE WHEN Cancer='colorectal cancer' THEN TRY_CAST(High AS INT)||','||TRY_CAST(Medium AS INT)||','||TRY_CAST(Low AS INT)||','||TRY_CAST(\"Not detected\" AS INT) END) AS crc_counts\n  FROM (\n    SELECT \"Gene\", Cancer,\n      (3*TRY_CAST(High AS INT)+2*TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)) AS wsum,\n      TRY_CAST(High AS INT)+TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)+TRY_CAST(\"Not detected\" AS INT) AS obs,\n      High, Medium, Low, \"Not detected\"\n    FROM cancer_data\n    WHERE Cancer IN ('colorectal cancer','breast cancer','lung cancer')\n  ) s GROUP BY \"Gene\"\n),\nrna AS (SELECT Gene AS ensg, TRY_CAST(nTPM AS DOUBLE) AS colon_ntpm FROM rna_tissue_consensus WHERE Tissue='colon'),\nsel AS (\n  SELECT u.ensg, u.gname, n.colon_score, n.colon_lr, c.crc, c.crc_counts, ROUND(c.crc-n.colon_score,3) AS diff\n  FROM uni u JOIN norm n ON u.ensg=n.ensg JOIN canc c ON u.ensg=c.ensg\n  WHERE n.colon_score IS NOT NULL AND c.crc IS NOT NULL\n  ORDER BY (c.crc-n.colon_score) DESC, u.ensg ASC LIMIT 12\n)\nSELECT s.ensg, s.gname, s.colon_score, s.colon_lr, s.crc, s.crc_counts, s.diff,\n       n.breast_score, n.lung_score, c.brca, c.lu, r.colon_ntpm\nFROM sel s\nJOIN norm n ON s.ensg=n.ensg\nJOIN canc c ON s.ensg=c.ensg\nLEFT JOIN rna r ON s.ensg=r.ensg\nORDER BY s.diff DESC, s.ensg ASC"
+      },
+      "ms": 327,
+      "result_chars": 1387,
+      "truncated": false,
+      "error": null,
+      "result_head": "ensg\tgname\tcolon_score\tcolon_lr\tcrc\tcrc_counts\tdiff\tbreast_score\tlung_score\tbrca\tlu\tcolon_ntpm\nENSG00000163347\tCLDN1\t0\tNot detected / Enhanced\t2.4166666666666665\t6,5,1,0\t2.417\t2\t0\t0.2727272727272727\t2\t1.6\nENSG00000143337\tTOR1AIP1\t0\tNot detected / Enhanced\t2.0833333333333335\t2,9,1,0\t2.083\t2\t\t2.6\t2.090909090909091\t41.3\nENSG00000062038\tCDH3\t0\tNot detected / Enhanced\t2\t2,7,2,0\t2\t2\t0\t1.3333333333333333\t1.6666666666666667\t0.4\nENSG00000102524\tTNFSF13B\t0\tNot detected / Enhanced\t1.9166666666666667\t0,11,1,0\t1.917\t0\t0\t1.8181818181818181\t1.25\t5.1\nENSG00000176884\tGRIN1\t0\tNot detected / Enhanced\t1.833333333"
+    },
+    {
+      "turn": 11,
+      "name": "sql",
+      "input": {
+        "query": "WITH uni AS (\n  SELECT Ensembl AS ensg, Gene AS gname FROM proteinatlas WHERE \"Protein class\" LIKE '%Predicted membrane proteins%'\n),\nnorm AS (\n  SELECT \"Gene\" AS ensg,\n    MAX(CASE WHEN Tissue='Colon' THEN ord END) AS cs, MAX(CASE WHEN Tissue='Breast' THEN ord END) AS bs,\n    MAX(CASE WHEN Tissue='Lung' THEN ord END) AS ls\n  FROM (\n    SELECT \"Gene\", Tissue,\n      CASE Level WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END AS ord\n    FROM normal_ihc_data\n    WHERE Reliability IN ('Enhanced','Supported')\n      AND ((Tissue='Colon' AND \"Cell type\"='glandular cells')\n        OR (Tissue='Breast' AND \"Cell type\"='glandular cells')\n        OR (Tissue='Lung' AND \"Cell type\"='alveolar cells'))\n  ) s GROUP BY \"Gene\"\n),\ncanc AS (\n  SELECT \"Gene\" AS ensg,\n    MAX(CASE WHEN Cancer='colorectal cancer' AND obs>=5 THEN ROUND(wsum*1.0/obs,3) END) AS crc,\n    MAX(CASE WHEN Cancer='breast cancer' AND obs>=5 THEN ROUND(wsum*1.0/obs,3) END) AS brca,\n    MAX(CASE WHEN Cancer='lung cancer' AND obs>=5 THEN ROUND(wsum*1.0/obs,3) END) AS lu\n  FROM (\n    SELECT \"Gene\", Cancer,\n      (3*TRY_CAST(High AS INT)+2*TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)) AS wsum,\n      TRY_CAST(High AS INT)+TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)+TRY_CAST(\"Not detected\" AS INT) AS obs\n    FROM cancer_data\n    WHERE Cancer IN ('colorectal cancer','breast cancer','lung cancer')\n  ) s GROUP BY \"Gene\"\n),\nsel AS (\n  SELECT u.ensg, u.gname, n.cs, c.crc, ROUND(c.crc-n.cs,3) AS diff\n  FROM uni u JOIN norm n ON u.ensg=n.ensg JOIN canc c ON u.ensg=c.ensg\n  WHERE n.cs IS NOT NULL AND c.crc IS NOT NULL\n  ORDER BY (c.crc-n.cs) DESC, u.ensg ASC LIMIT 12\n)\nSELECT s.ensg, s.gname, s.cs AS norm_colon, s.crc AS cancer_colorectal,\n       ROUND(s.crc-s.cs,3) AS d_colon,\n       n.bs AS norm_breast, c.brca AS cancer_breast,\n       CASE WHEN n.bs IS NOT NULL AND c.brca IS NOT NULL THEN ROUND(c.brca-n.bs,3) ELSE NULL END AS d_breast,\n       n.ls AS norm_lung, c.lu AS cancer_lung,\n       CASE WHEN n.ls IS NOT NULL AND c.lu IS NOT NULL THEN ROUND(c.lu-n.ls,3) ELSE NULL END AS d_lung\nFROM sel s\nJOIN norm n ON s.ensg=n.ensg\nJOIN canc c ON s.ensg=c.ensg\nORDER BY s.diff DESC, s.ensg ASC"
+      },
+      "ms": 240,
+      "result_chars": 813,
+      "truncated": false,
+      "error": null,
+      "result_head": "ensg\tgname\tnorm_colon\tcancer_colorectal\td_colon\tnorm_breast\tcancer_breast\td_breast\tnorm_lung\tcancer_lung\td_lung\nENSG00000163347\tCLDN1\t0\t2.417\t2.417\t2\t0.273\t-1.727\t0\t2\t2\nENSG00000143337\tTOR1AIP1\t0\t2.083\t2.083\t2\t2.6\t0.6\t\t2.091\t\nENSG00000062038\tCDH3\t0\t2\t2\t2\t1.333\t-0.667\t0\t1.667\t1.667\nENSG00000102524\tTNFSF13B\t0\t1.917\t1.917\t0\t1.818\t1.818\t0\t1.25\t1.25\nENSG00000176884\tGRIN1\t0\t1.833\t1.833\t0\t0\t0\t0\t0.25\t0.25\nENSG00000100749\tVRK1\t0\t1.727\t1.727\t1\t1.545\t0.545\t\t1.818\t\nENSG00000150938\tCRIM1\t0\t1.667\t1.667\t2\t0.667\t-1.333\t0\t0.5\t0.5\nENSG00000185885\tIFITM1\t1\t2.545\t1.545\t0\t0.917\t0.917\t0\t1.333\t1.333\nENSG00000059377\t"
+    },
+    {
+      "turn": 12,
+      "name": "sql",
+      "input": {
+        "query": "WITH uni AS (\n  SELECT Ensembl AS ensg FROM proteinatlas WHERE \"Protein class\" LIKE '%Predicted membrane proteins%'\n),\nnorm AS (\n  SELECT \"Gene\" AS ensg,\n    MAX(CASE WHEN Tissue='Colon' THEN ord END) AS cs, MAX(CASE WHEN Tissue='Breast' THEN ord END) AS bs,\n    MAX(CASE WHEN Tissue='Lung' THEN ord END) AS ls\n  FROM (SELECT \"Gene\", Tissue, CASE Level WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END AS ord\n    FROM normal_ihc_data\n    WHERE Reliability IN ('Enhanced','Supported')\n      AND ((Tissue='Colon' AND \"Cell type\"='glandular cells') OR (Tissue='Breast' AND \"Cell type\"='glandular cells') OR (Tissue='Lung' AND \"Cell type\"='alveolar cells'))) s\n  GROUP BY \"Gene\"\n),\ncanc AS (\n  SELECT \"Gene\" AS ensg,\n    MAX(CASE WHEN Cancer='colorectal cancer' AND obs>=5 THEN wsum*1.0/obs END) AS crc,\n    MAX(CASE WHEN Cancer='breast cancer' AND obs>=5 THEN wsum*1.0/obs END) AS brca,\n    MAX(CASE WHEN Cancer='lung cancer' AND obs>=5 THEN wsum*1.0/obs END) AS lu\n  FROM (SELECT \"Gene\", Cancer, (3*TRY_CAST(High AS INT)+2*TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)) AS wsum,\n     TRY_CAST(High AS INT)+TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)+TRY_CAST(\"Not detected\" AS INT) AS obs\n    FROM cancer_data WHERE Cancer IN ('colorectal cancer','breast cancer','lung cancer')) s\n  GROUP BY \"Gene\"\n)\nSELECT 'Colon vs colorectal' AS pair, COUNT(*) AS n_both,\n  SUM(CASE WHEN (crc-cs)>=1 THEN 1 ELSE 0 END) AS n_inc,\n  MEDIAN(crc-cs) AS med\nFROM uni u JOIN norm n USING(ensg) JOIN canc c USING(ensg) WHERE cs IS NOT NULL AND crc IS NOT NULL\nUNION ALL SELECT 'Breast vs breast cancer', COUNT(*), SUM(CASE WHEN (brca-bs)>=1 THEN 1 ELSE 0 END), MEDIAN(brca-bs)\nFROM uni u JOIN norm n USING(ensg) JOIN canc c USING(ensg) WHERE bs IS NOT NULL AND brca IS NOT NULL\nUNION ALL SELECT 'Lung vs lung cancer', COUNT(*), SUM(CASE WHEN (lu-ls)>=1 THEN 1 ELSE 0 END), MEDIAN(lu-ls)\nFROM uni u JOIN norm n USING(ensg) JOIN canc c USING(ensg) WHERE ls IS NOT NULL AND lu IS NOT NULL"
+      },
+      "ms": 267,
+      "result_chars": 123,
+      "truncated": false,
+      "error": null,
+      "result_head": "pair\tn_both\tn_inc\tmed\nColon vs colorectal\t1003\t37\t0\nBreast vs breast cancer\t1346\t60\t0\nLung vs lung cancer\t990\t72\t0\n[3 rows]"
+    },
+    {
+      "turn": 12,
+      "name": "sql",
+      "input": {
+        "query": "SELECT n.\"Gene\" AS ensg, p.Gene AS gname, n.Level AS norm_level, n.Reliability AS norm_rel,\n       c.High, c.Medium, c.Low, c.ND, c.obs,\n       ROUND(c.wsum*1.0/c.obs,3) AS wscore, ROUND(c.wsum*1.0/c.obs - (CASE n.Level WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END),3) AS diff,\n       r.colon_ntpm\nFROM (\n  SELECT \"Gene\", Level, Reliability,\n    CASE Level WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END AS ord\n  FROM normal_ihc_data\n  WHERE Reliability IN ('Enhanced','Supported') AND Tissue='Colon' AND \"Cell type\"='glandular cells'\n) n\nJOIN proteinatlas p ON p.Ensembl=n.\"Gene\" AND p.\"Protein class\" LIKE '%Predicted membrane proteins%'\nJOIN (\n  SELECT \"Gene\", TRY_CAST(High AS INT) High, TRY_CAST(Medium AS INT) Medium, TRY_CAST(Low AS INT) Low,\n         TRY_CAST(\"Not detected\" AS INT) ND,\n         (3*TRY_CAST(High AS INT)+2*TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)) AS wsum,\n         TRY_CAST(High AS INT)+TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)+TRY_CAST(\"Not detected\" AS INT) AS obs\n  FROM cancer_data WHERE Cancer='colorectal cancer'\n) c ON c.\"Gene\"=n.\"Gene\" AND c.obs>=5\nLEFT JOIN (SELECT Gene, nTPM AS colon_ntpm FROM rna_tissue_consensus WHERE Tissue='colon') r ON r.Gene=n.\"Gene\"\nORDER BY (c.wsum*1.0/c.obs - n.ord) DESC, n.\"Gene\" ASC\nLIMIT 12"
+      },
+      "ms": 338,
+      "result_chars": 929,
+      "truncated": false,
+      "error": null,
+      "result_head": "ensg\tgname\tnorm_level\tnorm_rel\tHigh\tMedium\tLow\tND\tobs\twscore\tdiff\tcolon_ntpm\nENSG00000163347\tCLDN1\tNot detected\tEnhanced\t6\t5\t1\t0\t12\t2.417\t2.417\t1.6\nENSG00000143337\tTOR1AIP1\tNot detected\tEnhanced\t2\t9\t1\t0\t12\t2.083\t2.083\t41.3\nENSG00000062038\tCDH3\tNot detected\tEnhanced\t2\t7\t2\t0\t11\t2\t2\t0.4\nENSG00000102524\tTNFSF13B\tNot detected\tEnhanced\t0\t11\t1\t0\t12\t1.917\t1.917\t5.1\nENSG00000176884\tGRIN1\tNot detected\tEnhanced\t2\t7\t2\t1\t12\t1.833\t1.833\t0.7\nENSG00000100749\tVRK1\tNot detected\tEnhanced\t1\t8\t0\t2\t11\t1.727\t1.727\t10.2\nENSG00000150938\tCRIM1\tNot detected\tEnhanced\t0\t9\t2\t1\t12\t1.667\t1.667\t26.9\nENSG00000185885\tIFITM1\tLow"
+    },
+    {
+      "turn": 13,
+      "name": "sql",
+      "input": {
+        "query": "WITH uni AS (\n  SELECT Ensembl AS ensg, Gene AS gname FROM proteinatlas WHERE \"Protein class\" LIKE '%Predicted membrane proteins%'\n),\nnorm AS (\n  SELECT \"Gene\" AS ensg,\n    MAX(CASE WHEN Tissue='Colon' THEN ord END) AS cs, MAX(CASE WHEN Tissue='Breast' THEN ord END) AS bs,\n    MAX(CASE WHEN Tissue='Lung' THEN ord END) AS ls\n  FROM (SELECT \"Gene\", Tissue, CASE Level WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END AS ord\n    FROM normal_ihc_data\n    WHERE Reliability IN ('Enhanced','Supported')\n      AND ((Tissue='Colon' AND \"Cell type\"='glandular cells') OR (Tissue='Breast' AND \"Cell type\"='glandular cells') OR (Tissue='Lung' AND \"Cell type\"='alveolar cells'))) s\n  GROUP BY \"Gene\"\n),\ncanc AS (\n  SELECT \"Gene\" AS ensg,\n    MAX(CASE WHEN Cancer='colorectal cancer' AND obs>=5 THEN ROUND(wsum*1.0/obs,3) END) AS crc,\n    MAX(CASE WHEN Cancer='breast cancer' AND obs>=5 THEN ROUND(wsum*1.0/obs,3) END) AS brca,\n    MAX(CASE WHEN Cancer='lung cancer' AND obs>=5 THEN ROUND(wsum*1.0/obs,3) END) AS lu\n  FROM (SELECT \"Gene\", Cancer, (3*TRY_CAST(High AS INT)+2*TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)) AS wsum,\n     TRY_CAST(High AS INT)+TRY_CAST(Medium AS INT)+TRY_CAST(Low AS INT)+TRY_CAST(\"Not detected\" AS INT) AS obs\n    FROM cancer_data WHERE Cancer IN ('colorectal cancer','breast cancer','lung cancer')) s\n  GROUP BY \"Gene\"\n),\nsel AS (\n  SELECT u.ensg, u.gname, n.cs, c.crc, ROUND(c.crc-n.cs,3) AS diff\n  FROM uni u JOIN norm n ON u.ensg=n.ensg JOIN canc c ON u.ensg=c.ensg\n  WHERE n.cs IS NOT NULL AND c.crc IS NOT NULL\n  ORDER BY (c.crc-n.cs) DESC, u.ensg ASC LIMIT 12\n)\nSELECT 'Colon-colorectal' AS pair, s.ensg, s.gname, n.cs AS normal, c.crc AS cancer, ROUND(c.crc-n.cs,3) AS diff\nFROM sel s JOIN norm n USING(ensg) JOIN canc c USING(ensg)\nUNION ALL\nSELECT 'Breast-breastcancer', s.ensg, s.gname, n.bs, c.brca, ROUND(c.brca-n.bs,3)\nFROM sel s JOIN norm n USING(ensg) JOIN canc c USING(ensg)\nWHERE n.bs IS NOT NULL AND c.brca IS NOT NULL\nUNION ALL\nSELECT 'Lung-lungcancer', s.ensg, s.gname, n.ls, c.lu, ROUND(c.lu-n.ls,3)\nFROM sel s JOIN norm n USING(ensg) JOIN canc c USING(ensg)\nWHERE n.ls IS NOT NULL AND c.lu IS NOT NULL\nORDER BY pair, diff DESC, ensg"
+      },
+      "ms": 234,
+      "result_chars": 1781,
+      "truncated": false,
+      "error": null,
+      "result_head": "pair\tensg\tgname\tnormal\tcancer\tdiff\nBreast-breastcancer\tENSG00000102524\tTNFSF13B\t0\t1.818\t1.818\nBreast-breastcancer\tENSG00000185885\tIFITM1\t0\t0.917\t0.917\nBreast-breastcancer\tENSG00000143337\tTOR1AIP1\t2\t2.6\t0.6\nBreast-breastcancer\tENSG00000100749\tVRK1\t1\t1.545\t0.545\nBreast-breastcancer\tENSG00000168003\tSLC3A2\t0\t0.5\t0.5\nBreast-breastcancer\tENSG00000169760\tNLGN1\t0\t0.333\t0.333\nBreast-breastcancer\tENSG00000081800\tSLC13A1\t0\t0.3\t0.3\nBreast-breastcancer\tENSG00000059377\tTBXAS1\t0\t0\t0\nBreast-breastcancer\tENSG00000176884\tGRIN1\t0\t0\t0\nBreast-breastcancer\tENSG00000062038\tCDH3\t2\t1.333\t-0.667\nBreast-breastcancer\tENS"
+    }
+  ],
+  "usage": {
+    "input_tokens": 235675,
+    "output_tokens": 24067,
+    "cache_read_input_tokens": 222592,
+    "cache_creation_input_tokens": 0,
+    "reasoning_tokens": 14317
+  },
+  "started_unix_ms": 1788992934492,
+  "final_answer": "I now have all the required results. Here is the complete analysis.\n\n## Method (brief)\n\n- **Gene universe**: 5,573 Ensembl genes in the HPA master table (`proteinatlas`) whose `Protein class` contains \"Predicted membrane proteins\".\n- **Normal IHC** (`normal_ihc_data`): Colon glandular cells, Breast glandular cells, Lung alveolar cells; Reliability = Enhanced or Supported only. Level → score: High=3, Medium=2, Low=1, Not detected=0; per gene/tissue the highest ordinal level was taken (each gene/tissue had ≤1 eligible record, so no aggregation was actually needed).\n- **Cancer IHC** (`cancer_data`): colorectal cancer, breast cancer, lung cancer; rows with ≥5 observations (High+Medium+Low+Not detected). Weighted score = (3·High + 2·Medium + Low)/(High+Medium+Low+Not detected).\n- **Change** = cancer weighted score − normal ordinal score, computed only for genes having both measurements.\n- Medians are DuckDB `median()`; fractions are counts of change ≥ 1 divided by the number of genes with both measurements.\n- **Important caveat**: normal IHC and cancer IHC are aggregate ordinal summaries over *different* tissue/cancer specimens; these are not paired-patient measurements, and all score differences are cross-sample ordinal summaries.\n\n## 1. Per tissue/cancer pair summary\n\n| Pair | Genes with both measurements | Median cancer−normal score | Fraction with increase ≥ 1 score unit |\n|---|---|---|---|\n| Colon (glandular) vs colorectal cancer | 1,003 | 0 | 37/1,003 = **0.0369 (3.7%)** |\n| Breast (glandular) vs breast cancer | 1,346 | 0 | 60/1,346 = **0.0446 (4.5%)** |\n| Lung (alveolar) vs lung cancer | 990 | 0 | 72/990 = **0.0727 (7.3%)** |\n\n## 2. Colon: twelve genes with the largest increase (ties broken by Ensembl ID)\n\nRanked by change (descending), then Ensembl ID. All 12 come from the predicted-membrane-protein universe (n = 1,003 ranked members, so the requested list of 12 is full).\n\n| Ensembl ID | Gene | Normal level / reliability | High | Medium | Low | Not detected | Cancer obs | Weighted cancer score | Change | Colon consensus nTPM |\n|---|---|---|---|---|---|---|---|---|---|---|\n| ENSG00000163347 | CLDN1 | Not detected / Enhanced | 6 | 5 | 1 | 0 | 12 | 2.417 | +2.417 | 1.6 |\n| ENSG00000143337 | TOR1AIP1 | Not detected / Enhanced | 2 | 9 | 1 | 0 | 12 | 2.083 | +2.083 | 41.3 |\n| ENSG00000062038 | CDH3 | Not detected / Enhanced | 2 | 7 | 2 | 0 | 11 | 2.000 | +2.000 | 0.4 |\n| ENSG00000102524 | TNFSF13B | Not detected / Enhanced | 0 | 11 | 1 | 0 | 12 | 1.917 | +1.917 | 5.1 |\n| ENSG00000176884 | GRIN1 | Not detected / Enhanced | 2 | 7 | 2 | 1 | 12 | 1.833 | +1.833 | 0.7 |\n| ENSG00000100749 | VRK1 | Not detected / Enhanced | 1 | 8 | 0 | 2 | 11 | 1.727 | +1.727 | 10.2 |\n| ENSG00000150938 | CRIM1 | Not detected / Enhanced | 0 | 9 | 2 | 1 | 12 | 1.667 | +1.667 | 26.9 |\n| ENSG00000185885 | IFITM1 | Low / Enhanced | 7 | 3 | 1 | 0 | 11 | 2.545 | +1.545 | 332.0 |\n| ENSG00000059377 | TBXAS1 | Not detected / Enhanced | 3 | 4 | 1 | 4 | 12 | 1.500 | +1.500 | 8.6 |\n| ENSG00000168003 | SLC3A2 | Not detected / Enhanced | 0 | 7 | 4 | 1 | 12 | 1.500 | +1.500 | 50.0 |\n| ENSG00000169760 | NLGN1 | Not detected / Enhanced | 0 | 5 | 6 | 0 | 11 | 1.455 | +1.455 | 1.6 |\n| ENSG00000081800 | SLC13A1 | Not detected / Enhanced | 0 | 6 | 4 | 2 | 12 | 1.333 | +1.333 | 0.2 |\n\n## 3. Data tables for the requested plots\n\nA text environment cannot render the three figures, so I supply the exact underlying tables (unavailable cells left blank). These are ordinal summary values of different samples, not paired-patient data.\n\n### 3a. Paired-score scatter data (normal score ×, cancer weighted score y)\n\n| Pair | Ensembl ID | Gene | Normal score (x) | Cancer score (y) |\n|---|---|---|---|---|\n| Colon–colorectal | ENSG00000163347 | CLDN1 | 0 | 2.417 |\n| Colon–colorectal | ENSG00000143337 | TOR1AIP1 | 0 | 2.083 |\n| Colon–colorectal | ENSG00000062038 | CDH3 | 0 | 2.000 |\n| Colon–colorectal | ENSG00000102524 | TNFSF13B | 0 | 1.917 |\n| Colon–colorectal | ENSG00000176884 | GRIN1 | 0 | 1.833 |\n| Colon–colorectal | ENSG00000100749 | VRK1 | 0 | 1.727 |\n| Colon–colorectal | ENSG00000150938 | CRIM1 | 0 | 1.667 |\n| Colon–colorectal | ENSG00000185885 | IFITM1 | 1 | 2.545 |\n| Colon–colorectal | ENSG00000059377 | TBXAS1 | 0 | 1.500 |\n| Colon–colorectal | ENSG00000168003 | SLC3A2 | 0 | 1.500 |\n| Colon–colorectal | ENSG00000169760 | NLGN1 | 0 | 1.455 |\n| Colon–colorectal | ENSG00000081800 | SLC13A1 | 0 | 1.333 |\n| Breast–breast cancer | ENSG00000102524 | TNFSF13B | 0 | 1.818 |\n| Breast–breast cancer | ENSG00000185885 | IFITM1 | 0 | 0.917 |\n| Breast–breast cancer | ENSG00000143337 | TOR1AIP1 | 2 | 2.600 |\n| Breast–breast cancer | ENSG00000100749 | VRK1 | 1 | 1.545 |\n| Breast–breast cancer | ENSG00000168003 | SLC3A2 | 0 | 0.500 |\n| Breast–breast cancer | ENSG00000169760 | NLGN1 | 0 | 0.333 |\n| Breast–breast cancer | ENSG00000081800 | SLC13A1 | 0 | 0.300 |\n| Breast–breast cancer | ENSG00000059377 | TBXAS1 | 0 | 0.000 |\n| Breast–breast cancer | ENSG00000176884 | GRIN1 | 0 | 0.000 |\n| Breast–breast cancer | ENSG00000062038 | CDH3 | 2 | 1.333 |\n| Breast–breast cancer | ENSG00000150938 | CRIM1 | 2 | 0.667 |\n| Breast–breast cancer | ENSG00000163347 | CLDN1 | 2 | 0.273 |\n| Lung–lung cancer | ENSG00000163347 | CLDN1 | 0 | 2.000 |\n| Lung–lung cancer | ENSG00000062038 | CDH3 | 0 | 1.667 |\n| Lung–lung cancer | ENSG00000185885 | IFITM1 | 0 | 1.333 |\n| Lung–lung cancer | ENSG00000081800 | SLC13A1 | 0 | 1.250 |\n| Lung–lung cancer | ENSG00000102524 | TNFSF13B | 0 | 1.250 |\n| Lung–lung cancer | ENSG00000168003 | SLC3A2 | 0 | 0.900 |\n| Lung–lung cancer | ENSG00000169760 | NLGN1 | 0 | 0.556 |\n| Lung–lung cancer | ENSG00000150938 | CRIM1 | 0 | 0.500 |\n| Lung–lung cancer | ENSG00000176884 | GRIN1 | 0 | 0.250 |\n\nLung points are unavailable for TOR1AIP1, VRK1 and TBXAS1 because they have no eligible lung alveolar-cell normal record (Enhanced/Supported). Nine of the twelve genes are plottable in the lung pair.\n\n### 3b. Comparison-bar data (per gene, per pair: normal vs cancer)\n\nSame numbers as 3a; each bar group would be Normal vs Cancer within each pair (or change bars = cancer − normal, given in the matrix below).\n\n### 3c. Heatmap matrix (rows = twelve colon-selected genes, columns = the six tissue/cancer measurements; blank = unavailable)\n\n| Gene | Colon normal | Colorectal cancer | Breast normal | Breast cancer | Lung normal | Lung cancer |\n|---|---|---|---|---|---|---|\n| CLDN1 | 0 | 2.417 | 2 | 0.273 | 0 | 2.000 |\n| TOR1AIP1 | 0 | 2.083 | 2 | 2.600 | — | 2.091 |\n| CDH3 | 0 | 2.000 | 2 | 1.333 | 0 | 1.667 |\n| TNFSF13B | 0 | 1.917 | 0 | 1.818 | 0 | 1.250 |\n| GRIN1 | 0 | 1.833 | 0 | 0.000 | 0 | 0.250 |\n| VRK1 | 0 | 1.727 | 1 | 1.545 | — | 1.818 |\n| CRIM1 | 0 | 1.667 | 2 | 0.667 | 0 | 0.500 |\n| IFITM1 | 1 | 2.545 | 0 | 0.917 | 0 | 1.333 |\n| TBXAS1 | 0 | 1.500 | 0 | 0.000 | — | 0.000 |\n| SLC3A2 | 0 | 1.500 | 0 | 0.500 | 0 | 0.900 |\n| NLGN1 | 0 | 1.455 | 0 | 0.333 | 0 | 0.556 |\n| SLC13A1 | 0 | 1.333 | 0 | 0.300 | 0 | 1.250 |\n\nMissing cells are TOR1AIP1, VRK1 and TBXAS1 **Lung normal** (no eligible alveolar-cell record). All cancer values shown are from rows with ≥5 observations.\n\n## 4. Key takeaways\n\n- Median change is 0 for every pair: most predicted-membrane-protein genes show no ordinal increase from normal to cancer.\n- The lung pair has the highest fraction of ≥1-unit increases (7.3%), colon the lowest (3.7%).\n- The twelve largest colon increases are dominated by genes with normal \"Not detected\" colon status that show Medium–High staining in colorectal cancer (CLDN1, TOR1AIP1, CDH3, TNFSF13B, GRIN1, VRK1, CRIM1, TBXAS1, SLC3A2, NLGN1, SLC13A1) plus IFITM1 (Low→2.545), the only one that is a colon consensus-high RNA gene (nTPM 332).\n- These are ordinal summaries across different normal and cancer samples — they should not be read as matched per-patient up/down-regulation.",
+  "stop": "stop",
+  "tool_call_count": 29,
+  "seconds": 161.421,
+  "model_calls": 14,
+  "cost_usd": 0.13858172800000002
+}

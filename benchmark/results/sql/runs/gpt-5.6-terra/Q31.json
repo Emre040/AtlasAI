@@ -1,0 +1,254 @@
+{
+ "id": "Q31",
+ "kind": "analysis",
+ "question": "Test the reproducibility of transcription-factor RNA abundance across HPA and GTEx in colon, ovary and testis, using their separate tissue nTPM files, not the consensus file as a substitute for either source. For each tissue use transcription-factor Ensembl genes with finite nonnegative values in both sources. Report the count, Spearman correlation and median absolute log2((HPA nTPM+1)/(GTEx nTPM+1)). Compare the top twenty transcription factors from each source, giving overlap, Jaccard and the two ranked lists. Select the ten largest absolute log2 differences per tissue, ties by Ensembl ID, and add the corresponding consensus nTPM and RNA tissue specificity category. Draw per-tissue source-agreement scatters restricted to the union of the two top-twenty lists, overlap bars and a discrepancy heatmap. Supply the top-list union measurements and aggregate/discrepancy tables. Explain why consensus is not an independent third replication cohort. If a requested ranked list has fewer eligible members, return every eligible member and state the count. Use Ensembl genes present in the HPA master table as the gene universe and break all gene-ranking ties by Ensembl ID.",
+ "model": "gpt-5.6-terra",
+ "effort": "low",
+ "turns": [
+  {
+   "turn": 1,
+   "ms": 1215,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 417,
+    "input_tokens_details": {
+     "cache_write_tokens": 0,
+     "cached_tokens": 0
+    },
+    "output_tokens": 24,
+    "output_tokens_details": {
+     "reasoning_tokens": 9
+    },
+    "total_tokens": 441
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "schema",
+     "input": "{}"
+    }
+   ]
+  },
+  {
+   "turn": 2,
+   "ms": 3040,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 5934,
+    "input_tokens_details": {
+     "cache_write_tokens": 5931,
+     "cached_tokens": 0
+    },
+    "output_tokens": 264,
+    "output_tokens_details": {
+     "reasoning_tokens": 82
+    },
+    "total_tokens": 6198
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT \\\"Protein class\\\", count(*) n FROM proteinatlas WHERE lower(\\\"Protein class\\\") LIKE '%transcription%' GROUP BY 1 ORDER BY n DESC LIMIT 30\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT Tissue, count(*) FROM rna_tissue_hpa WHERE lower(Tissue) IN ('colon','ovary','testis') GROUP BY 1 UNION ALL SELECT Tissue, count(*) FROM rna_tissue_gtex WHERE lower(Tissue) IN ('colon','ovary','testis') GROUP BY 1\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT * FROM rna_tissue_consensus WHERE lower(Tissue) IN ('colon','ovary','testis') LIMIT 5\"}"
+    }
+   ]
+  },
+  {
+   "turn": 3,
+   "ms": 8973,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 6973,
+    "input_tokens_details": {
+     "cache_write_tokens": 1039,
+     "cached_tokens": 5931
+    },
+    "output_tokens": 1007,
+    "output_tokens_details": {
+     "reasoning_tokens": 254
+    },
+    "total_tokens": 7980
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH base AS (\\n SELECT lower(h.Tissue) tissue,h.Gene ensembl,h.\\\"Gene name\\\" gene_name,\\n TRY_CAST(h.nTPM AS DOUBLE) hpa,TRY_CAST(g.nTPM AS DOUBLE) gtex,\\n TRY_CAST(c.nTPM AS DOUBLE) consensus,p.\\\"RNA tissue specificity\\\" specificity\\n FROM rna_tissue_hpa h JOIN rna_tissue_gtex g ON h.Gene=g.Gene AND h.Tissue=g.Tissue\\n JOIN proteinatlas p ON h.Gene=p.Ensembl\\n LEFT JOIN rna_tissue_consensus c ON h.Gene=c.Gene AND h.Tissue=c.Tissue\\n WHERE lower(h.Tissue) IN ('colon','ovary','testis')\\n AND lower(p.\\\"Protein class\\\") LIKE '%transcription factors%'\\n), elig AS (SELECT *, log2((hpa+1)/(gtex+1)) ld FROM base WHERE isfinite(hpa) AND isfinite(gtex) AND hpa>=0 AND gtex>=0),\\nr AS (SELECT *, rank() OVER(PARTITION BY tissue ORDER BY hpa DESC,ensembl) rh,rank() OVER(PARTITION BY tissue ORDER BY gtex DESC,ensembl) rg,\\n (rank() OVER(PARTITION BY tissue ORDER BY hpa)+(count(*) OVER(PARTITION BY tissue,hpa)-1)/2.0) ar_h,\\n (rank() OVER(PARTITION BY tissue ORDER BY gtex)+(count(*) OVER(PARTITION BY tissue,gtex)-1)/2.0) ar_g\\n FROM elig), a AS (SELECT tissue,count(*) eligible, corr(ar_h,ar_g) spearman,median(abs(ld)) median_abs_log2diff FROM r GROUP BY tissue),\\ntopunion AS (SELECT * FROM r WHERE rh<=20 OR rg<=20), ov AS (SELECT tissue,count(*) FILTER(WHERE rh<=20) hpa_top_n,count(*) FILTER(WHERE rg<=20) gtex_top_n,count(*) FILTER(WHERE rh<=20 AND rg<=20) overlap FROM r GROUP BY tissue),\\ndisc AS (SELECT *, row_number() OVER(PARTITION BY tissue ORDER BY abs(ld) DESC,ensembl) dn FROM r)\\nSELECT 'AGGREGATE' section,tissue,CAST(eligible AS VARCHAR) v1,CAST(spearman AS VARCHAR) v2,CAST(median_abs_log2diff AS VARCHAR) v3,'' v4,'' v5,'' v6,'' v7,'' v8 FROM a\\nUNION ALL SELECT 'OVERLAP',tissue,CAST(hpa_top_n AS VARCHAR),CAST(gtex_top_n AS VARCHAR),CAST(overlap AS VARCHAR),CAST(overlap*1.0/(hpa_top_n+gtex_top_n-overlap) AS VARCHAR),'','','','','' FROM ov\\nUNION ALL SELECT 'TOP_UNION',tissue,ensembl,gene_name,CAST(hpa AS VARCHAR),CAST(gtex AS VARCHAR),CAST(rh AS VARCHAR),CAST(rg AS VARCHAR),CAST(consensus AS VARCHAR),specificity,CAST(ld AS VARCHAR) FROM topunion\\nUNION ALL SELECT 'DISCREPANCY',tissue,ensembl,gene_name,CAST(hpa AS VARCHAR),CAST(gtex AS VARCHAR),CAST(ld AS VARCHAR),CAST(abs(ld) AS VARCHAR),CAST(consensus AS VARCHAR),specificity,CAST(dn AS VARCHAR) FROM disc WHERE dn<=10\\nORDER BY section,tissue,TRY_CAST(v8 AS INTEGER),v1\"}"
+    }
+   ]
+  },
+  {
+   "turn": 4,
+   "ms": 6242,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 8009,
+    "input_tokens_details": {
+     "cache_write_tokens": 1036,
+     "cached_tokens": 6970
+    },
+    "output_tokens": 803,
+    "output_tokens_details": {
+     "reasoning_tokens": 100
+    },
+    "total_tokens": 8812
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH base AS (\\n SELECT lower(h.Tissue) tissue,h.Gene ensembl,h.\\\"Gene name\\\" gene_name, TRY_CAST(h.nTPM AS DOUBLE) hpa,TRY_CAST(g.nTPM AS DOUBLE) gtex, TRY_CAST(c.nTPM AS DOUBLE) consensus,p.\\\"RNA tissue specificity\\\" specificity\\n FROM rna_tissue_hpa h JOIN rna_tissue_gtex g ON h.Gene=g.Gene AND h.Tissue=g.Tissue JOIN proteinatlas p ON h.Gene=p.Ensembl LEFT JOIN rna_tissue_consensus c ON h.Gene=c.Gene AND h.Tissue=c.Tissue\\n WHERE lower(h.Tissue) IN ('colon','ovary','testis') AND lower(p.\\\"Protein class\\\") LIKE '%transcription factors%'\\n), elig AS (SELECT *, log2((hpa+1)/(gtex+1)) ld FROM base WHERE isfinite(hpa) AND isfinite(gtex) AND hpa>=0 AND gtex>=0), r AS (SELECT *, rank() OVER(PARTITION BY tissue ORDER BY hpa DESC,ensembl) rh,rank() OVER(PARTITION BY tissue ORDER BY gtex DESC,ensembl) rg,(rank() OVER(PARTITION BY tissue ORDER BY hpa)+(count(*) OVER(PARTITION BY tissue,hpa)-1)/2.0) ar_h,(rank() OVER(PARTITION BY tissue ORDER BY gtex)+(count(*) OVER(PARTITION BY tissue,gtex)-1)/2.0) ar_g FROM elig), a AS (SELECT tissue,count(*) eligible,corr(ar_h,ar_g) spearman,median(abs(ld)) mad FROM r GROUP BY tissue), topunion AS (SELECT * FROM r WHERE rh<=20 OR rg<=20), ov AS (SELECT tissue,count(*) FILTER(WHERE rh<=20) hn,count(*) FILTER(WHERE rg<=20) gn,count(*) FILTER(WHERE rh<=20 AND rg<=20) overlap FROM r GROUP BY tissue), disc AS (SELECT *,row_number() OVER(PARTITION BY tissue ORDER BY abs(ld) DESC,ensembl) dn FROM r)\\nSELECT 'AGGREGATE' section,tissue,CAST(eligible AS VARCHAR) x1,CAST(spearman AS VARCHAR) x2,CAST(mad AS VARCHAR) x3,'','','','','','' FROM a\\nUNION ALL SELECT 'OVERLAP',tissue,CAST(hn AS VARCHAR),CAST(gn AS VARCHAR),CAST(overlap AS VARCHAR),CAST(overlap*1.0/(hn+gn-overlap) AS VARCHAR),'','','','','' FROM ov\\nUNION ALL SELECT 'TOP_UNION',tissue,ensembl,gene_name,CAST(hpa AS VARCHAR),CAST(gtex AS VARCHAR),CAST(rh AS VARCHAR),CAST(rg AS VARCHAR),CAST(consensus AS VARCHAR),specificity,CAST(ld AS VARCHAR) FROM topunion\\nUNION ALL SELECT 'DISCREPANCY',tissue,ensembl,gene_name,CAST(hpa AS VARCHAR),CAST(gtex AS VARCHAR),CAST(ld AS VARCHAR),CAST(abs(ld) AS VARCHAR),CAST(consensus AS VARCHAR),specificity,CAST(dn AS VARCHAR) FROM disc WHERE dn<=10\\nORDER BY section,tissue,TRY_CAST(x8 AS INTEGER),x1\"}"
+    }
+   ]
+  },
+  {
+   "turn": 5,
+   "ms": 4469,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 8857,
+    "input_tokens_details": {
+     "cache_write_tokens": 848,
+     "cached_tokens": 8006
+    },
+    "output_tokens": 725,
+    "output_tokens_details": {
+     "reasoning_tokens": 6
+    },
+    "total_tokens": 9582
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH base AS (SELECT lower(h.Tissue) tissue,h.Gene ensembl,h.\\\"Gene name\\\" gene_name,TRY_CAST(h.nTPM AS DOUBLE) hpa,TRY_CAST(g.nTPM AS DOUBLE) gtex,TRY_CAST(c.nTPM AS DOUBLE) consensus,p.\\\"RNA tissue specificity\\\" specificity FROM rna_tissue_hpa h JOIN rna_tissue_gtex g ON h.Gene=g.Gene AND h.Tissue=g.Tissue JOIN proteinatlas p ON h.Gene=p.Ensembl LEFT JOIN rna_tissue_consensus c ON h.Gene=c.Gene AND h.Tissue=c.Tissue WHERE lower(h.Tissue) IN ('colon','ovary','testis') AND lower(p.\\\"Protein class\\\") LIKE '%transcription factors%'), elig AS (SELECT *,log2((hpa+1)/(gtex+1)) ld FROM base WHERE isfinite(hpa) AND isfinite(gtex) AND hpa>=0 AND gtex>=0),r AS (SELECT *,rank() OVER(PARTITION BY tissue ORDER BY hpa DESC,ensembl) rh,rank() OVER(PARTITION BY tissue ORDER BY gtex DESC,ensembl) rg,(rank() OVER(PARTITION BY tissue ORDER BY hpa)+(count(*) OVER(PARTITION BY tissue,hpa)-1)/2.0) ar_h,(rank() OVER(PARTITION BY tissue ORDER BY gtex)+(count(*) OVER(PARTITION BY tissue,gtex)-1)/2.0) ar_g FROM elig),a AS (SELECT tissue,count(*) eligible,corr(ar_h,ar_g) spearman,median(abs(ld)) mad FROM r GROUP BY tissue),topunion AS (SELECT * FROM r WHERE rh<=20 OR rg<=20),ov AS (SELECT tissue,count(*) FILTER(WHERE rh<=20) hn,count(*) FILTER(WHERE rg<=20) gn,count(*) FILTER(WHERE rh<=20 AND rg<=20) overlap FROM r GROUP BY tissue),disc AS (SELECT *,row_number() OVER(PARTITION BY tissue ORDER BY abs(ld) DESC,ensembl) dn FROM r), z AS (SELECT 'AGGREGATE' section,tissue,CAST(eligible AS VARCHAR) x1,CAST(spearman AS VARCHAR) x2,CAST(mad AS VARCHAR) x3,' ' x4,' ' x5,' ' x6,' ' x7,' ' x8,' ' x9 FROM a UNION ALL SELECT 'OVERLAP',tissue,CAST(hn AS VARCHAR),CAST(gn AS VARCHAR),CAST(overlap AS VARCHAR),CAST(overlap*1.0/(hn+gn-overlap) AS VARCHAR),' ',' ',' ',' ',' ' FROM ov UNION ALL SELECT 'TOP_UNION',tissue,ensembl,gene_name,CAST(hpa AS VARCHAR),CAST(gtex AS VARCHAR),CAST(rh AS VARCHAR),CAST(rg AS VARCHAR),CAST(consensus AS VARCHAR),specificity,CAST(ld AS VARCHAR) FROM topunion UNION ALL SELECT 'DISCREPANCY',tissue,ensembl,gene_name,CAST(hpa AS VARCHAR),CAST(gtex AS VARCHAR),CAST(ld AS VARCHAR),CAST(abs(ld) AS VARCHAR),CAST(consensus AS VARCHAR),specificity,CAST(dn AS VARCHAR) FROM disc WHERE dn<=10) SELECT * FROM z ORDER BY section,tissue,TRY_CAST(x9 AS INTEGER),x1\"}"
+    }
+   ]
+  },
+  {
+   "turn": 6,
+   "ms": 49561,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 15240,
+    "input_tokens_details": {
+     "cache_write_tokens": 6383,
+     "cached_tokens": 8854
+    },
+    "output_tokens": 8521,
+    "output_tokens_details": {
+     "reasoning_tokens": 871
+    },
+    "total_tokens": 23761
+   },
+   "text": "## Design and eligibility\n\nI used the separate `rna_tissue_hpa` and `rna_tissue_gtex` nTPM tables—not the consensus table—for HPA–GTEx comparisons. The universe was restricted to Ensembl genes present in the HPA master (`proteinatlas`) table whose `Protein class` contains **“Transcription factors”**. For each tissue, eligible genes had finite, non-negative nTPM in both sources.\n\nAll three tissues had **1,483 eligible transcription-factor genes**. Rankings use descending nTPM and break ties by Ensembl ID. Spearman ranks use average ranks for tied expression values.\n\n## Agreement summary\n\n| Tissue | Eligible TF genes | Spearman ρ | Median \\|log2((HPA+1)/(GTEx+1))\\| | HPA top-20 | GTEx top-20 | Overlap | Jaccard |\n|---|---:|---:|---:|---:|---:|---:|---:|\n| Colon | 1,483 | 0.9116508243 | 0.3719687774 | 20 | 20 | 11 | 0.3793103448 |\n| Ovary | 1,483 | 0.9479850725 | 0.2756344426 | 20 | 20 | 14 | 0.5384615385 |\n| Testis | 1,483 | 0.9150135937 | 0.3219280949 | 20 | 20 | 12 | 0.4285714286 |\n\n### Overlap bars\n\n```text\nColon   HPA [====================] 20\n        GTEx[====================] 20     shared [###########---------] 11; J=0.3793\n\nOvary   HPA [====================] 20\n        GTEx[====================] 20     shared [##############------] 14; J=0.5385\n\nTestis  HPA [====================] 20\n        GTEx[====================] 20     shared [############--------] 12; J=0.4286\n```\n\n## Top-20 ranked TF lists\n\nEach list has 20 eligible members; therefore no shortened list was required.\n\n### Colon\n\n| Rank | HPA | GTEx |\n|---:|---|---|\n| 1 | YBX1 (ENSG00000065978) | ATF4 (ENSG00000128272) |\n| 2 | FOS (ENSG00000170345) | YBX1 (ENSG00000065978) |\n| 3 | ATF4 (ENSG00000128272) | FOS (ENSG00000170345) |\n| 4 | XBP1 (ENSG00000100219) | TSC22D3 (ENSG00000157514) |\n| 5 | TSC22D3 (ENSG00000157514) | JUNB (ENSG00000171223) |\n| 6 | ELF3 (ENSG00000163435) | CEBPD (ENSG00000221869) |\n| 7 | KLF5 (ENSG00000102554) | EGR1 (ENSG00000120738) |\n| 8 | MAZ (ENSG00000103495) | NR4A1 (ENSG00000123358) |\n| 9 | TSC22D1 (ENSG00000102804) | YBX3 (ENSG00000060138) |\n| 10 | ETS2 (ENSG00000157557) | JUND (ENSG00000130522) |\n| 11 | ID2 (ENSG00000115738) | ID2 (ENSG00000115738) |\n| 12 | NFE2L1 (ENSG00000082641) | ID3 (ENSG00000117318) |\n| 13 | EGR1 (ENSG00000120738) | ID1 (ENSG00000125968) |\n| 14 | CDX1 (ENSG00000113722) | ELF3 (ENSG00000163435) |\n| 15 | EHF (ENSG00000135373) | TSC22D1 (ENSG00000102804) |\n| 16 | NONO (ENSG00000147140) | NFKBIA (ENSG00000100906) |\n| 17 | NR4A1 (ENSG00000123358) | MAZ (ENSG00000103495) |\n| 18 | KLF6 (ENSG00000067082) | USF2 (ENSG00000105698) |\n| 19 | KLF4 (ENSG00000136826) | HAND2 (ENSG00000164107) |\n| 20 | JUND (ENSG00000130522) | ZNF358 (ENSG00000198816) |\n\n### Ovary\n\n| Rank | HPA | GTEx |\n|---:|---|---|\n| 1 | FOS (ENSG00000170345) | NR4A1 (ENSG00000123358) |\n| 2 | EGR1 (ENSG00000120738) | JUNB (ENSG00000171223) |\n| 3 | NR4A1 (ENSG00000123358) | FOS (ENSG00000170345) |\n| 4 | JUNB (ENSG00000171223) | CEBPD (ENSG00000221869) |\n| 5 | ATF4 (ENSG00000128272) | JUND (ENSG00000130522) |\n| 6 | YBX1 (ENSG00000065978) | ATF4 (ENSG00000128272) |\n| 7 | NR2F2 (ENSG00000185551) | TSC22D3 (ENSG00000157514) |\n| 8 | NFKBIA (ENSG00000100906) | YBX1 (ENSG00000065978) |\n| 9 | NONO (ENSG00000147140) | EGR1 (ENSG00000120738) |\n| 10 | FOSB (ENSG00000125740) | NR2F2 (ENSG00000185551) |\n| 11 | PEG3 (ENSG00000198300) | ID2 (ENSG00000115738) |\n| 12 | TSC22D3 (ENSG00000157514) | NFKBIA (ENSG00000100906) |\n| 13 | TCF21 (ENSG00000118526) | TSC22D1 (ENSG00000102804) |\n| 14 | ID2 (ENSG00000115738) | ID3 (ENSG00000117318) |\n| 15 | TSC22D1 (ENSG00000102804) | USF2 (ENSG00000105698) |\n| 16 | JUN (ENSG00000177606) | KLF2 (ENSG00000127528) |\n| 17 | NFE2L2 (ENSG00000116044) | NONO (ENSG00000147140) |\n| 18 | NFE2L1 (ENSG00000082641) | NFATC4 (ENSG00000100968) |\n| 19 | USF2 (ENSG00000105698) | TCF21 (ENSG00000118526) |\n| 20 | MAZ (ENSG00000103495) | FOSL2 (ENSG00000075426) |\n\n### Testis\n\n| Rank | HPA | GTEx |\n|---:|---|---|\n| 1 | YBX1 (ENSG00000065978) | YBX1 (ENSG000000659",
+   "tool_uses": []
+  }
+ ],
+ "tool_calls": [
+  {
+   "turn": 1,
+   "name": "schema",
+   "input": {},
+   "ms": 29260,
+   "result_chars": 148152,
+   "truncated": true,
+   "error": null,
+   "result_head": "Tables built from the Human Protein Atlas bulk files (all columns are text; cast for arithmetic, e.g. TRY_CAST(col AS DOUBLE)).\n\nblood_immunoassay_concentration (0.1 MB): gene, ENSG ID, conc [pg/L], sample type, number_of_samples, pubmed id\nblood_ms_concentration (0.1 MB): Gene, ENSG ID, Conc [pg/L]\nblood_pea_disease_de (17.9 MB): Gene, ENSG ID, Disease, Class, Control, logFC, p-value adjusted, Seeds, Mean importance, SD importance, Max importance, Min importance\nblood_pea_diseases (0.0 MB): Disease, Class\ncancer_cancers (0.0 MB): Cancer, Organ\ncancer_cptac (5.7 MB): Cancer, Gene, Gene name, p"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"Protein class\", count(*) n FROM proteinatlas WHERE lower(\"Protein class\") LIKE '%transcription%' GROUP BY 1 ORDER BY n DESC LIMIT 30"
+   },
+   "ms": 633,
+   "result_chars": 3274,
+   "truncated": false,
+   "error": null,
+   "result_head": "Protein class\tn\nPredicted intracellular proteins, Transcription factors\t840\nDisease related genes, Human disease related genes, Predicted intracellular proteins, Transcription factors\t172\nPlasma proteins, Predicted intracellular proteins, Transcription factors\t71\nCancer-related genes, Disease related genes, Human disease related genes, Predicted intracellular proteins, Transcription factors\t68\nCancer-related genes, Predicted intracellular proteins, Transcription factors\t39\nDisease related genes, Human disease related genes, Plasma proteins, Predicted intracellular proteins, Transcription facto"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT Tissue, count(*) FROM rna_tissue_hpa WHERE lower(Tissue) IN ('colon','ovary','testis') GROUP BY 1 UNION ALL SELECT Tissue, count(*) FROM rna_tissue_gtex WHERE lower(Tissue) IN ('colon','ovary','testis') GROUP BY 1"
+   },
+   "ms": 759,
+   "result_chars": 102,
+   "truncated": false,
+   "error": null,
+   "result_head": "Tissue\tcount_star()\ntestis\t20162\ncolon\t20162\novary\t20162\novary\t19965\ncolon\t19965\ntestis\t19965\n[6 rows]"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT * FROM rna_tissue_consensus WHERE lower(Tissue) IN ('colon','ovary','testis') LIMIT 5"
+   },
+   "ms": 195,
+   "result_chars": 200,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tGene name\tTissue\tnTPM\nENSG00000000003\tTSPAN6\tcolon\t30.7\nENSG00000000003\tTSPAN6\tovary\t37.5\nENSG00000000003\tTSPAN6\ttestis\t65.7\nENSG00000000005\tTNMD\tcolon\t0.7\nENSG00000000005\tTNMD\tovary\t5.3\n[5 rows]"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "WITH base AS (\n SELECT lower(h.Tissue) tissue,h.Gene ensembl,h.\"Gene name\" gene_name,\n TRY_CAST(h.nTPM AS DOUBLE) hpa,TRY_CAST(g.nTPM AS DOUBLE) gtex,\n TRY_CAST(c.nTPM AS DOUBLE) consensus,p.\"RNA tissue specificity\" specificity\n FROM rna_tissue_hpa h JOIN rna_tissue_gtex g ON h.Gene=g.Gene AND h.Tissue=g.Tissue\n JOIN proteinatlas p ON h.Gene=p.Ensembl\n LEFT JOIN rna_tissue_consensus c ON h.Gene=c.Gene AND h.Tissue=c.Tissue\n WHERE lower(h.Tissue) IN ('colon','ovary','testis')\n AND lower(p.\"Protein class\") LIKE '%transcription factors%'\n), elig AS (SELECT *, log2((hpa+1)/(gtex+1)) ld FROM base WHERE isfinite(hpa) AND isfinite(gtex) AND hpa>=0 AND gtex>=0),\nr AS (SELECT *, rank() OVER(PARTITION BY tissue ORDER BY hpa DESC,ensembl) rh,rank() OVER(PARTITION BY tissue ORDER BY gtex DESC,ensembl) rg,\n (rank() OVER(PARTITION BY tissue ORDER BY hpa)+(count(*) OVER(PARTITION BY tissue,hpa)-1)/2.0) ar_h,\n (rank() OVER(PARTITION BY tissue ORDER BY gtex)+(count(*) OVER(PARTITION BY tissue,gtex)-1)/2.0) ar_g\n FROM elig), a AS (SELECT tissue,count(*) eligible, corr(ar_h,ar_g) spearman,median(abs(ld)) median_abs_log2diff FROM r GROUP BY tissue),\ntopunion AS (SELECT * FROM r WHERE rh<=20 OR rg<=20), ov AS (SELECT tissue,count(*) FILTER(WHERE rh<=20) hpa_top_n,count(*) FILTER(WHERE rg<=20) gtex_top_n,count(*) FILTER(WHERE rh<=20 AND rg<=20) overlap FROM r GROUP BY tissue),\ndisc AS (SELECT *, row_number() OVER(PARTITION BY tissue ORDER BY abs(ld) DESC,ensembl) dn FROM r)\nSELECT 'AGGREGATE' section,tissue,CAST(eligible AS VARCHAR) v1,CAST(spearman AS VARCHAR) v2,CAST(median_abs_log2diff AS VARCHAR) v3,'' v4,'' v5,'' v6,'' v7,'' v8 FROM a\nUNION ALL SELECT 'OVERLAP',tissue,CAST(hpa_top_n AS VARCHAR),CAST(gtex_top_n AS VARCHAR),CAST(overlap AS VARCHAR),CAST(overlap*1.0/(hpa_top_n+gtex_top_n-overlap) AS VARCHAR),'','','','','' FROM ov\nUNION ALL SELECT 'TOP_UNION',tissue,ensembl,gene_name,CAST(hpa AS VARCHAR),CAST(gtex AS VARCHAR),CAST(rh AS VARCHAR),CAST(rg AS VARCHAR),CAST(consensus AS VARCHAR),specificity,CAST(ld AS VARCHAR) FROM topunion\nUNION ALL SELECT 'DISCREPANCY',tissue,ensembl,gene_name,CAST(hpa AS VARCHAR),CAST(gtex AS VARCHAR),CAST(ld AS VARCHAR),CAST(abs(ld) AS VARCHAR),CAST(consensus AS VARCHAR),specificity,CAST(dn AS VARCHAR) FROM disc WHERE dn<=10\nORDER BY section,tissue,TRY_CAST(v8 AS INTEGER),v1"
+   },
+   "ms": 740,
+   "result_chars": 104,
+   "truncated": false,
+   "error": "tool reported an error",
+   "result_head": "Error: Binder Error: Set operations can only apply to expressions with the same number of result columns"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "WITH base AS (\n SELECT lower(h.Tissue) tissue,h.Gene ensembl,h.\"Gene name\" gene_name, TRY_CAST(h.nTPM AS DOUBLE) hpa,TRY_CAST(g.nTPM AS DOUBLE) gtex, TRY_CAST(c.nTPM AS DOUBLE) consensus,p.\"RNA tissue specificity\" specificity\n FROM rna_tissue_hpa h JOIN rna_tissue_gtex g ON h.Gene=g.Gene AND h.Tissue=g.Tissue JOIN proteinatlas p ON h.Gene=p.Ensembl LEFT JOIN rna_tissue_consensus c ON h.Gene=c.Gene AND h.Tissue=c.Tissue\n WHERE lower(h.Tissue) IN ('colon','ovary','testis') AND lower(p.\"Protein class\") LIKE '%transcription factors%'\n), elig AS (SELECT *, log2((hpa+1)/(gtex+1)) ld FROM base WHERE isfinite(hpa) AND isfinite(gtex) AND hpa>=0 AND gtex>=0), r AS (SELECT *, rank() OVER(PARTITION BY tissue ORDER BY hpa DESC,ensembl) rh,rank() OVER(PARTITION BY tissue ORDER BY gtex DESC,ensembl) rg,(rank() OVER(PARTITION BY tissue ORDER BY hpa)+(count(*) OVER(PARTITION BY tissue,hpa)-1)/2.0) ar_h,(rank() OVER(PARTITION BY tissue ORDER BY gtex)+(count(*) OVER(PARTITION BY tissue,gtex)-1)/2.0) ar_g FROM elig), a AS (SELECT tissue,count(*) eligible,corr(ar_h,ar_g) spearman,median(abs(ld)) mad FROM r GROUP BY tissue), topunion AS (SELECT * FROM r WHERE rh<=20 OR rg<=20), ov AS (SELECT tissue,count(*) FILTER(WHERE rh<=20) hn,count(*) FILTER(WHERE rg<=20) gn,count(*) FILTER(WHERE rh<=20 AND rg<=20) overlap FROM r GROUP BY tissue), disc AS (SELECT *,row_number() OVER(PARTITION BY tissue ORDER BY abs(ld) DESC,ensembl) dn FROM r)\nSELECT 'AGGREGATE' section,tissue,CAST(eligible AS VARCHAR) x1,CAST(spearman AS VARCHAR) x2,CAST(mad AS VARCHAR) x3,'','','','','','' FROM a\nUNION ALL SELECT 'OVERLAP',tissue,CAST(hn AS VARCHAR),CAST(gn AS VARCHAR),CAST(overlap AS VARCHAR),CAST(overlap*1.0/(hn+gn-overlap) AS VARCHAR),'','','','','' FROM ov\nUNION ALL SELECT 'TOP_UNION',tissue,ensembl,gene_name,CAST(hpa AS VARCHAR),CAST(gtex AS VARCHAR),CAST(rh AS VARCHAR),CAST(rg AS VARCHAR),CAST(consensus AS VARCHAR),specificity,CAST(ld AS VARCHAR) FROM topunion\nUNION ALL SELECT 'DISCREPANCY',tissue,ensembl,gene_name,CAST(hpa AS VARCHAR),CAST(gtex AS VARCHAR),CAST(ld AS VARCHAR),CAST(abs(ld) AS VARCHAR),CAST(consensus AS VARCHAR),specificity,CAST(dn AS VARCHAR) FROM disc WHERE dn<=10\nORDER BY section,tissue,TRY_CAST(x8 AS INTEGER),x1"
+   },
+   "ms": 674,
+   "result_chars": 156,
+   "truncated": false,
+   "error": "tool reported an error",
+   "result_head": "Error: Binder Error: Could not ORDER BY column \"TRY_CAST(x8 AS INTEGER)\": add the expression/function to every SELECT, or move the UNION into a FROM clause."
+  },
+  {
+   "turn": 5,
+   "name": "sql",
+   "input": {
+    "query": "WITH base AS (SELECT lower(h.Tissue) tissue,h.Gene ensembl,h.\"Gene name\" gene_name,TRY_CAST(h.nTPM AS DOUBLE) hpa,TRY_CAST(g.nTPM AS DOUBLE) gtex,TRY_CAST(c.nTPM AS DOUBLE) consensus,p.\"RNA tissue specificity\" specificity FROM rna_tissue_hpa h JOIN rna_tissue_gtex g ON h.Gene=g.Gene AND h.Tissue=g.Tissue JOIN proteinatlas p ON h.Gene=p.Ensembl LEFT JOIN rna_tissue_consensus c ON h.Gene=c.Gene AND h.Tissue=c.Tissue WHERE lower(h.Tissue) IN ('colon','ovary','testis') AND lower(p.\"Protein class\") LIKE '%transcription factors%'), elig AS (SELECT *,log2((hpa+1)/(gtex+1)) ld FROM base WHERE isfinite(hpa) AND isfinite(gtex) AND hpa>=0 AND gtex>=0),r AS (SELECT *,rank() OVER(PARTITION BY tissue ORDER BY hpa DESC,ensembl) rh,rank() OVER(PARTITION BY tissue ORDER BY gtex DESC,ensembl) rg,(rank() OVER(PARTITION BY tissue ORDER BY hpa)+(count(*) OVER(PARTITION BY tissue,hpa)-1)/2.0) ar_h,(rank() OVER(PARTITION BY tissue ORDER BY gtex)+(count(*) OVER(PARTITION BY tissue,gtex)-1)/2.0) ar_g FROM elig),a AS (SELECT tissue,count(*) eligible,corr(ar_h,ar_g) spearman,median(abs(ld)) mad FROM r GROUP BY tissue),topunion AS (SELECT * FROM r WHERE rh<=20 OR rg<=20),ov AS (SELECT tissue,count(*) FILTER(WHERE rh<=20) hn,count(*) FILTER(WHERE rg<=20) gn,count(*) FILTER(WHERE rh<=20 AND rg<=20) overlap FROM r GROUP BY tissue),disc AS (SELECT *,row_number() OVER(PARTITION BY tissue ORDER BY abs(ld) DESC,ensembl) dn FROM r), z AS (SELECT 'AGGREGATE' section,tissue,CAST(eligible AS VARCHAR) x1,CAST(spearman AS VARCHAR) x2,CAST(mad AS VARCHAR) x3,' ' x4,' ' x5,' ' x6,' ' x7,' ' x8,' ' x9 FROM a UNION ALL SELECT 'OVERLAP',tissue,CAST(hn AS VARCHAR),CAST(gn AS VARCHAR),CAST(overlap AS VARCHAR),CAST(overlap*1.0/(hn+gn-overlap) AS VARCHAR),' ',' ',' ',' ',' ' FROM ov UNION ALL SELECT 'TOP_UNION',tissue,ensembl,gene_name,CAST(hpa AS VARCHAR),CAST(gtex AS VARCHAR),CAST(rh AS VARCHAR),CAST(rg AS VARCHAR),CAST(consensus AS VARCHAR),specificity,CAST(ld AS VARCHAR) FROM topunion UNION ALL SELECT 'DISCREPANCY',tissue,ensembl,gene_name,CAST(hpa AS VARCHAR),CAST(gtex AS VARCHAR),CAST(ld AS VARCHAR),CAST(abs(ld) AS VARCHAR),CAST(consensus AS VARCHAR),specificity,CAST(dn AS VARCHAR) FROM disc WHERE dn<=10) SELECT * FROM z ORDER BY section,tissue,TRY_CAST(x9 AS INTEGER),x1"
+   },
+   "ms": 2612,
+   "result_chars": 12158,
+   "truncated": false,
+   "error": null,
+   "result_head": "section\ttissue\tx1\tx2\tx3\tx4\tx5\tx6\tx7\tx8\tx9\nAGGREGATE\tcolon\t1483\t0.9116508243306284\t0.3719687773869581\t \t \t \t \t \t \nAGGREGATE\tovary\t1483\t0.9479850724824948\t0.27563444261342734\t \t \t \t \t \t \nAGGREGATE\ttestis\t1483\t0.9150135936738785\t0.32192809488736235\t \t \t \t \t \t \nDISCREPANCY\tcolon\tENSG00000124440\tHIF3A\t2.2\t52.5\t-4.063395081288509\t4.063395081288509\t52.5\tLow tissue specificity\t1\nDISCREPANCY\tcolon\tENSG00000204498\tNFKBIL1\t0.8\t26.0\t-3.9068905956085187\t3.9068905956085187\t26.0\tLow tissue specificity\t2\nDISCREPANCY\tcolon\tENSG00000164107\tHAND2\t6.3\t101.2\t-3.807354922057604\t3.807354922057604\t101.2\tTissue enhanc"
+  }
+ ],
+ "usage": {
+  "input_tokens": 45430,
+  "output_tokens": 11344,
+  "cache_read_input_tokens": 29761,
+  "cache_creation_input_tokens": 0,
+  "reasoning_tokens": 1322
+ },
+ "started_unix_ms": 1789299384074,
+ "final_answer": "## Design and eligibility\n\nI used the separate `rna_tissue_hpa` and `rna_tissue_gtex` nTPM tables—not the consensus table—for HPA–GTEx comparisons. The universe was restricted to Ensembl genes present in the HPA master (`proteinatlas`) table whose `Protein class` contains **“Transcription factors”**. For each tissue, eligible genes had finite, non-negative nTPM in both sources.\n\nAll three tissues had **1,483 eligible transcription-factor genes**. Rankings use descending nTPM and break ties by Ensembl ID. Spearman ranks use average ranks for tied expression values.\n\n## Agreement summary\n\n| Tissue | Eligible TF genes | Spearman ρ | Median \\|log2((HPA+1)/(GTEx+1))\\| | HPA top-20 | GTEx top-20 | Overlap | Jaccard |\n|---|---:|---:|---:|---:|---:|---:|---:|\n| Colon | 1,483 | 0.9116508243 | 0.3719687774 | 20 | 20 | 11 | 0.3793103448 |\n| Ovary | 1,483 | 0.9479850725 | 0.2756344426 | 20 | 20 | 14 | 0.5384615385 |\n| Testis | 1,483 | 0.9150135937 | 0.3219280949 | 20 | 20 | 12 | 0.4285714286 |\n\n### Overlap bars\n\n```text\nColon   HPA [====================] 20\n        GTEx[====================] 20     shared [###########---------] 11; J=0.3793\n\nOvary   HPA [====================] 20\n        GTEx[====================] 20     shared [##############------] 14; J=0.5385\n\nTestis  HPA [====================] 20\n        GTEx[====================] 20     shared [############--------] 12; J=0.4286\n```\n\n## Top-20 ranked TF lists\n\nEach list has 20 eligible members; therefore no shortened list was required.\n\n### Colon\n\n| Rank | HPA | GTEx |\n|---:|---|---|\n| 1 | YBX1 (ENSG00000065978) | ATF4 (ENSG00000128272) |\n| 2 | FOS (ENSG00000170345) | YBX1 (ENSG00000065978) |\n| 3 | ATF4 (ENSG00000128272) | FOS (ENSG00000170345) |\n| 4 | XBP1 (ENSG00000100219) | TSC22D3 (ENSG00000157514) |\n| 5 | TSC22D3 (ENSG00000157514) | JUNB (ENSG00000171223) |\n| 6 | ELF3 (ENSG00000163435) | CEBPD (ENSG00000221869) |\n| 7 | KLF5 (ENSG00000102554) | EGR1 (ENSG00000120738) |\n| 8 | MAZ (ENSG00000103495) | NR4A1 (ENSG00000123358) |\n| 9 | TSC22D1 (ENSG00000102804) | YBX3 (ENSG00000060138) |\n| 10 | ETS2 (ENSG00000157557) | JUND (ENSG00000130522) |\n| 11 | ID2 (ENSG00000115738) | ID2 (ENSG00000115738) |\n| 12 | NFE2L1 (ENSG00000082641) | ID3 (ENSG00000117318) |\n| 13 | EGR1 (ENSG00000120738) | ID1 (ENSG00000125968) |\n| 14 | CDX1 (ENSG00000113722) | ELF3 (ENSG00000163435) |\n| 15 | EHF (ENSG00000135373) | TSC22D1 (ENSG00000102804) |\n| 16 | NONO (ENSG00000147140) | NFKBIA (ENSG00000100906) |\n| 17 | NR4A1 (ENSG00000123358) | MAZ (ENSG00000103495) |\n| 18 | KLF6 (ENSG00000067082) | USF2 (ENSG00000105698) |\n| 19 | KLF4 (ENSG00000136826) | HAND2 (ENSG00000164107) |\n| 20 | JUND (ENSG00000130522) | ZNF358 (ENSG00000198816) |\n\n### Ovary\n\n| Rank | HPA | GTEx |\n|---:|---|---|\n| 1 | FOS (ENSG00000170345) | NR4A1 (ENSG00000123358) |\n| 2 | EGR1 (ENSG00000120738) | JUNB (ENSG00000171223) |\n| 3 | NR4A1 (ENSG00000123358) | FOS (ENSG00000170345) |\n| 4 | JUNB (ENSG00000171223) | CEBPD (ENSG00000221869) |\n| 5 | ATF4 (ENSG00000128272) | JUND (ENSG00000130522) |\n| 6 | YBX1 (ENSG00000065978) | ATF4 (ENSG00000128272) |\n| 7 | NR2F2 (ENSG00000185551) | TSC22D3 (ENSG00000157514) |\n| 8 | NFKBIA (ENSG00000100906) | YBX1 (ENSG00000065978) |\n| 9 | NONO (ENSG00000147140) | EGR1 (ENSG00000120738) |\n| 10 | FOSB (ENSG00000125740) | NR2F2 (ENSG00000185551) |\n| 11 | PEG3 (ENSG00000198300) | ID2 (ENSG00000115738) |\n| 12 | TSC22D3 (ENSG00000157514) | NFKBIA (ENSG00000100906) |\n| 13 | TCF21 (ENSG00000118526) | TSC22D1 (ENSG00000102804) |\n| 14 | ID2 (ENSG00000115738) | ID3 (ENSG00000117318) |\n| 15 | TSC22D1 (ENSG00000102804) | USF2 (ENSG00000105698) |\n| 16 | JUN (ENSG00000177606) | KLF2 (ENSG00000127528) |\n| 17 | NFE2L2 (ENSG00000116044) | NONO (ENSG00000147140) |\n| 18 | NFE2L1 (ENSG00000082641) | NFATC4 (ENSG00000100968) |\n| 19 | USF2 (ENSG00000105698) | TCF21 (ENSG00000118526) |\n| 20 | MAZ (ENSG00000103495) | FOSL2 (ENSG00000075426) |\n\n### Testis\n\n| Rank | HPA | GTEx |\n|---:|---|---|\n| 1 | YBX1 (ENSG00000065978) | YBX1 (ENSG00000065978) |\n| 2 | YBX3 (ENSG00000060138) | YBX2 (ENSG00000006047) |\n| 3 | CREM (ENSG00000095794) | YBX3 (ENSG00000060138) |\n| 4 | TBPL1 (ENSG00000028839) | CREM (ENSG00000095794) |\n| 5 | LYAR (ENSG00000145220) | ATF4 (ENSG00000128272) |\n| 6 | YBX2 (ENSG00000006047) | HSF1 (ENSG00000185122) |\n| 7 | ATF4 (ENSG00000128272) | JUND (ENSG00000130522) |\n| 8 | FOS (ENSG00000170345) | MAZ (ENSG00000103495) |\n| 9 | ZFP91 (ENSG00000186660) | MBD1 (ENSG00000141644) |\n| 10 | SOX30 (ENSG00000039600) | LYAR (ENSG00000145220) |\n| 11 | RFX4 (ENSG00000111783) | ZNF683 (ENSG00000176083) |\n| 12 | TCFL5 (ENSG00000101190) | HMGA1 (ENSG00000137309) |\n| 13 | LRRFIP2 (ENSG00000093167) | SOX30 (ENSG00000039600) |\n| 14 | TFDP2 (ENSG00000114126) | TCF25 (ENSG00000141002) |\n| 15 | NFE2L1 (ENSG00000082641) | NFKBIB (ENSG00000104825) |\n| 16 | MAZ (ENSG00000103495) | TBPL1 (ENSG00000028839) |\n| 17 | TSC22D1 (ENSG00000102804) | CIC (ENSG00000079432) |\n| 18 | NFE2L2 (ENSG00000116044) | TFDP2 (ENSG00000114126) |\n| 19 | MBD1 (ENSG00000141644) | LRRFIP2 (ENSG00000093167) |\n| 20 | BBX (ENSG00000114439) | DMRTB1 (ENSG00000143006) |\n\n## Top-list-union measurement tables\n\nColumns are: `ID`, `HPA nTPM`, `GTEx nTPM`, `HPA rank`, `GTEx rank`, `consensus nTPM`, and signed `log2(HPA+1)/(GTEx+1)`. These are the points used for the per-tissue agreement scatters.\n\n### Colon union (29 TFs)\n\n```text\nID                 HPA    GTEx   rH   rG   Consensus  log2-ratio\nENSG00000065978    398.6  530.4   1    2    530.4     -0.411242\nENSG00000170345    276.9  450.4   2    3    450.4     -0.699841\nENSG00000128272    207.2  826.1   3    1    826.1     -1.990092\nENSG00000100219    188.4   94.5   4   24    188.4      0.987864\nENSG00000157514    165.0  273.2   5    4    273.2     -0.724045\nENSG00000163435    151.3  126.9   6   14    151.3      0.251900\nENSG00000102554    151.1   81.1   7   30    151.1      0.889566\nENSG00000103495    131.8  115.4   8   17    131.8      0.190164\nENSG00000102804    113.3  123.3   9   15    123.3     -0.121001\nENSG00000157557    111.8   98.8  10   21    111.8      0.176655\nENSG00000115738    110.3  145.5  11   11    145.5     -0.396447\nENSG00000082641    100.7   97.1  12   23    100.7      0.051995\nENSG00000120738     98.7  228.4  13    7    228.4     -1.202200\nENSG00000113722     93.3   89.0  14   26     93.3      0.067333\nENSG00000135373     93.1   39.1  15  108     93.1      1.230592\nENSG00000147140     88.3   81.3  16   29     88.3      0.117768\nENSG00000123358     87.0  217.3  17    8    217.3     -1.310737\nENSG00000067082     86.4   75.0  18   34     86.4      0.201634\nENSG00000136826     81.8   31.8  19  131     81.8      1.335935\nENSG00000130522     74.9  174.7  20   10    174.7     -1.210942\nENSG00000100906     74.6  122.1  21   16    122.1     -0.703373\nENSG00000105698     72.7  110.7  23   18    110.7     -0.599893\nENSG00000125968     67.2  127.1  24   13    127.1     -0.909427\nENSG00000171223     54.7  270.4  29    5    270.4     -2.284671\nENSG00000117318     38.2  127.1  55   12    127.1     -1.708345\nENSG00000221869     39.5  247.8  51    6    247.8     -2.618993\nENSG00000164107      6.3  101.2 465   19    101.2     -3.807355\nENSG00000198816     23.8  100.8 105   20    100.8     -2.037326\nENSG00000060138     59.9  214.5  27    9    214.5     -1.823174\n```\n\n### Ovary union (26 TFs)\n\n```text\nID                 HPA     GTEx   rH   rG   Consensus  log2-ratio\nENSG00000170345   1090.9   481.8   1    3   1090.9      1.177343\nENSG00000120738    729.2   221.8   2    9    729.2      1.712542\nENSG00000123358    337.9   800.4   3    1    800.4     -1.241663\nENSG00000171223    283.0   605.2   4    2    605.2     -1.093903\nENSG00000128272    262.3   340.9   5    6    340.9     -0.376867\nENSG00000065978    241.7   275.5   6    8    275.5     -0.188105\nENSG00000185551    223.5   214.1   7   10    223.5      0.061708\nENSG00000100906    201.8   197.7   8   12    201.8      0.029466\nENSG00000147140    198.9   138.4   9   17    198.9      0.520048\nENSG00000125740    197.2    84.7  10   34    197.2      1.209590\nENSG00000198300    195.7    79.2  11   39    195.7      1.294323\nENSG00000157514    193.0   338.8  12    7    338.8     -0.808629\nENSG00000118526    192.4   130.4  13   19    192.4      0.557622\nENSG00000115738    187.4   208.9  14   11    208.9     -0.155904\nENSG00000102804    162.2   165.6  15   13    165.6     -0.029747\nENSG00000177606    161.5   116.4  16   22    161.5      0.469007\nENSG00000116044    143.9   111.7  17   24    143.9      0.362570\nENSG00000082641    136.2   102.4  18   26    136.2      0.408044\nENSG00000105698    128.3   152.9  19   15    152.9     -0.251271\nENSG00000103495    124.8    94.2  20   27    124.8      0.402098\nENSG00000117318     94.8   155.3  21   14    155.3     -0.706220\nENSG00000221869     56.8   467.9  39    4    467.9     -3.020139\nENSG00000130522     75.9   397.6  26    5    397.6     -2.373886\nENSG00000127528     54.1   138.6  42   16    138.6     -1.341175\nENSG00000100968     22.8   137.4 167   18    137.4     -2.539810\nENSG00000075426     44.3   124.3  55   20    124.3     -1.467803\n```\n\n### Testis union (28 TFs)\n\n```text\nID                 HPA    GTEx   rH   rG   Consensus  log2-ratio\nENSG00000065978    719.0  701.6   1    1    719.0      0.035293\nENSG00000060138    246.1  231.6   2    3    246.1      0.087244\nENSG00000095794    168.0  194.3   3    4    194.3     -0.208669\nENSG00000028839    118.4   68.8   4   16    118.4      0.774504\nENSG00000145220     95.4   79.0   5   10     95.4      0.269033\nENSG00000006047     90.2  493.0   6    2    493.0     -2.437405\nENSG00000128272     89.5  153.4   7    5    153.4     -0.770683\nENSG00000170345     81.5   24.7   8  100     81.5      1.682626\nENSG00000186660     80.8   46.2   9   30     80.8      0.793314\nENSG00000039600     74.9   76.2  10   13     76.2     -0.024501\nENSG00000111783     70.2   48.5  11   26     70.2      0.524449\nENSG00000101190     69.2   46.4  12   29     69.2      0.566584\nENSG00000093167     67.0   60.5  13   19     67.0      0.144948\nENSG00000114126     65.2   60.7  14   18     65.2      0.101561\nENSG00000082641     64.7   49.8  15   25     64.7      0.371065\nENSG00000103495     62.7   86.5  16    8     86.5     -0.457990\nENSG00000102804     57.8   53.8  17   23     57.8      0.101640\nENSG00000116044     56.8   32.7  18   61     56.8      0.778321\nENSG00000141644     54.7   84.1  19    9     84.1     -0.611482\nENSG00000114439     54.2   38.2  20   44     54.2      0.493815\nENSG00000185122     31.2  102.6  52    6    102.6     -1.685891\nENSG00000130522     22.6   93.5 102    7     93.5     -2.001527\nENSG00000137309     53.0   76.3  22   12     76.3     -0.517509\nENSG00000141002     44.2   74.1  30   14     74.1     -0.732490\nENSG00000104825      8.2   72.2 381   15     72.2     -2.992138\nENSG00000079432     21.9   67.6 109   17     67.6     -1.582861\nENSG00000176083     40.1   76.5  36   11     76.5     -0.915057\nENSG00000143006     34.8   59.1  42   20     59.1     -0.747405\n```\n\n## Per-tissue source-agreement scatter interpretation\n\nThe scatter coordinates are exactly the HPA and GTEx nTPM columns in the preceding union tables; use log2(nTPM+1) on both axes. The main high-expression disagreements visible in those point sets are:\n\n```text\nColon:   HAND2, CEBPD, JUNB, ZNF358, YBX3 lie substantially above GTEx relative to HPA.\nOvary:   CEBPD, JUND, NFATC4, FOSL2 are GTEx-higher; EGR1 and FOS are HPA-higher.\nTestis:  YBX2 and NFKBIB are GTEx-higher; FOS is HPA-higher.\n```\n\n## Largest absolute HPA–GTEx discrepancies\n\nSigned difference is `log2((HPA nTPM+1)/(GTEx nTPM+1))`; a negative value means GTEx is higher. Rows are sorted by absolute difference descending, with Ensembl ID used to resolve ties. `Consensus` and specificity are taken from the respective HPA consensus/master fields only for annotation—not as a third comparison source.\n\n### Colon\n\n| Rank | TF | HPA | GTEx | Signed log2 ratio | \\|ratio\\| | Consensus | RNA tissue specificity |\n|---:|---|---:|---:|---:|---:|---:|---|\n| 1 | HIF3A (ENSG00000124440) | 2.2 | 52.5 | -4.0633950813 | 4.0633950813 | 52.5 | Low tissue specificity |\n| 2 | NFKBIL1 (ENSG00000204498) | 0.8 | 26.0 | -3.9068905956 | 3.9068905956 | 26.0 | Low tissue specificity |\n| 3 | HAND2 (ENSG00000164107) | 6.3 | 101.2 | -3.8073549221 | 3.8073549221 | 101.2 | Tissue enhanced |\n| 4 | HAND1 (ENSG00000113196) | 4.7 | 63.4 | -3.4980268639 | 3.4980268639 | 63.4 | Tissue enhanced |\n| 5 | NFATC4 (ENSG00000100968) | 5.3 | 68.7 | -3.4677349224 | 3.4677349224 | 68.7 | Low tissue specificity |\n| 6 | GLIS2 (ENSG00000126603) | 0.9 | 18.1 | -3.3295013146 | 3.3295013146 | 18.1 | Low tissue specificity |\n| 7 | TWIST2 (ENSG00000233608) | 1.4 | 22.8 | -3.3098552626 | 3.3098552626 | 22.8 | Tissue enhanced |\n| 8 | NKX3-2 (ENSG00000109705) | 1.3 | 21.5 | -3.2902192352 | 3.2902192352 | 21.5 | Tissue enriched |\n| 9 | HOXB2 (ENSG00000173917) | 3.1 | 38.6 | -3.2718046155 | 3.2718046155 | 38.6 | Low tissue specificity |\n| 10 | NR1D1 (ENSG00000126368) | 4.6 | 52.7 | -3.2614233559 | 3.2614233559 | 52.7 | Tissue enhanced |\n\n### Ovary\n\n| Rank | TF | HPA | GTEx | Signed log2 ratio | \\|ratio\\| | Consensus | RNA tissue specificity |\n|---:|---|---:|---:|---:|---:|---:|---|\n| 1 | NFKBIL1 (ENSG00000204498) | 2.1 | 32.5 | -3.4338209749 | 3.4338209749 | 32.5 | Low tissue specificity |\n| 2 | CEBPD (ENSG00000221869) | 56.8 | 467.9 | -3.0201388812 | 3.0201388812 | 467.9 | Low tissue specificity |\n| 3 | THAP12 (ENSG00000137492) | 20.3 | 1.7 | 2.9798221181 | 2.9798221181 | 20.3 | Low tissue specificity |\n| 4 | RXRB (ENSG00000204231) | 3.7 | 31.7 | -2.7985579738 | 2.7985579738 | 31.7 | Low tissue specificity |\n| 5 | NR4A3 (ENSG00000119508) | 4.9 | 39.5 | -2.7791350484 | 2.7791350484 | 39.5 | Low tissue specificity |\n| 6 | ZNF83 (ENSG00000167766) | 11.1 | 81.6 | -2.7711347341 | 2.7711347341 | 81.6 | Low tissue specificity |\n| 7 | ZBTB12 (ENSG00000204366) | 0.0 | 5.8 | -2.7655347464 | 2.7655347464 | 5.8 | Low tissue specificity |\n| 8 | TWIST2 (ENSG00000233608) | 5.0 | 39.6 | -2.7584453216 | 2.7584453216 | 39.6 | Tissue enhanced |\n| 9 | NFATC4 (ENSG00000100968) | 22.8 | 137.4 | -2.5398104643 | 2.5398104643 | 137.4 | Low tissue specificity |\n| 10 | HSF4 (ENSG00000102878) | 2.9 | 21.3 | -2.5154976811 | 2.5154976811 | 21.3 | Low tissue specificity |\n\n### Testis\n\n| Rank | TF | HPA | GTEx | Signed log2 ratio | \\|ratio\\| | Consensus | RNA tissue specificity |\n|---:|---|---:|---:|---:|---:|---:|---|\n| 1 | NFKBIL1 (ENSG00000204498) | 0.6 | 17.1 | -3.4998458871 | 3.4998458871 | 17.1 | Low tissue specificity |\n| 2 | ZNF233 (ENSG00000159915) | 13.6 | 0.8 | 3.0198995574 | 3.0198995574 | 13.6 | Tissue enhanced |\n| 3 | NFKBIB (ENSG00000104825) | 8.2 | 72.2 | -2.9921378822 | 2.9921378822 | 72.2 | Tissue enhanced |\n| 4 | RXRB (ENSG00000204231) | 1.6 | 19.5 | -2.9790403814 | 2.9790403814 | 19.5 | Low tissue specificity |\n| 5 | THAP12 (ENSG00000137492) | 15.2 | 1.1 | 2.9475325801 | 2.9475325801 | 15.2 | Low tissue specificity |\n| 6 | CEBPD (ENSG00000221869) | 3.8 | 25.3 | -2.4539564886 | 2.4539564886 | 25.3 | Low tissue specificity |\n| 7 | YBX2 (ENSG00000006047) | 90.2 | 493.0 | -2.4374053123 | 2.4374053123 | 493.0 | Tissue enriched |\n| 8 | ZNF628 (ENSG00000197483) | 3.5 | 21.8 | -2.3410369178 | 2.3410369178 | 21.8 | Tissue enhanced |\n| 9 | NFATC4 (ENSG00000100968) | 8.0 | 41.1 | -2.2258233267 | 2.2258233267 | 41.1 | Low tissue specificity |\n| 10 | ZNF414 (ENSG00000133250) | 3.5 | 20.0 | -2.2223924213 | 2.2223924213 | 20.0 | Low tissue specificity |\n\n## Discrepancy heatmap\n\nCells encode the signed log2 ratio; `−` denotes GTEx-higher and `+` HPA-higher. Darker symbols indicate larger absolute discrepancy.\n\n```text\nTF / tissue                         Colon       Ovary       Testis\nNFKBIL1 (ENSG00000204498)          −███ 3.907  −███ 3.434  −███ 3.500\nNFKBIB  (ENSG00000104825)           —           —          −███ 2.992\nTHAP12  (ENSG00000137492)           —          +███ 2.980  +███ 2.948\nRXRB    (ENSG00000204231)           —          −███ 2.799  −███ 2.979\nCEBPD   (ENSG00000221869)           —          −███ 3.020  −██  2.454\nNFATC4  (ENSG00000100968)          −███ 3.468  −███ 2.540  −██  2.226\nTWIST2  (ENSG00000233608)          −███ 3.310  −███ 2.758   —\nHAND2   (ENSG00000164107)          −████4.063   —           —\n```\n\n## Interpretation and consensus caveat\n\nThe separate-source correlations are high across the full eligible TF set (ρ = **0.912–0.948**), with the strongest rank agreement in ovary. The median absolute log-scale differences are modest—about **0.276 to 0.372 log2 units**—but individual TFs can differ by roughly 3–4 log2 units, especially low-to-moderate abundance genes and tissue-regulated factors.\n\nThe consensus nTPM file is **not an independent third replication cohort**. It is an HPA-derived integrated/consensus expression product that incorporates the source datasets represented by HPA and GTEx measurements (and may select or aggregate source-derived values). It is therefore statistically dependent on the two compared inputs. Treating it as a third replicate would reuse information from the same underlying sources, inflate apparent replication, and obscure rather than test source-specific disagreement.",
+ "stop": "completed",
+ "tool_call_count": 7,
+ "seconds": 108.379,
+ "model_calls": 6,
+ "cost_usd": 0.23294020000000001
+}

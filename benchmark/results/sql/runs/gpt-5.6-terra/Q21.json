@@ -1,0 +1,402 @@
+{
+ "id": "Q21",
+ "kind": "analysis",
+ "question": "For every tissue in the consensus RNA data, give the number of tissue enriched genes, the share of them secreted to blood, and the share that are FDA approved drug targets. Draw a bar chart of the twenty tissues with the most enriched genes and a heatmap of the ten tissues with the most enriched genes against the eight most common protein classes among their enriched genes. Provide the table.",
+ "model": "gpt-5.6-terra",
+ "effort": "low",
+ "turns": [
+  {
+   "turn": 1,
+   "ms": 1299,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 251,
+    "input_tokens_details": {
+     "cache_write_tokens": 0,
+     "cached_tokens": 0
+    },
+    "output_tokens": 23,
+    "output_tokens_details": {
+     "reasoning_tokens": 8
+    },
+    "total_tokens": 274
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "schema",
+     "input": "{}"
+    }
+   ]
+  },
+  {
+   "turn": 2,
+   "ms": 3413,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 5767,
+    "input_tokens_details": {
+     "cache_write_tokens": 5764,
+     "cached_tokens": 0
+    },
+    "output_tokens": 294,
+    "output_tokens_details": {
+     "reasoning_tokens": 121
+    },
+    "total_tokens": 6061
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT \\\"RNA tissue specificity\\\", COUNT(*) n FROM proteinatlas GROUP BY 1 ORDER BY n DESC\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT \\\"Secretome location\\\", COUNT(*) n FROM proteinatlas GROUP BY 1 ORDER BY n DESC LIMIT 20\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT \\\"Protein class\\\", COUNT(*) n FROM proteinatlas WHERE \\\"Protein class\\\" ILIKE '%FDA%' GROUP BY 1 LIMIT 10\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT \\\"RNA tissue specific nTPM\\\", COUNT(*) FROM proteinatlas WHERE \\\"RNA tissue specificity\\\"='Tissue enriched' GROUP BY 1 LIMIT 10\"}"
+    }
+   ]
+  },
+  {
+   "turn": 3,
+   "ms": 6341,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 6591,
+    "input_tokens_details": {
+     "cache_write_tokens": 824,
+     "cached_tokens": 5764
+    },
+    "output_tokens": 771,
+    "output_tokens_details": {
+     "reasoning_tokens": 147
+    },
+    "total_tokens": 7362
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH e AS (SELECT split_part(\\\"RNA tissue specific nTPM\\\", ':', 1) AS tissue, Gene, \\\"Secretome location\\\"='Secreted to blood' AS blood, \\\"Protein class\\\" ILIKE '%FDA approved drug targets%' AS fda FROM proteinatlas WHERE \\\"RNA tissue specificity\\\"='Tissue enriched') SELECT t.Tissue, COUNT(e.Gene) AS enriched_genes, SUM(CASE WHEN e.blood THEN 1 ELSE 0 END) AS secreted_to_blood_n, ROUND(100.0*SUM(CASE WHEN e.blood THEN 1 ELSE 0 END)/NULLIF(COUNT(e.Gene),0),2) AS secreted_to_blood_pct, SUM(CASE WHEN e.fda THEN 1 ELSE 0 END) AS fda_target_n, ROUND(100.0*SUM(CASE WHEN e.fda THEN 1 ELSE 0 END)/NULLIF(COUNT(e.Gene),0),2) AS fda_target_pct FROM rna_tissue_consensus_tissues t LEFT JOIN e ON t.Tissue=e.tissue GROUP BY t.Tissue ORDER BY enriched_genes DESC, t.Tissue\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH e AS (SELECT split_part(\\\"RNA tissue specific nTPM\\\", ':', 1) tissue, Gene, trim(pc) protein_class FROM proteinatlas, UNNEST(string_split(\\\"Protein class\\\", ',')) AS u(pc) WHERE \\\"RNA tissue specificity\\\"='Tissue enriched'), top10 AS (SELECT tissue FROM (SELECT split_part(\\\"RNA tissue specific nTPM\\\", ':', 1) tissue, COUNT(*) n FROM proteinatlas WHERE \\\"RNA tissue specificity\\\"='Tissue enriched' GROUP BY 1 ORDER BY n DESC, tissue LIMIT 10)), classes AS (SELECT protein_class, COUNT(*) n FROM e JOIN top10 USING(tissue) WHERE protein_class<>'' GROUP BY 1 ORDER BY n DESC, protein_class LIMIT 8) SELECT e.tissue, e.protein_class, COUNT(*) n FROM e JOIN top10 USING(tissue) JOIN classes USING(protein_class) GROUP BY 1,2 ORDER BY 1,2\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH e AS (SELECT split_part(\\\"RNA tissue specific nTPM\\\", ':', 1) tissue, Gene FROM proteinatlas WHERE \\\"RNA tissue specificity\\\"='Tissue enriched'), top10 AS (SELECT tissue FROM e GROUP BY 1 ORDER BY COUNT(*) DESC, tissue LIMIT 10) SELECT pc protein_class, COUNT(*) n FROM proteinatlas p JOIN e ON p.Gene=e.Gene JOIN top10 ON e.tissue=top10.tissue, UNNEST(string_split(p.\\\"Protein class\\\", ',')) u(pc) WHERE trim(pc)<>'' GROUP BY 1 ORDER BY n DESC, 1 LIMIT 8\"}"
+    }
+   ]
+  },
+  {
+   "turn": 4,
+   "ms": 10370,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 9025,
+    "input_tokens_details": {
+     "cache_write_tokens": 2434,
+     "cached_tokens": 6588
+    },
+    "output_tokens": 1216,
+    "output_tokens_details": {
+     "reasoning_tokens": 412
+    },
+    "total_tokens": 10241
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH x AS (SELECT Gene, Tissue, TRY_CAST(nTPM AS DOUBLE) val, ROW_NUMBER() OVER(PARTITION BY Gene ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) rn, LEAD(TRY_CAST(nTPM AS DOUBLE)) OVER(PARTITION BY Gene ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) secondval FROM rna_tissue_consensus), e AS (SELECT x.Tissue, x.Gene, p.\\\"Secretome location\\\"='Secreted to blood' blood, p.\\\"Protein class\\\" ILIKE '%FDA approved drug targets%' fda FROM x JOIN proteinatlas p USING(Gene) WHERE rn=1 AND val>=1 AND val>=4*secondval) SELECT t.Tissue, COUNT(e.Gene) enriched_genes, SUM(CASE WHEN blood THEN 1 ELSE 0 END) secreted_to_blood_n, ROUND(100.0*SUM(CASE WHEN blood THEN 1 ELSE 0 END)/NULLIF(COUNT(e.Gene),0),2) secreted_to_blood_pct, SUM(CASE WHEN fda THEN 1 ELSE 0 END) fda_target_n, ROUND(100.0*SUM(CASE WHEN fda THEN 1 ELSE 0 END)/NULLIF(COUNT(e.Gene),0),2) fda_target_pct FROM rna_tissue_consensus_tissues t LEFT JOIN e ON t.Tissue=e.Tissue GROUP BY 1 ORDER BY 2 DESC, 1\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH x AS (SELECT Gene, Tissue, TRY_CAST(nTPM AS DOUBLE) val, ROW_NUMBER() OVER(PARTITION BY Gene ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) rn, LEAD(TRY_CAST(nTPM AS DOUBLE)) OVER(PARTITION BY Gene ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) secondval FROM rna_tissue_consensus), e AS (SELECT x.Tissue, x.Gene, trim(pc) protein_class FROM x JOIN proteinatlas p USING(Gene), UNNEST(string_split(p.\\\"Protein class\\\", ',')) u(pc) WHERE rn=1 AND val>=1 AND val>=4*secondval), top10 AS (SELECT Tissue FROM e GROUP BY 1 ORDER BY COUNT(*) DESC, 1 LIMIT 10), classes AS (SELECT protein_class, COUNT(*) n FROM e JOIN top10 USING(Tissue) WHERE protein_class<>'' GROUP BY 1 ORDER BY n DESC,1 LIMIT 8) SELECT e.Tissue,e.protein_class,COUNT(*) n FROM e JOIN top10 USING(Tissue) JOIN classes USING(protein_class) GROUP BY 1,2 ORDER BY 1,2\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH x AS (SELECT Gene, Tissue, TRY_CAST(nTPM AS DOUBLE) val, ROW_NUMBER() OVER(PARTITION BY Gene ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) rn, LEAD(TRY_CAST(nTPM AS DOUBLE)) OVER(PARTITION BY Gene ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) secondval FROM rna_tissue_consensus), e AS (SELECT x.Tissue, x.Gene, trim(pc) protein_class FROM x JOIN proteinatlas p USING(Gene), UNNEST(string_split(p.\\\"Protein class\\\", ',')) u(pc) WHERE rn=1 AND val>=1 AND val>=4*secondval), top10 AS (SELECT Tissue FROM e GROUP BY 1 ORDER BY COUNT(*) DESC, 1 LIMIT 10) SELECT protein_class,COUNT(*) n FROM e JOIN top10 USING(Tissue) WHERE protein_class<>'' GROUP BY 1 ORDER BY 2 DESC,1 LIMIT 8\"}"
+    }
+   ]
+  },
+  {
+   "turn": 5,
+   "ms": 3457,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 11126,
+    "input_tokens_details": {
+     "cache_write_tokens": 2101,
+     "cached_tokens": 9022
+    },
+    "output_tokens": 254,
+    "output_tokens_details": {
+     "reasoning_tokens": 161
+    },
+    "total_tokens": 11380
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT r.Gene,r.Tissue,r.nTPM FROM rna_tissue_consensus r WHERE r.Gene IN (SELECT Gene FROM proteinatlas WHERE \\\"RNA tissue specificity\\\"='Tissue enriched' AND \\\"RNA tissue specific nTPM\\\" LIKE 'testis:%') ORDER BY r.Gene, TRY_CAST(r.nTPM AS DOUBLE) DESC LIMIT 40\"}"
+    }
+   ]
+  },
+  {
+   "turn": 6,
+   "ms": 7547,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 11977,
+    "input_tokens_details": {
+     "cache_write_tokens": 851,
+     "cached_tokens": 11123
+    },
+    "output_tokens": 1046,
+    "output_tokens_details": {
+     "reasoning_tokens": 201
+    },
+    "total_tokens": 13023
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH x AS (SELECT \\\"Gene name\\\" gene, Tissue, TRY_CAST(nTPM AS DOUBLE) val, ROW_NUMBER() OVER(PARTITION BY \\\"Gene name\\\" ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) rn, LEAD(TRY_CAST(nTPM AS DOUBLE)) OVER(PARTITION BY \\\"Gene name\\\" ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) secondval FROM rna_tissue_consensus), e AS (SELECT x.Tissue, x.gene, p.\\\"Secretome location\\\"='Secreted to blood' blood, p.\\\"Protein class\\\" ILIKE '%FDA approved drug targets%' fda FROM x JOIN proteinatlas p ON x.gene=p.Gene WHERE rn=1 AND val>=1 AND val>=4*secondval) SELECT t.Tissue, COUNT(e.gene) enriched_genes, SUM(CASE WHEN blood THEN 1 ELSE 0 END) secreted_to_blood_n, ROUND(100.0*SUM(CASE WHEN blood THEN 1 ELSE 0 END)/NULLIF(COUNT(e.gene),0),2) secreted_to_blood_pct, SUM(CASE WHEN fda THEN 1 ELSE 0 END) fda_target_n, ROUND(100.0*SUM(CASE WHEN fda THEN 1 ELSE 0 END)/NULLIF(COUNT(e.gene),0),2) fda_target_pct FROM rna_tissue_consensus_tissues t LEFT JOIN e ON t.Tissue=e.Tissue GROUP BY 1 ORDER BY 2 DESC, 1\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH x AS (SELECT \\\"Gene name\\\" gene, Tissue, TRY_CAST(nTPM AS DOUBLE) val, ROW_NUMBER() OVER(PARTITION BY \\\"Gene name\\\" ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) rn, LEAD(TRY_CAST(nTPM AS DOUBLE)) OVER(PARTITION BY \\\"Gene name\\\" ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) secondval FROM rna_tissue_consensus), e AS (SELECT x.Tissue, x.gene, trim(pc) protein_class FROM x JOIN proteinatlas p ON x.gene=p.Gene, UNNEST(string_split(p.\\\"Protein class\\\", ',')) u(pc) WHERE rn=1 AND val>=1 AND val>=4*secondval), top10 AS (SELECT Tissue FROM e GROUP BY 1 ORDER BY COUNT(*) DESC, 1 LIMIT 10), classes AS (SELECT protein_class, COUNT(*) n FROM e JOIN top10 USING(Tissue) WHERE protein_class<>'' GROUP BY 1 ORDER BY n DESC,1 LIMIT 8) SELECT e.Tissue,e.protein_class,COUNT(*) n FROM e JOIN top10 USING(Tissue) JOIN classes USING(protein_class) GROUP BY 1,2 ORDER BY 1,2\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH x AS (SELECT \\\"Gene name\\\" gene, Tissue, TRY_CAST(nTPM AS DOUBLE) val, ROW_NUMBER() OVER(PARTITION BY \\\"Gene name\\\" ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) rn, LEAD(TRY_CAST(nTPM AS DOUBLE)) OVER(PARTITION BY \\\"Gene name\\\" ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) secondval FROM rna_tissue_consensus), e AS (SELECT x.Tissue, x.gene, trim(pc) protein_class FROM x JOIN proteinatlas p ON x.gene=p.Gene, UNNEST(string_split(p.\\\"Protein class\\\", ',')) u(pc) WHERE rn=1 AND val>=1 AND val>=4*secondval), top10 AS (SELECT Tissue FROM e GROUP BY 1 ORDER BY COUNT(*) DESC, 1 LIMIT 10) SELECT protein_class,COUNT(*) n FROM e JOIN top10 USING(Tissue) WHERE protein_class<>'' GROUP BY 1 ORDER BY 2 DESC,1 LIMIT 8\"}"
+    }
+   ]
+  },
+  {
+   "turn": 7,
+   "ms": 19810,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 14739,
+    "input_tokens_details": {
+     "cache_write_tokens": 2762,
+     "cached_tokens": 11974
+    },
+    "output_tokens": 2671,
+    "output_tokens_details": {
+     "reasoning_tokens": 483
+    },
+    "total_tokens": 17410
+   },
+   "text": "## Method\n\nUsing the consensus RNA tissue matrix, I defined a **tissue-enriched gene** as one with **nTPM ≥ 1** in its highest-expression tissue and expression **at least fourfold greater than in the second-highest tissue**. “Secreted to blood” is the HPA *Secretome location* annotation, and FDA targets are genes whose HPA *Protein class* includes **FDA approved drug targets**.  \n\nPercentages are calculated among enriched genes in the respective tissue; **—** denotes no enriched genes (so a share is undefined).\n\n## Bar chart — 20 tissues with the most tissue-enriched genes\n\n*Each `█` is approximately 30 genes; exact values are shown at right.*\n\n```text\nTestis              ███████████████████████████████  936\nLiver               █████████                         267\nSkin                ██████                            188\nRetina              ████                              130\nBone marrow         ████                              110\nEpididymis          ███                                98\nPlacenta            ██                                 66\nPancreas            ██                                 62\nThymus              ██                                 58\nKidney              ██                                 54\nSkeletal muscle     ██                                 54\nCerebellum          █                                  44\nSalivary gland      █                                  43\nStomach             █                                  36\nChoroid plexus      █                                  33\nHeart muscle        █                                  33\nParathyroid gland   █                                  29\nBlood vessel        █                                  26\nPituitary gland     █                                  26\nAdrenal gland       █                                  24\n```\n\n## Heatmap — top 10 tissues × eight most common protein classes\n\nCell values are numbers of enriched genes annotated to the class. Protein-class annotations are non-exclusive, so a gene can contribute to multiple columns.\n\n**Color scale:** `·` = 0; `░` = 1–15; `▒` = 16–49; `▓` = 50–149; `█` = ≥150.\n\n| Tissue | Predicted intracellular (1,436) | Predicted membrane (451) | Predicted secreted (378) | Disease-related (356) | Human disease-related (345) | Plasma (303) | Enzymes (293) | Metabolic (249) |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|\n| Testis | █ 790 | █ 201 | ▒ 40 | ▓ 61 | ▓ 54 | ▒ 32 | ▓ 86 | ▓ 52 |\n| Liver | █ 153 | ▓ 57 | ▓ 130 | ▓ 112 | ▓ 116 | █ 152 | ▓ 108 | ▓ 107 |\n| Skin | █ 154 | ▒ 24 | ▒ 22 | ▒ 37 | ▒ 37 | ▒ 35 | ░ 15 | ░ 15 |\n| Retina | ▓ 92 | ▒ 45 | ░ 11 | ▓ 63 | ▓ 62 | ░ 15 | ▒ 16 | ▒ 17 |\n| Bone marrow | ▓ 78 | ▒ 31 | ▒ 25 | ▒ 28 | ▒ 22 | ▒ 31 | ▒ 17 | ░ 11 |\n| Epididymis | ▒ 37 | ░ 11 | ▓ 67 | ░ 8 | ░ 7 | ░ 4 | ░ 7 | ░ 4 |\n| Placenta | ▒ 32 | ▒ 16 | ▒ 37 | ░ 12 | ░ 11 | ░ 9 | ░ 9 | ░ 3 |\n| Pancreas | ▒ 33 | ▒ 16 | ▒ 36 | ░ 12 | ░ 14 | ░ 15 | ▒ 23 | ░ 12 |\n| Thymus | ▓ 52 | ░ 13 | ░ 2 | ░ 6 | ░ 6 | ░ 6 | ░ 6 | ░ 3 |\n| Kidney | ░ 15 | ▒ 37 | ░ 8 | ▒ 17 | ▒ 16 | ░ 4 | ░ 6 | ▒ 25 |\n\nNumbers in parentheses in the headers are totals across the ten displayed tissues.\n\n## Complete tissue table\n\n| Tissue | Enriched genes | Secreted to blood, n (%) | FDA target, n (%) |\n|---|---:|---:|---:|\n| Testis | 936 | 3 (0.32%) | 3 (0.32%) |\n| Liver | 267 | 127 (47.57%) | 42 (15.73%) |\n| Skin | 188 | 3 (1.60%) | 2 (1.06%) |\n| Retina | 130 | 0 (0.00%) | 6 (4.62%) |\n| Bone marrow | 110 | 22 (20.00%) | 4 (3.64%) |\n| Epididymis | 98 | 2 (2.04%) | 1 (1.02%) |\n| Placenta | 66 | 10 (15.15%) | 5 (7.58%) |\n| Pancreas | 62 | 6 (9.68%) | 3 (4.84%) |\n| Thymus | 58 | 0 (0.00%) | 1 (1.72%) |\n| Kidney | 54 | 4 (7.41%) | 10 (18.52%) |\n| Skeletal muscle | 54 | 0 (0.00%) | 3 (5.56%) |\n| Cerebellum | 44 | 1 (2.27%) | 6 (13.64%) |\n| Salivary gland | 43 | 3 (6.98%) | 1 (2.33%) |\n| Stomach | 36 | 2 (5.56%) | 7 (19.44%) |\n| Choroid plexus | 33 | 5 (15.15%) | 4 (12.12%) |\n| Heart muscle | 33 | 3 (9.09%) | 3 (9.09%) |\n| Parathyroid gland | 29 | 3 (10.34%) | ",
+   "tool_uses": []
+  }
+ ],
+ "tool_calls": [
+  {
+   "turn": 1,
+   "name": "schema",
+   "input": {},
+   "ms": 34503,
+   "result_chars": 148152,
+   "truncated": true,
+   "error": null,
+   "result_head": "Tables built from the Human Protein Atlas bulk files (all columns are text; cast for arithmetic, e.g. TRY_CAST(col AS DOUBLE)).\n\nblood_immunoassay_concentration (0.1 MB): gene, ENSG ID, conc [pg/L], sample type, number_of_samples, pubmed id\nblood_ms_concentration (0.1 MB): Gene, ENSG ID, Conc [pg/L]\nblood_pea_disease_de (17.9 MB): Gene, ENSG ID, Disease, Class, Control, logFC, p-value adjusted, Seeds, Mean importance, SD importance, Max importance, Min importance\nblood_pea_diseases (0.0 MB): Disease, Class\ncancer_cancers (0.0 MB): Cancer, Organ\ncancer_cptac (5.7 MB): Cancer, Gene, Gene name, p"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"RNA tissue specificity\", COUNT(*) n FROM proteinatlas GROUP BY 1 ORDER BY n DESC"
+   },
+   "ms": 804,
+   "result_chars": 141,
+   "truncated": false,
+   "error": null,
+   "result_head": "RNA tissue specificity\tn\nLow tissue specificity\t8096\nTissue enhanced\t6356\nTissue enriched\t3132\nGroup enriched\t1547\nNot detected\t1031\n[5 rows]"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"Secretome location\", COUNT(*) n FROM proteinatlas GROUP BY 1 ORDER BY n DESC LIMIT 20"
+   },
+   "ms": 919,
+   "result_chars": 350,
+   "truncated": false,
+   "error": null,
+   "result_head": "Secretome location\tn\n\t17642\nSecreted to blood\t785\nIntracellular and membrane\t619\nSecreted in other tissues\t286\nSecreted to extracellular matrix\t236\nImmunoglobulin genes\t147\nSecreted in male reproductive system\t123\nSecreted - unknown location\t116\nSecreted to digestive system\t94\nSecreted in brain\t76\nSecreted in female reproductive system\t38\n[11 rows]"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"Protein class\", COUNT(*) n FROM proteinatlas WHERE \"Protein class\" ILIKE '%FDA%' GROUP BY 1 LIMIT 10"
+   },
+   "ms": 995,
+   "result_chars": 1156,
+   "truncated": false,
+   "error": null,
+   "result_head": "Protein class\tn\nCancer-related genes, Disease related genes, FDA approved drug targets, Human disease related genes, Predicted secreted proteins\t2\nFDA approved drug targets, Plasma proteins, Predicted secreted proteins\t5\nEnzymes, Essential proteins, FDA approved drug targets, Metabolic proteins, Predicted secreted proteins\t1\nBlood group antigen proteins, Disease related genes, FDA approved drug targets, Human disease related genes, Plasma proteins, Predicted secreted proteins\t1\nEnzymes, FDA approved drug targets, Predicted intracellular proteins, Predicted secreted proteins\t1\nFDA approved drug"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"RNA tissue specific nTPM\", COUNT(*) FROM proteinatlas WHERE \"RNA tissue specificity\"='Tissue enriched' GROUP BY 1 LIMIT 10"
+   },
+   "ms": 1242,
+   "result_chars": 214,
+   "truncated": false,
+   "error": null,
+   "result_head": "RNA tissue specific nTPM\tcount_star()\nepididymis: 2.4\t2\ntestis: 2.6\t6\ntestis: 56.1\t1\npancreas: 145041.3\t1\ntestis: 476.4\t1\nepididymis: 46.7\t1\ntestis: 11.7\t2\ntestis: 9.9\t3\nbone marrow: 14.6\t1\ntestis: 19.6\t1\n[10 rows]"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "WITH e AS (SELECT split_part(\"RNA tissue specific nTPM\", ':', 1) AS tissue, Gene, \"Secretome location\"='Secreted to blood' AS blood, \"Protein class\" ILIKE '%FDA approved drug targets%' AS fda FROM proteinatlas WHERE \"RNA tissue specificity\"='Tissue enriched') SELECT t.Tissue, COUNT(e.Gene) AS enriched_genes, SUM(CASE WHEN e.blood THEN 1 ELSE 0 END) AS secreted_to_blood_n, ROUND(100.0*SUM(CASE WHEN e.blood THEN 1 ELSE 0 END)/NULLIF(COUNT(e.Gene),0),2) AS secreted_to_blood_pct, SUM(CASE WHEN e.fda THEN 1 ELSE 0 END) AS fda_target_n, ROUND(100.0*SUM(CASE WHEN e.fda THEN 1 ELSE 0 END)/NULLIF(COUNT(e.Gene),0),2) AS fda_target_pct FROM rna_tissue_consensus_tissues t LEFT JOIN e ON t.Tissue=e.tissue GROUP BY t.Tissue ORDER BY enriched_genes DESC, t.Tissue"
+   },
+   "ms": 1104,
+   "result_chars": 1294,
+   "truncated": false,
+   "error": null,
+   "result_head": "Tissue\tenriched_genes\tsecreted_to_blood_n\tsecreted_to_blood_pct\tfda_target_n\tfda_target_pct\ntestis\t932\t3\t0.32\t3\t0.32\nliver\t267\t127\t47.57\t42\t15.73\nretina\t129\t0\t0\t6\t4.65\nbone marrow\t109\t22\t20.18\t4\t3.67\nepididymis\t96\t2\t2.08\t1\t1.04\nplacenta\t65\t10\t15.38\t5\t7.69\npancreas\t62\t6\t9.68\t3\t4.84\nkidney\t53\t4\t7.55\t10\t18.87\nskeletal muscle\t53\t0\t0\t3\t5.66\nsalivary gland\t43\t3\t6.98\t1\t2.33\nchoroid plexus\t32\t5\t15.63\t4\t12.5\nheart muscle\t32\t3\t9.38\t3\t9.38\nparathyroid gland\t29\t3\t10.34\t3\t10.34\nblood vessel\t26\t3\t11.54\t1\t3.85\npituitary gland\t26\t9\t34.62\t3\t11.54\nadrenal gland\t24\t0\t0\t12\t50\nbreast\t19\t0\t0\t1\t5.26\nfallopian tube\t1"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "WITH e AS (SELECT split_part(\"RNA tissue specific nTPM\", ':', 1) tissue, Gene, trim(pc) protein_class FROM proteinatlas, UNNEST(string_split(\"Protein class\", ',')) AS u(pc) WHERE \"RNA tissue specificity\"='Tissue enriched'), top10 AS (SELECT tissue FROM (SELECT split_part(\"RNA tissue specific nTPM\", ':', 1) tissue, COUNT(*) n FROM proteinatlas WHERE \"RNA tissue specificity\"='Tissue enriched' GROUP BY 1 ORDER BY n DESC, tissue LIMIT 10)), classes AS (SELECT protein_class, COUNT(*) n FROM e JOIN top10 USING(tissue) WHERE protein_class<>'' GROUP BY 1 ORDER BY n DESC, protein_class LIMIT 8) SELECT e.tissue, e.protein_class, COUNT(*) n FROM e JOIN top10 USING(tissue) JOIN classes USING(protein_class) GROUP BY 1,2 ORDER BY 1,2"
+   },
+   "ms": 2071,
+   "result_chars": 2826,
+   "truncated": false,
+   "error": null,
+   "result_head": "tissue\tprotein_class\tn\nbone marrow\tDisease related genes\t27\nbone marrow\tEnzymes\t17\nbone marrow\tHuman disease related genes\t22\nbone marrow\tMetabolic proteins\t11\nbone marrow\tPlasma proteins\t31\nbone marrow\tPredicted intracellular proteins\t77\nbone marrow\tPredicted membrane proteins\t31\nbone marrow\tPredicted secreted proteins\t25\nbrain\tDisease related genes\t120\nbrain\tEnzymes\t42\nbrain\tHuman disease related genes\t114\nbrain\tMetabolic proteins\t38\nbrain\tPlasma proteins\t78\nbrain\tPredicted intracellular proteins\t320\nbrain\tPredicted membrane proteins\t204\nbrain\tPredicted secreted proteins\t49\nepididymis\tDiseas"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "WITH e AS (SELECT split_part(\"RNA tissue specific nTPM\", ':', 1) tissue, Gene FROM proteinatlas WHERE \"RNA tissue specificity\"='Tissue enriched'), top10 AS (SELECT tissue FROM e GROUP BY 1 ORDER BY COUNT(*) DESC, tissue LIMIT 10) SELECT pc protein_class, COUNT(*) n FROM proteinatlas p JOIN e ON p.Gene=e.Gene JOIN top10 ON e.tissue=top10.tissue, UNNEST(string_split(p.\"Protein class\", ',')) u(pc) WHERE trim(pc)<>'' GROUP BY 1 ORDER BY n DESC, 1 LIMIT 8"
+   },
+   "ms": 2267,
+   "result_chars": 264,
+   "truncated": false,
+   "error": null,
+   "result_head": "protein_class\tn\nPredicted intracellular proteins\t1140\n Predicted intracellular proteins\t737\n Predicted membrane proteins\t483\n Human disease related genes\t440\nDisease related genes\t386\n Predicted secreted proteins\t312\n Plasma proteins\t275\n Transporters\t258\n[8 rows]"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "WITH x AS (SELECT Gene, Tissue, TRY_CAST(nTPM AS DOUBLE) val, ROW_NUMBER() OVER(PARTITION BY Gene ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) rn, LEAD(TRY_CAST(nTPM AS DOUBLE)) OVER(PARTITION BY Gene ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) secondval FROM rna_tissue_consensus), e AS (SELECT x.Tissue, x.Gene, p.\"Secretome location\"='Secreted to blood' blood, p.\"Protein class\" ILIKE '%FDA approved drug targets%' fda FROM x JOIN proteinatlas p USING(Gene) WHERE rn=1 AND val>=1 AND val>=4*secondval) SELECT t.Tissue, COUNT(e.Gene) enriched_genes, SUM(CASE WHEN blood THEN 1 ELSE 0 END) secreted_to_blood_n, ROUND(100.0*SUM(CASE WHEN blood THEN 1 ELSE 0 END)/NULLIF(COUNT(e.Gene),0),2) secreted_to_blood_pct, SUM(CASE WHEN fda THEN 1 ELSE 0 END) fda_target_n, ROUND(100.0*SUM(CASE WHEN fda THEN 1 ELSE 0 END)/NULLIF(COUNT(e.Gene),0),2) fda_target_pct FROM rna_tissue_consensus_tissues t LEFT JOIN e ON t.Tissue=e.Tissue GROUP BY 1 ORDER BY 2 DESC, 1"
+   },
+   "ms": 3091,
+   "result_chars": 1102,
+   "truncated": false,
+   "error": null,
+   "result_head": "Tissue\tenriched_genes\tsecreted_to_blood_n\tsecreted_to_blood_pct\tfda_target_n\tfda_target_pct\ntestis\t22\t0\t0\t0\t0\nskeletal muscle\t9\t0\t0\t0\t0\nretina\t5\t0\t0\t0\t0\nepididymis\t4\t0\t0\t0\t0\nliver\t4\t0\t0\t0\t0\ncolon\t2\t0\t0\t0\t0\npituitary gland\t2\t0\t0\t0\t0\nplacenta\t2\t0\t0\t0\t0\nadrenal gland\t1\t0\t0\t0\t0\nbone marrow\t1\t0\t0\t0\t0\ncerebellum\t1\t0\t0\t0\t0\ncerebral cortex\t1\t0\t0\t0\t0\nchoroid plexus\t1\t0\t0\t0\t0\nfallopian tube\t1\t0\t0\t0\t0\nsalivary gland\t1\t0\t0\t0\t0\nskin\t1\t0\t0\t0\t0\ntongue\t1\t0\t0\t0\t0\nadipose tissue\t0\t0\t\t0\t\namygdala\t0\t0\t\t0\t\nappendix\t0\t0\t\t0\t\nbasal ganglia\t0\t0\t\t0\t\nblood vessel\t0\t0\t\t0\t\nbreast\t0\t0\t\t0\t\ncervix\t0\t0\t\t0\t\nduodenum\t0\t0\t\t0\t\nen"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "WITH x AS (SELECT Gene, Tissue, TRY_CAST(nTPM AS DOUBLE) val, ROW_NUMBER() OVER(PARTITION BY Gene ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) rn, LEAD(TRY_CAST(nTPM AS DOUBLE)) OVER(PARTITION BY Gene ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) secondval FROM rna_tissue_consensus), e AS (SELECT x.Tissue, x.Gene, trim(pc) protein_class FROM x JOIN proteinatlas p USING(Gene), UNNEST(string_split(p.\"Protein class\", ',')) u(pc) WHERE rn=1 AND val>=1 AND val>=4*secondval), top10 AS (SELECT Tissue FROM e GROUP BY 1 ORDER BY COUNT(*) DESC, 1 LIMIT 10), classes AS (SELECT protein_class, COUNT(*) n FROM e JOIN top10 USING(Tissue) WHERE protein_class<>'' GROUP BY 1 ORDER BY n DESC,1 LIMIT 8) SELECT e.Tissue,e.protein_class,COUNT(*) n FROM e JOIN top10 USING(Tissue) JOIN classes USING(protein_class) GROUP BY 1,2 ORDER BY 1,2"
+   },
+   "ms": 2833,
+   "result_chars": 756,
+   "truncated": false,
+   "error": null,
+   "result_head": "Tissue\tprotein_class\tn\nadrenal gland\tPredicted membrane proteins\t1\ncolon\tPredicted intracellular proteins\t1\ncolon\tPredicted membrane proteins\t1\nepididymis\tPredicted intracellular proteins\t4\nliver\tPredicted intracellular proteins\t4\npituitary gland\tPredicted intracellular proteins\t1\npituitary gland\tPredicted membrane proteins\t1\npituitary gland\tPredicted secreted proteins\t1\nplacenta\tPredicted intracellular proteins\t2\nretina\tDisease related genes\t1\nretina\tPredicted intracellular proteins\t5\nskeletal muscle\tPredicted intracellular proteins\t8\nskeletal muscle\tPredicted membrane proteins\t1\ntestis\tPredi"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "WITH x AS (SELECT Gene, Tissue, TRY_CAST(nTPM AS DOUBLE) val, ROW_NUMBER() OVER(PARTITION BY Gene ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) rn, LEAD(TRY_CAST(nTPM AS DOUBLE)) OVER(PARTITION BY Gene ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) secondval FROM rna_tissue_consensus), e AS (SELECT x.Tissue, x.Gene, trim(pc) protein_class FROM x JOIN proteinatlas p USING(Gene), UNNEST(string_split(p.\"Protein class\", ',')) u(pc) WHERE rn=1 AND val>=1 AND val>=4*secondval), top10 AS (SELECT Tissue FROM e GROUP BY 1 ORDER BY COUNT(*) DESC, 1 LIMIT 10) SELECT protein_class,COUNT(*) n FROM e JOIN top10 USING(Tissue) WHERE protein_class<>'' GROUP BY 1 ORDER BY 2 DESC,1 LIMIT 8"
+   },
+   "ms": 3852,
+   "result_chars": 145,
+   "truncated": false,
+   "error": null,
+   "result_head": "protein_class\tn\nPredicted intracellular proteins\t43\nPredicted membrane proteins\t10\nDisease related genes\t1\nPredicted secreted proteins\t1\n[4 rows]"
+  },
+  {
+   "turn": 5,
+   "name": "sql",
+   "input": {
+    "query": "SELECT r.Gene,r.Tissue,r.nTPM FROM rna_tissue_consensus r WHERE r.Gene IN (SELECT Gene FROM proteinatlas WHERE \"RNA tissue specificity\"='Tissue enriched' AND \"RNA tissue specific nTPM\" LIKE 'testis:%') ORDER BY r.Gene, TRY_CAST(r.nTPM AS DOUBLE) DESC LIMIT 40"
+   },
+   "ms": 1639,
+   "result_chars": 1276,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tTissue\tnTPM\nENSG00000198211\ttestis\t5.2\nENSG00000198211\tskin\t0.5\nENSG00000198211\tpituitary gland\t0.3\nENSG00000198211\tkidney\t0.1\nENSG00000198211\tfallopian tube\t0.1\nENSG00000198211\tepididymis\t0.1\nENSG00000198211\thypothalamus\t0.1\nENSG00000198211\tcerebellum\t0.1\nENSG00000198211\theart muscle\t0.1\nENSG00000198211\tamygdala\t0.0\nENSG00000198211\tappendix\t0.0\nENSG00000198211\tadipose tissue\t0.0\nENSG00000198211\tpancreas\t0.0\nENSG00000198211\tadrenal gland\t0.0\nENSG00000198211\tseminal vesicle\t0.0\nENSG00000198211\tcervix\t0.0\nENSG00000198211\tplacenta\t0.0\nENSG00000198211\tmidbrain\t0.0\nENSG00000198211\tchoroid plex"
+  },
+  {
+   "turn": 6,
+   "name": "sql",
+   "input": {
+    "query": "WITH x AS (SELECT \"Gene name\" gene, Tissue, TRY_CAST(nTPM AS DOUBLE) val, ROW_NUMBER() OVER(PARTITION BY \"Gene name\" ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) rn, LEAD(TRY_CAST(nTPM AS DOUBLE)) OVER(PARTITION BY \"Gene name\" ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) secondval FROM rna_tissue_consensus), e AS (SELECT x.Tissue, x.gene, p.\"Secretome location\"='Secreted to blood' blood, p.\"Protein class\" ILIKE '%FDA approved drug targets%' fda FROM x JOIN proteinatlas p ON x.gene=p.Gene WHERE rn=1 AND val>=1 AND val>=4*secondval) SELECT t.Tissue, COUNT(e.gene) enriched_genes, SUM(CASE WHEN blood THEN 1 ELSE 0 END) secreted_to_blood_n, ROUND(100.0*SUM(CASE WHEN blood THEN 1 ELSE 0 END)/NULLIF(COUNT(e.gene),0),2) secreted_to_blood_pct, SUM(CASE WHEN fda THEN 1 ELSE 0 END) fda_target_n, ROUND(100.0*SUM(CASE WHEN fda THEN 1 ELSE 0 END)/NULLIF(COUNT(e.gene),0),2) fda_target_pct FROM rna_tissue_consensus_tissues t LEFT JOIN e ON t.Tissue=e.Tissue GROUP BY 1 ORDER BY 2 DESC, 1"
+   },
+   "ms": 3023,
+   "result_chars": 1376,
+   "truncated": false,
+   "error": null,
+   "result_head": "Tissue\tenriched_genes\tsecreted_to_blood_n\tsecreted_to_blood_pct\tfda_target_n\tfda_target_pct\ntestis\t936\t3\t0.32\t3\t0.32\nliver\t267\t127\t47.57\t42\t15.73\nskin\t188\t3\t1.6\t2\t1.06\nretina\t130\t0\t0\t6\t4.62\nbone marrow\t110\t22\t20\t4\t3.64\nepididymis\t98\t2\t2.04\t1\t1.02\nplacenta\t66\t10\t15.15\t5\t7.58\npancreas\t62\t6\t9.68\t3\t4.84\nthymus\t58\t0\t0\t1\t1.72\nkidney\t54\t4\t7.41\t10\t18.52\nskeletal muscle\t54\t0\t0\t3\t5.56\ncerebellum\t44\t1\t2.27\t6\t13.64\nsalivary gland\t43\t3\t6.98\t1\t2.33\nstomach\t36\t2\t5.56\t7\t19.44\nchoroid plexus\t33\t5\t15.15\t4\t12.12\nheart muscle\t33\t3\t9.09\t3\t9.09\nparathyroid gland\t29\t3\t10.34\t3\t10.34\nblood vessel\t26\t3\t11.54\t1\t3.85\npit"
+  },
+  {
+   "turn": 6,
+   "name": "sql",
+   "input": {
+    "query": "WITH x AS (SELECT \"Gene name\" gene, Tissue, TRY_CAST(nTPM AS DOUBLE) val, ROW_NUMBER() OVER(PARTITION BY \"Gene name\" ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) rn, LEAD(TRY_CAST(nTPM AS DOUBLE)) OVER(PARTITION BY \"Gene name\" ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) secondval FROM rna_tissue_consensus), e AS (SELECT x.Tissue, x.gene, trim(pc) protein_class FROM x JOIN proteinatlas p ON x.gene=p.Gene, UNNEST(string_split(p.\"Protein class\", ',')) u(pc) WHERE rn=1 AND val>=1 AND val>=4*secondval), top10 AS (SELECT Tissue FROM e GROUP BY 1 ORDER BY COUNT(*) DESC, 1 LIMIT 10), classes AS (SELECT protein_class, COUNT(*) n FROM e JOIN top10 USING(Tissue) WHERE protein_class<>'' GROUP BY 1 ORDER BY n DESC,1 LIMIT 8) SELECT e.Tissue,e.protein_class,COUNT(*) n FROM e JOIN top10 USING(Tissue) JOIN classes USING(protein_class) GROUP BY 1,2 ORDER BY 1,2"
+   },
+   "ms": 4692,
+   "result_chars": 2725,
+   "truncated": false,
+   "error": null,
+   "result_head": "Tissue\tprotein_class\tn\nbone marrow\tDisease related genes\t28\nbone marrow\tEnzymes\t17\nbone marrow\tHuman disease related genes\t22\nbone marrow\tMetabolic proteins\t11\nbone marrow\tPlasma proteins\t31\nbone marrow\tPredicted intracellular proteins\t78\nbone marrow\tPredicted membrane proteins\t31\nbone marrow\tPredicted secreted proteins\t25\nepididymis\tDisease related genes\t8\nepididymis\tEnzymes\t7\nepididymis\tHuman disease related genes\t7\nepididymis\tMetabolic proteins\t4\nepididymis\tPlasma proteins\t4\nepididymis\tPredicted intracellular proteins\t37\nepididymis\tPredicted membrane proteins\t11\nepididymis\tPredicted secrete"
+  },
+  {
+   "turn": 6,
+   "name": "sql",
+   "input": {
+    "query": "WITH x AS (SELECT \"Gene name\" gene, Tissue, TRY_CAST(nTPM AS DOUBLE) val, ROW_NUMBER() OVER(PARTITION BY \"Gene name\" ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) rn, LEAD(TRY_CAST(nTPM AS DOUBLE)) OVER(PARTITION BY \"Gene name\" ORDER BY TRY_CAST(nTPM AS DOUBLE) DESC) secondval FROM rna_tissue_consensus), e AS (SELECT x.Tissue, x.gene, trim(pc) protein_class FROM x JOIN proteinatlas p ON x.gene=p.Gene, UNNEST(string_split(p.\"Protein class\", ',')) u(pc) WHERE rn=1 AND val>=1 AND val>=4*secondval), top10 AS (SELECT Tissue FROM e GROUP BY 1 ORDER BY COUNT(*) DESC, 1 LIMIT 10) SELECT protein_class,COUNT(*) n FROM e JOIN top10 USING(Tissue) WHERE protein_class<>'' GROUP BY 1 ORDER BY 2 DESC,1 LIMIT 8"
+   },
+   "ms": 4772,
+   "result_chars": 239,
+   "truncated": false,
+   "error": null,
+   "result_head": "protein_class\tn\nPredicted intracellular proteins\t1436\nPredicted membrane proteins\t451\nPredicted secreted proteins\t378\nDisease related genes\t356\nHuman disease related genes\t345\nPlasma proteins\t303\nEnzymes\t293\nMetabolic proteins\t249\n[8 rows]"
+  }
+ ],
+ "usage": {
+  "input_tokens": 59476,
+  "output_tokens": 6275,
+  "cache_read_input_tokens": 44471,
+  "cache_creation_input_tokens": 0,
+  "reasoning_tokens": 1533
+ },
+ "started_unix_ms": 1789299179966,
+ "final_answer": "## Method\n\nUsing the consensus RNA tissue matrix, I defined a **tissue-enriched gene** as one with **nTPM ≥ 1** in its highest-expression tissue and expression **at least fourfold greater than in the second-highest tissue**. “Secreted to blood” is the HPA *Secretome location* annotation, and FDA targets are genes whose HPA *Protein class* includes **FDA approved drug targets**.  \n\nPercentages are calculated among enriched genes in the respective tissue; **—** denotes no enriched genes (so a share is undefined).\n\n## Bar chart — 20 tissues with the most tissue-enriched genes\n\n*Each `█` is approximately 30 genes; exact values are shown at right.*\n\n```text\nTestis              ███████████████████████████████  936\nLiver               █████████                         267\nSkin                ██████                            188\nRetina              ████                              130\nBone marrow         ████                              110\nEpididymis          ███                                98\nPlacenta            ██                                 66\nPancreas            ██                                 62\nThymus              ██                                 58\nKidney              ██                                 54\nSkeletal muscle     ██                                 54\nCerebellum          █                                  44\nSalivary gland      █                                  43\nStomach             █                                  36\nChoroid plexus      █                                  33\nHeart muscle        █                                  33\nParathyroid gland   █                                  29\nBlood vessel        █                                  26\nPituitary gland     █                                  26\nAdrenal gland       █                                  24\n```\n\n## Heatmap — top 10 tissues × eight most common protein classes\n\nCell values are numbers of enriched genes annotated to the class. Protein-class annotations are non-exclusive, so a gene can contribute to multiple columns.\n\n**Color scale:** `·` = 0; `░` = 1–15; `▒` = 16–49; `▓` = 50–149; `█` = ≥150.\n\n| Tissue | Predicted intracellular (1,436) | Predicted membrane (451) | Predicted secreted (378) | Disease-related (356) | Human disease-related (345) | Plasma (303) | Enzymes (293) | Metabolic (249) |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|\n| Testis | █ 790 | █ 201 | ▒ 40 | ▓ 61 | ▓ 54 | ▒ 32 | ▓ 86 | ▓ 52 |\n| Liver | █ 153 | ▓ 57 | ▓ 130 | ▓ 112 | ▓ 116 | █ 152 | ▓ 108 | ▓ 107 |\n| Skin | █ 154 | ▒ 24 | ▒ 22 | ▒ 37 | ▒ 37 | ▒ 35 | ░ 15 | ░ 15 |\n| Retina | ▓ 92 | ▒ 45 | ░ 11 | ▓ 63 | ▓ 62 | ░ 15 | ▒ 16 | ▒ 17 |\n| Bone marrow | ▓ 78 | ▒ 31 | ▒ 25 | ▒ 28 | ▒ 22 | ▒ 31 | ▒ 17 | ░ 11 |\n| Epididymis | ▒ 37 | ░ 11 | ▓ 67 | ░ 8 | ░ 7 | ░ 4 | ░ 7 | ░ 4 |\n| Placenta | ▒ 32 | ▒ 16 | ▒ 37 | ░ 12 | ░ 11 | ░ 9 | ░ 9 | ░ 3 |\n| Pancreas | ▒ 33 | ▒ 16 | ▒ 36 | ░ 12 | ░ 14 | ░ 15 | ▒ 23 | ░ 12 |\n| Thymus | ▓ 52 | ░ 13 | ░ 2 | ░ 6 | ░ 6 | ░ 6 | ░ 6 | ░ 3 |\n| Kidney | ░ 15 | ▒ 37 | ░ 8 | ▒ 17 | ▒ 16 | ░ 4 | ░ 6 | ▒ 25 |\n\nNumbers in parentheses in the headers are totals across the ten displayed tissues.\n\n## Complete tissue table\n\n| Tissue | Enriched genes | Secreted to blood, n (%) | FDA target, n (%) |\n|---|---:|---:|---:|\n| Testis | 936 | 3 (0.32%) | 3 (0.32%) |\n| Liver | 267 | 127 (47.57%) | 42 (15.73%) |\n| Skin | 188 | 3 (1.60%) | 2 (1.06%) |\n| Retina | 130 | 0 (0.00%) | 6 (4.62%) |\n| Bone marrow | 110 | 22 (20.00%) | 4 (3.64%) |\n| Epididymis | 98 | 2 (2.04%) | 1 (1.02%) |\n| Placenta | 66 | 10 (15.15%) | 5 (7.58%) |\n| Pancreas | 62 | 6 (9.68%) | 3 (4.84%) |\n| Thymus | 58 | 0 (0.00%) | 1 (1.72%) |\n| Kidney | 54 | 4 (7.41%) | 10 (18.52%) |\n| Skeletal muscle | 54 | 0 (0.00%) | 3 (5.56%) |\n| Cerebellum | 44 | 1 (2.27%) | 6 (13.64%) |\n| Salivary gland | 43 | 3 (6.98%) | 1 (2.33%) |\n| Stomach | 36 | 2 (5.56%) | 7 (19.44%) |\n| Choroid plexus | 33 | 5 (15.15%) | 4 (12.12%) |\n| Heart muscle | 33 | 3 (9.09%) | 3 (9.09%) |\n| Parathyroid gland | 29 | 3 (10.34%) | 3 (10.34%) |\n| Blood vessel | 26 | 3 (11.54%) | 1 (3.85%) |\n| Pituitary gland | 26 | 9 (34.62%) | 3 (11.54%) |\n| Adrenal gland | 24 | 0 (0.00%) | 12 (50.00%) |\n| Breast | 19 | 0 (0.00%) | 1 (5.26%) |\n| Esophagus | 19 | 1 (5.26%) | 0 (0.00%) |\n| Fallopian tube | 19 | 1 (5.26%) | 0 (0.00%) |\n| Lung | 17 | 1 (5.88%) | 1 (5.88%) |\n| Spleen | 17 | 2 (11.76%) | 1 (5.88%) |\n| Basal ganglia | 14 | 0 (0.00%) | 1 (7.14%) |\n| Cerebral cortex | 14 | 0 (0.00%) | 2 (14.29%) |\n| Prostate | 14 | 2 (14.29%) | 3 (21.43%) |\n| Thyroid gland | 12 | 1 (8.33%) | 2 (16.67%) |\n| Hypothalamus | 10 | 5 (50.00%) | 1 (10.00%) |\n| Colon | 7 | 0 (0.00%) | 0 (0.00%) |\n| Seminal vesicle | 6 | 0 (0.00%) | 0 (0.00%) |\n| Urinary bladder | 6 | 2 (33.33%) | 1 (16.67%) |\n| Duodenum | 5 | 2 (40.00%) | 0 (0.00%) |\n| Ovary | 5 | 0 (0.00%) | 0 (0.00%) |\n| Small intestine | 5 | 0 (0.00%) | 0 (0.00%) |\n| Tonsil | 4 | 0 (0.00%) | 0 (0.00%) |\n| Endometrium | 3 | 0 (0.00%) | 0 (0.00%) |\n| Gallbladder | 3 | 1 (33.33%) | 0 (0.00%) |\n| Tongue | 3 | 0 (0.00%) | 0 (0.00%) |\n| Adipose tissue | 2 | 0 (0.00%) | 0 (0.00%) |\n| Hippocampal formation | 1 | 0 (0.00%) | 0 (0.00%) |\n| Lymph node | 1 | 1 (100.00%) | 0 (0.00%) |\n| Midbrain | 1 | 0 (0.00%) | 1 (100.00%) |\n| Amygdala | 0 | 0 (—) | 0 (—) |\n| Appendix | 0 | 0 (—) | 0 (—) |\n| Cervix | 0 | 0 (—) | 0 (—) |\n| Rectum | 0 | 0 (—) | 0 (—) |\n| Smooth muscle | 0 | 0 (—) | 0 (—) |\n| Spinal cord | 0 | 0 (—) | 0 (—) |\n| Vagina | 0 | 0 (—) | 0 (—) |",
+ "stop": "completed",
+ "tool_call_count": 15,
+ "seconds": 120.068,
+ "model_calls": 7,
+ "cost_usd": 0.2031462
+}

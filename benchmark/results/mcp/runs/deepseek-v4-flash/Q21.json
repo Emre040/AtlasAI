@@ -1,0 +1,778 @@
+{
+  "id": "Q21",
+  "kind": "analysis",
+  "question": "For every tissue in the consensus RNA data, give the number of tissue enriched genes, the share of them secreted to blood, and the share that are FDA approved drug targets. Draw a bar chart of the twenty tissues with the most enriched genes and a heatmap of the ten tissues with the most enriched genes against the eight most common protein classes among their enriched genes. Provide the table.",
+  "model": "deepseek-v4-flash",
+  "effort": null,
+  "turns": [
+    {
+      "turn": 1,
+      "ms": 6021,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 2614,
+        "completion_tokens": 856,
+        "total_tokens": 3470,
+        "prompt_tokens_details": {
+          "cached_tokens": 2432
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 665
+        },
+        "prompt_cache_hit_tokens": 2432,
+        "prompt_cache_miss_tokens": 182
+      },
+      "text": "I'll analyze tissue-enriched genes from the consensus RNA data. Let me start by exploring the data structure with a few tissues.",
+      "tool_uses": [
+        {
+          "name": "search_by_tissue",
+          "input": "{\"tissue\": \"liver\", \"maxResults\": 5}"
+        },
+        {
+          "name": "search_by_tissue",
+          "input": "{\"tissue\": \"testis\", \"maxResults\": 5}"
+        },
+        {
+          "name": "search_by_tissue",
+          "input": "{\"tissue\": \"brain\", \"maxResults\": 5}"
+        }
+      ]
+    },
+    {
+      "turn": 2,
+      "ms": 23531,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 20807,
+        "completion_tokens": 3039,
+        "total_tokens": 23846,
+        "prompt_tokens_details": {
+          "cached_tokens": 3456
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 2815
+        },
+        "prompt_cache_hit_tokens": 3456,
+        "prompt_cache_miss_tokens": 17351
+      },
+      "text": "The `search_by_tissue` tool appears to return broadly expressed genes rather than specifically \"tissue-enriched\" genes. Let me explore the data schema more to understand what fields are available, including tissue specificity, blood/secreted status, and FDA approval.",
+      "tool_uses": [
+        {
+          "name": "get_protein_info",
+          "input": "{\"gene\": \"ALDOB\"}"
+        },
+        {
+          "name": "get_protein_info",
+          "input": "{\"gene\": \"ALB\"}"
+        },
+        {
+          "name": "advanced_search",
+          "input": "{\"query\": \"\", \"tissueSpecific\": \"liver\", \"maxResults\": 20, \"columns\": [\"Gene\", \"Protein class\", \"RNA tissue specificity\"]}"
+        }
+      ]
+    },
+    {
+      "turn": 3,
+      "ms": 12629,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 31578,
+        "completion_tokens": 1822,
+        "total_tokens": 33400,
+        "prompt_tokens_details": {
+          "cached_tokens": 23808
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1386
+        },
+        "prompt_cache_hit_tokens": 23808,
+        "prompt_cache_miss_tokens": 7770
+      },
+      "text": "The `get_protein_info` data doesn't contain tissue-specificity fields directly. The `advanced_search` with tissueSpecific returned nothing. Let me examine the `search_by_tissue` tool more carefully — comparing its output with and without the expression level filter to understand whether it returns tissue-enriched genes.",
+      "tool_uses": [
+        {
+          "name": "search_by_tissue",
+          "input": "{\"columns\": [\"Gene\"], \"compress\": true, \"expressionLevel\": \"high\", \"format\": \"tsv\", \"maxResults\": 10000, \"tissue\": \"liver\"}"
+        },
+        {
+          "name": "search_by_tissue",
+          "input": "{\"columns\": [\"Gene\"], \"compress\": true, \"expressionLevel\": \"high\", \"format\": \"tsv\", \"maxResults\": 10000, \"tissue\": \"testis\"}"
+        },
+        {
+          "name": "search_by_tissue",
+          "input": "{\"columns\": [\"Gene\"], \"compress\": true, \"expressionLevel\": \"high\", \"format\": \"tsv\", \"maxResults\": 10000, \"tissue\": \"skeletal muscle\"}"
+        }
+      ]
+    },
+    {
+      "turn": 4,
+      "ms": 27581,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 51268,
+        "completion_tokens": 3703,
+        "total_tokens": 54971,
+        "prompt_tokens_details": {
+          "cached_tokens": 33280
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 3447
+        },
+        "prompt_cache_hit_tokens": 33280,
+        "prompt_cache_miss_tokens": 17988
+      },
+      "text": "The `search_by_tissue` results appear noisy and heavily overlapping across tissues, so it may not reflect tissue-enriched genes. Let me probe what data columns are available (e.g., tissue specificity annotations) via `search_proteins`, and also check `get_tissue_expression` output structure.",
+      "tool_uses": [
+        {
+          "name": "search_proteins",
+          "input": "{\"query\": \"ALDOB\", \"columns\": [\"Gene\", \"RNA tissue specificity\", \"RNA tissue distribution\", \"RNA tissue enriched\", \"Tissue specificity\", \"Protein class\"]}"
+        },
+        {
+          "name": "get_tissue_expression",
+          "input": "{\"gene\": \"ALDOB\"}"
+        },
+        {
+          "name": "search_proteins",
+          "input": "{\"query\": \"tissue enriched\", \"maxResults\": 20, \"columns\": [\"Gene\", \"Protein class\"]}"
+        }
+      ]
+    },
+    {
+      "turn": 5,
+      "ms": 16988,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 55401,
+        "completion_tokens": 2279,
+        "total_tokens": 57680,
+        "prompt_tokens_details": {
+          "cached_tokens": 54912
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1997
+        },
+        "prompt_cache_hit_tokens": 54912,
+        "prompt_cache_miss_tokens": 489
+      },
+      "text": "`get_tissue_expression` reveals a per-gene \"RNA tissue specificity\" field (e.g., ALDOB = \"Group enriched\") with nTPM per tissue. This means tissue-enrichment is computed from per-gene data. Let me verify the semantics of `search_by_tissue` by testing with genes of known specificity and a few well-known tissue-enriched genes.",
+      "tool_uses": [
+        {
+          "name": "get_tissue_expression",
+          "input": "{\"gene\": \"PLEC\"}"
+        },
+        {
+          "name": "get_tissue_expression",
+          "input": "{\"gene\": \"PRM2\"}"
+        },
+        {
+          "name": "search_by_tissue",
+          "input": "{\"columns\": [\"Gene\"], \"compress\": true, \"expressionLevel\": \"high\", \"format\": \"tsv\", \"maxResults\": 10000, \"tissue\": \"heart muscle\"}"
+        }
+      ]
+    },
+    {
+      "turn": 6,
+      "ms": 42825,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 69725,
+        "completion_tokens": 5544,
+        "total_tokens": 75269,
+        "prompt_tokens_details": {
+          "cached_tokens": 57600
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 5292
+        },
+        "prompt_cache_hit_tokens": 57600,
+        "prompt_cache_miss_tokens": 12125
+      },
+      "text": "The `get_tissue_expression` output reveals the consensus RNA dataset covers 17 tissues, and each gene has an \"RNA tissue specificity\" classification. Let me check whether other output formats expose more per-gene fields (e.g., tissue-enriched tissue, blood/secreted annotations, drug target info).",
+      "tool_uses": [
+        {
+          "name": "get_protein_info",
+          "input": "{\"gene\": \"PRM2\", \"format\": \"xml\"}"
+        },
+        {
+          "name": "get_protein_by_ensembl",
+          "input": "{\"ensemblId\": \"ENSG00000122304\", \"format\": \"tsv\"}"
+        },
+        {
+          "name": "get_protein_classes",
+          "input": "{\"gene\": \"ALB\"}"
+        },
+        {
+          "name": "get_protein_classes",
+          "input": "{\"gene\": \"PRM2\"}"
+        }
+      ]
+    },
+    {
+      "turn": 7,
+      "ms": 11859,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 82212,
+        "completion_tokens": 1598,
+        "total_tokens": 83810,
+        "prompt_tokens_details": {
+          "cached_tokens": 75264
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1253
+        },
+        "prompt_cache_hit_tokens": 75264,
+        "prompt_cache_miss_tokens": 6948
+      },
+      "text": "Key discovery: `get_protein_by_ensembl` in TSV format returns the full HPA gene annotation row, including `RNA tissue specificity`, `RNA tissue specific nTPM` (e.g., \"testis: 11179.1\"), and protein classes. Let me check whether `search_proteins` can return many genes with these rich columns, and whether an empty query can enumerate the gene universe.",
+      "tool_uses": [
+        {
+          "name": "search_proteins",
+          "input": "{\"query\": \"albumin\", \"columns\": [\"Gene\", \"RNA tissue specificity\", \"RNA tissue specific nTPM\", \"RNA tissue distribution\", \"Protein class\", \"Secretome location\", \"Blood expression cluster\"], \"format\": \"tsv\", \"maxResults\": 20}"
+        },
+        {
+          "name": "search_proteins",
+          "input": "{\"query\": \"\", \"format\": \"tsv\", \"maxResults\": 20}"
+        },
+        {
+          "name": "search_proteins",
+          "input": "{\"query\": \"PRM2\", \"format\": \"tsv\", \"maxResults\": 10}"
+        }
+      ]
+    },
+    {
+      "turn": 8,
+      "ms": 15081,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 83970,
+        "completion_tokens": 1924,
+        "total_tokens": 85894,
+        "prompt_tokens_details": {
+          "cached_tokens": 83712
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1689
+        },
+        "prompt_cache_hit_tokens": 83712,
+        "prompt_cache_miss_tokens": 258
+      },
+      "text": "`search_proteins` only returns basic fields. Let me probe `advanced_search` parameters more, since it may support tissue-specific filters.",
+      "tool_uses": [
+        {
+          "name": "advanced_search",
+          "input": "{\"query\": \"\", \"tissueSpecific\": \"Tissue enriched\", \"maxResults\": 10}"
+        },
+        {
+          "name": "advanced_search",
+          "input": "{\"query\": \"\", \"tissueSpecific\": \"liver\", \"maxResults\": 10}"
+        },
+        {
+          "name": "advanced_search",
+          "input": "{\"query\": \"\", \"proteinClass\": \"FDA approved drug targets\", \"maxResults\": 10}"
+        }
+      ]
+    },
+    {
+      "turn": 9,
+      "ms": 26664,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 92866,
+        "completion_tokens": 3405,
+        "total_tokens": 96271,
+        "prompt_tokens_details": {
+          "cached_tokens": 85888
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 3087
+        },
+        "prompt_cache_hit_tokens": 85888,
+        "prompt_cache_miss_tokens": 6978
+      },
+      "text": "`advanced_search` seems to accept tissue filters but returns basic fields. Let me test whether `advanced_search` (or `search_proteins`) can return the richer per-gene columns when filtering by chromosome, which would let me enumerate genes systematically.",
+      "tool_uses": [
+        {
+          "name": "advanced_search",
+          "input": "{\"chromosome\": \"1\", \"columns\": [\"Gene\", \"RNA tissue specificity\", \"RNA tissue specific nTPM\", \"Protein class\"], \"format\": \"tsv\", \"maxResults\": 20}"
+        },
+        {
+          "name": "advanced_search",
+          "input": "{\"chromosome\": \"1\", \"format\": \"tsv\", \"maxResults\": 20}"
+        },
+        {
+          "name": "batch_protein_lookup",
+          "input": "{\"genes\": [\"ALB\", \"PRM2\", \"ALDOB\", \"PLEC\"], \"columns\": [\"Gene\", \"RNA tissue specificity\", \"RNA tissue specific nTPM\", \"Protein class\", \"Secretome location\"]}"
+        }
+      ]
+    },
+    {
+      "turn": 10,
+      "ms": 31792,
+      "stop_reason": "stop",
+      "usage": {
+        "prompt_tokens": 100978,
+        "completion_tokens": 4018,
+        "total_tokens": 104996,
+        "prompt_tokens_details": {
+          "cached_tokens": 96256
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 3082
+        },
+        "prompt_cache_hit_tokens": 96256,
+        "prompt_cache_miss_tokens": 4722
+      },
+      "text": "I've done extensive probing of the available tools, and I need to be transparent about a fundamental limitation before giving results.\n\n## What the tools can tell us\n\n1. **The consensus RNA dataset covers 17 tissues.** This is confirmed directly from the `get_tissue_expression` output, which contains per-gene nTPM columns for exactly: *adipose tissue, adrenal gland, breast, colon, heart muscle, kidney, liver, lung, ovary, pancreas, prostate, skeletal muscle, skin, spleen, stomach, testis, thyroid gland.*\n\n2. **Each gene carries an \"RNA tissue specificity\" annotation** in HPA (\"Tissue enriched\", \"Group enriched\", \"Tissue enhanced\", \"Low tissue specificity\"), with the enriched tissue and nTPM value given per gene. For example, via `get_protein_by_ensembl` (TSV): PRM2 = **\"Tissue enriched\", RNA tissue specific nTPM = \"testis: 11179.1\"**; ALDOB = **\"Group enriched\"** (max in liver 10467 nTPM / kidney 6695); PLEC = **\"Tissue enhanced\"**.\n\n## Why the requested analysis cannot be done with these tools\n\nThe requested deliverable requires, for every one of the 17 tissues, the **complete list of genes HPA classifies as tissue-enriched in that tissue**, and then the shares of those genes that are (a) secreted to blood and (b) FDA-approved drug targets.\n\nThe tools I have access to do not expose that information in an enumerable way:\n\n- **`search_by_tissue` / `advanced_search(tissueSpecific=…)` return all genes expressed at a given level in a tissue, not the HPA \"tissue enriched\" gene set.** This is demonstrated by the fact that broadly expressed (non-enriched) genes such as PLEC, ACTB, CTNNB1, and even liver/kidney-enriched ALDOB appear in the \"high expression\" results for liver, testis, skeletal muscle, and heart muscle alike. A true \"tissue-enriched\" list would never contain the same ubiquitous gene in nearly every tissue.\n- **The \"RNA tissue specificity\" annotation is only available one gene at a time** (through `get_protein_by_ensembl` or `get_tissue_expression` for a single gene symbol). Enumerating tissue-enriched genes per tissue would require classifying all ~20,000 protein-coding genes one by one — that is not feasible through these endpoints, and no bulk/download endpoint is exposed (`search_proteins` returns only basic fields; custom rich columns are ignored; `batch_protein_lookup` likewise returns only basic fields and does fuzzy matching).\n- **`search_proteins`/`batch_protein_lookup` do return protein classes**, so \"Plasma proteins\" (secreted-to-blood proxy) and \"FDA approved drug targets\" *can* be checked for a given list of genes — but only *after* you have a valid tissue-enriched gene list, which the tools cannot supply.\n\n## Conclusion\n\nI cannot reliably provide the per-tissue counts of tissue-enriched genes, their secreted-to-blood shares, or their FDA drug-target shares for the consensus RNA tissues, and I therefore cannot truthfully construct the requested table, bar chart, or heatmap. Per the requirement to state when something cannot be determined rather than estimate, I am not fabricating those numbers.\n\nIf you can provide (or make accessible) HPA's downloadable per-gene RNA-consensus annotation file (which contains one row per gene with `RNA tissue specificity`, `RNA tissue specific nTPM`, `Protein class`, and blood/secretome annotations), I can then compute the complete table and the charts from it. With that file, the exact recipe would be:\n\n1. Keep genes with `RNA tissue specificity = Tissue enriched`, read the enriched tissue from `RNA tissue specific nTPM` (e.g., \"testis: 11179.1\").\n2. Tally enriched genes per tissue → counts.\n3. For each tissue, compute % of those genes annotated as \"Plasma proteins\" (secreted to blood) and % annotated as \"FDA approved drug targets\".\n4. Bar chart of the top-20 tissues by count; heatmap of the top-10 tissues × their 8 most common protein classes.\n\nLet me know if you can supply that gene-level data file, and I'll produce the full table and figures.",
+      "tool_uses": []
+    }
+  ],
+  "tool_calls": [
+    {
+      "turn": 1,
+      "name": "search_by_tissue",
+      "input": {
+        "tissue": "liver",
+        "maxResults": 5
+      },
+      "ms": 686,
+      "result_chars": 362110,
+      "truncated": true,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"NOTCH1\",\n    \"Gene synonym\": [\n      \"TAN1\"\n    ],\n    \"Ensembl\": \"ENSG00000148400\",\n    \"Gene description\": \"Notch receptor 1\",\n    \"Uniprot\": [\n      \"P46531\"\n    ],\n    \"Chromosome\": \"9\",\n    \"Protein class\": [\n      \"Cancer-related genes\",\n      \"Disease related genes\",\n      \"Human disease related genes\",\n      \"Plasma proteins\",\n      \"Potential drug targets\",\n      \"Predicted membrane proteins\",\n      \"Transporters\"\n    ],\n    \"Evidence\": \"Evidence at protein level\"\n  },\n  {\n    \"Gene\": \"TGFB1\",\n    \"Gene synonym\": [\n      \"CED\",\n      \"DPD1\",\n      \"TGFB\",\n      \"TGF"
+    },
+    {
+      "turn": 1,
+      "name": "search_by_tissue",
+      "input": {
+        "tissue": "testis",
+        "maxResults": 5
+      },
+      "ms": 540,
+      "result_chars": 269586,
+      "truncated": true,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"TSSK1B\",\n    \"Gene synonym\": [\n      \"FKSG81\",\n      \"SPOGA4\",\n      \"STK22D\",\n      \"TSSK1\"\n    ],\n    \"Ensembl\": \"ENSG00000212122\",\n    \"Gene description\": \"Testis specific serine kinase 1B\",\n    \"Uniprot\": [\n      \"Q9BXA7\"\n    ],\n    \"Chromosome\": \"5\",\n    \"Protein class\": [\n      \"Enzymes\",\n      \"Predicted membrane proteins\"\n    ],\n    \"Evidence\": \"Evidence at protein level\"\n  },\n  {\n    \"Gene\": \"TEX37\",\n    \"Gene synonym\": [\n      \"C2orf51\",\n      \"FLJ25369\",\n      \"TSC21\"\n    ],\n    \"Ensembl\": \"ENSG00000172073\",\n    \"Gene description\": \"Testis expressed 37\",\n    \"Unip"
+    },
+    {
+      "turn": 1,
+      "name": "search_by_tissue",
+      "input": {
+        "tissue": "brain",
+        "maxResults": 5
+      },
+      "ms": 292,
+      "result_chars": 96553,
+      "truncated": true,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"NOTCH1\",\n    \"Gene synonym\": [\n      \"TAN1\"\n    ],\n    \"Ensembl\": \"ENSG00000148400\",\n    \"Gene description\": \"Notch receptor 1\",\n    \"Uniprot\": [\n      \"P46531\"\n    ],\n    \"Chromosome\": \"9\",\n    \"Protein class\": [\n      \"Cancer-related genes\",\n      \"Disease related genes\",\n      \"Human disease related genes\",\n      \"Plasma proteins\",\n      \"Potential drug targets\",\n      \"Predicted membrane proteins\",\n      \"Transporters\"\n    ],\n    \"Evidence\": \"Evidence at protein level\"\n  },\n  {\n    \"Gene\": \"SHH\",\n    \"Gene synonym\": [\n      \"HHG1\",\n      \"HLP3\",\n      \"HPE3\",\n      \"MCOP"
+    },
+    {
+      "turn": 2,
+      "name": "get_protein_info",
+      "input": {
+        "gene": "ALDOB"
+      },
+      "ms": 145,
+      "result_chars": 528,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"ALDOB\",\n    \"Gene synonym\": [],\n    \"Ensembl\": \"ENSG00000136872\",\n    \"Gene description\": \"Aldolase, fructose-bisphosphate B\",\n    \"Uniprot\": [\n      \"P05062\"\n    ],\n    \"Chromosome\": \"9\",\n    \"Protein class\": [\n      \"Cancer-related genes\",\n      \"Disease related genes\",\n      \"Enzymes\",\n      \"Human disease related genes\",\n      \"Metabolic proteins\",\n      \"Plasma proteins\",\n      \"Potential drug targets\",\n      \"Predicted intracellular proteins\"\n    ],\n    \"Evidence\": \"Evidence at protein level\"\n  }\n]"
+    },
+    {
+      "turn": 2,
+      "name": "get_protein_info",
+      "input": {
+        "gene": "ALB"
+      },
+      "ms": 220,
+      "result_chars": 47423,
+      "truncated": true,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"ALB\",\n    \"Gene synonym\": [],\n    \"Ensembl\": \"ENSG00000163631\",\n    \"Gene description\": \"Albumin\",\n    \"Uniprot\": [\n      \"P02768\"\n    ],\n    \"Chromosome\": \"4\",\n    \"Protein class\": [\n      \"Cancer-related genes\",\n      \"Candidate cardiovascular disease genes\",\n      \"Disease related genes\",\n      \"FDA approved drug targets\",\n      \"Metabolic proteins\",\n      \"Plasma proteins\",\n      \"Predicted intracellular proteins\",\n      \"Predicted secreted proteins\"\n    ],\n    \"Evidence\": \"Evidence at protein level\"\n  },\n  {\n    \"Gene\": \"CALB1\",\n    \"Gene synonym\": [\n      \"CALB\"\n    ],"
+    },
+    {
+      "turn": 2,
+      "name": "advanced_search",
+      "input": {
+        "query": "",
+        "tissueSpecific": "liver",
+        "maxResults": 20,
+        "columns": [
+          "Gene",
+          "Protein class",
+          "RNA tissue specificity"
+        ]
+      },
+      "ms": 716,
+      "result_chars": 4886,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  []"
+    },
+    {
+      "turn": 3,
+      "name": "search_by_tissue",
+      "input": {
+        "columns": [
+          "Gene"
+        ],
+        "compress": true,
+        "expressionLevel": "high",
+        "format": "tsv",
+        "maxResults": 10000,
+        "tissue": "liver"
+      },
+      "ms": 232,
+      "result_chars": 25164,
+      "truncated": true,
+      "error": null,
+      "result_head": "Gene\t\"Gene synonym\"\tEnsembl\t\"Gene description\"\tUniprot\tChromosome\t\"Protein class\"\tEvidence\nPLEC\t\"EBS1, PCN, PLEC1, PLTN\"\tENSG00000178209\tPlectin\tQ15149\t8\t\"Cancer-related genes, Disease related genes, Human disease related genes, Plasma proteins, Predicted intracellular proteins\"\t\"Evidence at protein level\"\nNR1H2\t\"LXR-b, LXRb, NER, NER-I, RIP15, UNR\"\tENSG00000131408\t\"Nuclear receptor subfamily 1 group H member 2\"\tP55055\t19\t\"Cancer-related genes, Nuclear receptors, Predicted intracellular proteins, Transcription factors\"\t\"Evidence at protein level\"\nALDOB\t\tENSG00000136872\t\"Aldolase, fructose-bisp"
+    },
+    {
+      "turn": 3,
+      "name": "search_by_tissue",
+      "input": {
+        "columns": [
+          "Gene"
+        ],
+        "compress": true,
+        "expressionLevel": "high",
+        "format": "tsv",
+        "maxResults": 10000,
+        "tissue": "testis"
+      },
+      "ms": 210,
+      "result_chars": 22498,
+      "truncated": true,
+      "error": null,
+      "result_head": "Gene\t\"Gene synonym\"\tEnsembl\t\"Gene description\"\tUniprot\tChromosome\t\"Protein class\"\tEvidence\nPLEC\t\"EBS1, PCN, PLEC1, PLTN\"\tENSG00000178209\tPlectin\tQ15149\t8\t\"Cancer-related genes, Disease related genes, Human disease related genes, Plasma proteins, Predicted intracellular proteins\"\t\"Evidence at protein level\"\nTSSK1B\t\"FKSG81, SPOGA4, STK22D, TSSK1\"\tENSG00000212122\t\"Testis specific serine kinase 1B\"\tQ9BXA7\t5\t\"Enzymes, Predicted membrane proteins\"\t\"Evidence at protein level\"\nCTNNB1\t\"armadillo, beta-catenin, CTNNB\"\tENSG00000168036\t\"Catenin beta 1\"\tP35222\t3\t\"Cancer-related genes, Disease related genes"
+    },
+    {
+      "turn": 3,
+      "name": "search_by_tissue",
+      "input": {
+        "columns": [
+          "Gene"
+        ],
+        "compress": true,
+        "expressionLevel": "high",
+        "format": "tsv",
+        "maxResults": 10000,
+        "tissue": "skeletal muscle"
+      },
+      "ms": 201,
+      "result_chars": 17037,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\t\"Gene synonym\"\tEnsembl\t\"Gene description\"\tUniprot\tChromosome\t\"Protein class\"\tEvidence\nDMD\t\"BMD, DXS142, DXS164, DXS206, DXS230, DXS239, DXS268, DXS269, DXS270, DXS272, MRX85\"\tENSG00000198947\tDystrophin\tP11532\tX\t\"Cancer-related genes, Disease related genes, FDA approved drug targets, Human disease related genes, Plasma proteins, Predicted intracellular proteins, Transporters\"\t\"Evidence at protein level\"\nACTA1\t\"ACTA, NEM3\"\tENSG00000143632\t\"Actin alpha 1, skeletal muscle\"\tP68133\t1\t\"Disease related genes, Human disease related genes, Plasma proteins, Predicted intracellular proteins\"\t\"Evidenc"
+    },
+    {
+      "turn": 4,
+      "name": "search_proteins",
+      "input": {
+        "query": "ALDOB",
+        "columns": [
+          "Gene",
+          "RNA tissue specificity",
+          "RNA tissue distribution",
+          "RNA tissue enriched",
+          "Tissue specificity",
+          "Protein class"
+        ]
+      },
+      "ms": 145,
+      "result_chars": 8,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  []\n]"
+    },
+    {
+      "turn": 4,
+      "name": "get_tissue_expression",
+      "input": {
+        "gene": "ALDOB"
+      },
+      "ms": 136,
+      "result_chars": 953,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"ALDOB\",\n    \"Ensembl\": \"ENSG00000136872\",\n    \"RNA tissue specificity\": \"Group enriched\",\n    \"RNA tissue distribution\": \"Detected in many\",\n    \"RNA tissue specificity score\": \"25\",\n    \"Tissue RNA - adipose tissue [nTPM]\": \"3.5\",\n    \"Tissue RNA - adrenal gland [nTPM]\": \"1.8\",\n    \"Tissue RNA - breast [nTPM]\": \"0.8\",\n    \"Tissue RNA - colon [nTPM]\": \"30.6\",\n    \"Tissue RNA - heart muscle [nTPM]\": \"1.1\",\n    \"Tissue RNA - kidney [nTPM]\": \"6695.1\",\n    \"Tissue RNA - liver [nTPM]\": \"10467.2\",\n    \"Tissue RNA - lung [nTPM]\": \"0.5\",\n    \"Tissue RNA - ovary [nTPM]\": \"0.5\",\n    \""
+    },
+    {
+      "turn": 4,
+      "name": "search_proteins",
+      "input": {
+        "query": "tissue enriched",
+        "maxResults": 20,
+        "columns": [
+          "Gene",
+          "Protein class"
+        ]
+      },
+      "ms": 141,
+      "result_chars": 56,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  [],\n  []\n]"
+    },
+    {
+      "turn": 5,
+      "name": "get_tissue_expression",
+      "input": {
+        "gene": "PLEC"
+      },
+      "ms": 215,
+      "result_chars": 92456,
+      "truncated": true,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"PLEC\",\n    \"Ensembl\": \"ENSG00000178209\",\n    \"RNA tissue specificity\": \"Tissue enhanced\",\n    \"RNA tissue distribution\": \"Detected in all\",\n    \"RNA tissue specificity score\": null,\n    \"Tissue RNA - adipose tissue [nTPM]\": \"45.0\",\n    \"Tissue RNA - adrenal gland [nTPM]\": \"34.0\",\n    \"Tissue RNA - breast [nTPM]\": \"40.4\",\n    \"Tissue RNA - colon [nTPM]\": \"63.9\",\n    \"Tissue RNA - heart muscle [nTPM]\": \"83.9\",\n    \"Tissue RNA - kidney [nTPM]\": \"32.2\",\n    \"Tissue RNA - liver [nTPM]\": \"35.7\",\n    \"Tissue RNA - lung [nTPM]\": \"53.5\",\n    \"Tissue RNA - ovary [nTPM]\": \"48.7\",\n    \""
+    },
+    {
+      "turn": 5,
+      "name": "get_tissue_expression",
+      "input": {
+        "gene": "PRM2"
+      },
+      "ms": 141,
+      "result_chars": 1893,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"PRM2\",\n    \"Ensembl\": \"ENSG00000122304\",\n    \"RNA tissue specificity\": \"Tissue enriched\",\n    \"RNA tissue distribution\": \"Detected in many\",\n    \"RNA tissue specificity score\": \"1223\",\n    \"Tissue RNA - adipose tissue [nTPM]\": \"2.9\",\n    \"Tissue RNA - adrenal gland [nTPM]\": \"2.0\",\n    \"Tissue RNA - breast [nTPM]\": \"7.4\",\n    \"Tissue RNA - colon [nTPM]\": \"3.9\",\n    \"Tissue RNA - heart muscle [nTPM]\": \"1.8\",\n    \"Tissue RNA - kidney [nTPM]\": \"2.1\",\n    \"Tissue RNA - liver [nTPM]\": \"3.8\",\n    \"Tissue RNA - lung [nTPM]\": \"1.1\",\n    \"Tissue RNA - ovary [nTPM]\": \"1.4\",\n    \"Tissue"
+    },
+    {
+      "turn": 5,
+      "name": "search_by_tissue",
+      "input": {
+        "columns": [
+          "Gene"
+        ],
+        "compress": true,
+        "expressionLevel": "high",
+        "format": "tsv",
+        "maxResults": 10000,
+        "tissue": "heart muscle"
+      },
+      "ms": 174,
+      "result_chars": 11617,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\t\"Gene synonym\"\tEnsembl\t\"Gene description\"\tUniprot\tChromosome\t\"Protein class\"\tEvidence\nPLN\t\"CMD1P, PLB\"\tENSG00000198523\tPhospholamban\tP26678\t6\t\"Disease related genes, Human disease related genes, Potential drug targets, Predicted membrane proteins, Transporters\"\t\"Evidence at protein level\"\nDMD\t\"BMD, DXS142, DXS164, DXS206, DXS230, DXS239, DXS268, DXS269, DXS270, DXS272, MRX85\"\tENSG00000198947\tDystrophin\tP11532\tX\t\"Cancer-related genes, Disease related genes, FDA approved drug targets, Human disease related genes, Plasma proteins, Predicted intracellular proteins, Transporters\"\t\"Evidence at "
+    },
+    {
+      "turn": 6,
+      "name": "get_protein_info",
+      "input": {
+        "gene": "PRM2",
+        "format": "xml"
+      },
+      "ms": 78,
+      "result_chars": 64,
+      "truncated": false,
+      "error": "tool reported an error",
+      "result_head": "Error fetching protein info: Request failed with status code 400"
+    },
+    {
+      "turn": 6,
+      "name": "get_protein_by_ensembl",
+      "input": {
+        "ensemblId": "ENSG00000122304",
+        "format": "tsv"
+      },
+      "ms": 61,
+      "result_chars": 5647,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\t\"Gene synonym\"\tEnsembl\t\"Gene description\"\tUniprot\tChromosome\tPosition\t\"Protein class\"\t\"Biological process\"\t\"Molecular function\"\t\"Disease involvement\"\tEvidence\t\"HPA evidence\"\t\"UniProt evidence\"\t\"NeXtProt evidence\"\t\"RNA tissue specificity\"\t\"RNA tissue distribution\"\t\"RNA tissue specificity score\"\t\"RNA tissue specific nTPM\"\t\"RNA single cell type specificity\"\t\"RNA single cell type distribution\"\t\"RNA single cell type specificity score\"\t\"RNA single cell type specific nCPM\"\t\"RNA single cell type group specificity\"\t\"RNA single cell type group distribution\"\t\"RNA single cell type group specificity s"
+    },
+    {
+      "turn": 6,
+      "name": "get_protein_classes",
+      "input": {
+        "gene": "ALB"
+      },
+      "ms": 221,
+      "result_chars": 41318,
+      "truncated": true,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"ALB\",\n    \"Ensembl\": \"ENSG00000163631\",\n    \"Protein class\": [\n      \"Cancer-related genes\",\n      \"Candidate cardiovascular disease genes\",\n      \"Disease related genes\",\n      \"FDA approved drug targets\",\n      \"Metabolic proteins\",\n      \"Plasma proteins\",\n      \"Predicted intracellular proteins\",\n      \"Predicted secreted proteins\"\n    ],\n    \"Biological process\": null,\n    \"Molecular function\": null,\n    \"Evidence\": \"Evidence at protein level\"\n  },\n  {\n    \"Gene\": \"CALB1\",\n    \"Ensembl\": \"ENSG00000104327\",\n    \"Protein class\": [\n      \"Predicted intracellular proteins\"\n"
+    },
+    {
+      "turn": 6,
+      "name": "get_protein_classes",
+      "input": {
+        "gene": "PRM2"
+      },
+      "ms": 137,
+      "result_chars": 724,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"PRM2\",\n    \"Ensembl\": \"ENSG00000122304\",\n    \"Protein class\": [\n      \"Predicted intracellular proteins\"\n    ],\n    \"Biological process\": [\n      \"Differentiation\",\n      \"DNA condensation\",\n      \"Spermatogenesis\"\n    ],\n    \"Molecular function\": [\n      \"Developmental protein\",\n      \"DNA-binding\"\n    ],\n    \"Evidence\": \"Evidence at protein level\"\n  },\n  {\n    \"Gene\": \"TNP1\",\n    \"Ensembl\": \"ENSG00000118245\",\n    \"Protein class\": [\n      \"Predicted intracellular proteins\"\n    ],\n    \"Biological process\": [\n      \"Differentiation\",\n      \"Spermatogenesis\"\n    ],\n    \"Molecu"
+    },
+    {
+      "turn": 7,
+      "name": "search_proteins",
+      "input": {
+        "query": "albumin",
+        "columns": [
+          "Gene",
+          "RNA tissue specificity",
+          "RNA tissue specific nTPM",
+          "RNA tissue distribution",
+          "Protein class",
+          "Secretome location",
+          "Blood expression cluster"
+        ],
+        "format": "tsv",
+        "maxResults": 20
+      },
+      "ms": 166,
+      "result_chars": 37,
+      "truncated": false,
+      "error": null,
+      "result_head": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "turn": 7,
+      "name": "search_proteins",
+      "input": {
+        "query": "",
+        "format": "tsv",
+        "maxResults": 20
+      },
+      "ms": 9,
+      "result_chars": 72,
+      "truncated": false,
+      "error": "MCP error -32602: MCP error -32602: Invalid search arguments",
+      "result_head": "Tool error: MCP error -32602: MCP error -32602: Invalid search arguments"
+    },
+    {
+      "turn": 7,
+      "name": "search_proteins",
+      "input": {
+        "query": "PRM2",
+        "format": "tsv",
+        "maxResults": 10
+      },
+      "ms": 132,
+      "result_chars": 323,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\t\"Gene synonym\"\tEnsembl\t\"Gene description\"\tUniprot\tChromosome\t\"Protein class\"\tEvidence\nPRM2\tCT94.2\tENSG00000122304\t\"Protamine 2\"\tP04554\t16\t\"Predicted intracellular proteins\"\t\"Evidence at protein level\"\nTNP1\t\tENSG00000118245\t\"Transition protein 1\"\tP09430\t2\t\"Predicted intracellular proteins\"\t\"Evidence at protein level\"\n"
+    },
+    {
+      "turn": 8,
+      "name": "advanced_search",
+      "input": {
+        "query": "",
+        "tissueSpecific": "Tissue enriched",
+        "maxResults": 10
+      },
+      "ms": 152,
+      "result_chars": 4344,
+      "truncated": false,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"LAMB2\",\n    \"Gene synonym\": [\n      \"LAMS\",\n      \"NPHS5\"\n    ],\n    \"Ensembl\": \"ENSG00000172037\",\n    \"Gene description\": \"Laminin subunit beta 2\",\n    \"Uniprot\": [\n      \"P55268\"\n    ],\n    \"Chromosome\": \"3\",\n    \"Protein class\": [\n      \"Disease related genes\",\n      \"Human disease related genes\",\n      \"Plasma proteins\",\n      \"Predicted intracellular proteins\",\n      \"Predicted secreted proteins\"\n    ],\n    \"Evidence\": \"Evidence at protein level\"\n  },\n  {\n    \"Gene\": \"ACACA\",\n    \"Gene synonym\": [\n      \"ACAC\",\n      \"Acac1\",\n      \"ACACalpha\",\n      \"ACC\",\n      \"ACC-a"
+    },
+    {
+      "turn": 8,
+      "name": "advanced_search",
+      "input": {
+        "query": "",
+        "tissueSpecific": "liver",
+        "maxResults": 10
+      },
+      "ms": 694,
+      "result_chars": 362110,
+      "truncated": true,
+      "error": null,
+      "result_head": "[\n  {\n    \"Gene\": \"NOTCH1\",\n    \"Gene synonym\": [\n      \"TAN1\"\n    ],\n    \"Ensembl\": \"ENSG00000148400\",\n    \"Gene description\": \"Notch receptor 1\",\n    \"Uniprot\": [\n      \"P46531\"\n    ],\n    \"Chromosome\": \"9\",\n    \"Protein class\": [\n      \"Cancer-related genes\",\n      \"Disease related genes\",\n      \"Human disease related genes\",\n      \"Plasma proteins\",\n      \"Potential drug targets\",\n      \"Predicted membrane proteins\",\n      \"Transporters\"\n    ],\n    \"Evidence\": \"Evidence at protein level\"\n  },\n  {\n    \"Gene\": \"TGFB1\",\n    \"Gene synonym\": [\n      \"CED\",\n      \"DPD1\",\n      \"TGFB\",\n      \"TGF"
+    },
+    {
+      "turn": 8,
+      "name": "advanced_search",
+      "input": {
+        "query": "",
+        "proteinClass": "FDA approved drug targets",
+        "maxResults": 10
+      },
+      "ms": 150,
+      "result_chars": 2,
+      "truncated": false,
+      "error": null,
+      "result_head": "[]"
+    },
+    {
+      "turn": 9,
+      "name": "advanced_search",
+      "input": {
+        "chromosome": "1",
+        "columns": [
+          "Gene",
+          "RNA tissue specificity",
+          "RNA tissue specific nTPM",
+          "Protein class"
+        ],
+        "format": "tsv",
+        "maxResults": 20
+      },
+      "ms": 177,
+      "result_chars": 1,
+      "truncated": false,
+      "error": null,
+      "result_head": "\n"
+    },
+    {
+      "turn": 9,
+      "name": "advanced_search",
+      "input": {
+        "chromosome": "1",
+        "format": "tsv",
+        "maxResults": 20
+      },
+      "ms": 156,
+      "result_chars": 91,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\t\"Gene synonym\"\tEnsembl\t\"Gene description\"\tUniprot\tChromosome\t\"Protein class\"\tEvidence\n"
+    },
+    {
+      "turn": 9,
+      "name": "batch_protein_lookup",
+      "input": {
+        "genes": [
+          "ALB",
+          "PRM2",
+          "ALDOB",
+          "PLEC"
+        ],
+        "columns": [
+          "Gene",
+          "RNA tissue specificity",
+          "RNA tissue specific nTPM",
+          "Protein class",
+          "Secretome location"
+        ]
+      },
+      "ms": 329,
+      "result_chars": 111929,
+      "truncated": true,
+      "error": null,
+      "result_head": "{\n  \"batchResults\": [\n    {\n      \"gene\": \"ALB\",\n      \"data\": [\n        {\n          \"Gene\": \"ALB\",\n          \"Gene synonym\": [],\n          \"Ensembl\": \"ENSG00000163631\",\n          \"Gene description\": \"Albumin\",\n          \"Uniprot\": [\n            \"P02768\"\n          ],\n          \"Chromosome\": \"4\",\n          \"Protein class\": [\n            \"Cancer-related genes\",\n            \"Candidate cardiovascular disease genes\",\n            \"Disease related genes\",\n            \"FDA approved drug targets\",\n            \"Metabolic proteins\",\n            \"Plasma proteins\",\n            \"Predicted intracellular prot"
+    }
+  ],
+  "usage": {
+    "input_tokens": 591419,
+    "output_tokens": 28188,
+    "cache_read_input_tokens": 516608,
+    "cache_creation_input_tokens": 0,
+    "reasoning_tokens": 24713
+  },
+  "started_unix_ms": 1788895447799,
+  "final_answer": "I've done extensive probing of the available tools, and I need to be transparent about a fundamental limitation before giving results.\n\n## What the tools can tell us\n\n1. **The consensus RNA dataset covers 17 tissues.** This is confirmed directly from the `get_tissue_expression` output, which contains per-gene nTPM columns for exactly: *adipose tissue, adrenal gland, breast, colon, heart muscle, kidney, liver, lung, ovary, pancreas, prostate, skeletal muscle, skin, spleen, stomach, testis, thyroid gland.*\n\n2. **Each gene carries an \"RNA tissue specificity\" annotation** in HPA (\"Tissue enriched\", \"Group enriched\", \"Tissue enhanced\", \"Low tissue specificity\"), with the enriched tissue and nTPM value given per gene. For example, via `get_protein_by_ensembl` (TSV): PRM2 = **\"Tissue enriched\", RNA tissue specific nTPM = \"testis: 11179.1\"**; ALDOB = **\"Group enriched\"** (max in liver 10467 nTPM / kidney 6695); PLEC = **\"Tissue enhanced\"**.\n\n## Why the requested analysis cannot be done with these tools\n\nThe requested deliverable requires, for every one of the 17 tissues, the **complete list of genes HPA classifies as tissue-enriched in that tissue**, and then the shares of those genes that are (a) secreted to blood and (b) FDA-approved drug targets.\n\nThe tools I have access to do not expose that information in an enumerable way:\n\n- **`search_by_tissue` / `advanced_search(tissueSpecific=…)` return all genes expressed at a given level in a tissue, not the HPA \"tissue enriched\" gene set.** This is demonstrated by the fact that broadly expressed (non-enriched) genes such as PLEC, ACTB, CTNNB1, and even liver/kidney-enriched ALDOB appear in the \"high expression\" results for liver, testis, skeletal muscle, and heart muscle alike. A true \"tissue-enriched\" list would never contain the same ubiquitous gene in nearly every tissue.\n- **The \"RNA tissue specificity\" annotation is only available one gene at a time** (through `get_protein_by_ensembl` or `get_tissue_expression` for a single gene symbol). Enumerating tissue-enriched genes per tissue would require classifying all ~20,000 protein-coding genes one by one — that is not feasible through these endpoints, and no bulk/download endpoint is exposed (`search_proteins` returns only basic fields; custom rich columns are ignored; `batch_protein_lookup` likewise returns only basic fields and does fuzzy matching).\n- **`search_proteins`/`batch_protein_lookup` do return protein classes**, so \"Plasma proteins\" (secreted-to-blood proxy) and \"FDA approved drug targets\" *can* be checked for a given list of genes — but only *after* you have a valid tissue-enriched gene list, which the tools cannot supply.\n\n## Conclusion\n\nI cannot reliably provide the per-tissue counts of tissue-enriched genes, their secreted-to-blood shares, or their FDA drug-target shares for the consensus RNA tissues, and I therefore cannot truthfully construct the requested table, bar chart, or heatmap. Per the requirement to state when something cannot be determined rather than estimate, I am not fabricating those numbers.\n\nIf you can provide (or make accessible) HPA's downloadable per-gene RNA-consensus annotation file (which contains one row per gene with `RNA tissue specificity`, `RNA tissue specific nTPM`, `Protein class`, and blood/secretome annotations), I can then compute the complete table and the charts from it. With that file, the exact recipe would be:\n\n1. Keep genes with `RNA tissue specificity = Tissue enriched`, read the enriched tissue from `RNA tissue specific nTPM` (e.g., \"testis: 11179.1\").\n2. Tally enriched genes per tissue → counts.\n3. For each tissue, compute % of those genes annotated as \"Plasma proteins\" (secreted to blood) and % annotated as \"FDA approved drug targets\".\n4. Bar chart of the top-20 tissues by count; heatmap of the top-10 tissues × their 8 most common protein classes.\n\nLet me know if you can supply that gene-level data file, and I'll produce the full table and figures.",
+  "stop": "stop",
+  "tool_call_count": 28,
+  "seconds": 221.639,
+  "model_calls": 10,
+  "cost_usd": 0.304665032
+}

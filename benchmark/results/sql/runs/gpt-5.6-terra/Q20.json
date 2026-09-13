@@ -1,0 +1,290 @@
+{
+ "id": "Q20",
+ "kind": "analysis",
+ "question": "For these TCGA cohorts and their tissues of origin: liver hepatocellular carcinoma (liver), kidney renal clear cell carcinoma (kidney), pancreatic adenocarcinoma (pancreas), lung adenocarcinoma (lung), breast invasive carcinoma (breast), colon adenocarcinoma (colon), stomach adenocarcinoma (stomach), prostate adenocarcinoma (prostate), ovary serous cystadenocarcinoma (ovary), thyroid carcinoma (thyroid gland), glioblastoma multiforme (brain), testicular germ cell tumor (testis): give the number of validated favourable and validated unfavourable prognostic genes, and how many of each are tissue enriched in the tissue of origin. Draw a grouped bar chart of the four counts per cohort and provide the table.",
+ "model": "gpt-5.6-terra",
+ "effort": "low",
+ "turns": [
+  {
+   "turn": 1,
+   "ms": 945,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 336,
+    "input_tokens_details": {
+     "cache_write_tokens": 0,
+     "cached_tokens": 0
+    },
+    "output_tokens": 26,
+    "output_tokens_details": {
+     "reasoning_tokens": 11
+    },
+    "total_tokens": 362
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "schema",
+     "input": "{}"
+    }
+   ]
+  },
+  {
+   "turn": 2,
+   "ms": 7182,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 5855,
+    "input_tokens_details": {
+     "cache_write_tokens": 5852,
+     "cached_tokens": 0
+    },
+    "output_tokens": 293,
+    "output_tokens_details": {
+     "reasoning_tokens": 189
+    },
+    "total_tokens": 6148
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT DISTINCT Cancer FROM cancer_prognostic_data ORDER BY Cancer\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT DISTINCT Tissue FROM rna_tissue_consensus_tissues ORDER BY Tissue\"}"
+    },
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT \\\"RNA tissue specificity\\\", COUNT(*) FROM proteinatlas GROUP BY 1 ORDER BY 1\"}"
+    }
+   ]
+  },
+  {
+   "turn": 3,
+   "ms": 1843,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 6775,
+    "input_tokens_details": {
+     "cache_write_tokens": 920,
+     "cached_tokens": 5852
+    },
+    "output_tokens": 108,
+    "output_tokens_details": {
+     "reasoning_tokens": 16
+    },
+    "total_tokens": 6883
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT \\\"validated prognostic - favorable\\\" AS favorable, \\\"validated prognostic - unfavorable\\\" AS unfavorable, COUNT(*) AS n FROM cancer_prognostic_data WHERE Cancer IN ('Liver Hepatocellular Carcinoma (TCGA)','Kidney Renal Clear Cell Carcinoma (TCGA)') GROUP BY 1,2 ORDER BY 1,2\"}"
+    }
+   ]
+  },
+  {
+   "turn": 4,
+   "ms": 7687,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 23389,
+    "input_tokens_details": {
+     "cache_write_tokens": 16614,
+     "cached_tokens": 6772
+    },
+    "output_tokens": 757,
+    "output_tokens_details": {
+     "reasoning_tokens": 239
+    },
+    "total_tokens": 24146
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH cohorts(cancer,tissue,ord) AS (VALUES\\n('Liver Hepatocellular Carcinoma (TCGA)','liver',1),('Kidney Renal Clear Cell Carcinoma (TCGA)','kidney',2),('Pancreatic Adenocarcinoma (TCGA)','pancreas',3),('Lung Adenocarcinoma (TCGA)','lung',4),('Breast Invasive Carcinoma (TCGA)','breast',5),('Colon Adenocarcinoma (TCGA)','colon',6),('Stomach Adenocarcinoma (TCGA)','stomach',7),('Prostate Adenocarcinoma (TCGA)','prostate',8),('Ovary Serous Cystadenocarcinoma (TCGA)','ovary',9),('Thyroid Carcinoma (TCGA)','thyroid gland',10),('Glioblastoma Multiforme (TCGA)','brain',11),('Testicular Germ Cell Tumor (TCGA)','testis',12)),\\nmx AS (SELECT Gene, MAX(TRY_CAST(nTPM AS DOUBLE)) AS max_ntpm FROM rna_tissue_consensus GROUP BY Gene),\\nenriched AS (SELECT DISTINCT r.Gene,r.Tissue FROM rna_tissue_consensus r JOIN mx USING(Gene) JOIN proteinatlas p USING(Gene) WHERE r.Tissue IN (SELECT tissue FROM cohorts) AND TRY_CAST(r.nTPM AS DOUBLE)=mx.max_ntpm AND p.\\\"RNA tissue specificity\\\"='Tissue enriched'),\\nx AS (SELECT c.ord,c.cancer,c.tissue,d.Gene,d.\\\"validated prognostic - favorable\\\" fav,d.\\\"validated prognostic - unfavorable\\\" unf, CASE WHEN e.Gene IS NOT NULL THEN 1 ELSE 0 END AS origin_enriched FROM cohorts c JOIN cancer_prognostic_data d ON c.cancer=d.Cancer LEFT JOIN enriched e ON e.Gene=d.Gene AND e.Tissue=c.tissue)\\nSELECT cancer,tissue,\\nCOUNT(*) FILTER (WHERE fav <> '') AS validated_favourable,\\nCOUNT(*) FILTER (WHERE unf <> '') AS validated_unfavourable,\\nSUM(origin_enriched) FILTER (WHERE fav <> '') AS favourable_tissue_enriched,\\nSUM(origin_enriched) FILTER (WHERE unf <> '') AS unfavourable_tissue_enriched\\nFROM x GROUP BY ord,cancer,tissue ORDER BY ord\"}"
+    }
+   ]
+  },
+  {
+   "turn": 5,
+   "ms": 4170,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 24445,
+    "input_tokens_details": {
+     "cache_write_tokens": 1056,
+     "cached_tokens": 23386
+    },
+    "output_tokens": 275,
+    "output_tokens_details": {
+     "reasoning_tokens": 152
+    },
+    "total_tokens": 24720
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"SELECT d.Gene,d.\\\"Gene name\\\",p.\\\"RNA tissue specificity\\\", r.Tissue,r.nTPM,d.\\\"validated prognostic - favorable\\\" FROM cancer_prognostic_data d LEFT JOIN proteinatlas p ON d.Gene=p.Gene LEFT JOIN rna_tissue_consensus r ON d.Gene=r.Gene AND r.Tissue='kidney' WHERE d.Cancer='Kidney Renal Clear Cell Carcinoma (TCGA)' AND d.\\\"validated prognostic - favorable\\\"<>'' LIMIT 20\"}"
+    }
+   ]
+  },
+  {
+   "turn": 6,
+   "ms": 6844,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 25273,
+    "input_tokens_details": {
+     "cache_write_tokens": 828,
+     "cached_tokens": 24442
+    },
+    "output_tokens": 821,
+    "output_tokens_details": {
+     "reasoning_tokens": 235
+    },
+    "total_tokens": 26094
+   },
+   "text": "",
+   "tool_uses": [
+    {
+     "name": "sql",
+     "input": "{\"query\":\"WITH cohorts(cancer,tissue,ord) AS (VALUES\\n('Liver Hepatocellular Carcinoma (TCGA)','liver',1),('Kidney Renal Clear Cell Carcinoma (TCGA)','kidney',2),('Pancreatic Adenocarcinoma (TCGA)','pancreas',3),('Lung Adenocarcinoma (TCGA)','lung',4),('Breast Invasive Carcinoma (TCGA)','breast',5),('Colon Adenocarcinoma (TCGA)','colon',6),('Stomach Adenocarcinoma (TCGA)','stomach',7),('Prostate Adenocarcinoma (TCGA)','prostate',8),('Ovary Serous Cystadenocarcinoma (TCGA)','ovary',9),('Thyroid Carcinoma (TCGA)','thyroid gland',10),('Glioblastoma Multiforme (TCGA)','brain',11),('Testicular Germ Cell Tumor (TCGA)','testis',12)),\\nmx AS (SELECT Gene, MAX(TRY_CAST(nTPM AS DOUBLE)) AS max_ntpm FROM rna_tissue_consensus GROUP BY Gene),\\nenriched AS (SELECT DISTINCT r.Gene,r.Tissue FROM rna_tissue_consensus r JOIN mx USING(Gene) JOIN proteinatlas p ON r.Gene=p.Ensembl WHERE TRY_CAST(r.nTPM AS DOUBLE)=mx.max_ntpm AND p.\\\"RNA tissue specificity\\\"='Tissue enriched'),\\nx AS (SELECT c.ord,c.cancer,c.tissue,d.Gene,d.\\\"validated prognostic - favorable\\\" fav,d.\\\"validated prognostic - unfavorable\\\" unf, CASE WHEN e.Gene IS NOT NULL THEN 1 ELSE 0 END AS origin_enriched FROM cohorts c JOIN cancer_prognostic_data d ON c.cancer=d.Cancer LEFT JOIN enriched e ON e.Gene=d.Gene AND (e.Tissue=c.tissue OR (c.tissue='brain' AND e.Tissue IN ('amygdala','basal ganglia','cerebellum','cerebral cortex','choroid plexus','hippocampal formation','hypothalamus','midbrain','pituitary gland','retina','spinal cord'))))\\nSELECT cancer,tissue,COUNT(*) FILTER (WHERE fav <> '') AS validated_favourable,COUNT(*) FILTER (WHERE unf <> '') AS validated_unfavourable,COALESCE(SUM(origin_enriched) FILTER (WHERE fav <> ''),0) AS favourable_tissue_enriched,COALESCE(SUM(origin_enriched) FILTER (WHERE unf <> ''),0) AS unfavourable_tissue_enriched FROM x GROUP BY ord,cancer,tissue ORDER BY ord\"}"
+    }
+   ]
+  },
+  {
+   "turn": 7,
+   "ms": 9147,
+   "stop_reason": "completed",
+   "usage": {
+    "input_tokens": 26410,
+    "input_tokens_details": {
+     "cache_write_tokens": 1137,
+     "cached_tokens": 25270
+    },
+    "output_tokens": 1057,
+    "output_tokens_details": {
+     "reasoning_tokens": 295
+    },
+    "total_tokens": 27467
+   },
+   "text": "## Validated prognostic genes and tissue-of-origin enrichment\n\n“Tissue enriched” was counted when the gene is classified by HPA as **RNA tissue specificity = Tissue enriched** and its highest consensus RNA expression is in the stated tissue of origin. For **brain**, the HPA brain-region tissues were treated as brain tissue.\n\n| TCGA cohort | Tissue of origin | Validated favourable | Favourable, tissue-enriched in origin | Validated unfavourable | Unfavourable, tissue-enriched in origin |\n|---|---|---:|---:|---:|---:|\n| Liver hepatocellular carcinoma | liver | 113 | 45 | 939 | 0 |\n| Kidney renal clear cell carcinoma | kidney | 1,639 | 16 | 264 | 0 |\n| Pancreatic adenocarcinoma | pancreas | 4 | 0 | 134 | 0 |\n| Lung adenocarcinoma | lung | 5 | 0 | 202 | 0 |\n| Breast invasive carcinoma | breast | 5 | 0 | 4 | 0 |\n| Colon adenocarcinoma | colon | 5 | 0 | 3 | 0 |\n| Stomach adenocarcinoma | stomach | 0 | 0 | 0 | 0 |\n| Prostate adenocarcinoma | prostate | 0 | 0 | 0 | 0 |\n| Ovary serous cystadenocarcinoma | ovary | 0 | 0 | 17 | 0 |\n| Thyroid carcinoma | thyroid gland | 0 | 0 | 0 | 0 |\n| Glioblastoma multiforme | brain | 12 | 0 | 57 | 0 |\n| Testicular germ cell tumor | testis | 0 | 0 | 0 | 0 |\n\n```mermaid\nxychart-beta\n    title \"Validated prognostic genes and tissue-of-origin enriched subsets\"\n    x-axis [\"LIHC\",\"KIRC\",\"PAAD\",\"LUAD\",\"BRCA\",\"COAD\",\"STAD\",\"PRAD\",\"OV\",\"THCA\",\"GBM\",\"TGCT\"]\n    y-axis \"Number of genes\" 0 --> 1700\n    bar \"Validated favourable\" [113, 1639, 4, 5, 5, 5, 0, 0, 0, 0, 12, 0]\n    bar \"Favourable—origin tissue enriched\" [45, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n    bar \"Validated unfavourable\" [939, 264, 134, 202, 4, 3, 0, 0, 17, 0, 57, 0]\n    bar \"Unfavourable—origin tissue enriched\" [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n```\n\n**Abbreviations:** LIHC, liver hepatocellular carcinoma; KIRC, kidney renal clear cell carcinoma; PAAD, pancreatic adenocarcinoma; LUAD, lung adenocarcinoma; BRCA, breast invasive carcinoma; COAD, colon adenocarcinoma; STAD, stomach adenocarcinoma; PRAD, prostate adenocarcinoma; OV, ovary serous cystadenocarcinoma; THCA, thyroid carcinoma; GBM, glioblastoma multiforme; TGCT, testicular germ cell tumor.",
+   "tool_uses": []
+  }
+ ],
+ "tool_calls": [
+  {
+   "turn": 1,
+   "name": "schema",
+   "input": {},
+   "ms": 37670,
+   "result_chars": 148152,
+   "truncated": true,
+   "error": null,
+   "result_head": "Tables built from the Human Protein Atlas bulk files (all columns are text; cast for arithmetic, e.g. TRY_CAST(col AS DOUBLE)).\n\nblood_immunoassay_concentration (0.1 MB): gene, ENSG ID, conc [pg/L], sample type, number_of_samples, pubmed id\nblood_ms_concentration (0.1 MB): Gene, ENSG ID, Conc [pg/L]\nblood_pea_disease_de (17.9 MB): Gene, ENSG ID, Disease, Class, Control, logFC, p-value adjusted, Seeds, Mean importance, SD importance, Max importance, Min importance\nblood_pea_diseases (0.0 MB): Disease, Class\ncancer_cancers (0.0 MB): Cancer, Organ\ncancer_cptac (5.7 MB): Cancer, Gene, Gene name, p"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT DISTINCT Cancer FROM cancer_prognostic_data ORDER BY Cancer"
+   },
+   "ms": 762,
+   "result_chars": 1165,
+   "truncated": false,
+   "error": null,
+   "result_head": "Cancer\nBladder Urothelial Carcinoma (TCGA)\nBreast Invasive Carcinoma (TCGA)\nBreast Invasive Carcinoma (validation)\nCervical Squamous Cell Carcinoma and Endocervical Adenocarcinoma (TCGA)\nColon Adenocarcinoma (TCGA)\nColon Adenocarcinoma (validation)\nGlioblastoma Multiforme (TCGA)\nGlioblastoma Multiforme (validation)\nHead and Neck Squamous Cell Carcinoma (TCGA)\nKidney Chromophobe (TCGA)\nKidney Renal Clear Cell Carcinoma (TCGA)\nKidney Renal Clear Cell Carcinoma (validation)\nKidney Renal Papillary Cell Carcinoma (TCGA)\nLiver Hepatocellular Carcinoma (TCGA)\nLiver Hepatocellular Carcinoma (validatio"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT DISTINCT Tissue FROM rna_tissue_consensus_tissues ORDER BY Tissue"
+   },
+   "ms": 41,
+   "result_chars": 574,
+   "truncated": false,
+   "error": null,
+   "result_head": "Tissue\nadipose tissue\nadrenal gland\namygdala\nappendix\nbasal ganglia\nblood vessel\nbone marrow\nbreast\ncerebellum\ncerebral cortex\ncervix\nchoroid plexus\ncolon\nduodenum\nendometrium\nepididymis\nesophagus\nfallopian tube\ngallbladder\nheart muscle\nhippocampal formation\nhypothalamus\nkidney\nliver\nlung\nlymph node\nmidbrain\novary\npancreas\nparathyroid gland\npituitary gland\nplacenta\nprostate\nrectum\nretina\nsalivary gland\nseminal vesicle\nskeletal muscle\nskin\nsmall intestine\nsmooth muscle\nspinal cord\nspleen\nstomach\ntestis\nthymus\nthyroid gland\ntongue\ntonsil\nurinary bladder\nvagina\n[51 rows]"
+  },
+  {
+   "turn": 2,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"RNA tissue specificity\", COUNT(*) FROM proteinatlas GROUP BY 1 ORDER BY 1"
+   },
+   "ms": 1401,
+   "result_chars": 152,
+   "truncated": false,
+   "error": null,
+   "result_head": "RNA tissue specificity\tcount_star()\nGroup enriched\t1547\nLow tissue specificity\t8096\nNot detected\t1031\nTissue enhanced\t6356\nTissue enriched\t3132\n[5 rows]"
+  },
+  {
+   "turn": 3,
+   "name": "sql",
+   "input": {
+    "query": "SELECT \"validated prognostic - favorable\" AS favorable, \"validated prognostic - unfavorable\" AS unfavorable, COUNT(*) AS n FROM cancer_prognostic_data WHERE Cancer IN ('Liver Hepatocellular Carcinoma (TCGA)','Kidney Renal Clear Cell Carcinoma (TCGA)') GROUP BY 1,2 ORDER BY 1,2"
+   },
+   "ms": 878,
+   "result_chars": 24292,
+   "truncated": true,
+   "error": null,
+   "result_head": "favorable\tunfavorable\tn\n0\t\t1\n1.001e-5\t\t1\n1.002e-7\t\t1\n1.003e-6\t\t1\n1.007e-4\t\t1\n1.009e-6\t\t1\n1.012e-4\t\t1\n1.013e-6\t\t1\n1.016e-6\t\t1\n1.020e-5\t\t2\n1.020e-6\t\t1\n1.021e-5\t\t1\n1.023e-8\t\t1\n1.025e-8\t\t1\n1.026e-4\t\t1\n1.026e-6\t\t1\n1.027e-5\t\t2\n1.029e-6\t\t1\n1.029e-8\t\t1\n1.030e-8\t\t1\n1.031e-9\t\t2\n1.036e-4\t\t1\n1.037e-4\t\t1\n1.040e-4\t\t2\n1.043e-8\t\t1\n1.046e-8\t\t1\n1.047e-6\t\t1\n1.051e-4\t\t1\n1.052e-11\t\t1\n1.055e-6\t\t1\n1.055e-7\t\t1\n1.056e-6\t\t1\n1.056e-7\t\t1\n1.057e-5\t\t1\n1.060e-4\t\t1\n1.062e-5\t\t1\n1.063e-10\t\t1\n1.066e-7\t\t1\n1.067e-5\t\t2\n1.068e-6\t\t1\n1.068e-8\t\t1\n1.069e-4\t\t1\n1.072e-6\t\t1\n1.073e-4\t\t1\n1.073e-8\t\t1\n1.075e-9\t\t1\n1.077e-5\t\t1\n1.079e-8\t\t1\n1.080"
+  },
+  {
+   "turn": 4,
+   "name": "sql",
+   "input": {
+    "query": "WITH cohorts(cancer,tissue,ord) AS (VALUES\n('Liver Hepatocellular Carcinoma (TCGA)','liver',1),('Kidney Renal Clear Cell Carcinoma (TCGA)','kidney',2),('Pancreatic Adenocarcinoma (TCGA)','pancreas',3),('Lung Adenocarcinoma (TCGA)','lung',4),('Breast Invasive Carcinoma (TCGA)','breast',5),('Colon Adenocarcinoma (TCGA)','colon',6),('Stomach Adenocarcinoma (TCGA)','stomach',7),('Prostate Adenocarcinoma (TCGA)','prostate',8),('Ovary Serous Cystadenocarcinoma (TCGA)','ovary',9),('Thyroid Carcinoma (TCGA)','thyroid gland',10),('Glioblastoma Multiforme (TCGA)','brain',11),('Testicular Germ Cell Tumor (TCGA)','testis',12)),\nmx AS (SELECT Gene, MAX(TRY_CAST(nTPM AS DOUBLE)) AS max_ntpm FROM rna_tissue_consensus GROUP BY Gene),\nenriched AS (SELECT DISTINCT r.Gene,r.Tissue FROM rna_tissue_consensus r JOIN mx USING(Gene) JOIN proteinatlas p USING(Gene) WHERE r.Tissue IN (SELECT tissue FROM cohorts) AND TRY_CAST(r.nTPM AS DOUBLE)=mx.max_ntpm AND p.\"RNA tissue specificity\"='Tissue enriched'),\nx AS (SELECT c.ord,c.cancer,c.tissue,d.Gene,d.\"validated prognostic - favorable\" fav,d.\"validated prognostic - unfavorable\" unf, CASE WHEN e.Gene IS NOT NULL THEN 1 ELSE 0 END AS origin_enriched FROM cohorts c JOIN cancer_prognostic_data d ON c.cancer=d.Cancer LEFT JOIN enriched e ON e.Gene=d.Gene AND e.Tissue=c.tissue)\nSELECT cancer,tissue,\nCOUNT(*) FILTER (WHERE fav <> '') AS validated_favourable,\nCOUNT(*) FILTER (WHERE unf <> '') AS validated_unfavourable,\nSUM(origin_enriched) FILTER (WHERE fav <> '') AS favourable_tissue_enriched,\nSUM(origin_enriched) FILTER (WHERE unf <> '') AS unfavourable_tissue_enriched\nFROM x GROUP BY ord,cancer,tissue ORDER BY ord"
+   },
+   "ms": 3304,
+   "result_chars": 706,
+   "truncated": false,
+   "error": null,
+   "result_head": "cancer\ttissue\tvalidated_favourable\tvalidated_unfavourable\tfavourable_tissue_enriched\tunfavourable_tissue_enriched\nLiver Hepatocellular Carcinoma (TCGA)\tliver\t113\t939\t0\t0\nKidney Renal Clear Cell Carcinoma (TCGA)\tkidney\t1639\t264\t0\t0\nPancreatic Adenocarcinoma (TCGA)\tpancreas\t4\t134\t0\t0\nLung Adenocarcinoma (TCGA)\tlung\t5\t202\t0\t0\nBreast Invasive Carcinoma (TCGA)\tbreast\t5\t4\t0\t0\nColon Adenocarcinoma (TCGA)\tcolon\t5\t3\t0\t0\nStomach Adenocarcinoma (TCGA)\tstomach\t0\t0\t\t\nProstate Adenocarcinoma (TCGA)\tprostate\t0\t0\t\t\nOvary Serous Cystadenocarcinoma (TCGA)\tovary\t0\t17\t\t0\nThyroid Carcinoma (TCGA)\tthyroid gland\t0\t0"
+  },
+  {
+   "turn": 5,
+   "name": "sql",
+   "input": {
+    "query": "SELECT d.Gene,d.\"Gene name\",p.\"RNA tissue specificity\", r.Tissue,r.nTPM,d.\"validated prognostic - favorable\" FROM cancer_prognostic_data d LEFT JOIN proteinatlas p ON d.Gene=p.Gene LEFT JOIN rna_tissue_consensus r ON d.Gene=r.Gene AND r.Tissue='kidney' WHERE d.Cancer='Kidney Renal Clear Cell Carcinoma (TCGA)' AND d.\"validated prognostic - favorable\"<>'' LIMIT 20"
+   },
+   "ms": 2786,
+   "result_chars": 977,
+   "truncated": false,
+   "error": null,
+   "result_head": "Gene\tGene name\tRNA tissue specificity\tTissue\tnTPM\tvalidated prognostic - favorable\nENSG00000113658\tSMAD5\t\tkidney\t14.4\t2.759e-5\nENSG00000113838\tTBCCD1\t\tkidney\t5.8\t4.323e-4\nENSG00000113851\tCRBN\t\tkidney\t26.5\t1.750e-7\nENSG00000114491\tUMPS\t\tkidney\t1.7\t2.013e-4\nENSG00000114541\tFRMD4B\t\tkidney\t15.2\t6.883e-6\nENSG00000114698\tPLSCR4\t\tkidney\t23.6\t3.143e-6\nENSG00000114739\tACVR2B\t\tkidney\t1.7\t4.403e-6\nENSG00000114784\tEIF1B\t\tkidney\t100.3\t4.991e-8\nENSG00000114796\tKLHL24\t\tkidney\t17.3\t1.618e-5\nENSG00000114812\tVIPR1\t\tkidney\t2.7\t5.287e-5\nENSG00000115137\tDNAJC27\t\tkidney\t3.5\t5.567e-5\nENSG00000115145\tSTAM2\t\tkidney\t13"
+  },
+  {
+   "turn": 6,
+   "name": "sql",
+   "input": {
+    "query": "WITH cohorts(cancer,tissue,ord) AS (VALUES\n('Liver Hepatocellular Carcinoma (TCGA)','liver',1),('Kidney Renal Clear Cell Carcinoma (TCGA)','kidney',2),('Pancreatic Adenocarcinoma (TCGA)','pancreas',3),('Lung Adenocarcinoma (TCGA)','lung',4),('Breast Invasive Carcinoma (TCGA)','breast',5),('Colon Adenocarcinoma (TCGA)','colon',6),('Stomach Adenocarcinoma (TCGA)','stomach',7),('Prostate Adenocarcinoma (TCGA)','prostate',8),('Ovary Serous Cystadenocarcinoma (TCGA)','ovary',9),('Thyroid Carcinoma (TCGA)','thyroid gland',10),('Glioblastoma Multiforme (TCGA)','brain',11),('Testicular Germ Cell Tumor (TCGA)','testis',12)),\nmx AS (SELECT Gene, MAX(TRY_CAST(nTPM AS DOUBLE)) AS max_ntpm FROM rna_tissue_consensus GROUP BY Gene),\nenriched AS (SELECT DISTINCT r.Gene,r.Tissue FROM rna_tissue_consensus r JOIN mx USING(Gene) JOIN proteinatlas p ON r.Gene=p.Ensembl WHERE TRY_CAST(r.nTPM AS DOUBLE)=mx.max_ntpm AND p.\"RNA tissue specificity\"='Tissue enriched'),\nx AS (SELECT c.ord,c.cancer,c.tissue,d.Gene,d.\"validated prognostic - favorable\" fav,d.\"validated prognostic - unfavorable\" unf, CASE WHEN e.Gene IS NOT NULL THEN 1 ELSE 0 END AS origin_enriched FROM cohorts c JOIN cancer_prognostic_data d ON c.cancer=d.Cancer LEFT JOIN enriched e ON e.Gene=d.Gene AND (e.Tissue=c.tissue OR (c.tissue='brain' AND e.Tissue IN ('amygdala','basal ganglia','cerebellum','cerebral cortex','choroid plexus','hippocampal formation','hypothalamus','midbrain','pituitary gland','retina','spinal cord'))))\nSELECT cancer,tissue,COUNT(*) FILTER (WHERE fav <> '') AS validated_favourable,COUNT(*) FILTER (WHERE unf <> '') AS validated_unfavourable,COALESCE(SUM(origin_enriched) FILTER (WHERE fav <> ''),0) AS favourable_tissue_enriched,COALESCE(SUM(origin_enriched) FILTER (WHERE unf <> ''),0) AS unfavourable_tissue_enriched FROM x GROUP BY ord,cancer,tissue ORDER BY ord"
+   },
+   "ms": 11246,
+   "result_chars": 717,
+   "truncated": false,
+   "error": null,
+   "result_head": "cancer\ttissue\tvalidated_favourable\tvalidated_unfavourable\tfavourable_tissue_enriched\tunfavourable_tissue_enriched\nLiver Hepatocellular Carcinoma (TCGA)\tliver\t113\t939\t45\t0\nKidney Renal Clear Cell Carcinoma (TCGA)\tkidney\t1639\t264\t16\t0\nPancreatic Adenocarcinoma (TCGA)\tpancreas\t4\t134\t0\t0\nLung Adenocarcinoma (TCGA)\tlung\t5\t202\t0\t0\nBreast Invasive Carcinoma (TCGA)\tbreast\t5\t4\t0\t0\nColon Adenocarcinoma (TCGA)\tcolon\t5\t3\t0\t0\nStomach Adenocarcinoma (TCGA)\tstomach\t0\t0\t0\t0\nProstate Adenocarcinoma (TCGA)\tprostate\t0\t0\t0\t0\nOvary Serous Cystadenocarcinoma (TCGA)\tovary\t0\t17\t0\t0\nThyroid Carcinoma (TCGA)\tthyroid gl"
+  }
+ ],
+ "usage": {
+  "input_tokens": 112483,
+  "output_tokens": 3337,
+  "cache_read_input_tokens": 85722,
+  "cache_creation_input_tokens": 0,
+  "reasoning_tokens": 1137
+ },
+ "started_unix_ms": 1789299205807,
+ "final_answer": "## Validated prognostic genes and tissue-of-origin enrichment\n\n“Tissue enriched” was counted when the gene is classified by HPA as **RNA tissue specificity = Tissue enriched** and its highest consensus RNA expression is in the stated tissue of origin. For **brain**, the HPA brain-region tissues were treated as brain tissue.\n\n| TCGA cohort | Tissue of origin | Validated favourable | Favourable, tissue-enriched in origin | Validated unfavourable | Unfavourable, tissue-enriched in origin |\n|---|---|---:|---:|---:|---:|\n| Liver hepatocellular carcinoma | liver | 113 | 45 | 939 | 0 |\n| Kidney renal clear cell carcinoma | kidney | 1,639 | 16 | 264 | 0 |\n| Pancreatic adenocarcinoma | pancreas | 4 | 0 | 134 | 0 |\n| Lung adenocarcinoma | lung | 5 | 0 | 202 | 0 |\n| Breast invasive carcinoma | breast | 5 | 0 | 4 | 0 |\n| Colon adenocarcinoma | colon | 5 | 0 | 3 | 0 |\n| Stomach adenocarcinoma | stomach | 0 | 0 | 0 | 0 |\n| Prostate adenocarcinoma | prostate | 0 | 0 | 0 | 0 |\n| Ovary serous cystadenocarcinoma | ovary | 0 | 0 | 17 | 0 |\n| Thyroid carcinoma | thyroid gland | 0 | 0 | 0 | 0 |\n| Glioblastoma multiforme | brain | 12 | 0 | 57 | 0 |\n| Testicular germ cell tumor | testis | 0 | 0 | 0 | 0 |\n\n```mermaid\nxychart-beta\n    title \"Validated prognostic genes and tissue-of-origin enriched subsets\"\n    x-axis [\"LIHC\",\"KIRC\",\"PAAD\",\"LUAD\",\"BRCA\",\"COAD\",\"STAD\",\"PRAD\",\"OV\",\"THCA\",\"GBM\",\"TGCT\"]\n    y-axis \"Number of genes\" 0 --> 1700\n    bar \"Validated favourable\" [113, 1639, 4, 5, 5, 5, 0, 0, 0, 0, 12, 0]\n    bar \"Favourable—origin tissue enriched\" [45, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n    bar \"Validated unfavourable\" [939, 264, 134, 202, 4, 3, 0, 0, 17, 0, 57, 0]\n    bar \"Unfavourable—origin tissue enriched\" [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n```\n\n**Abbreviations:** LIHC, liver hepatocellular carcinoma; KIRC, kidney renal clear cell carcinoma; PAAD, pancreatic adenocarcinoma; LUAD, lung adenocarcinoma; BRCA, breast invasive carcinoma; COAD, colon adenocarcinoma; STAD, stomach adenocarcinoma; PRAD, prostate adenocarcinoma; OV, ovary serous cystadenocarcinoma; THCA, thyroid carcinoma; GBM, glioblastoma multiforme; TGCT, testicular germ cell tumor.",
+ "stop": "completed",
+ "tool_call_count": 8,
+ "seconds": 95.919,
+ "model_calls": 7,
+ "cost_usd": 0.2821544
+}

@@ -1,0 +1,402 @@
+{
+  "id": "Q30",
+  "kind": "analysis",
+  "question": "Assess RNA-protein agreement for cardiomyocytes, hepatocytes and neutrophils in the Human Protein Atlas using single-cell-type RNA nCPM and Deep Visual Proteomics cell-type Intensity. Join by Ensembl ID and those exact cell-type names. For each cell type separately retain genes with positive measurements in both modalities, report the retained count, Spearman correlation and overlap/Jaccard of the top twenty genes ranked independently by RNA and by protein. Give the top-twenty lists with values. Convert within-cell-type ranks to percentiles (ascending average rank divided by retained count), and select five genes per cell type with the largest absolute RNA-minus-protein percentile difference, ties by Ensembl ID. Give their measurements, percentiles and main subcellular locations. Draw three RNA/protein scatter panels restricted to the union of each cell type's two top-twenty lists, a top-twenty-overlap bar chart and a discordance heatmap. Supply the top-list union measurements and the aggregate and discordant-gene tables. If a requested ranked list has fewer eligible members, return every eligible member and state the count. Use Ensembl genes present in the HPA master table as the gene universe and break all gene-ranking ties by Ensembl ID.",
+  "model": "qwen-3.8-27b",
+  "effort": null,
+  "turns": [
+    {
+      "turn": 1,
+      "ms": 284,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 753,
+        "completion_tokens": 30,
+        "completion_tokens_details": {
+          "reasoning_tokens": 15
+        },
+        "prompt_tokens": 723,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\n",
+      "tool_uses": [
+        {
+          "name": "schema",
+          "input": "{}"
+        }
+      ]
+    },
+    {
+      "turn": 2,
+      "ms": 1030,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 7424,
+        "completion_tokens": 255,
+        "completion_tokens_details": {
+          "reasoning_tokens": 144
+        },
+        "prompt_tokens": 7169,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Cell type\\\", \\\"Cell type group\\\", \\\"Cell type class\\\" FROM rna_single_cell_type_cell_types ORDER BY \\\"Cell type\\\"\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Cell type name\\\", \\\"Cell type group\\\", \\\"Cell type class\\\", \\\"Tissue name\\\" FROM dvp_cell_types ORDER BY \\\"Cell type name\\\"\"}"
+        }
+      ]
+    },
+    {
+      "turn": 3,
+      "ms": 4050,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 13102,
+        "completion_tokens": 2894,
+        "completion_tokens_details": {
+          "reasoning_tokens": 2480
+        },
+        "prompt_tokens": 10208,
+        "prompt_tokens_details": {
+          "cached_tokens": 7168,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\nThe exact cell-type names exist in both the scRNA (rna_single_cell_type) and DVP (dvp_cell_type) tables. Next, I'll verify the gene universe (proteinatlas) and the integrity of the data (duplicate gene entries, ID formats).\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT (SELECT COUNT(*) FROM proteinatlas) AS master_rows,\\n       (SELECT COUNT(DISTINCT \\\"Ensembl\\\") FROM proteinatlas) AS master_distinct_ensg,\\n       (SELECT COUNT(DISTINCT \\\"Gene\\\") FROM proteinatlas WHERE LENGTH(\\\"Gene\\\")>1) AS master_distinct_gene\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Cell type\\\", \\\"Gene\\\", COUNT(*) AS c FROM rna_single_cell_type\\nWHERE \\\"Cell type\\\" IN ('cardiomyocytes','hepatocytes','neutrophils')\\nGROUP BY 1,2 HAVING COUNT(*)>1 LIMIT 10\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Cell type\\\", \\\"Gene\\\", COUNT(*) AS c FROM dvp_cell_type\\nWHERE \\\"Cell type\\\" IN ('cardiomyocytes','hepatocytes','neutrophils')\\nGROUP BY 1,2 HAVING COUNT(*)>1 LIMIT 10\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene\\\", \\\"nCPM\\\" FROM rna_single_cell_type WHERE \\\"Cell type\\\"='cardiomyocytes' LIMIT 5;\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene\\\", \\\"Intensity\\\" FROM dvp_cell_type WHERE \\\"Cell type\\\"='cardiomyocytes' LIMIT 5;\"}"
+        }
+      ]
+    },
+    {
+      "turn": 4,
+      "ms": 2265,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 12905,
+        "completion_tokens": 1995,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1509
+        },
+        "prompt_tokens": 10910,
+        "prompt_tokens_details": {
+          "cached_tokens": 9728,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\nBoth tables store Ensembl IDs in the `Gene` columns, the master table has 20,162 unique Ensembl genes, and DVP `Intensity` can be empty (missing). From here, I'll construct a retained (both-positive) table per cell type, including within-cell-type ranking, percentile rank, and subcellular main location.\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"CREATE OR REPLACE TABLE ct_retain_cardiomyocytes AS\\nWITH m AS (\\n  SELECT DISTINCT \\\"Ensembl\\\" AS ensg, \\\"Gene\\\" AS gname, \\\"Subcellular main location\\\" AS main_loc\\n  FROM proteinatlas\\n),\\nr AS (SELECT \\\"Gene\\\" AS ensg, TRY_CAST(\\\"nCPM\\\" AS DOUBLE) AS rna\\n      FROM rna_single_cell_type WHERE \\\"Cell type\\\"='cardiomyocytes'),\\np AS (SELECT \\\"Gene\\\" AS ensg, TRY_CAST(\\\"Intensity\\\" AS DOUBLE) AS prot\\n      FROM dvp_cell_type WHERE \\\"Cell type\\\"='cardiomyocytes'),\\nj AS (\\n  SELECT m.ensg, m.gname, m.main_loc, r.rna, p.prot,\\n         ROW_NUMBER() OVER (ORDER BY r.rna DESC, m.ensg ASC) AS rn_r,\\n         COUNT(*)       OVER (PARTITION BY r.rna)            AS ce_r,\\n         ROW_NUMBER() OVER (ORDER BY p.prot DESC, m.ensg ASC) AS rn_p,\\n         COUNT(*)       OVER (PARTITION BY p.prot)           AS ce_p\\n  FROM m JOIN r ON m.ensg=r.ensg\\n        JOIN p ON m.ensg=p.ensg\\n  WHERE r.rna > 0 AND p.prot > 0\\n)\\nSELECT ensg, gname, rna AS \\\"rna_nCPM\\\", prot AS \\\"dvp_intensity\\\",\\n       rn_r AS rna_rank, rn_p AS prot_rank,\\n       ((rn_r-1)+(ce_r+1)/2.0) AS rna_avgrank,\\n       ((rn_p-1)+(ce_p+1)/2.0) AS prot_avgrank,\\n       main_loc\\nFROM j\"}"
+        }
+      ]
+    },
+    {
+      "turn": 5,
+      "ms": 8159,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 20947,
+        "completion_tokens": 9527,
+        "completion_tokens_details": {
+          "reasoning_tokens": 6364
+        },
+        "prompt_tokens": 11420,
+        "prompt_tokens_details": {
+          "cached_tokens": 10752,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\nSince the sandbox is read-only (no temp tables allowed), I'll use CTEs to run one comprehensive query per cell type. Each query will return the following: statistics (retained count, Spearman correlation, Jaccard/overlap for the top 20), the top 20 RNA list and the top 20 protein list with percentiles, and the top 5 discordant genes by absolute percentile difference. Definitions:\n- Universe: Ensembl genes from `proteinatlas` (20,162 entries), joined via Ensembl ID on `rna_single_cell_type.nCPM` (scRNA) and `dvp_cell_type.Intensity` (DVP).\n- Retained: nCPM > 0 AND Intensity > 0 per cell type.\n- Ranks: descending value order with ties broken by Ensembl ID; percentile = average rank on the ascending side / retained count; Spearman correlation is against the ranks across all retained genes.\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH m AS (\\n  SELECT \\\"Ensembl\\\" AS ensg, \\\"Gene\\\" AS gname, \\\"Subcellular main location\\\" AS loc\\n  FROM proteinatlas\\n),\\nr AS (\\n  SELECT \\\"Gene\\\" AS ensg, TRY_CAST(\\\"nCPM\\\" AS DOUBLE) AS rna\\n  FROM rna_single_cell_type WHERE \\\"Cell type\\\" = 'cardiomyocytes'\\n),\\np AS (\\n  SELECT \\\"Gene\\\" AS ensg, TRY_CAST(\\\"Intensity\\\" AS DOUBLE) AS prot\\n  FROM dvp_cell_type WHERE \\\"Cell type\\\" = 'cardiomyocytes'\\n),\\nj AS (\\n  SELECT m.ensg, m.gname, m.loc, r.rna, p.prot,\\n         ROW_NUMBER() OVER (ORDER BY r.rna DESC, m.ensg)  AS dr,\\n         ROW_NUMBER() OVER (ORDER BY p.prot DESC, m.ensg) AS dp,\\n         COUNT(*)      OVER (PARTITION BY r.rna)          AS cr,\\n         COUNT(*)      OVER (PARTITION BY p.prot)         AS cp,\\n         COUNT(*)      OVER ()                            AS cnt\\n  FROM m\\n  JOIN r ON m.ensg = r.ensg\\n  JOIN p ON m.ensg = p.ensg\\n  WHERE r.rna > 0 AND p.prot > 0\\n),\\ns AS (\\n  SELECT ensg, gname, loc, rna, prot, dr, dp, cr, cp, cnt,\\n         (cnt - dr + 1.0 + (cr - 1)/2.0) / cnt AS r_pct,\\n         (cnt - dp + 1.0 + (cp - 1)/2.0) / cnt AS p_pct\\n  FROM j\\n)\\nSELECT 'A_stats' AS section, NULL::BIGINT AS rk, NULL AS ensg, 'retained_n' AS gname,\\n       NULL::DOUBLE AS rna, NULL::DOUBLE AS prot, NULL::DOUBLE AS rna_pctl, NULL::DOUBLE AS prot_pctl,\\n       MAX(cnt)::DOUBLE AS val, NULL::VARCHAR AS loc FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'avg_rna_nCPM', NULL, NULL, NULL, NULL, AVG(rna), NULL FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'avg_dvp_intensity', NULL, NULL, NULL, NULL, AVG(prot), NULL FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'spearman_rank_corr', NULL, NULL, NULL, NULL, CORR(dr, dp)::DOUBLE, NULL FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'top20_overlap', NULL, NULL, NULL, NULL,\\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, NULL\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'jaccard_top20', NULL, NULL, NULL, NULL,\\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE\\n       / NULLIF((SELECT COUNT(*) FROM s WHERE dr <= 20 OR dp <= 20), 0), NULL\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'mean_abs_rank_difference', NULL, NULL, NULL, NULL, AVG(ABS(dr - dp))::DOUBLE, NULL FROM s\\nUNION ALL\\nSELECT 'B_top20_rna', dr, ensg, gname, rna, prot, r_pct, NULL, NULL, loc FROM s WHERE dr <= 20\\nUNION ALL\\nSELECT 'C_top20_prot', dp, ensg, gname, rna, prot, NULL, p_pct, NULL, loc FROM s WHERE dp <= 20\\nUNION ALL\\nSELECT 'D_discord5', rn_disc, ensg, gname, rna, prot, r_pct, p_pct, ABS(r_pct - p_pct), loc\\nFROM (\\n  SELECT *, ROW_NUMBER() OVER (\\n             ORDER BY ABS((dr - (cr - 1.0)/2.0) - (dp - (cp - 1.0)/2.0)) DESC, ensg ASC\\n          ) AS rn_disc\\n  FROM s\\n) d\\nWHERE rn_disc <= 5\\nORDER BY 1, 2, 3, 4\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH m AS (\\n  SELECT \\\"Ensembl\\\" AS ensg, \\\"Gene\\\" AS gname, \\\"Subcellular main location\\\" AS loc\\n  FROM proteinatlas\\n),\\nr AS (\\n  SELECT \\\"Gene\\\" AS ensg, TRY_CAST(\\\"nCPM\\\" AS DOUBLE) AS rna\\n  FROM rna_single_cell_type WHERE \\\"Cell type\\\" = 'hepatocytes'\\n),\\np AS (\\n  SELECT \\\"Gene\\\" AS ensg, TRY_CAST(\\\"Intensity\\\" AS DOUBLE) AS prot\\n  FROM dvp_cell_type WHERE \\\"Cell type\\\" = 'hepatocytes'\\n),\\nj AS (\\n  SELECT m.ensg, m.gname, m.loc, r.rna, p.prot,\\n         ROW_NUMBER() OVER (ORDER BY r.rna DESC, m.ensg)  AS dr,\\n         ROW_NUMBER() OVER (ORDER BY p.prot DESC, m.ensg) AS dp,\\n         COUNT(*)      OVER (PARTITION BY r.rna)          AS cr,\\n         COUNT(*)      OVER (PARTITION BY p.prot)         AS cp,\\n         COUNT(*)      OVER ()                            AS cnt\\n  FROM m\\n  JOIN r ON m.ensg = r.ensg\\n  JOIN p ON m.ensg = p.ensg\\n  WHERE r.rna > 0 AND p.prot > 0\\n),\\ns AS (\\n  SELECT ensg, gname, loc, rna, prot, dr, dp, cr, cp, cnt,\\n         (cnt - dr + 1.0 + (cr - 1)/2.0) / cnt AS r_pct,\\n         (cnt - dp + 1.0 + (cp - 1)/2.0) / cnt AS p_pct\\n  FROM j\\n)\\nSELECT 'A_stats' AS section, NULL::BIGINT AS rk, NULL AS ensg, 'retained_n' AS gname,\\n       NULL::DOUBLE AS rna, NULL::DOUBLE AS prot, NULL::DOUBLE AS rna_pctl, NULL::DOUBLE AS prot_pctl,\\n       MAX(cnt)::DOUBLE AS val, NULL::VARCHAR AS loc FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'avg_rna_nCPM', NULL, NULL, NULL, NULL, AVG(rna), NULL FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'avg_dvp_intensity', NULL, NULL, NULL, NULL, AVG(prot), NULL FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'spearman_rank_corr', NULL, NULL, NULL, NULL, CORR(dr, dp)::DOUBLE, NULL FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'top20_overlap', NULL, NULL, NULL, NULL,\\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, NULL\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'jaccard_top20', NULL, NULL, NULL, NULL,\\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE\\n       / NULLIF((SELECT COUNT(*) FROM s WHERE dr <= 20 OR dp <= 20), 0), NULL\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'mean_abs_rank_difference', NULL, NULL, NULL, NULL, AVG(ABS(dr - dp))::DOUBLE, NULL FROM s\\nUNION ALL\\nSELECT 'B_top20_rna', dr, ensg, gname, rna, prot, r_pct, NULL, NULL, loc FROM s WHERE dr <= 20\\nUNION ALL\\nSELECT 'C_top20_prot', dp, ensg, gname, rna, prot, NULL, p_pct, NULL, loc FROM s WHERE dp <= 20\\nUNION ALL\\nSELECT 'D_discord5', rn_disc, ensg, gname, rna, prot, r_pct, p_pct, ABS(r_pct - p_pct), loc\\nFROM (\\n  SELECT *, ROW_NUMBER() OVER (\\n             ORDER BY ABS((dr - (cr - 1.0)/2.0) - (dp - (cp - 1.0)/2.0)) DESC, ensg ASC\\n          ) AS rn_disc\\n  FROM s\\n) d\\nWHERE rn_disc <= 5\\nORDER BY 1, 2, 3, 4\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH m AS (\\n  SELECT \\\"Ensembl\\\" AS ensg, \\\"Gene\\\" AS gname, \\\"Subcellular main location\\\" AS loc\\n  FROM proteinatlas\\n),\\nr AS (\\n  SELECT \\\"Gene\\\" AS ensg, TRY_CAST(\\\"nCPM\\\" AS DOUBLE) AS rna\\n  FROM rna_single_cell_type WHERE \\\"Cell type\\\" = 'neutrophils'\\n),\\np AS (\\n  SELECT \\\"Gene\\\" AS ensg, TRY_CAST(\\\"Intensity\\\" AS DOUBLE) AS prot\\n  FROM dvp_cell_type WHERE \\\"Cell type\\\" = 'neutrophils'\\n),\\nj AS (\\n  SELECT m.ensg, m.gname, m.loc, r.rna, p.prot,\\n         ROW_NUMBER() OVER (ORDER BY r.rna DESC, m.ensg)  AS dr,\\n         ROW_NUMBER() OVER (ORDER BY p.prot DESC, m.ensg) AS dp,\\n         COUNT(*)      OVER (PARTITION BY r.rna)          AS cr,\\n         COUNT(*)      OVER (PARTITION BY p.prot)         AS cp,\\n         COUNT(*)      OVER ()                            AS cnt\\n  FROM m\\n  JOIN r ON m.ensg = r.ensg\\n  JOIN p ON m.ensg = p.ensg\\n  WHERE r.rna > 0 AND p.prot > 0\\n),\\ns AS (\\n  SELECT ensg, gname, loc, rna, prot, dr, dp, cr, cp, cnt,\\n         (cnt - dr + 1.0 + (cr - 1)/2.0) / cnt AS r_pct,\\n         (cnt - dp + 1.0 + (cp - 1)/2.0) / cnt AS p_pct\\n  FROM j\\n)\\nSELECT 'A_stats' AS section, NULL::BIGINT AS rk, NULL AS ensg, 'retained_n' AS gname,\\n       NULL::DOUBLE AS rna, NULL::DOUBLE AS prot, NULL::DOUBLE AS rna_pctl, NULL::DOUBLE AS prot_pctl,\\n       MAX(cnt)::DOUBLE AS val, NULL::VARCHAR AS loc FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'avg_rna_nCPM', NULL, NULL, NULL, NULL, AVG(rna), NULL FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'avg_dvp_intensity', NULL, NULL, NULL, NULL, AVG(prot), NULL FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'spearman_rank_corr', NULL, NULL, NULL, NULL, CORR(dr, dp)::DOUBLE, NULL FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'top20_overlap', NULL, NULL, NULL, NULL,\\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, NULL\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'jaccard_top20', NULL, NULL, NULL, NULL,\\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE\\n       / NULLIF((SELECT COUNT(*) FROM s WHERE dr <= 20 OR dp <= 20), 0), NULL\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'mean_abs_rank_difference', NULL, NULL, NULL, NULL, AVG(ABS(dr - dp))::DOUBLE, NULL FROM s\\nUNION ALL\\nSELECT 'B_top20_rna', dr, ensg, gname, rna, prot, r_pct, NULL, NULL, loc FROM s WHERE dr <= 20\\nUNION ALL\\nSELECT 'C_top20_prot', dp, ensg, gname, rna, prot, NULL, p_pct, NULL, loc FROM s WHERE dp <= 20\\nUNION ALL\\nSELECT 'D_discord5', rn_disc, ensg, gname, rna, prot, r_pct, p_pct, ABS(r_pct - p_pct), loc\\nFROM (\\n  SELECT *, ROW_NUMBER() OVER (\\n             ORDER BY ABS((dr - (cr - 1.0)/2.0) - (dp - (cp - 1.0)/2.0)) DESC, ensg ASC\\n          ) AS rn_disc\\n  FROM s\\n) d\\nWHERE rn_disc <= 5\\nORDER BY 1, 2, 3, 4\"}"
+        }
+      ]
+    },
+    {
+      "turn": 6,
+      "ms": 7346,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "total_tokens": 32413,
+        "completion_tokens": 7628,
+        "completion_tokens_details": {
+          "reasoning_tokens": 4911
+        },
+        "prompt_tokens": 24785,
+        "prompt_tokens_details": {
+          "cached_tokens": 11264,
+          "image_tokens": 0
+        }
+      },
+      "text": "\n\nAll three runs succeeded. One correction is needed: because the user instructs \"break all gene ranking ties by Ensembl ID,\" the ranks become a strict total ordering (there are no remaining tied ranks). Therefore, the percentile must be `(N − rank + 1)/N` — the standard tie-midrank correction (the `(t−1)/2` term) should not be applied. As a result, for example, the top percentile > 1.0 seen in the neutrophil DVP top list disappears. I will rerun all three with the strict percentile. On top of that, I'll add a section (E) that reports the measurement values, percentiles, and flags for the union of the top list (per cell type, for the scatter/heatmap/summary table).\n\n",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH m AS (\\n  SELECT \\\"Ensembl\\\" AS ensg, \\\"Gene\\\" AS gname, \\\"Subcellular main location\\\" AS loc\\n  FROM proteinatlas\\n),\\nr AS (\\n  SELECT \\\"Gene\\\" AS ensg, TRY_CAST(\\\"nCPM\\\" AS DOUBLE) AS rna\\n  FROM rna_single_cell_type WHERE \\\"Cell type\\\" = 'cardiomyocytes'\\n),\\np AS (\\n  SELECT \\\"Gene\\\" AS ensg, TRY_CAST(\\\"Intensity\\\" AS DOUBLE) AS prot\\n  FROM dvp_cell_type WHERE \\\"Cell type\\\" = 'cardiomyocytes'\\n),\\nj AS (\\n  SELECT m.ensg, m.gname, m.loc, r.rna, p.prot,\\n         ROW_NUMBER() OVER (ORDER BY r.rna DESC, m.ensg)  AS dr,\\n         ROW_NUMBER() OVER (ORDER BY p.prot DESC, m.ensg) AS dp,\\n         COUNT(*)      OVER ()                            AS cnt\\n  FROM m\\n  JOIN r ON m.ensg = r.ensg\\n  JOIN p ON m.ensg = p.ensg\\n  WHERE r.rna > 0 AND p.prot > 0\\n),\\ns AS (\\n  SELECT ensg, gname, loc, rna, prot, dr, dp, cnt,\\n         (cnt - dr + 1.0) / cnt AS r_pct,\\n         (cnt - dp + 1.0) / cnt AS p_pct\\n  FROM j\\n)\\nSELECT 'A_stats' AS section, NULL::BIGINT AS rk, NULL AS ensg, 'retained_n' AS gname,\\n       NULL::DOUBLE AS rna, NULL::DOUBLE AS prot, NULL::DOUBLE AS rna_pctl, NULL::DOUBLE AS prot_pctl,\\n       MAX(cnt)::DOUBLE AS val, NULL::VARCHAR AS loc FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'spearman_rank_corr', NULL, NULL, NULL, NULL, CORR(dr, dp)::DOUBLE, NULL FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'top20_overlap', NULL, NULL, NULL, NULL,\\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, NULL\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'jaccard_top20', NULL, NULL, NULL, NULL,\\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE\\n       / NULLIF((SELECT COUNT(*) FROM s WHERE dr <= 20 OR dp <= 20), 0), NULL\\nUNION ALL\\nSELECT 'B_top20_rna', dr, ensg, gname, rna, prot, r_pct, NULL, NULL, loc FROM s WHERE dr <= 20\\nUNION ALL\\nSELECT 'C_top20_prot', dp, ensg, gname, rna, prot, NULL, p_pct, NULL, loc FROM s WHERE dp <= 20\\nUNION ALL\\nSELECT 'D_discord5', rn5, ensg, gname, rna, prot, r_pct, p_pct, ABS(r_pct - p_pct), loc\\nFROM (\\n  SELECT *, ROW_NUMBER() OVER (ORDER BY ABS(r_pct - p_pct) DESC, ensg ASC) AS rn5 FROM s\\n) d\\nWHERE rn5 <= 5\\nUNION ALL\\nSELECT 'E_union', dr, ensg, gname, rna, prot, r_pct, p_pct,\\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, loc\\nFROM s WHERE dr <= 20 OR dp <= 20\\nORDER BY 1, 2, 3, 4\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH m AS (\\n  SELECT \\\"Ensembl\\\" AS ensg, \\\"Gene\\\" AS gname, \\\"Subcellular main location\\\" AS loc\\n  FROM proteinatlas\\n),\\nr AS (\\n  SELECT \\\"Gene\\\" AS ensg, TRY_CAST(\\\"nCPM\\\" AS DOUBLE) AS rna\\n  FROM rna_single_cell_type WHERE \\\"Cell type\\\" = 'hepatocytes'\\n),\\np AS (\\n  SELECT \\\"Gene\\\" AS ensg, TRY_CAST(\\\"Intensity\\\" AS DOUBLE) AS prot\\n  FROM dvp_cell_type WHERE \\\"Cell type\\\" = 'hepatocytes'\\n),\\nj AS (\\n  SELECT m.ensg, m.gname, m.loc, r.rna, p.prot,\\n         ROW_NUMBER() OVER (ORDER BY r.rna DESC, m.ensg)  AS dr,\\n         ROW_NUMBER() OVER (ORDER BY p.prot DESC, m.ensg) AS dp,\\n         COUNT(*)      OVER ()                            AS cnt\\n  FROM m\\n  JOIN r ON m.ensg = r.ensg\\n  JOIN p ON m.ensg = p.ensg\\n  WHERE r.rna > 0 AND p.prot > 0\\n),\\ns AS (\\n  SELECT ensg, gname, loc, rna, prot, dr, dp, cnt,\\n         (cnt - dr + 1.0) / cnt AS r_pct,\\n         (cnt - dp + 1.0) / cnt AS p_pct\\n  FROM j\\n)\\nSELECT 'A_stats' AS section, NULL::BIGINT AS rk, NULL AS ensg, 'retained_n' AS gname,\\n       NULL::DOUBLE AS rna, NULL::DOUBLE AS prot, NULL::DOUBLE AS rna_pctl, NULL::DOUBLE AS prot_pctl,\\n       MAX(cnt)::DOUBLE AS val, NULL::VARCHAR AS loc FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'spearman_rank_corr', NULL, NULL, NULL, NULL, CORR(dr, dp)::DOUBLE, NULL FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'top20_overlap', NULL, NULL, NULL, NULL,\\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, NULL\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'jaccard_top20', NULL, NULL, NULL, NULL,\\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE\\n       / NULLIF((SELECT COUNT(*) FROM s WHERE dr <= 20 OR dp <= 20), 0), NULL\\nUNION ALL\\nSELECT 'B_top20_rna', dr, ensg, gname, rna, prot, r_pct, NULL, NULL, loc FROM s WHERE dr <= 20\\nUNION ALL\\nSELECT 'C_top20_prot', dp, ensg, gname, rna, prot, NULL, p_pct, NULL, loc FROM s WHERE dp <= 20\\nUNION ALL\\nSELECT 'D_discord5', rn5, ensg, gname, rna, prot, r_pct, p_pct, ABS(r_pct - p_pct), loc\\nFROM (\\n  SELECT *, ROW_NUMBER() OVER (ORDER BY ABS(r_pct - p_pct) DESC, ensg ASC) AS rn5 FROM s\\n) d\\nWHERE rn5 <= 5\\nUNION ALL\\nSELECT 'E_union', dr, ensg, gname, rna, prot, r_pct, p_pct,\\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, loc\\nFROM s WHERE dr <= 20 OR dp <= 20\\nORDER BY 1, 2, 3, 4\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH m AS (\\n  SELECT \\\"Ensembl\\\" AS ensg, \\\"Gene\\\" AS gname, \\\"Subcellular main location\\\" AS loc\\n  FROM proteinatlas\\n),\\nr AS (\\n  SELECT \\\"Gene\\\" AS ensg, TRY_CAST(\\\"nCPM\\\" AS DOUBLE) AS rna\\n  FROM rna_single_cell_type WHERE \\\"Cell type\\\" = 'neutrophils'\\n),\\np AS (\\n  SELECT \\\"Gene\\\" AS ensg, TRY_CAST(\\\"Intensity\\\" AS DOUBLE) AS prot\\n  FROM dvp_cell_type WHERE \\\"Cell type\\\" = 'neutrophils'\\n),\\nj AS (\\n  SELECT m.ensg, m.gname, m.loc, r.rna, p.prot,\\n         ROW_NUMBER() OVER (ORDER BY r.rna DESC, m.ensg)  AS dr,\\n         ROW_NUMBER() OVER (ORDER BY p.prot DESC, m.ensg) AS dp,\\n         COUNT(*)      OVER ()                            AS cnt\\n  FROM m\\n  JOIN r ON m.ensg = r.ensg\\n  JOIN p ON m.ensg = p.ensg\\n  WHERE r.rna > 0 AND p.prot > 0\\n),\\ns AS (\\n  SELECT ensg, gname, loc, rna, prot, dr, dp, cnt,\\n         (cnt - dr + 1.0) / cnt AS r_pct,\\n         (cnt - dp + 1.0) / cnt AS p_pct\\n  FROM j\\n)\\nSELECT 'A_stats' AS section, NULL::BIGINT AS rk, NULL AS ensg, 'retained_n' AS gname,\\n       NULL::DOUBLE AS rna, NULL::DOUBLE AS prot, NULL::DOUBLE AS rna_pctl, NULL::DOUBLE AS prot_pctl,\\n       MAX(cnt)::DOUBLE AS val, NULL::VARCHAR AS loc FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'spearman_rank_corr', NULL, NULL, NULL, NULL, CORR(dr, dp)::DOUBLE, NULL FROM s\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'top20_overlap', NULL, NULL, NULL, NULL,\\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, NULL\\nUNION ALL\\nSELECT 'A_stats', NULL, NULL, 'jaccard_top20', NULL, NULL, NULL, NULL,\\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE\\n       / NULLIF((SELECT COUNT(*) FROM s WHERE dr <= 20 OR dp <= 20), 0), NULL\\nUNION ALL\\nSELECT 'B_top20_rna', dr, ensg, gname, rna, prot, r_pct, NULL, NULL, loc FROM s WHERE dr <= 20\\nUNION ALL\\nSELECT 'C_top20_prot', dp, ensg, gname, rna, prot, NULL, p_pct, NULL, loc FROM s WHERE dp <= 20\\nUNION ALL\\nSELECT 'D_discord5', rn5, ensg, gname, rna, prot, r_pct, p_pct, ABS(r_pct - p_pct), loc\\nFROM (\\n  SELECT *, ROW_NUMBER() OVER (ORDER BY ABS(r_pct - p_pct) DESC, ensg ASC) AS rn5 FROM s\\n) d\\nWHERE rn5 <= 5\\nUNION ALL\\nSELECT 'E_union', dr, ensg, gname, rna, prot, r_pct, p_pct,\\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, loc\\nFROM s WHERE dr <= 20 OR dp <= 20\\nORDER BY 1, 2, 3, 4\"}"
+        }
+      ]
+    },
+    {
+      "turn": 7,
+      "ms": 33815,
+      "stop_reason": "length",
+      "usage": {
+        "total_tokens": 79311,
+        "completion_tokens": 32000,
+        "completion_tokens_details": {
+          "reasoning_tokens": 32000
+        },
+        "prompt_tokens": 47311,
+        "prompt_tokens_details": {
+          "cached_tokens": 24576,
+          "image_tokens": 0
+        }
+      },
+      "text": "",
+      "tool_uses": []
+    }
+  ],
+  "tool_calls": [
+    {
+      "turn": 1,
+      "name": "schema",
+      "input": {},
+      "ms": 3785,
+      "result_chars": 148152,
+      "truncated": true,
+      "error": null,
+      "result_head": "Tables built from the Human Protein Atlas bulk files (all columns are text; cast for arithmetic, e.g. TRY_CAST(col AS DOUBLE)).\n\nblood_immunoassay_concentration (0.1 MB): gene, ENSG ID, conc [pg/L], sample type, number_of_samples, pubmed id\nblood_ms_concentration (0.1 MB): Gene, ENSG ID, Conc [pg/L]\nblood_pea_disease_de (17.9 MB): Gene, ENSG ID, Disease, Class, Control, logFC, p-value adjusted, Seeds, Mean importance, SD importance, Max importance, Min importance\nblood_pea_diseases (0.0 MB): Disease, Class\ncancer_cancers (0.0 MB): Cancer, Organ\ncancer_cptac (5.7 MB): Cancer, Gene, Gene name, p"
+    },
+    {
+      "turn": 2,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Cell type\", \"Cell type group\", \"Cell type class\" FROM rna_single_cell_type_cell_types ORDER BY \"Cell type\""
+      },
+      "ms": 5,
+      "result_chars": 9343,
+      "truncated": false,
+      "error": null,
+      "result_head": "Cell type\tCell type group\tCell type class\nadipocytes\tadipocytes\tmesenchymal cells\nadrenal cortex cells\tadrenal endocrine cells\tendocrine cells\nadrenal medulla cells\tadrenal endocrine cells\tendocrine cells\nalveolar cells type 1\talveolar cells\tspecialized epithelial cells\nalveolar cells type 2\talveolar cells\tspecialized epithelial cells\nastrocytes\tglial cells\tglial cells\nb-cells\tb-cells\tblood and immune cells\nbasal keratinocytes\tbasal cells\tspecialized epithelial cells\nbasal prostatic cells\tbasal cells\tspecialized epithelial cells\nbergmann glia\tglial cells\tglial cells\nbrain excitatory neurons\tne"
+    },
+    {
+      "turn": 2,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Cell type name\", \"Cell type group\", \"Cell type class\", \"Tissue name\" FROM dvp_cell_types ORDER BY \"Cell type name\""
+      },
+      "ms": 2,
+      "result_chars": 1772,
+      "truncated": false,
+      "error": null,
+      "result_head": "Cell type name\tCell type group\tCell type class\tTissue name\nalveolar cells type 1\talveolar cell types\tspecialized epithelial cells\tlung\nalveolar cells type 2\talveolar cell types\tspecialized epithelial cells\tlung\nastrocytes and neuropil\tastrocytes and neuropil\tglial cells\tbrain\nb-cells\tb-cells\tblood and immune cells\tlymph node\ncapillaries\tcapillaries\tendothelial and mural cells\theart muscle\ncardiomyocytes\tcardiomyocytes\tmuscle cells\theart muscle\ncd4 t-cells\tt-cells\tblood and immune cells\tlymph node\ncd8 t-cells\tt-cells\tblood and immune cells\tlymph node\nciliated cells\tfallopian tube cells\tciliated"
+    },
+    {
+      "turn": 3,
+      "name": "sql",
+      "input": {
+        "query": "SELECT (SELECT COUNT(*) FROM proteinatlas) AS master_rows,\n       (SELECT COUNT(DISTINCT \"Ensembl\") FROM proteinatlas) AS master_distinct_ensg,\n       (SELECT COUNT(DISTINCT \"Gene\") FROM proteinatlas WHERE LENGTH(\"Gene\")>1) AS master_distinct_gene"
+      },
+      "ms": 306,
+      "result_chars": 80,
+      "truncated": false,
+      "error": null,
+      "result_head": "master_rows\tmaster_distinct_ensg\tmaster_distinct_gene\n20162\t20162\t20151\n[1 rows]"
+    },
+    {
+      "turn": 3,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Cell type\", \"Gene\", COUNT(*) AS c FROM rna_single_cell_type\nWHERE \"Cell type\" IN ('cardiomyocytes','hepatocytes','neutrophils')\nGROUP BY 1,2 HAVING COUNT(*)>1 LIMIT 10"
+      },
+      "ms": 128,
+      "result_chars": 18,
+      "truncated": false,
+      "error": null,
+      "result_head": "(no rows)\n[0 rows]"
+    },
+    {
+      "turn": 3,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Cell type\", \"Gene\", COUNT(*) AS c FROM dvp_cell_type\nWHERE \"Cell type\" IN ('cardiomyocytes','hepatocytes','neutrophils')\nGROUP BY 1,2 HAVING COUNT(*)>1 LIMIT 10"
+      },
+      "ms": 52,
+      "result_chars": 18,
+      "truncated": false,
+      "error": null,
+      "result_head": "(no rows)\n[0 rows]"
+    },
+    {
+      "turn": 3,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene\", \"nCPM\" FROM rna_single_cell_type WHERE \"Cell type\"='cardiomyocytes' LIMIT 5;"
+      },
+      "ms": 69,
+      "result_chars": 121,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tnCPM\nENSG00000000003\t0.8\nENSG00000000005\t0.6\nENSG00000000419\t44.5\nENSG00000000457\t37.7\nENSG00000000460\t88.9\n[5 rows]"
+    },
+    {
+      "turn": 3,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene\", \"Intensity\" FROM dvp_cell_type WHERE \"Cell type\"='cardiomyocytes' LIMIT 5;"
+      },
+      "ms": 14,
+      "result_chars": 125,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tIntensity\nENSG00000000003\t\nENSG00000000005\t\nENSG00000000419\t1254678.0\nENSG00000000457\t125605.6\nENSG00000000460\t\n[5 rows]"
+    },
+    {
+      "turn": 4,
+      "name": "sql",
+      "input": {
+        "query": "CREATE OR REPLACE TABLE ct_retain_cardiomyocytes AS\nWITH m AS (\n  SELECT DISTINCT \"Ensembl\" AS ensg, \"Gene\" AS gname, \"Subcellular main location\" AS main_loc\n  FROM proteinatlas\n),\nr AS (SELECT \"Gene\" AS ensg, TRY_CAST(\"nCPM\" AS DOUBLE) AS rna\n      FROM rna_single_cell_type WHERE \"Cell type\"='cardiomyocytes'),\np AS (SELECT \"Gene\" AS ensg, TRY_CAST(\"Intensity\" AS DOUBLE) AS prot\n      FROM dvp_cell_type WHERE \"Cell type\"='cardiomyocytes'),\nj AS (\n  SELECT m.ensg, m.gname, m.main_loc, r.rna, p.prot,\n         ROW_NUMBER() OVER (ORDER BY r.rna DESC, m.ensg ASC) AS rn_r,\n         COUNT(*)       OVER (PARTITION BY r.rna)            AS ce_r,\n         ROW_NUMBER() OVER (ORDER BY p.prot DESC, m.ensg ASC) AS rn_p,\n         COUNT(*)       OVER (PARTITION BY p.prot)           AS ce_p\n  FROM m JOIN r ON m.ensg=r.ensg\n        JOIN p ON m.ensg=p.ensg\n  WHERE r.rna > 0 AND p.prot > 0\n)\nSELECT ensg, gname, rna AS \"rna_nCPM\", prot AS \"dvp_intensity\",\n       rn_r AS rna_rank, rn_p AS prot_rank,\n       ((rn_r-1)+(ce_r+1)/2.0) AS rna_avgrank,\n       ((rn_p-1)+(ce_p+1)/2.0) AS prot_avgrank,\n       main_loc\nFROM j"
+      },
+      "ms": 1,
+      "result_chars": 37,
+      "truncated": false,
+      "error": "tool reported an error",
+      "result_head": "Error: read-only: SELECT queries only"
+    },
+    {
+      "turn": 5,
+      "name": "sql",
+      "input": {
+        "query": "WITH m AS (\n  SELECT \"Ensembl\" AS ensg, \"Gene\" AS gname, \"Subcellular main location\" AS loc\n  FROM proteinatlas\n),\nr AS (\n  SELECT \"Gene\" AS ensg, TRY_CAST(\"nCPM\" AS DOUBLE) AS rna\n  FROM rna_single_cell_type WHERE \"Cell type\" = 'cardiomyocytes'\n),\np AS (\n  SELECT \"Gene\" AS ensg, TRY_CAST(\"Intensity\" AS DOUBLE) AS prot\n  FROM dvp_cell_type WHERE \"Cell type\" = 'cardiomyocytes'\n),\nj AS (\n  SELECT m.ensg, m.gname, m.loc, r.rna, p.prot,\n         ROW_NUMBER() OVER (ORDER BY r.rna DESC, m.ensg)  AS dr,\n         ROW_NUMBER() OVER (ORDER BY p.prot DESC, m.ensg) AS dp,\n         COUNT(*)      OVER (PARTITION BY r.rna)          AS cr,\n         COUNT(*)      OVER (PARTITION BY p.prot)         AS cp,\n         COUNT(*)      OVER ()                            AS cnt\n  FROM m\n  JOIN r ON m.ensg = r.ensg\n  JOIN p ON m.ensg = p.ensg\n  WHERE r.rna > 0 AND p.prot > 0\n),\ns AS (\n  SELECT ensg, gname, loc, rna, prot, dr, dp, cr, cp, cnt,\n         (cnt - dr + 1.0 + (cr - 1)/2.0) / cnt AS r_pct,\n         (cnt - dp + 1.0 + (cp - 1)/2.0) / cnt AS p_pct\n  FROM j\n)\nSELECT 'A_stats' AS section, NULL::BIGINT AS rk, NULL AS ensg, 'retained_n' AS gname,\n       NULL::DOUBLE AS rna, NULL::DOUBLE AS prot, NULL::DOUBLE AS rna_pctl, NULL::DOUBLE AS prot_pctl,\n       MAX(cnt)::DOUBLE AS val, NULL::VARCHAR AS loc FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'avg_rna_nCPM', NULL, NULL, NULL, NULL, AVG(rna), NULL FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'avg_dvp_intensity', NULL, NULL, NULL, NULL, AVG(prot), NULL FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'spearman_rank_corr', NULL, NULL, NULL, NULL, CORR(dr, dp)::DOUBLE, NULL FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'top20_overlap', NULL, NULL, NULL, NULL,\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, NULL\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'jaccard_top20', NULL, NULL, NULL, NULL,\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE\n       / NULLIF((SELECT COUNT(*) FROM s WHERE dr <= 20 OR dp <= 20), 0), NULL\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'mean_abs_rank_difference', NULL, NULL, NULL, NULL, AVG(ABS(dr - dp))::DOUBLE, NULL FROM s\nUNION ALL\nSELECT 'B_top20_rna', dr, ensg, gname, rna, prot, r_pct, NULL, NULL, loc FROM s WHERE dr <= 20\nUNION ALL\nSELECT 'C_top20_prot', dp, ensg, gname, rna, prot, NULL, p_pct, NULL, loc FROM s WHERE dp <= 20\nUNION ALL\nSELECT 'D_discord5', rn_disc, ensg, gname, rna, prot, r_pct, p_pct, ABS(r_pct - p_pct), loc\nFROM (\n  SELECT *, ROW_NUMBER() OVER (\n             ORDER BY ABS((dr - (cr - 1.0)/2.0) - (dp - (cp - 1.0)/2.0)) DESC, ensg ASC\n          ) AS rn_disc\n  FROM s\n) d\nWHERE rn_disc <= 5\nORDER BY 1, 2, 3, 4"
+      },
+      "ms": 749,
+      "result_chars": 4518,
+      "truncated": false,
+      "error": null,
+      "result_head": "section\trk\tensg\tgname\trna\tprot\trna_pctl\tprot_pctl\tval\tloc\nA_stats\t\t\tavg_dvp_intensity\t\t\t\t\t82939653.30390328\t\nA_stats\t\t\tavg_rna_nCPM\t\t\t\t\t109.27874416631309\t\nA_stats\t\t\tjaccard_top20\t\t\t\t\t0.08108108108108109\t\nA_stats\t\t\tmean_abs_rank_difference\t\t\t\t\t1483.0937632583793\t\nA_stats\t\t\tretained_n\t\t\t\t\t4714\t\nA_stats\t\t\tspearman_rank_corr\t\t\t\t\t0.09723394061440481\t\nA_stats\t\t\ttop20_overlap\t\t\t\t\t3\t\nB_top20_rna\t1\tENSG00000198626\tRYR2\t30129.5\t389006225.9\t1\t\t\tPlasma membrane\nB_top20_rna\t2\tENSG00000155657\tTTN\t24623.7\t5510998285.3\t0.9997878659312686\t\t\t\nB_top20_rna\t3\tENSG00000183023\tSLC8A1\t14581\t36351152.8\t0.999575731862"
+    },
+    {
+      "turn": 5,
+      "name": "sql",
+      "input": {
+        "query": "WITH m AS (\n  SELECT \"Ensembl\" AS ensg, \"Gene\" AS gname, \"Subcellular main location\" AS loc\n  FROM proteinatlas\n),\nr AS (\n  SELECT \"Gene\" AS ensg, TRY_CAST(\"nCPM\" AS DOUBLE) AS rna\n  FROM rna_single_cell_type WHERE \"Cell type\" = 'hepatocytes'\n),\np AS (\n  SELECT \"Gene\" AS ensg, TRY_CAST(\"Intensity\" AS DOUBLE) AS prot\n  FROM dvp_cell_type WHERE \"Cell type\" = 'hepatocytes'\n),\nj AS (\n  SELECT m.ensg, m.gname, m.loc, r.rna, p.prot,\n         ROW_NUMBER() OVER (ORDER BY r.rna DESC, m.ensg)  AS dr,\n         ROW_NUMBER() OVER (ORDER BY p.prot DESC, m.ensg) AS dp,\n         COUNT(*)      OVER (PARTITION BY r.rna)          AS cr,\n         COUNT(*)      OVER (PARTITION BY p.prot)         AS cp,\n         COUNT(*)      OVER ()                            AS cnt\n  FROM m\n  JOIN r ON m.ensg = r.ensg\n  JOIN p ON m.ensg = p.ensg\n  WHERE r.rna > 0 AND p.prot > 0\n),\ns AS (\n  SELECT ensg, gname, loc, rna, prot, dr, dp, cr, cp, cnt,\n         (cnt - dr + 1.0 + (cr - 1)/2.0) / cnt AS r_pct,\n         (cnt - dp + 1.0 + (cp - 1)/2.0) / cnt AS p_pct\n  FROM j\n)\nSELECT 'A_stats' AS section, NULL::BIGINT AS rk, NULL AS ensg, 'retained_n' AS gname,\n       NULL::DOUBLE AS rna, NULL::DOUBLE AS prot, NULL::DOUBLE AS rna_pctl, NULL::DOUBLE AS prot_pctl,\n       MAX(cnt)::DOUBLE AS val, NULL::VARCHAR AS loc FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'avg_rna_nCPM', NULL, NULL, NULL, NULL, AVG(rna), NULL FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'avg_dvp_intensity', NULL, NULL, NULL, NULL, AVG(prot), NULL FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'spearman_rank_corr', NULL, NULL, NULL, NULL, CORR(dr, dp)::DOUBLE, NULL FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'top20_overlap', NULL, NULL, NULL, NULL,\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, NULL\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'jaccard_top20', NULL, NULL, NULL, NULL,\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE\n       / NULLIF((SELECT COUNT(*) FROM s WHERE dr <= 20 OR dp <= 20), 0), NULL\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'mean_abs_rank_difference', NULL, NULL, NULL, NULL, AVG(ABS(dr - dp))::DOUBLE, NULL FROM s\nUNION ALL\nSELECT 'B_top20_rna', dr, ensg, gname, rna, prot, r_pct, NULL, NULL, loc FROM s WHERE dr <= 20\nUNION ALL\nSELECT 'C_top20_prot', dp, ensg, gname, rna, prot, NULL, p_pct, NULL, loc FROM s WHERE dp <= 20\nUNION ALL\nSELECT 'D_discord5', rn_disc, ensg, gname, rna, prot, r_pct, p_pct, ABS(r_pct - p_pct), loc\nFROM (\n  SELECT *, ROW_NUMBER() OVER (\n             ORDER BY ABS((dr - (cr - 1.0)/2.0) - (dp - (cp - 1.0)/2.0)) DESC, ensg ASC\n          ) AS rn_disc\n  FROM s\n) d\nWHERE rn_disc <= 5\nORDER BY 1, 2, 3, 4"
+      },
+      "ms": 802,
+      "result_chars": 4430,
+      "truncated": false,
+      "error": null,
+      "result_head": "section\trk\tensg\tgname\trna\tprot\trna_pctl\tprot_pctl\tval\tloc\nA_stats\t\t\tavg_dvp_intensity\t\t\t\t\t39845838.53761069\t\nA_stats\t\t\tavg_rna_nCPM\t\t\t\t\t303.72110275689244\t\nA_stats\t\t\tjaccard_top20\t\t\t\t\t0.02564102564102564\t\nA_stats\t\t\tmean_abs_rank_difference\t\t\t\t\t1516.84544695071\t\nA_stats\t\t\tretained_n\t\t\t\t\t5985\t\nA_stats\t\t\tspearman_rank_corr\t\t\t\t\t0.35399706958336014\t\nA_stats\t\t\ttop20_overlap\t\t\t\t\t1\t\nB_top20_rna\t1\tENSG00000110245\tAPOC3\t97065.8\t40164841.5\t1\t\t\tNucleoplasm\nB_top20_rna\t2\tENSG00000163631\tALB\t81391.2\t3292380412.1\t0.9998329156223893\t\t\tEndoplasmic reticulum, Golgi apparatus\nB_top20_rna\t3\tENSG00000257017\tHP\t655"
+    },
+    {
+      "turn": 5,
+      "name": "sql",
+      "input": {
+        "query": "WITH m AS (\n  SELECT \"Ensembl\" AS ensg, \"Gene\" AS gname, \"Subcellular main location\" AS loc\n  FROM proteinatlas\n),\nr AS (\n  SELECT \"Gene\" AS ensg, TRY_CAST(\"nCPM\" AS DOUBLE) AS rna\n  FROM rna_single_cell_type WHERE \"Cell type\" = 'neutrophils'\n),\np AS (\n  SELECT \"Gene\" AS ensg, TRY_CAST(\"Intensity\" AS DOUBLE) AS prot\n  FROM dvp_cell_type WHERE \"Cell type\" = 'neutrophils'\n),\nj AS (\n  SELECT m.ensg, m.gname, m.loc, r.rna, p.prot,\n         ROW_NUMBER() OVER (ORDER BY r.rna DESC, m.ensg)  AS dr,\n         ROW_NUMBER() OVER (ORDER BY p.prot DESC, m.ensg) AS dp,\n         COUNT(*)      OVER (PARTITION BY r.rna)          AS cr,\n         COUNT(*)      OVER (PARTITION BY p.prot)         AS cp,\n         COUNT(*)      OVER ()                            AS cnt\n  FROM m\n  JOIN r ON m.ensg = r.ensg\n  JOIN p ON m.ensg = p.ensg\n  WHERE r.rna > 0 AND p.prot > 0\n),\ns AS (\n  SELECT ensg, gname, loc, rna, prot, dr, dp, cr, cp, cnt,\n         (cnt - dr + 1.0 + (cr - 1)/2.0) / cnt AS r_pct,\n         (cnt - dp + 1.0 + (cp - 1)/2.0) / cnt AS p_pct\n  FROM j\n)\nSELECT 'A_stats' AS section, NULL::BIGINT AS rk, NULL AS ensg, 'retained_n' AS gname,\n       NULL::DOUBLE AS rna, NULL::DOUBLE AS prot, NULL::DOUBLE AS rna_pctl, NULL::DOUBLE AS prot_pctl,\n       MAX(cnt)::DOUBLE AS val, NULL::VARCHAR AS loc FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'avg_rna_nCPM', NULL, NULL, NULL, NULL, AVG(rna), NULL FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'avg_dvp_intensity', NULL, NULL, NULL, NULL, AVG(prot), NULL FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'spearman_rank_corr', NULL, NULL, NULL, NULL, CORR(dr, dp)::DOUBLE, NULL FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'top20_overlap', NULL, NULL, NULL, NULL,\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, NULL\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'jaccard_top20', NULL, NULL, NULL, NULL,\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE\n       / NULLIF((SELECT COUNT(*) FROM s WHERE dr <= 20 OR dp <= 20), 0), NULL\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'mean_abs_rank_difference', NULL, NULL, NULL, NULL, AVG(ABS(dr - dp))::DOUBLE, NULL FROM s\nUNION ALL\nSELECT 'B_top20_rna', dr, ensg, gname, rna, prot, r_pct, NULL, NULL, loc FROM s WHERE dr <= 20\nUNION ALL\nSELECT 'C_top20_prot', dp, ensg, gname, rna, prot, NULL, p_pct, NULL, loc FROM s WHERE dp <= 20\nUNION ALL\nSELECT 'D_discord5', rn_disc, ensg, gname, rna, prot, r_pct, p_pct, ABS(r_pct - p_pct), loc\nFROM (\n  SELECT *, ROW_NUMBER() OVER (\n             ORDER BY ABS((dr - (cr - 1.0)/2.0) - (dp - (cp - 1.0)/2.0)) DESC, ensg ASC\n          ) AS rn_disc\n  FROM s\n) d\nWHERE rn_disc <= 5\nORDER BY 1, 2, 3, 4"
+      },
+      "ms": 803,
+      "result_chars": 4229,
+      "truncated": false,
+      "error": null,
+      "result_head": "section\trk\tensg\tgname\trna\tprot\trna_pctl\tprot_pctl\tval\tloc\nA_stats\t\t\tavg_dvp_intensity\t\t\t\t\t42695656.56779096\t\nA_stats\t\t\tavg_rna_nCPM\t\t\t\t\t299.4154002965158\t\nA_stats\t\t\tjaccard_top20\t\t\t\t\t0\t\nA_stats\t\t\tmean_abs_rank_difference\t\t\t\t\t1615.5778354336546\t\nA_stats\t\t\tretained_n\t\t\t\t\t5396\t\nA_stats\t\t\tspearman_rank_corr\t\t\t\t\t0.15264916841826012\t\nA_stats\t\t\ttop20_overlap\t\t\t\t\t0\t\nB_top20_rna\t1\tENSG00000163220\tS100A9\t52381\t397984403.3\t1\t\t\tPlasma membrane, Intermediate filaments, Cytosol\nB_top20_rna\t2\tENSG00000143546\tS100A8\t52049.5\t1170046987.3\t0.9998146775389177\t\t\tIntermediate filaments\nB_top20_rna\t3\tENSG00000105835"
+    },
+    {
+      "turn": 6,
+      "name": "sql",
+      "input": {
+        "query": "WITH m AS (\n  SELECT \"Ensembl\" AS ensg, \"Gene\" AS gname, \"Subcellular main location\" AS loc\n  FROM proteinatlas\n),\nr AS (\n  SELECT \"Gene\" AS ensg, TRY_CAST(\"nCPM\" AS DOUBLE) AS rna\n  FROM rna_single_cell_type WHERE \"Cell type\" = 'cardiomyocytes'\n),\np AS (\n  SELECT \"Gene\" AS ensg, TRY_CAST(\"Intensity\" AS DOUBLE) AS prot\n  FROM dvp_cell_type WHERE \"Cell type\" = 'cardiomyocytes'\n),\nj AS (\n  SELECT m.ensg, m.gname, m.loc, r.rna, p.prot,\n         ROW_NUMBER() OVER (ORDER BY r.rna DESC, m.ensg)  AS dr,\n         ROW_NUMBER() OVER (ORDER BY p.prot DESC, m.ensg) AS dp,\n         COUNT(*)      OVER ()                            AS cnt\n  FROM m\n  JOIN r ON m.ensg = r.ensg\n  JOIN p ON m.ensg = p.ensg\n  WHERE r.rna > 0 AND p.prot > 0\n),\ns AS (\n  SELECT ensg, gname, loc, rna, prot, dr, dp, cnt,\n         (cnt - dr + 1.0) / cnt AS r_pct,\n         (cnt - dp + 1.0) / cnt AS p_pct\n  FROM j\n)\nSELECT 'A_stats' AS section, NULL::BIGINT AS rk, NULL AS ensg, 'retained_n' AS gname,\n       NULL::DOUBLE AS rna, NULL::DOUBLE AS prot, NULL::DOUBLE AS rna_pctl, NULL::DOUBLE AS prot_pctl,\n       MAX(cnt)::DOUBLE AS val, NULL::VARCHAR AS loc FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'spearman_rank_corr', NULL, NULL, NULL, NULL, CORR(dr, dp)::DOUBLE, NULL FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'top20_overlap', NULL, NULL, NULL, NULL,\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, NULL\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'jaccard_top20', NULL, NULL, NULL, NULL,\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE\n       / NULLIF((SELECT COUNT(*) FROM s WHERE dr <= 20 OR dp <= 20), 0), NULL\nUNION ALL\nSELECT 'B_top20_rna', dr, ensg, gname, rna, prot, r_pct, NULL, NULL, loc FROM s WHERE dr <= 20\nUNION ALL\nSELECT 'C_top20_prot', dp, ensg, gname, rna, prot, NULL, p_pct, NULL, loc FROM s WHERE dp <= 20\nUNION ALL\nSELECT 'D_discord5', rn5, ensg, gname, rna, prot, r_pct, p_pct, ABS(r_pct - p_pct), loc\nFROM (\n  SELECT *, ROW_NUMBER() OVER (ORDER BY ABS(r_pct - p_pct) DESC, ensg ASC) AS rn5 FROM s\n) d\nWHERE rn5 <= 5\nUNION ALL\nSELECT 'E_union', dr, ensg, gname, rna, prot, r_pct, p_pct,\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, loc\nFROM s WHERE dr <= 20 OR dp <= 20\nORDER BY 1, 2, 3, 4"
+      },
+      "ms": 773,
+      "result_chars": 8208,
+      "truncated": false,
+      "error": null,
+      "result_head": "section\trk\tensg\tgname\trna\tprot\trna_pctl\tprot_pctl\tval\tloc\nA_stats\t\t\tjaccard_top20\t\t\t\t\t0.08108108108108109\t\nA_stats\t\t\tretained_n\t\t\t\t\t4714\t\nA_stats\t\t\tspearman_rank_corr\t\t\t\t\t0.09723394061440503\t\nA_stats\t\t\ttop20_overlap\t\t\t\t\t3\t\nB_top20_rna\t1\tENSG00000198626\tRYR2\t30129.5\t389006225.9\t1\t\t\tPlasma membrane\nB_top20_rna\t2\tENSG00000155657\tTTN\t24623.7\t5510998285.3\t0.9997878659312686\t\t\t\nB_top20_rna\t3\tENSG00000183023\tSLC8A1\t14581\t36351152.8\t0.9995757318625371\t\t\tNucleoplasm, Plasma membrane\nB_top20_rna\t4\tENSG00000114279\tFGF12\t9617.8\t7387232.2\t0.9993635977938057\t\t\tNucleoplasm\nB_top20_rna\t5\tENSG00000198947\tDMD\t6"
+    },
+    {
+      "turn": 6,
+      "name": "sql",
+      "input": {
+        "query": "WITH m AS (\n  SELECT \"Ensembl\" AS ensg, \"Gene\" AS gname, \"Subcellular main location\" AS loc\n  FROM proteinatlas\n),\nr AS (\n  SELECT \"Gene\" AS ensg, TRY_CAST(\"nCPM\" AS DOUBLE) AS rna\n  FROM rna_single_cell_type WHERE \"Cell type\" = 'hepatocytes'\n),\np AS (\n  SELECT \"Gene\" AS ensg, TRY_CAST(\"Intensity\" AS DOUBLE) AS prot\n  FROM dvp_cell_type WHERE \"Cell type\" = 'hepatocytes'\n),\nj AS (\n  SELECT m.ensg, m.gname, m.loc, r.rna, p.prot,\n         ROW_NUMBER() OVER (ORDER BY r.rna DESC, m.ensg)  AS dr,\n         ROW_NUMBER() OVER (ORDER BY p.prot DESC, m.ensg) AS dp,\n         COUNT(*)      OVER ()                            AS cnt\n  FROM m\n  JOIN r ON m.ensg = r.ensg\n  JOIN p ON m.ensg = p.ensg\n  WHERE r.rna > 0 AND p.prot > 0\n),\ns AS (\n  SELECT ensg, gname, loc, rna, prot, dr, dp, cnt,\n         (cnt - dr + 1.0) / cnt AS r_pct,\n         (cnt - dp + 1.0) / cnt AS p_pct\n  FROM j\n)\nSELECT 'A_stats' AS section, NULL::BIGINT AS rk, NULL AS ensg, 'retained_n' AS gname,\n       NULL::DOUBLE AS rna, NULL::DOUBLE AS prot, NULL::DOUBLE AS rna_pctl, NULL::DOUBLE AS prot_pctl,\n       MAX(cnt)::DOUBLE AS val, NULL::VARCHAR AS loc FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'spearman_rank_corr', NULL, NULL, NULL, NULL, CORR(dr, dp)::DOUBLE, NULL FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'top20_overlap', NULL, NULL, NULL, NULL,\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, NULL\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'jaccard_top20', NULL, NULL, NULL, NULL,\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE\n       / NULLIF((SELECT COUNT(*) FROM s WHERE dr <= 20 OR dp <= 20), 0), NULL\nUNION ALL\nSELECT 'B_top20_rna', dr, ensg, gname, rna, prot, r_pct, NULL, NULL, loc FROM s WHERE dr <= 20\nUNION ALL\nSELECT 'C_top20_prot', dp, ensg, gname, rna, prot, NULL, p_pct, NULL, loc FROM s WHERE dp <= 20\nUNION ALL\nSELECT 'D_discord5', rn5, ensg, gname, rna, prot, r_pct, p_pct, ABS(r_pct - p_pct), loc\nFROM (\n  SELECT *, ROW_NUMBER() OVER (ORDER BY ABS(r_pct - p_pct) DESC, ensg ASC) AS rn5 FROM s\n) d\nWHERE rn5 <= 5\nUNION ALL\nSELECT 'E_union', dr, ensg, gname, rna, prot, r_pct, p_pct,\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, loc\nFROM s WHERE dr <= 20 OR dp <= 20\nORDER BY 1, 2, 3, 4"
+      },
+      "ms": 772,
+      "result_chars": 8231,
+      "truncated": false,
+      "error": null,
+      "result_head": "section\trk\tensg\tgname\trna\tprot\trna_pctl\tprot_pctl\tval\tloc\nA_stats\t\t\tjaccard_top20\t\t\t\t\t0.02564102564102564\t\nA_stats\t\t\tretained_n\t\t\t\t\t5985\t\nA_stats\t\t\tspearman_rank_corr\t\t\t\t\t0.3539970695833614\t\nA_stats\t\t\ttop20_overlap\t\t\t\t\t1\t\nB_top20_rna\t1\tENSG00000110245\tAPOC3\t97065.8\t40164841.5\t1\t\t\tNucleoplasm\nB_top20_rna\t2\tENSG00000163631\tALB\t81391.2\t3292380412.1\t0.9998329156223893\t\t\tEndoplasmic reticulum, Golgi apparatus\nB_top20_rna\t3\tENSG00000257017\tHP\t65516.9\t427088229.1\t0.9996658312447786\t\t\tVesicles\nB_top20_rna\t4\tENSG00000229314\tORM1\t63160.9\t25087070.9\t0.9994987468671679\t\t\tVesicles\nB_top20_rna\t5\tENSG0000019"
+    },
+    {
+      "turn": 6,
+      "name": "sql",
+      "input": {
+        "query": "WITH m AS (\n  SELECT \"Ensembl\" AS ensg, \"Gene\" AS gname, \"Subcellular main location\" AS loc\n  FROM proteinatlas\n),\nr AS (\n  SELECT \"Gene\" AS ensg, TRY_CAST(\"nCPM\" AS DOUBLE) AS rna\n  FROM rna_single_cell_type WHERE \"Cell type\" = 'neutrophils'\n),\np AS (\n  SELECT \"Gene\" AS ensg, TRY_CAST(\"Intensity\" AS DOUBLE) AS prot\n  FROM dvp_cell_type WHERE \"Cell type\" = 'neutrophils'\n),\nj AS (\n  SELECT m.ensg, m.gname, m.loc, r.rna, p.prot,\n         ROW_NUMBER() OVER (ORDER BY r.rna DESC, m.ensg)  AS dr,\n         ROW_NUMBER() OVER (ORDER BY p.prot DESC, m.ensg) AS dp,\n         COUNT(*)      OVER ()                            AS cnt\n  FROM m\n  JOIN r ON m.ensg = r.ensg\n  JOIN p ON m.ensg = p.ensg\n  WHERE r.rna > 0 AND p.prot > 0\n),\ns AS (\n  SELECT ensg, gname, loc, rna, prot, dr, dp, cnt,\n         (cnt - dr + 1.0) / cnt AS r_pct,\n         (cnt - dp + 1.0) / cnt AS p_pct\n  FROM j\n)\nSELECT 'A_stats' AS section, NULL::BIGINT AS rk, NULL AS ensg, 'retained_n' AS gname,\n       NULL::DOUBLE AS rna, NULL::DOUBLE AS prot, NULL::DOUBLE AS rna_pctl, NULL::DOUBLE AS prot_pctl,\n       MAX(cnt)::DOUBLE AS val, NULL::VARCHAR AS loc FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'spearman_rank_corr', NULL, NULL, NULL, NULL, CORR(dr, dp)::DOUBLE, NULL FROM s\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'top20_overlap', NULL, NULL, NULL, NULL,\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, NULL\nUNION ALL\nSELECT 'A_stats', NULL, NULL, 'jaccard_top20', NULL, NULL, NULL, NULL,\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE\n       / NULLIF((SELECT COUNT(*) FROM s WHERE dr <= 20 OR dp <= 20), 0), NULL\nUNION ALL\nSELECT 'B_top20_rna', dr, ensg, gname, rna, prot, r_pct, NULL, NULL, loc FROM s WHERE dr <= 20\nUNION ALL\nSELECT 'C_top20_prot', dp, ensg, gname, rna, prot, NULL, p_pct, NULL, loc FROM s WHERE dp <= 20\nUNION ALL\nSELECT 'D_discord5', rn5, ensg, gname, rna, prot, r_pct, p_pct, ABS(r_pct - p_pct), loc\nFROM (\n  SELECT *, ROW_NUMBER() OVER (ORDER BY ABS(r_pct - p_pct) DESC, ensg ASC) AS rn5 FROM s\n) d\nWHERE rn5 <= 5\nUNION ALL\nSELECT 'E_union', dr, ensg, gname, rna, prot, r_pct, p_pct,\n       (SELECT COUNT(*) FROM s WHERE dr <= 20 AND dp <= 20)::DOUBLE, loc\nFROM s WHERE dr <= 20 OR dp <= 20\nORDER BY 1, 2, 3, 4"
+      },
+      "ms": 747,
+      "result_chars": 8056,
+      "truncated": false,
+      "error": null,
+      "result_head": "section\trk\tensg\tgname\trna\tprot\trna_pctl\tprot_pctl\tval\tloc\nA_stats\t\t\tjaccard_top20\t\t\t\t\t0\t\nA_stats\t\t\tretained_n\t\t\t\t\t5396\t\nA_stats\t\t\tspearman_rank_corr\t\t\t\t\t0.15264916841825799\t\nA_stats\t\t\ttop20_overlap\t\t\t\t\t0\t\nB_top20_rna\t1\tENSG00000163220\tS100A9\t52381\t397984403.3\t1\t\t\tPlasma membrane, Intermediate filaments, Cytosol\nB_top20_rna\t2\tENSG00000143546\tS100A8\t52049.5\t1170046987.3\t0.9998146775389177\t\t\tIntermediate filaments\nB_top20_rna\t3\tENSG00000105835\tNAMPT\t41123.4\t5104286.3\t0.9996293550778355\t\t\tNuclear speckles\nB_top20_rna\t4\tENSG00000167996\tFTH1\t24197.5\t19468868.2\t0.9994440326167532\t\t\tVesicles\nB_top20_r"
+    }
+  ],
+  "usage": {
+    "input_tokens": 112526,
+    "output_tokens": 54329,
+    "cache_read_input_tokens": 63488,
+    "cache_creation_input_tokens": 0,
+    "reasoning_tokens": 47423
+  },
+  "started_unix_ms": 1788991201994,
+  "final_answer": "",
+  "stop": "length",
+  "tool_call_count": 15,
+  "seconds": 65.958,
+  "model_calls": 7,
+  "cost_usd": 0.25520407
+}

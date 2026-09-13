@@ -1,0 +1,589 @@
+{
+  "id": "Q14",
+  "kind": "analysis",
+  "question": "Which transcription factors have cell type enriched RNA expression, and in which single cell types? Give the number of such transcription factors per cell type as a bar chart of the fifteen cell types with the most. For the cell type with the most, list its transcription factors with their nCPM, the distribution of their RNA tissue specificity categories as a bar chart, and which of them have a validated prognostic association in any TCGA cohort. Provide the table.",
+  "model": "deepseek-v4-flash",
+  "effort": null,
+  "turns": [
+    {
+      "turn": 1,
+      "ms": 836,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 596,
+        "completion_tokens": 37,
+        "total_tokens": 633,
+        "prompt_tokens_details": {
+          "cached_tokens": 384
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 10
+        },
+        "prompt_cache_hit_tokens": 384,
+        "prompt_cache_miss_tokens": 212
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "schema",
+          "input": "{}"
+        }
+      ]
+    },
+    {
+      "turn": 2,
+      "ms": 5103,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6212,
+        "completion_tokens": 795,
+        "total_tokens": 7007,
+        "prompt_tokens_details": {
+          "cached_tokens": 512
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 543
+        },
+        "prompt_cache_hit_tokens": 512,
+        "prompt_cache_miss_tokens": 5700
+      },
+      "text": "I'll start by exploring the key tables and their relevant columns.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"RNA single cell type specificity\\\", COUNT(*) AS n FROM proteinatlas GROUP BY \\\"RNA single cell type specificity\\\" ORDER BY n DESC\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"RNA single cell type distribution\\\", COUNT(*) AS n FROM proteinatlas GROUP BY \\\"RNA single cell type distribution\\\" ORDER BY n DESC LIMIT 30\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"RNA tissue specificity\\\", COUNT(*) AS n FROM proteinatlas GROUP BY \\\"RNA tissue specificity\\\" ORDER BY n DESC\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Protein class\\\", COUNT(*) AS n FROM proteinatlas GROUP BY \\\"Protein class\\\" ORDER BY n DESC LIMIT 50\"}"
+        }
+      ]
+    },
+    {
+      "turn": 3,
+      "ms": 8908,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 7990,
+        "completion_tokens": 1235,
+        "total_tokens": 9225,
+        "prompt_tokens_details": {
+          "cached_tokens": 6912
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 982
+        },
+        "prompt_cache_hit_tokens": 6912,
+        "prompt_cache_miss_tokens": 1078
+      },
+      "text": "Let me understand the data structure better, checking which specific cell type field is available and confirming gene-level uniqueness.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT COUNT(*) AS total, COUNT(DISTINCT \\\"Gene\\\") AS distinct_genes FROM proteinatlas\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene\\\", \\\"Gene name\\\", \\\"Protein class\\\", \\\"RNA single cell type specificity\\\", \\\"RNA single cell type specific nCPM\\\", \\\"RNA single cell type distribution\\\" FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Transcription factors%' AND \\\"RNA single cell type specificity\\\"='Cell type enriched' LIMIT 20\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene\\\", \\\"Gene name\\\", \\\"Cell type\\\", nCPM FROM rna_single_cell_type WHERE \\\"Gene name\\\" IN ('FABP4','INS','ALB') LIMIT 50\"}"
+        }
+      ]
+    },
+    {
+      "turn": 4,
+      "ms": 2678,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 10345,
+        "completion_tokens": 378,
+        "total_tokens": 10723,
+        "prompt_tokens_details": {
+          "cached_tokens": 9216
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 201
+        },
+        "prompt_cache_hit_tokens": 9216,
+        "prompt_cache_miss_tokens": 1129
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene\\\", \\\"Ensembl\\\", \\\"RNA single cell type specificity\\\", \\\"RNA single cell type specific nCPM\\\", \\\"RNA single cell type distribution\\\", \\\"RNA single cell type group specificity\\\" FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Transcription factors%' AND \\\"RNA single cell type specificity\\\"='Cell type enriched' LIMIT 30\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT COUNT(*) AS n FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Transcription factors%' AND \\\"RNA single cell type specificity\\\"='Cell type enriched'\"}"
+        }
+      ]
+    },
+    {
+      "turn": 5,
+      "ms": 3267,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 11826,
+        "completion_tokens": 459,
+        "total_tokens": 12285,
+        "prompt_tokens_details": {
+          "cached_tokens": 10624
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 288
+        },
+        "prompt_cache_hit_tokens": 10624,
+        "prompt_cache_miss_tokens": 1202
+      },
+      "text": "The proteinatlas table embeds \"Cell type: nCPM\" in the \"RNA single cell type specific nCPM\" column. Let me parse all 92 enriched transcription factors.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene\\\", \\\"Ensembl\\\", split_part(\\\"RNA single cell type specific nCPM\\\", ': ', 1) AS cell_type, TRY_CAST(split_part(\\\"RNA single cell type specific nCPM\\\", ': ', 2) AS DOUBLE) AS nCPM FROM proteinatlas WHERE \\\"Protein class\\\" LIKE '%Transcription factors%' AND \\\"RNA single cell type specificity\\\"='Cell type enriched' ORDER BY cell_type\"}"
+        }
+      ]
+    },
+    {
+      "turn": 6,
+      "ms": 1633,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 14165,
+        "completion_tokens": 224,
+        "total_tokens": 14389,
+        "prompt_tokens_details": {
+          "cached_tokens": 12160
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 51
+        },
+        "prompt_cache_hit_tokens": 12160,
+        "prompt_cache_miss_tokens": 2005
+      },
+      "text": "Now let me count these transcription factors per cell type to identify the top fifteen.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH tf AS (\\n  SELECT \\\"Gene\\\", \\\"Ensembl\\\", split_part(\\\"RNA single cell type specific nCPM\\\", ': ', 1) AS cell_type,\\n         TRY_CAST(split_part(\\\"RNA single cell type specific nCPM\\\", ': ', 2) AS DOUBLE) AS nCPM\\n  FROM proteinatlas\\n  WHERE \\\"Protein class\\\" LIKE '%Transcription factors%' AND \\\"RNA single cell type specificity\\\"='Cell type enriched'\\n)\\nSELECT cell_type, COUNT(*) AS n FROM tf GROUP BY cell_type ORDER BY n DESC\"}"
+        }
+      ]
+    },
+    {
+      "turn": 7,
+      "ms": 9830,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 14758,
+        "completion_tokens": 1629,
+        "total_tokens": 16387,
+        "prompt_tokens_details": {
+          "cached_tokens": 14336
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1318
+        },
+        "prompt_cache_hit_tokens": 14336,
+        "prompt_cache_miss_tokens": 422
+      },
+      "text": "The cell type with the most enriched transcription factors is **Neutrophils** (8). Let me now gather details for those 8 genes: their tissue specificity categories and validated prognostic associations.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene\\\", \\\"RNA tissue specificity\\\", \\\"RNA single cell type specific nCPM\\\" FROM proteinatlas WHERE \\\"Gene\\\" IN ('ELF2','BCL6','ZNF746','ZNF438','NFKBIZ','ZNF429','ZNF281','STAT5B')\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT * FROM cancer_prognostic_data WHERE \\\"Gene name\\\" IN ('ELF2','BCL6','ZNF746','ZNF438','NFKBIZ','ZNF429','ZNF281','STAT5B') AND (\\\"validated prognostic - favorable\\\" <> '' OR \\\"validated prognostic - unfavorable\\\" <> '') LIMIT 30\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene name\\\", \\\"Cancer\\\", \\\"validated prognostic - favorable\\\", \\\"validated prognostic - unfavorable\\\" FROM cancer_prognostic_data WHERE \\\"Gene name\\\"='BCL6' LIMIT 30\"}"
+        }
+      ]
+    },
+    {
+      "turn": 8,
+      "ms": 12392,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 17259,
+        "completion_tokens": 1837,
+        "total_tokens": 19096,
+        "prompt_tokens_details": {
+          "cached_tokens": 16384
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 1415
+        },
+        "prompt_cache_hit_tokens": 16384,
+        "prompt_cache_miss_tokens": 875
+      },
+      "text": "The 3 genes with entries in validated prognostic columns are ZNF429, ELF2, STAT5B (all unfavorable in Kidney Renal Clear Cell Carcinoma). Let me verify with the main proteinatlas prognostic columns and check the tissue categories summary, plus confirm no other validated entries exist for these 8 genes.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene\\\", \\\"Cancer prognostics - Kidney Renal Clear Cell Carcinoma (TCGA)\\\" AS kidney_tcga FROM proteinatlas WHERE \\\"Gene\\\" IN ('ELF2','BCL6','ZNF746','ZNF438','NFKBIZ','ZNF429','ZNF281','STAT5B')\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene name\\\", \\\"Cancer\\\", \\\"validated prognostic - favorable\\\", \\\"validated prognostic - unfavorable\\\" FROM cancer_prognostic_data WHERE \\\"Gene name\\\" IN ('ELF2','BCL6','ZNF746','ZNF438','NFKBIZ','ZNF429','ZNF281','STAT5B') AND ((\\\"validated prognostic - favorable\\\" IS NOT NULL AND \\\"validated prognostic - favorable\\\"<>'') OR (\\\"validated prognostic - unfavorable\\\" IS NOT NULL AND \\\"validated prognostic - unfavorable\\\"<>'')) AND \\\"Cancer\\\" LIKE '%(TCGA)%' ORDER BY \\\"Gene name\\\"\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT COUNT(*) AS total_tf, COUNT(DISTINCT \\\"Gene\\\") AS tf_genes FROM rna_single_cell_type WHERE \\\"Gene name\\\" IN ('ELF2','BCL6','ZNF746','ZNF438','NFKBIZ','ZNF429','ZNF281','STAT5B')\"}"
+        }
+      ]
+    },
+    {
+      "turn": 9,
+      "ms": 25356,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 19369,
+        "completion_tokens": 3959,
+        "total_tokens": 23328,
+        "prompt_tokens_details": {
+          "cached_tokens": 19072
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 3599
+        },
+        "prompt_cache_hit_tokens": 19072,
+        "prompt_cache_miss_tokens": 297
+      },
+      "text": "Let me do a final check for any validated prognostic entries across all cohorts for the 8 neutrophil transcription factors, and assemble the complete top-15 cell type ranking.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene name\\\", \\\"Cancer\\\", \\\"validated prognostic - favorable\\\", \\\"validated prognostic - unfavorable\\\" FROM cancer_prognostic_data WHERE \\\"Gene name\\\" IN ('ELF2','BCL6','ZNF746','ZNF438','NFKBIZ','ZNF429','ZNF281','STAT5B') AND ((\\\"validated prognostic - favorable\\\" IS NOT NULL AND \\\"validated prognostic - favorable\\\"<>'') OR (\\\"validated prognostic - unfavorable\\\" IS NOT NULL AND \\\"validated prognostic - unfavorable\\\"<>'')) ORDER BY \\\"Gene name\\\", \\\"Cancer\\\"\"}"
+        },
+        {
+          "name": "sql",
+          "input": "{\"query\": \"SELECT \\\"Gene\\\", \\\"Cancer prognostics - Bladder Urothelial Carcinoma (TCGA)\\\", \\\"Cancer prognostics - Colon Adenocarcinoma (TCGA)\\\", \\\"Cancer prognostics - Lung Adenocarcinoma (TCGA)\\\", \\\"Cancer prognostics - Lung Squamous Cell Carcinoma (TCGA)\\\", \\\"Cancer prognostics - Stomach Adenocarcinoma (TCGA)\\\", \\\"Cancer prognostics - Skin Cuteneous Melanoma (TCGA)\\\", \\\"Cancer prognostics - Uterine Corpus Endometrial Carcinoma (TCGA)\\\" FROM proteinatlas WHERE \\\"Gene\\\" IN ('BCL6','NFKBIZ','ZNF746','ZNF438','ZNF281')\"}"
+        }
+      ]
+    },
+    {
+      "turn": 10,
+      "ms": 14206,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 23650,
+        "completion_tokens": 2239,
+        "total_tokens": 25889,
+        "prompt_tokens_details": {
+          "cached_tokens": 23296
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 2030
+        },
+        "prompt_cache_hit_tokens": 23296,
+        "prompt_cache_miss_tokens": 354
+      },
+      "text": "I have all the data needed. Let me verify the final per-cell-type ranking once more with a clean query to make sure I present accurate numbers.",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\": \"WITH tf AS (\\n  SELECT \\\"Gene\\\", split_part(\\\"RNA single cell type specific nCPM\\\", ': ', 1) AS cell_type,\\n         TRY_CAST(split_part(\\\"RNA single cell type specific nCPM\\\", ': ', 2) AS DOUBLE) AS nCPM\\n  FROM proteinatlas\\n  WHERE \\\"Protein class\\\" LIKE '%Transcription factors%' AND \\\"RNA single cell type specificity\\\"='Cell type enriched'\\n)\\nSELECT cell_type, COUNT(*) AS n, ROUND(SUM(nCPM),1) AS total_ncpm FROM tf GROUP BY cell_type HAVING COUNT(*)>=2 ORDER BY n DESC, cell_type\"}"
+        }
+      ]
+    },
+    {
+      "turn": 11,
+      "ms": 12226,
+      "stop_reason": "stop",
+      "usage": {
+        "prompt_tokens": 26142,
+        "completion_tokens": 2252,
+        "total_tokens": 28394,
+        "prompt_tokens_details": {
+          "cached_tokens": 25856
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 250
+        },
+        "prompt_cache_hit_tokens": 25856,
+        "prompt_cache_miss_tokens": 286
+      },
+      "text": "All data are gathered. Here is the complete analysis.\n\n## 1. Transcription factors with cell type–enriched RNA expression\n\nUsing the HPA definition of RNA single cell type specificity = **\"Cell type enriched\"** and restricting to genes annotated in the **\"Transcription factors\"** protein class, there are **92 transcription factors**, distributed across **49 single cell types**.\n\n### Number of enriched transcription factors per cell type (top 15)\n\nA bar chart of the 15 cell types with the most such transcription factors (each `#` = 1 TF; values from the data above):\n\n```\nNeutrophils                     8   ########\nOocytes                         6   ######\nLate spermatids                 6   ######\nCardiomyocytes                  5   #####\nEarly spermatids                5   #####\nEsophageal apical cells         3   ###\nAdrenal medulla cells           3   ###\nTuft cells                      3   ###\nBreast lactating cells          2   ##\nEarly primary spermatocytes     2   ##\nEpididymal principal cells      2   ##\nExtravillous trophoblasts       2   ##\nHepatocytes                     2   ##\nMyosatellite cells              2   ##\nNeuroendocrine cells            2   ##\n```\n\n> Note on ties: the cutoff at 15 falls inside a large tie — 12 cell types each have exactly 2 enriched transcription factors. The 7 shown at the bottom (positions 9–15) are ordered alphabetically; the other tied cell types (Pancreatic acinar cells, Platelets, Prostatic glandular cells, Retinal bipolar cells, Thymic myoid cells) also have 2 and are excluded only by this tie-break.\n\n### The 92 transcription factors and their single cell types (with nCPM)\n\n| Cell type | TFs (nCPM) |\n|---|---|\n| Neutrophils (8) | ELF2 (4633.5), NFKBIZ (3464.1), BCL6 (2731.6), STAT5B (1497.8), ZNF438 (1433.6), ZNF429 (489.9), ZNF281 (385.3), ZNF746 (109.4) |\n| Oocytes (6) | FIGLA (1556.5), FOXR1 (529.6), LHX8 (557.2), NEUROG1 (50.7), TBPL2 (101.3), ZNF256 (41.4) |\n| Late spermatids (6) | HBP1 (487.4), ETV2 (830.1), E2F2 (32.5), PLAGL2 (265.2), TBR1 (58.7), ZNF628 (212.7) |\n| Cardiomyocytes (5) | NFXL1 (987.6), ZNF606 (397.8), ZFP69 (73.9), ARGFX (49.3), NKX2-5 (20.1) |\n| Early spermatids (5) | ZNF829 (335.9), KLF17 (249.4), ZSCAN29 (131.8), SHOX2 (128.6), ZNF668 (81.4) |\n| Esophageal apical cells (3) | HOPX (29333.9), PAX9 (1282.1), ZNF426 (413.6) |\n| Adrenal medulla cells (3) | PHOX2B (95.7), PHOX2A (63.8), DRGX (42.5) |\n| Tuft cells (3) | POU2F3 (737.8), HMX2 (34.6), HMX3 (34.6) |\n| Breast lactating cells (2) | ELF5 (1231.3), NKX3-2 (11.6) |\n| Early primary spermatocytes (2) | DMRTC2 (347.3), PRDM9 (72.7) |\n| Epididymal principal cells (2) | DDIT3 (3123.3), ZNF417 (4.1) |\n| Extravillous trophoblasts (2) | ASCL2 (1529.3), MYCN (124.0) |\n| Hepatocytes (2) | ATF5 (1266.9), NR1I3 (194.8) |\n| Myosatellite cells (2) | PAX7 (927.7), MYF5 (176.3) |\n| Neuroendocrine cells (2) | FEV (565.8), LHX5 (18.7) |\n| Pancreatic acinar cells (2) | RBPJL (975.0), PTF1A (130.5) |\n| Platelets (2) | ZNF778 (320.5), ZNF547 (2.8) |\n| Prostatic glandular cells (2) | ZNF827 (1374.4), NKX3-1 (1231.7) |\n| Retinal bipolar cells (2) | VSX1 (482.6), PRDM8 (285.4) |\n| Thymic myoid cells (2) | MYF6 (596.9), ZBED1 (2.7) |\n| Single-TF cell types (29) | ZNF740→Adipocytes (330.0); PAX5→B-cells (496.0); NEUROD6→Brain excitatory neurons (23.0); TBX19→Corticotrophs (634.5); ZNF417→(above); ATOH1→Goblet cells (287.6); MKX→Gonadotrophs (558.1); SPIC→Kupffer cells (61.5); LYAR→Late primary spermatocytes (1609.5); PAX1→Medullary thymic epithelial cells (72.0); ALX1→Melanocytes (113.2); POU4F3→Mesothelial cells (6.6); NR2E1→Müller glia (91.3); CEBPE→Neutrophil progenitors (94.0); MYT1→Oligodendrocyte progenitor cells (238.7); ST18→Oligodendrocytes (4251.0); POU5F2→Paneth cells (3.9); LHX3→Pituitary stem cells (200.9); ZNF215→Plasma cells (177.8); GLIS1→Proximal tubule cells (319.8); POU4F2→Retinal ganglion cells (15.5); ONECUT3→Retinal horizontal cells (342.6); NR2E3→Rod photoreceptor cells (861.9); ZNF711→Sertoli cells (451.8",
+      "tool_uses": []
+    }
+  ],
+  "tool_calls": [
+    {
+      "turn": 1,
+      "name": "schema",
+      "input": {},
+      "ms": 13524,
+      "result_chars": 148152,
+      "truncated": true,
+      "error": null,
+      "result_head": "Tables built from the Human Protein Atlas bulk files (all columns are text; cast for arithmetic, e.g. TRY_CAST(col AS DOUBLE)).\n\nblood_immunoassay_concentration (0.1 MB): gene, ENSG ID, conc [pg/L], sample type, number_of_samples, pubmed id\nblood_ms_concentration (0.1 MB): Gene, ENSG ID, Conc [pg/L]\nblood_pea_disease_de (17.9 MB): Gene, ENSG ID, Disease, Class, Control, logFC, p-value adjusted, Seeds, Mean importance, SD importance, Max importance, Min importance\nblood_pea_diseases (0.0 MB): Disease, Class\ncancer_cancers (0.0 MB): Cancer, Organ\ncancer_cptac (5.7 MB): Cancer, Gene, Gene name, p"
+    },
+    {
+      "turn": 2,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"RNA single cell type specificity\", COUNT(*) AS n FROM proteinatlas GROUP BY \"RNA single cell type specificity\" ORDER BY n DESC"
+      },
+      "ms": 421,
+      "result_chars": 161,
+      "truncated": false,
+      "error": null,
+      "result_head": "RNA single cell type specificity\tn\nCell type enhanced\t13393\nGroup enriched\t1995\nCell type enriched\t1906\nLow cell type specificity\t1590\nNot detected\t1278\n[5 rows]"
+    },
+    {
+      "turn": 2,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"RNA single cell type distribution\", COUNT(*) AS n FROM proteinatlas GROUP BY \"RNA single cell type distribution\" ORDER BY n DESC LIMIT 30"
+      },
+      "ms": 489,
+      "result_chars": 151,
+      "truncated": false,
+      "error": null,
+      "result_head": "RNA single cell type distribution\tn\nDetected in many\t11450\nDetected in some\t4733\nDetected in all\t2425\nNot detected\t1278\nDetected in single\t276\n[5 rows]"
+    },
+    {
+      "turn": 2,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"RNA tissue specificity\", COUNT(*) AS n FROM proteinatlas GROUP BY \"RNA tissue specificity\" ORDER BY n DESC"
+      },
+      "ms": 341,
+      "result_chars": 141,
+      "truncated": false,
+      "error": null,
+      "result_head": "RNA tissue specificity\tn\nLow tissue specificity\t8096\nTissue enhanced\t6356\nTissue enriched\t3132\nGroup enriched\t1547\nNot detected\t1031\n[5 rows]"
+    },
+    {
+      "turn": 2,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Protein class\", COUNT(*) AS n FROM proteinatlas GROUP BY \"Protein class\" ORDER BY n DESC LIMIT 50"
+      },
+      "ms": 304,
+      "result_chars": 4169,
+      "truncated": false,
+      "error": null,
+      "result_head": "Protein class\tn\nPredicted intracellular proteins\t4705\nPredicted intracellular proteins, Transcription factors\t840\nPredicted membrane proteins\t817\nDisease related genes, Human disease related genes, Predicted intracellular proteins\t669\nEssential proteins, Predicted intracellular proteins\t604\nPredicted intracellular proteins, Predicted membrane proteins\t581\nEnzymes, Predicted intracellular proteins\t519\nPlasma proteins, Predicted intracellular proteins\t514\nEnzymes, Metabolic proteins, Predicted intracellular proteins\t486\nG-protein coupled receptors, Predicted membrane proteins\t457\nPredicted secre"
+    },
+    {
+      "turn": 3,
+      "name": "sql",
+      "input": {
+        "query": "SELECT COUNT(*) AS total, COUNT(DISTINCT \"Gene\") AS distinct_genes FROM proteinatlas"
+      },
+      "ms": 422,
+      "result_chars": 41,
+      "truncated": false,
+      "error": null,
+      "result_head": "total\tdistinct_genes\n20162\t20151\n[1 rows]"
+    },
+    {
+      "turn": 3,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene\", \"Gene name\", \"Protein class\", \"RNA single cell type specificity\", \"RNA single cell type specific nCPM\", \"RNA single cell type distribution\" FROM proteinatlas WHERE \"Protein class\" LIKE '%Transcription factors%' AND \"RNA single cell type specificity\"='Cell type enriched' LIMIT 20"
+      },
+      "ms": 224,
+      "result_chars": 363,
+      "truncated": false,
+      "error": "tool reported an error",
+      "result_head": "Error: Binder Error: Referenced column \"Gene name\" not found in FROM clause!\nCandidate bindings: \"Gene\", \"Gene synonym\", \"Gene description\", \"Cancer prognostics - Rectum Adenocarcinoma (TCGA)\", \"Cancer prognostics - Rectum Adenocarcinoma (validation)\"\n\nLINE 1: SELECT \"Gene\", \"Gene name\", \"Protein class\", \"RNA single cell type specifi...\n                       ^"
+    },
+    {
+      "turn": 3,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene\", \"Gene name\", \"Cell type\", nCPM FROM rna_single_cell_type WHERE \"Gene name\" IN ('FABP4','INS','ALB') LIMIT 50"
+      },
+      "ms": 643,
+      "result_chars": 2364,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tGene name\tCell type\tnCPM\nENSG00000163631\tALB\tadipocytes\t0.2\nENSG00000163631\tALB\tadrenal cortex cells\t0.0\nENSG00000163631\tALB\tadrenal medulla cells\t0.0\nENSG00000163631\tALB\talveolar cells type 1\t0.0\nENSG00000163631\tALB\talveolar cells type 2\t0.0\nENSG00000163631\tALB\tastrocytes\t1.6\nENSG00000163631\tALB\tb-cells\t56.5\nENSG00000163631\tALB\tbasal keratinocytes\t0.0\nENSG00000163631\tALB\tbasal prostatic cells\t0.0\nENSG00000163631\tALB\tbergmann glia\t0.5\nENSG00000163631\tALB\tbrain excitatory neurons\t0.6\nENSG00000163631\tALB\tbrain inhibitory neurons\t1.3\nENSG00000163631\tALB\tbreast hormone-responsive cells\t78.5\nE"
+    },
+    {
+      "turn": 4,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene\", \"Ensembl\", \"RNA single cell type specificity\", \"RNA single cell type specific nCPM\", \"RNA single cell type distribution\", \"RNA single cell type group specificity\" FROM proteinatlas WHERE \"Protein class\" LIKE '%Transcription factors%' AND \"RNA single cell type specificity\"='Cell type enriched' LIMIT 30"
+      },
+      "ms": 393,
+      "result_chars": 3238,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tEnsembl\tRNA single cell type specificity\tRNA single cell type specific nCPM\tRNA single cell type distribution\tRNA single cell type group specificity\nMEOX1\tENSG00000005102\tCell type enriched\tVascular endothelial cells: 62.3\tDetected in some\tCell type enriched\nE2F2\tENSG00000007968\tCell type enriched\tLate spermatids: 32.5\tDetected in some\tCell type enriched\nPAX7\tENSG00000009709\tCell type enriched\tMyosatellite cells: 927.7\tDetected in some\tCell type enriched\nLHX5\tENSG00000089116\tCell type enriched\tNeuroendocrine cells: 18.7\tDetected in some\tCell type enriched\nPOU4F3\tENSG00000091010\tCell type "
+    },
+    {
+      "turn": 4,
+      "name": "sql",
+      "input": {
+        "query": "SELECT COUNT(*) AS n FROM proteinatlas WHERE \"Protein class\" LIKE '%Transcription factors%' AND \"RNA single cell type specificity\"='Cell type enriched'"
+      },
+      "ms": 418,
+      "result_chars": 13,
+      "truncated": false,
+      "error": null,
+      "result_head": "n\n92\n[1 rows]"
+    },
+    {
+      "turn": 5,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene\", \"Ensembl\", split_part(\"RNA single cell type specific nCPM\", ': ', 1) AS cell_type, TRY_CAST(split_part(\"RNA single cell type specific nCPM\", ': ', 2) AS DOUBLE) AS nCPM FROM proteinatlas WHERE \"Protein class\" LIKE '%Transcription factors%' AND \"RNA single cell type specificity\"='Cell type enriched' ORDER BY cell_type"
+      },
+      "ms": 429,
+      "result_chars": 4186,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tEnsembl\tcell_type\tnCPM\nZNF740\tENSG00000139651\tAdipocytes\t330\nDRGX\tENSG00000165606\tAdrenal medulla cells\t42.5\nPHOX2A\tENSG00000165462\tAdrenal medulla cells\t63.8\nPHOX2B\tENSG00000109132\tAdrenal medulla cells\t95.7\nPAX5\tENSG00000196092\tB-cells\t496\nNEUROD6\tENSG00000164600\tBrain excitatory neurons\t23\nELF5\tENSG00000135374\tBreast lactating cells\t1231.3\nNKX3-2\tENSG00000109705\tBreast lactating cells\t11.6\nARGFX\tENSG00000186103\tCardiomyocytes\t49.3\nZFP69\tENSG00000187815\tCardiomyocytes\t73.9\nNKX2-5\tENSG00000183072\tCardiomyocytes\t20.1\nNFXL1\tENSG00000170448\tCardiomyocytes\t987.6\nZNF606\tENSG00000166704\tCardio"
+    },
+    {
+      "turn": 6,
+      "name": "sql",
+      "input": {
+        "query": "WITH tf AS (\n  SELECT \"Gene\", \"Ensembl\", split_part(\"RNA single cell type specific nCPM\", ': ', 1) AS cell_type,\n         TRY_CAST(split_part(\"RNA single cell type specific nCPM\", ': ', 2) AS DOUBLE) AS nCPM\n  FROM proteinatlas\n  WHERE \"Protein class\" LIKE '%Transcription factors%' AND \"RNA single cell type specificity\"='Cell type enriched'\n)\nSELECT cell_type, COUNT(*) AS n FROM tf GROUP BY cell_type ORDER BY n DESC"
+      },
+      "ms": 422,
+      "result_chars": 1024,
+      "truncated": false,
+      "error": null,
+      "result_head": "cell_type\tn\nNeutrophils\t8\nOocytes\t6\nLate spermatids\t6\nCardiomyocytes\t5\nEarly spermatids\t5\nEsophageal apical cells\t3\nAdrenal medulla cells\t3\nTuft cells\t3\nBreast lactating cells\t2\nRetinal bipolar cells\t2\nHepatocytes\t2\nPlatelets\t2\nEpididymal principal cells\t2\nMyosatellite cells\t2\nPancreatic acinar cells\t2\nProstatic glandular cells\t2\nThymic myoid cells\t2\nExtravillous trophoblasts\t2\nEarly primary spermatocytes\t2\nNeuroendocrine cells\t2\nRod photoreceptor cells\t1\nRetinal horizontal cells\t1\nGoblet cells\t1\nOligodendrocytes\t1\nMelanocytes\t1\nB-cells\t1\nNeutrophil progenitors\t1\nSomatotrophs\t1\nMüller glia\t1\nP"
+    },
+    {
+      "turn": 7,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene\", \"RNA tissue specificity\", \"RNA single cell type specific nCPM\" FROM proteinatlas WHERE \"Gene\" IN ('ELF2','BCL6','ZNF746','ZNF438','NFKBIZ','ZNF429','ZNF281','STAT5B')"
+      },
+      "ms": 414,
+      "result_chars": 443,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tRNA tissue specificity\tRNA single cell type specific nCPM\nELF2\tLow tissue specificity\tNeutrophils: 4633.5\nBCL6\tTissue enhanced\tNeutrophils: 2731.6\nNFKBIZ\tTissue enriched\tNeutrophils: 3464.1\nZNF281\tTissue enhanced\tNeutrophils: 385.3\nSTAT5B\tLow tissue specificity\tNeutrophils: 1497.8\nZNF746\tLow tissue specificity\tNeutrophils: 109.4\nZNF438\tLow tissue specificity\tNeutrophils: 1433.6\nZNF429\tLow tissue specificity\tNeutrophils: 489.9\n[8 rows]"
+    },
+    {
+      "turn": 7,
+      "name": "sql",
+      "input": {
+        "query": "SELECT * FROM cancer_prognostic_data WHERE \"Gene name\" IN ('ELF2','BCL6','ZNF746','ZNF438','NFKBIZ','ZNF429','ZNF281','STAT5B') AND (\"validated prognostic - favorable\" <> '' OR \"validated prognostic - unfavorable\" <> '') LIMIT 30"
+      },
+      "ms": 326,
+      "result_chars": 700,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tGene name\tCancer\tpotential prognostic - favorable\tunprognostic - favorable\tpotential prognostic - unfavorable\tunprognostic - unfavorable\tvalidated prognostic - favorable\tvalidated prognostic - unfavorable\nENSG00000197013\tZNF429\tKidney Renal Clear Cell Carcinoma (TCGA)\t\t\t\t\t2.799e-4\t\nENSG00000197013\tZNF429\tKidney Renal Clear Cell Carcinoma (validation)\t\t\t\t\t1.390e-4\t\nENSG00000109381\tELF2\tKidney Renal Clear Cell Carcinoma (TCGA)\t\t\t\t\t6.792e-6\t\nENSG00000109381\tELF2\tKidney Renal Clear Cell Carcinoma (validation)\t\t\t\t\t1.042e-5\t\nENSG00000173757\tSTAT5B\tKidney Renal Clear Cell Carcinoma (TCGA)\t\t\t\t\t1."
+    },
+    {
+      "turn": 7,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene name\", \"Cancer\", \"validated prognostic - favorable\", \"validated prognostic - unfavorable\" FROM cancer_prognostic_data WHERE \"Gene name\"='BCL6' LIMIT 30"
+      },
+      "ms": 272,
+      "result_chars": 1409,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene name\tCancer\tvalidated prognostic - favorable\tvalidated prognostic - unfavorable\nBCL6\tBladder Urothelial Carcinoma (TCGA)\t\t\nBCL6\tBreast Invasive Carcinoma (TCGA)\t\t\nBCL6\tBreast Invasive Carcinoma (validation)\t\t\nBCL6\tCervical Squamous Cell Carcinoma and Endocervical Adenocarcinoma (TCGA)\t\t\nBCL6\tColon Adenocarcinoma (TCGA)\t\t\nBCL6\tColon Adenocarcinoma (validation)\t\t\nBCL6\tGlioblastoma Multiforme (TCGA)\t\t\nBCL6\tGlioblastoma Multiforme (validation)\t\t\nBCL6\tHead and Neck Squamous Cell Carcinoma (TCGA)\t\t\nBCL6\tKidney Chromophobe (TCGA)\t\t\nBCL6\tKidney Renal Clear Cell Carcinoma (TCGA)\t\t\nBCL6\tKidney Rena"
+    },
+    {
+      "turn": 8,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene\", \"Cancer prognostics - Kidney Renal Clear Cell Carcinoma (TCGA)\" AS kidney_tcga FROM proteinatlas WHERE \"Gene\" IN ('ELF2','BCL6','ZNF746','ZNF438','NFKBIZ','ZNF429','ZNF281','STAT5B')"
+      },
+      "ms": 441,
+      "result_chars": 335,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tkidney_tcga\nELF2\tvalidated prognostic favorable (6.79e-6)\nBCL6\tunprognostic (1.01e-1)\nNFKBIZ\tpotential prognostic unfavorable (3.74e-7)\nZNF746\tunprognostic (3.27e-1)\nZNF438\tunprognostic (8.28e-3)\nZNF429\tvalidated prognostic favorable (2.80e-4)\nZNF281\tunprognostic (1.80e-2)\nSTAT5B\tvalidated prognostic favorable (1.27e-8)\n[8 rows]"
+    },
+    {
+      "turn": 8,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene name\", \"Cancer\", \"validated prognostic - favorable\", \"validated prognostic - unfavorable\" FROM cancer_prognostic_data WHERE \"Gene name\" IN ('ELF2','BCL6','ZNF746','ZNF438','NFKBIZ','ZNF429','ZNF281','STAT5B') AND ((\"validated prognostic - favorable\" IS NOT NULL AND \"validated prognostic - favorable\"<>'') OR (\"validated prognostic - unfavorable\" IS NOT NULL AND \"validated prognostic - unfavorable\"<>'')) AND \"Cancer\" LIKE '%(TCGA)%' ORDER BY \"Gene name\""
+      },
+      "ms": 338,
+      "result_chars": 265,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene name\tCancer\tvalidated prognostic - favorable\tvalidated prognostic - unfavorable\nELF2\tKidney Renal Clear Cell Carcinoma (TCGA)\t6.792e-6\t\nSTAT5B\tKidney Renal Clear Cell Carcinoma (TCGA)\t1.266e-8\t\nZNF429\tKidney Renal Clear Cell Carcinoma (TCGA)\t2.799e-4\t\n[3 rows]"
+    },
+    {
+      "turn": 8,
+      "name": "sql",
+      "input": {
+        "query": "SELECT COUNT(*) AS total_tf, COUNT(DISTINCT \"Gene\") AS tf_genes FROM rna_single_cell_type WHERE \"Gene name\" IN ('ELF2','BCL6','ZNF746','ZNF438','NFKBIZ','ZNF429','ZNF281','STAT5B')"
+      },
+      "ms": 479,
+      "result_chars": 33,
+      "truncated": false,
+      "error": null,
+      "result_head": "total_tf\ttf_genes\n1232\t8\n[1 rows]"
+    },
+    {
+      "turn": 9,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene name\", \"Cancer\", \"validated prognostic - favorable\", \"validated prognostic - unfavorable\" FROM cancer_prognostic_data WHERE \"Gene name\" IN ('ELF2','BCL6','ZNF746','ZNF438','NFKBIZ','ZNF429','ZNF281','STAT5B') AND ((\"validated prognostic - favorable\" IS NOT NULL AND \"validated prognostic - favorable\"<>'') OR (\"validated prognostic - unfavorable\" IS NOT NULL AND \"validated prognostic - unfavorable\"<>'')) ORDER BY \"Gene name\", \"Cancer\""
+      },
+      "ms": 294,
+      "result_chars": 455,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene name\tCancer\tvalidated prognostic - favorable\tvalidated prognostic - unfavorable\nELF2\tKidney Renal Clear Cell Carcinoma (TCGA)\t6.792e-6\t\nELF2\tKidney Renal Clear Cell Carcinoma (validation)\t1.042e-5\t\nSTAT5B\tKidney Renal Clear Cell Carcinoma (TCGA)\t1.266e-8\t\nSTAT5B\tKidney Renal Clear Cell Carcinoma (validation)\t1.441e-5\t\nZNF429\tKidney Renal Clear Cell Carcinoma (TCGA)\t2.799e-4\t\nZNF429\tKidney Renal Clear Cell Carcinoma (validation)\t1.390e-4\t\n[6 rows]"
+    },
+    {
+      "turn": 9,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \"Gene\", \"Cancer prognostics - Bladder Urothelial Carcinoma (TCGA)\", \"Cancer prognostics - Colon Adenocarcinoma (TCGA)\", \"Cancer prognostics - Lung Adenocarcinoma (TCGA)\", \"Cancer prognostics - Lung Squamous Cell Carcinoma (TCGA)\", \"Cancer prognostics - Stomach Adenocarcinoma (TCGA)\", \"Cancer prognostics - Skin Cuteneous Melanoma (TCGA)\", \"Cancer prognostics - Uterine Corpus Endometrial Carcinoma (TCGA)\" FROM proteinatlas WHERE \"Gene\" IN ('BCL6','NFKBIZ','ZNF746','ZNF438','ZNF281')"
+      },
+      "ms": 105,
+      "result_chars": 640,
+      "truncated": false,
+      "error": "tool reported an error",
+      "result_head": "Error: Binder Error: Referenced column \"Cancer prognostics - Skin Cuteneous Melanoma (TCGA)\" not found in FROM clause!\nCandidate bindings: \"Cancer prognostics - Skin Cutaneous Melanoma (TCGA)\", \"Cancer prognostics - Liver Hepatocellular Carcinoma (TCGA)\", \"Cancer prognostics - Rectum Adenocarcinoma (TCGA)\", \"Cancer prognostics - Ovary Serous Cystadenocarcinoma (TCGA)\", \"Cancer prognostics - Lung Squamous Cell Carcinoma (TCGA)\"\n\nLINE 1: ...(TCGA)\", \"Cancer prognostics - Stomach Adenocarcinoma (TCGA)\", \"Cancer prognostics - Skin Cuteneous Melanoma (TCGA)\", ...\n                                   "
+    },
+    {
+      "turn": 10,
+      "name": "sql",
+      "input": {
+        "query": "WITH tf AS (\n  SELECT \"Gene\", split_part(\"RNA single cell type specific nCPM\", ': ', 1) AS cell_type,\n         TRY_CAST(split_part(\"RNA single cell type specific nCPM\", ': ', 2) AS DOUBLE) AS nCPM\n  FROM proteinatlas\n  WHERE \"Protein class\" LIKE '%Transcription factors%' AND \"RNA single cell type specificity\"='Cell type enriched'\n)\nSELECT cell_type, COUNT(*) AS n, ROUND(SUM(nCPM),1) AS total_ncpm FROM tf GROUP BY cell_type HAVING COUNT(*)>=2 ORDER BY n DESC, cell_type"
+      },
+      "ms": 381,
+      "result_chars": 578,
+      "truncated": false,
+      "error": null,
+      "result_head": "cell_type\tn\ttotal_ncpm\nNeutrophils\t8\t14745.2\nLate spermatids\t6\t1886.6\nOocytes\t6\t2836.7\nCardiomyocytes\t5\t1528.7\nEarly spermatids\t5\t927.1\nAdrenal medulla cells\t3\t202\nEsophageal apical cells\t3\t31029.6\nTuft cells\t3\t807\nBreast lactating cells\t2\t1242.9\nEarly primary spermatocytes\t2\t420\nEpididymal principal cells\t2\t3127.4\nExtravillous trophoblasts\t2\t1653.3\nHepatocytes\t2\t1461.7\nMyosatellite cells\t2\t1104\nNeuroendocrine cells\t2\t584.5\nPancreatic acinar cells\t2\t1105.5\nPlatelets\t2\t323.3\nProstatic glandular cells\t2\t2606.1\nRetinal bipolar cells\t2\t768\nThymic myoid cells\t2\t599.6\n[20 rows]"
+    }
+  ],
+  "usage": {
+    "input_tokens": 152312,
+    "output_tokens": 15044,
+    "cache_read_input_tokens": 138752,
+    "cache_creation_input_tokens": 0,
+    "reasoning_tokens": 10687
+  },
+  "started_unix_ms": 1788823675236,
+  "final_answer": "All data are gathered. Here is the complete analysis.\n\n## 1. Transcription factors with cell type–enriched RNA expression\n\nUsing the HPA definition of RNA single cell type specificity = **\"Cell type enriched\"** and restricting to genes annotated in the **\"Transcription factors\"** protein class, there are **92 transcription factors**, distributed across **49 single cell types**.\n\n### Number of enriched transcription factors per cell type (top 15)\n\nA bar chart of the 15 cell types with the most such transcription factors (each `#` = 1 TF; values from the data above):\n\n```\nNeutrophils                     8   ########\nOocytes                         6   ######\nLate spermatids                 6   ######\nCardiomyocytes                  5   #####\nEarly spermatids                5   #####\nEsophageal apical cells         3   ###\nAdrenal medulla cells           3   ###\nTuft cells                      3   ###\nBreast lactating cells          2   ##\nEarly primary spermatocytes     2   ##\nEpididymal principal cells      2   ##\nExtravillous trophoblasts       2   ##\nHepatocytes                     2   ##\nMyosatellite cells              2   ##\nNeuroendocrine cells            2   ##\n```\n\n> Note on ties: the cutoff at 15 falls inside a large tie — 12 cell types each have exactly 2 enriched transcription factors. The 7 shown at the bottom (positions 9–15) are ordered alphabetically; the other tied cell types (Pancreatic acinar cells, Platelets, Prostatic glandular cells, Retinal bipolar cells, Thymic myoid cells) also have 2 and are excluded only by this tie-break.\n\n### The 92 transcription factors and their single cell types (with nCPM)\n\n| Cell type | TFs (nCPM) |\n|---|---|\n| Neutrophils (8) | ELF2 (4633.5), NFKBIZ (3464.1), BCL6 (2731.6), STAT5B (1497.8), ZNF438 (1433.6), ZNF429 (489.9), ZNF281 (385.3), ZNF746 (109.4) |\n| Oocytes (6) | FIGLA (1556.5), FOXR1 (529.6), LHX8 (557.2), NEUROG1 (50.7), TBPL2 (101.3), ZNF256 (41.4) |\n| Late spermatids (6) | HBP1 (487.4), ETV2 (830.1), E2F2 (32.5), PLAGL2 (265.2), TBR1 (58.7), ZNF628 (212.7) |\n| Cardiomyocytes (5) | NFXL1 (987.6), ZNF606 (397.8), ZFP69 (73.9), ARGFX (49.3), NKX2-5 (20.1) |\n| Early spermatids (5) | ZNF829 (335.9), KLF17 (249.4), ZSCAN29 (131.8), SHOX2 (128.6), ZNF668 (81.4) |\n| Esophageal apical cells (3) | HOPX (29333.9), PAX9 (1282.1), ZNF426 (413.6) |\n| Adrenal medulla cells (3) | PHOX2B (95.7), PHOX2A (63.8), DRGX (42.5) |\n| Tuft cells (3) | POU2F3 (737.8), HMX2 (34.6), HMX3 (34.6) |\n| Breast lactating cells (2) | ELF5 (1231.3), NKX3-2 (11.6) |\n| Early primary spermatocytes (2) | DMRTC2 (347.3), PRDM9 (72.7) |\n| Epididymal principal cells (2) | DDIT3 (3123.3), ZNF417 (4.1) |\n| Extravillous trophoblasts (2) | ASCL2 (1529.3), MYCN (124.0) |\n| Hepatocytes (2) | ATF5 (1266.9), NR1I3 (194.8) |\n| Myosatellite cells (2) | PAX7 (927.7), MYF5 (176.3) |\n| Neuroendocrine cells (2) | FEV (565.8), LHX5 (18.7) |\n| Pancreatic acinar cells (2) | RBPJL (975.0), PTF1A (130.5) |\n| Platelets (2) | ZNF778 (320.5), ZNF547 (2.8) |\n| Prostatic glandular cells (2) | ZNF827 (1374.4), NKX3-1 (1231.7) |\n| Retinal bipolar cells (2) | VSX1 (482.6), PRDM8 (285.4) |\n| Thymic myoid cells (2) | MYF6 (596.9), ZBED1 (2.7) |\n| Single-TF cell types (29) | ZNF740→Adipocytes (330.0); PAX5→B-cells (496.0); NEUROD6→Brain excitatory neurons (23.0); TBX19→Corticotrophs (634.5); ZNF417→(above); ATOH1→Goblet cells (287.6); MKX→Gonadotrophs (558.1); SPIC→Kupffer cells (61.5); LYAR→Late primary spermatocytes (1609.5); PAX1→Medullary thymic epithelial cells (72.0); ALX1→Melanocytes (113.2); POU4F3→Mesothelial cells (6.6); NR2E1→Müller glia (91.3); CEBPE→Neutrophil progenitors (94.0); MYT1→Oligodendrocyte progenitor cells (238.7); ST18→Oligodendrocytes (4251.0); POU5F2→Paneth cells (3.9); LHX3→Pituitary stem cells (200.9); ZNF215→Plasma cells (177.8); GLIS1→Proximal tubule cells (319.8); POU4F2→Retinal ganglion cells (15.5); ONECUT3→Retinal horizontal cells (342.6); NR2E3→Rod photoreceptor cells (861.9); ZNF711→Sertoli cells (451.8); HAND1→Smooth muscle cells (12.3); TBXT→Somatotrophs (3.8); NFYB→Syncytiotrophoblasts (486.0); PBX4→T-cells (336.6); MEOX1→Vascular endothelial cells (62.3); IRF7→pDCs (790.3) |\n\n*(The single-TF list is alphabetical by cell type; gene ↔ cell-type ↔ nCPM values are exactly as parsed from the HPA \"RNA single cell type specific nCPM\" field.)*\n\n## 2. The cell type with the most: **Neutrophils (8 TFs)**\n\n### Neutrophil transcription factors with nCPM\n\n| Gene | nCPM in neutrophils |\n|---|---|\n| ELF2 | 4633.5 |\n| NFKBIZ | 3464.1 |\n| BCL6 | 2731.6 |\n| STAT5B | 1497.8 |\n| ZNF438 | 1433.6 |\n| ZNF429 | 489.9 |\n| ZNF281 | 385.3 |\n| ZNF746 | 109.4 |\n\n### Distribution of their RNA tissue specificity categories\n\n```\nLow tissue specificity   5   #####   (ELF2, STAT5B, ZNF746, ZNF438, ZNF429)\nTissue enhanced          2   ##      (BCL6, ZNF281)\nTissue enriched          1   #       (NFKBIZ)\n```\n\n### Validated prognostic association in any TCGA cohort\n\nOf the 8, **three** have a validated prognostic association in a TCGA cohort — all in **Kidney Renal Clear Cell Carcinoma (TCGA)**, all **favorable**:\n\n| Gene | Cancer (TCGA) | Validated association | p-value |\n|---|---|---|---|\n| ELF2 | Kidney Renal Clear Cell Carcinoma (TCGA) | validated prognostic – favorable | 6.792e-6 |\n| STAT5B | Kidney Renal Clear Cell Carcinoma (TCGA) | validated prognostic – favorable | 1.266e-8 |\n| ZNF429 | Kidney Renal Clear Cell Carcinoma (TCGA) | validated prognostic – favorable | 2.799e-4 |\n\nThe other five (BCL6, NFKBIZ, ZNF746, ZNF438, ZNF281) have **no validated** prognostic association in any TCGA cohort (e.g., NFKBIZ is only a *potential* prognostic unfavorable in KIRC; the others are \"unprognostic\" in that dataset).",
+  "stop": "stop",
+  "tool_call_count": 21,
+  "seconds": 117.522,
+  "model_calls": 11,
+  "cost_usd": 0.08881788800000001
+}

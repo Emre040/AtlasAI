@@ -1,0 +1,892 @@
+{
+  "id": "Q30",
+  "kind": "analysis",
+  "question": "Assess RNA-protein agreement for cardiomyocytes, hepatocytes and neutrophils in the Human Protein Atlas using single-cell-type RNA nCPM and Deep Visual Proteomics cell-type Intensity. Join by Ensembl ID and those exact cell-type names. For each cell type separately retain genes with positive measurements in both modalities, report the retained count, Spearman correlation and overlap/Jaccard of the top twenty genes ranked independently by RNA and by protein. Give the top-twenty lists with values. Convert within-cell-type ranks to percentiles (ascending average rank divided by retained count), and select five genes per cell type with the largest absolute RNA-minus-protein percentile difference, ties by Ensembl ID. Give their measurements, percentiles and main subcellular locations. Draw three RNA/protein scatter panels restricted to the union of each cell type's two top-twenty lists, a top-twenty-overlap bar chart and a discordance heatmap. Supply the top-list union measurements and the aggregate and discordant-gene tables. If a requested ranked list has fewer eligible members, return every eligible member and state the count. Use Ensembl genes present in the HPA master table as the gene universe and break all gene-ranking ties by Ensembl ID.",
+  "model": "gemini-3.8-flash",
+  "effort": null,
+  "turns": [
+    {
+      "turn": 1,
+      "ms": 3402,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 8,
+        "prompt_tokens": 442,
+        "total_tokens": 466
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "schema",
+          "input": "{}"
+        }
+      ]
+    },
+    {
+      "turn": 2,
+      "ms": 3314,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 61,
+        "prompt_tokens": 6904,
+        "total_tokens": 7121
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"SELECT DISTINCT \\\"Cell type\\\" FROM rna_single_cell_type WHERE lower(\\\"Cell type\\\") LIKE '%cardio%' OR lower(\\\"Cell type\\\") LIKE '%hepato%' OR lower(\\\"Cell type\\\") LIKE '%neutro%'\"}"
+        }
+      ]
+    },
+    {
+      "turn": 3,
+      "ms": 1002,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 59,
+        "prompt_tokens": 7155,
+        "total_tokens": 7226
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"SELECT DISTINCT \\\"Cell type\\\" FROM dvp_cell_type WHERE lower(\\\"Cell type\\\") LIKE '%cardio%' OR lower(\\\"Cell type\\\") LIKE '%hepato%' OR lower(\\\"Cell type\\\") LIKE '%neutro%'\"}"
+        }
+      ]
+    },
+    {
+      "turn": 4,
+      "ms": 1487,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 24,
+        "prompt_tokens": 7255,
+        "total_tokens": 7654
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"SELECT Ensembl, Gene FROM proteinatlas LIMIT 5\"}"
+        }
+      ]
+    },
+    {
+      "turn": 5,
+      "ms": 2762,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 38,
+        "prompt_tokens": 7766,
+        "total_tokens": 7872
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"SELECT Gene, \\\"Gene name\\\", \\\"Cell type\\\", nCPM FROM rna_single_cell_type LIMIT 5\"}"
+        }
+      ]
+    },
+    {
+      "turn": 6,
+      "ms": 3201,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 35,
+        "prompt_tokens": 8037,
+        "total_tokens": 8107
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"SELECT Gene, \\\"Gene name\\\", \\\"Cell type\\\", Intensity FROM dvp_cell_type LIMIT 5\"}"
+        }
+      ]
+    },
+    {
+      "turn": 7,
+      "ms": 926,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 27,
+        "prompt_tokens": 8261,
+        "total_tokens": 8322
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"SELECT COUNT(*), COUNT(DISTINCT Ensembl) FROM proteinatlas\"}"
+        }
+      ]
+    },
+    {
+      "turn": 8,
+      "ms": 2196,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 173,
+        "prompt_tokens": 8362,
+        "total_tokens": 8686
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"SELECT \\n    r.\\\"Cell type\\\",\\n    COUNT(*) as total_pairs,\\n    COUNT(DISTINCT r.Gene) as distinct_genes,\\n    COUNT(CASE WHEN TRY_CAST(r.nCPM AS DOUBLE) \\u003e 0 AND TRY_CAST(d.Intensity AS DOUBLE) \\u003e 0 THEN 1 END) as positive_both\\nFROM rna_single_cell_type r\\nJOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\nJOIN proteinatlas p ON r.Gene = p.Ensembl\\nWHERE r.\\\"Cell type\\\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\\nGROUP BY r.\\\"Cell type\\\"\"}"
+        }
+      ]
+    },
+    {
+      "turn": 9,
+      "ms": 1207,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 210,
+        "prompt_tokens": 8778,
+        "total_tokens": 9031
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"SELECT \\n    r.\\\"Cell type\\\",\\n    COUNT(CASE WHEN TRY_CAST(r.nCPM AS DOUBLE) \\u003e 0 AND TRY_CAST(d.Intensity AS DOUBLE) \\u003e 0 THEN 1 END) as positive_both_no_p,\\n    COUNT(CASE WHEN p.Ensembl IS NOT NULL AND TRY_CAST(r.nCPM AS DOUBLE) \\u003e 0 AND TRY_CAST(d.Intensity AS DOUBLE) \\u003e 0 THEN 1 END) as positive_both_with_p\\nFROM rna_single_cell_type r\\nJOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\nLEFT JOIN proteinatlas p ON r.Gene = p.Ensembl\\nWHERE r.\\\"Cell type\\\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\\nGROUP BY r.\\\"Cell type\\\"\"}"
+        }
+      ]
+    },
+    {
+      "turn": 10,
+      "ms": 6229,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 242,
+        "prompt_tokens": 9106,
+        "total_tokens": 10621
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"WITH base AS (\\n    SELECT \\n        r.\\\"Cell type\\\" as cell_type,\\n        r.Gene as ensembl_id,\\n        TRY_CAST(r.nCPM AS DOUBLE) as rna,\\n        TRY_CAST(d.Intensity AS DOUBLE) as protein\\n    FROM rna_single_cell_type r\\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\\n    WHERE r.\\\"Cell type\\\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\\n      AND TRY_CAST(r.nCPM AS DOUBLE) \\u003e 0 \\n      AND TRY_CAST(d.Intensity AS DOUBLE) \\u003e 0\\n)\\nSELECT \\n    cell_type,\\n    COUNT(*) as total,\\n    COUNT(DISTINCT rna) as distinct_rna,\\n    COUNT(DISTINCT protein) as distinct_protein\\nFROM base\\nGROUP BY cell_type\"}"
+        }
+      ]
+    },
+    {
+      "turn": 11,
+      "ms": 4103,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 356,
+        "prompt_tokens": 10706,
+        "total_tokens": 11887
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"WITH base AS (\\n    SELECT \\n        r.\\\"Cell type\\\" as cell_type,\\n        r.Gene as ensembl_id,\\n        r.\\\"Gene name\\\" as gene_name,\\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity\\n    FROM rna_single_cell_type r\\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\\n    WHERE r.\\\"Cell type\\\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\\n      AND TRY_CAST(r.nCPM AS DOUBLE) \\u003e 0 \\n      AND TRY_CAST(d.Intensity AS DOUBLE) \\u003e 0\\n),\\nranked_rna AS (\\n    SELECT *,\\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY rna_ncpm DESC, ensembl_id ASC) as rna_rank\\n    FROM base\\n),\\nranked_protein AS (\\n    SELECT *,\\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY protein_intensity DESC, ensembl_id ASC) as protein_rank\\n    FROM base\\n)\\nSELECT cell_type, rna_rank, ensembl_id, gene_name, rna_ncpm\\nFROM ranked_rna\\nWHERE rna_rank \\u003c= 20\\nORDER BY cell_type, rna_rank\"}"
+        }
+      ]
+    },
+    {
+      "turn": 12,
+      "ms": 1387,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 301,
+        "prompt_tokens": 13833,
+        "total_tokens": 14148
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"WITH base AS (\\n    SELECT \\n        r.\\\"Cell type\\\" as cell_type,\\n        r.Gene as ensembl_id,\\n        r.\\\"Gene name\\\" as gene_name,\\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity\\n    FROM rna_single_cell_type r\\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\\n    WHERE r.\\\"Cell type\\\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\\n      AND TRY_CAST(r.nCPM AS DOUBLE) \\u003e 0 \\n      AND TRY_CAST(d.Intensity AS DOUBLE) \\u003e 0\\n),\\nranked_protein AS (\\n    SELECT *,\\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY protein_intensity DESC, ensembl_id ASC) as protein_rank\\n    FROM base\\n)\\nSELECT cell_type, protein_rank, ensembl_id, gene_name, protein_intensity\\nFROM ranked_protein\\nWHERE protein_rank \\u003c= 20\\nORDER BY cell_type, protein_rank\"}"
+        }
+      ]
+    },
+    {
+      "turn": 13,
+      "ms": 2513,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 562,
+        "prompt_tokens": 16422,
+        "total_tokens": 17075
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"WITH base AS (\\n    SELECT \\n        r.\\\"Cell type\\\" as cell_type,\\n        r.Gene as ensembl_id,\\n        r.\\\"Gene name\\\" as gene_name,\\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity\\n    FROM rna_single_cell_type r\\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\\n    WHERE r.\\\"Cell type\\\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\\n      AND TRY_CAST(r.nCPM AS DOUBLE) \\u003e 0 \\n      AND TRY_CAST(d.Intensity AS DOUBLE) \\u003e 0\\n),\\nranked_rna AS (\\n    SELECT *,\\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY rna_ncpm DESC, ensembl_id ASC) as rna_rank\\n    FROM base\\n),\\nranked_protein AS (\\n    SELECT *,\\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY protein_intensity DESC, ensembl_id ASC) as protein_rank\\n    FROM base\\n),\\ntop20_rna AS (\\n    SELECT cell_type, ensembl_id, gene_name, rna_ncpm, rna_rank\\n    FROM ranked_rna\\n    WHERE rna_rank \\u003c= 20\\n),\\ntop20_protein AS (\\n    SELECT cell_type, ensembl_id, gene_name, protein_intensity, protein_rank\\n    FROM ranked_protein\\n    WHERE protein_rank \\u003c= 20\\n)\\nSELECT \\n    COALESCE(r.cell_type, p.cell_type) as cell_type,\\n    COUNT(CASE WHEN r.ensembl_id IS NOT NULL AND p.ensembl_id IS NOT NULL THEN 1 END) as overlap_count,\\n    COUNT(DISTINCT COALESCE(r.ensembl_id, p.ensembl_id)) as union_count\\nFROM top20_rna r\\nFULL OUTER JOIN top20_protein p \\n    ON r.cell_type = p.cell_type AND r.ensembl_id = p.ensembl_id\\nGROUP BY COALESCE(r.cell_type, p.cell_type)\"}"
+        }
+      ]
+    },
+    {
+      "turn": 14,
+      "ms": 4806,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 658,
+        "prompt_tokens": 17128,
+        "total_tokens": 18195
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"WITH base AS (\\n    SELECT \\n        r.\\\"Cell type\\\" as cell_type,\\n        r.Gene as ensembl_id,\\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity\\n    FROM rna_single_cell_type r\\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\\n    WHERE r.\\\"Cell type\\\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\\n      AND TRY_CAST(r.nCPM AS DOUBLE) \\u003e 0 \\n      AND TRY_CAST(d.Intensity AS DOUBLE) \\u003e 0\\n),\\n-- Compute average rank for RNA:\\nrna_counts AS (\\n    SELECT cell_type, rna_ncpm, COUNT(*) as cnt, MIN(rna_ncpm) as val\\n    FROM base\\n    GROUP BY cell_type, rna_ncpm\\n),\\nrna_ranks AS (\\n    SELECT cell_type, rna_ncpm,\\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC)) / 2.0 as avg_rank_rna\\n    FROM rna_counts\\n),\\n-- Compute average rank for Protein:\\nprotein_counts AS (\\n    SELECT cell_type, protein_intensity, COUNT(*) as cnt\\n    FROM base\\n    GROUP BY cell_type, protein_intensity\\n),\\nprotein_ranks AS (\\n    SELECT cell_type, protein_intensity,\\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC)) / 2.0 as avg_rank_protein\\n    FROM protein_counts\\n),\\njoined_ranks AS (\\n    SELECT \\n        b.cell_type,\\n        b.ensembl_id,\\n        b.rna_ncpm,\\n        b.protein_intensity,\\n        rr.avg_rank_rna,\\n        pr.avg_rank_protein\\n    FROM base b\\n    JOIN rna_ranks rr ON b.cell_type = rr.cell_type AND b.rna_ncpm = rr.rna_ncpm\\n    JOIN protein_ranks pr ON b.cell_type = pr.cell_type AND b.protein_intensity = pr.protein_intensity\\n)\\nSELECT \\n    cell_type,\\n    COUNT(*) as n,\\n    corr(avg_rank_rna, avg_rank_protein) as spearman_corr\\nFROM joined_ranks\\nGROUP BY cell_type\"}"
+        }
+      ]
+    },
+    {
+      "turn": 15,
+      "ms": 1737,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 310,
+        "prompt_tokens": 18307,
+        "prompt_tokens_details": {
+          "cached_tokens": 16220
+        },
+        "total_tokens": 18657
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"WITH base AS (\\n    SELECT \\n        r.\\\"Cell type\\\" as cell_type,\\n        r.Gene as ensembl_id,\\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity\\n    FROM rna_single_cell_type r\\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\\n    WHERE r.\\\"Cell type\\\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\\n      AND TRY_CAST(r.nCPM AS DOUBLE) \\u003e 0 \\n      AND TRY_CAST(d.Intensity AS DOUBLE) \\u003e 0\\n),\\nranked AS (\\n    SELECT \\n        cell_type,\\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC, ensembl_id ASC) as r_rna,\\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC, ensembl_id ASC) as r_prot\\n    FROM base\\n)\\nSELECT cell_type, corr(r_rna, r_prot) as corr_strict\\nFROM ranked\\nGROUP BY cell_type\"}"
+        }
+      ]
+    },
+    {
+      "turn": 16,
+      "ms": 1645,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 42,
+        "prompt_tokens": 18751,
+        "prompt_tokens_details": {
+          "cached_tokens": 16216
+        },
+        "total_tokens": 19046
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"SELECT Ensembl, Gene, \\\"Subcellular main location\\\" FROM proteinatlas WHERE \\\"Subcellular main location\\\" IS NOT NULL LIMIT 10\"}"
+        }
+      ]
+    },
+    {
+      "turn": 17,
+      "ms": 2733,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 906,
+        "prompt_tokens": 19292,
+        "prompt_tokens_details": {
+          "cached_tokens": 16212
+        },
+        "total_tokens": 20226
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"WITH base AS (\\n    SELECT \\n        r.\\\"Cell type\\\" as cell_type,\\n        r.Gene as ensembl_id,\\n        r.\\\"Gene name\\\" as gene_name,\\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity,\\n        p.\\\"Subcellular main location\\\" as subcell_main\\n    FROM rna_single_cell_type r\\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\\n    WHERE r.\\\"Cell type\\\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\\n      AND TRY_CAST(r.nCPM AS DOUBLE) \\u003e 0 \\n      AND TRY_CAST(d.Intensity AS DOUBLE) \\u003e 0\\n),\\nrna_counts AS (\\n    SELECT cell_type, rna_ncpm, COUNT(*) as cnt\\n    FROM base\\n    GROUP BY cell_type, rna_ncpm\\n),\\nrna_ranks AS (\\n    SELECT cell_type, rna_ncpm,\\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC)) / 2.0 as avg_rank_rna\\n    FROM rna_counts\\n),\\nprotein_counts AS (\\n    SELECT cell_type, protein_intensity, COUNT(*) as cnt\\n    FROM base\\n    GROUP BY cell_type, protein_intensity\\n),\\nprotein_ranks AS (\\n    SELECT cell_type, protein_intensity,\\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC)) / 2.0 as avg_rank_protein\\n    FROM protein_counts\\n),\\ncounts_per_cell_type AS (\\n    SELECT cell_type, COUNT(*) as n_retained\\n    FROM base\\n    GROUP BY cell_type\\n),\\njoined AS (\\n    SELECT \\n        b.cell_type,\\n        b.ensembl_id,\\n        b.gene_name,\\n        b.rna_ncpm,\\n        b.protein_intensity,\\n        b.subcell_main,\\n        c.n_retained,\\n        rr.avg_rank_rna,\\n        pr.avg_rank_protein,\\n        rr.avg_rank_rna / c.n_retained as rna_pct,\\n        pr.avg_rank_protein / c.n_retained as protein_pct,\\n        ABS(rr.avg_rank_rna / c.n_retained - pr.avg_rank_protein / c.n_retained) as diff\\n    FROM base b\\n    JOIN rna_ranks rr ON b.cell_type = rr.cell_type AND b.rna_ncpm = rr.rna_ncpm\\n    JOIN protein_ranks pr ON b.cell_type = pr.cell_type AND b.protein_intensity = pr.protein_intensity\\n    JOIN counts_per_cell_type c ON b.cell_type = c.cell_type\\n),\\nranked_diff AS (\\n    SELECT *,\\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY diff DESC, ensembl_id ASC) as diff_rank\\n    FROM joined\\n)\\nSELECT \\n    cell_type,\\n    diff_rank,\\n    ensembl_id,\\n    gene_name,\\n    rna_ncpm,\\n    protein_intensity,\\n    rna_pct,\\n    protein_pct,\\n    diff,\\n    subcell_main\\nFROM ranked_diff\\nWHERE diff_rank \\u003c= 5\\nORDER BY cell_type, diff_rank\"}"
+        }
+      ]
+    },
+    {
+      "turn": 18,
+      "ms": 3109,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 565,
+        "prompt_tokens": 21808,
+        "prompt_tokens_details": {
+          "cached_tokens": 16224
+        },
+        "total_tokens": 22436
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"WITH base AS (\\n    SELECT \\n        r.\\\"Cell type\\\" as cell_type,\\n        r.Gene as ensembl_id,\\n        r.\\\"Gene name\\\" as gene_name,\\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity,\\n        p.\\\"Subcellular main location\\\" as subcell_main\\n    FROM rna_single_cell_type r\\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\\n    WHERE r.\\\"Cell type\\\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\\n      AND TRY_CAST(r.nCPM AS DOUBLE) \\u003e 0 \\n      AND TRY_CAST(d.Intensity AS DOUBLE) \\u003e 0\\n),\\nranked_strict AS (\\n    SELECT \\n        cell_type,\\n        ensembl_id,\\n        gene_name,\\n        rna_ncpm,\\n        protein_intensity,\\n        subcell_main,\\n        COUNT(*) OVER (PARTITION BY cell_type) as n_retained,\\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC, ensembl_id ASC) as r_rna,\\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC, ensembl_id ASC) as r_prot\\n    FROM base\\n),\\ndiffs AS (\\n    SELECT *,\\n        r_rna * 1.0 / n_retained as rna_pct,\\n        r_prot * 1.0 / n_retained as protein_pct,\\n        ABS(r_rna * 1.0 / n_retained - r_prot * 1.0 / n_retained) as diff\\n    FROM ranked_strict\\n),\\ntop5 AS (\\n    SELECT *,\\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY diff DESC, ensembl_id ASC) as diff_rank\\n    FROM diffs\\n)\\nSELECT cell_type, diff_rank, ensembl_id, gene_name, rna_ncpm, protein_intensity, rna_pct, protein_pct, diff, subcell_main\\nFROM top5\\nWHERE diff_rank \\u003c= 5\\nORDER BY cell_type, diff_rank\"}"
+        }
+      ]
+    },
+    {
+      "turn": 19,
+      "ms": 4062,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 708,
+        "prompt_tokens": 24011,
+        "prompt_tokens_details": {
+          "cached_tokens": 20290
+        },
+        "total_tokens": 25197
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"WITH base AS (\\n    SELECT \\n        r.\\\"Cell type\\\" as cell_type,\\n        r.Gene as ensembl_id,\\n        r.\\\"Gene name\\\" as gene_name,\\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity\\n    FROM rna_single_cell_type r\\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\\n    WHERE r.\\\"Cell type\\\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\\n      AND TRY_CAST(r.nCPM AS DOUBLE) \\u003e 0 \\n      AND TRY_CAST(d.Intensity AS DOUBLE) \\u003e 0\\n),\\nranked_rna AS (\\n    SELECT *,\\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY rna_ncpm DESC, ensembl_id ASC) as rna_rank\\n    FROM base\\n),\\nranked_protein AS (\\n    SELECT *,\\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY protein_intensity DESC, ensembl_id ASC) as protein_rank\\n    FROM base\\n),\\ntop20 AS (\\n    SELECT cell_type, ensembl_id, gene_name, rna_ncpm, protein_intensity, rna_rank, NULL as protein_rank\\n    FROM ranked_rna\\n    WHERE rna_rank \\u003c= 20\\n    UNION\\n    SELECT cell_type, ensembl_id, gene_name, rna_ncpm, protein_intensity, NULL as rna_rank, protein_rank\\n    FROM ranked_protein\\n    WHERE protein_rank \\u003c= 20\\n)\\nSELECT \\n    cell_type,\\n    ensembl_id,\\n    gene_name,\\n    rna_ncpm,\\n    protein_intensity,\\n    MIN(rna_rank) as rna_rank,\\n    MIN(protein_rank) as protein_rank\\nFROM (\\n    SELECT b.cell_type, b.ensembl_id, b.gene_name, b.rna_ncpm, b.protein_intensity, rr.rna_rank, rp.protein_rank\\n    FROM base b\\n    LEFT JOIN ranked_rna rr ON b.cell_type = rr.cell_type AND b.ensembl_id = rr.ensembl_id AND rr.rna_rank \\u003c= 20\\n    LEFT JOIN ranked_protein rp ON b.cell_type = rp.cell_type AND b.ensembl_id = rp.ensembl_id AND rp.protein_rank \\u003c= 20\\n    WHERE rr.rna_rank IS NOT NULL OR rp.protein_rank IS NOT NULL\\n)\\nGROUP BY cell_type, ensembl_id, gene_name, rna_ncpm, protein_intensity\\nORDER BY cell_type, COALESCE(rna_rank, 999), COALESCE(protein_rank, 999), ensembl_id\"}"
+        }
+      ]
+    },
+    {
+      "turn": 20,
+      "ms": 2694,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 493,
+        "prompt_tokens": 25316,
+        "prompt_tokens_details": {
+          "cached_tokens": 20292
+        },
+        "total_tokens": 25817
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"WITH base AS (\\n    SELECT \\n        r.\\\"Cell type\\\" as cell_type,\\n        r.Gene as ensembl_id,\\n        r.\\\"Gene name\\\" as gene_name,\\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity\\n    FROM rna_single_cell_type r\\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\\n    WHERE r.\\\"Cell type\\\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\\n      AND TRY_CAST(r.nCPM AS DOUBLE) \\u003e 0 \\n      AND TRY_CAST(d.Intensity AS DOUBLE) \\u003e 0\\n),\\nranked_rna AS (\\n    SELECT *,\\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY rna_ncpm DESC, ensembl_id ASC) as rna_rank\\n    FROM base\\n),\\nranked_protein AS (\\n    SELECT *,\\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY protein_intensity DESC, ensembl_id ASC) as protein_rank\\n    FROM base\\n)\\nSELECT \\n    b.cell_type,\\n    b.ensembl_id,\\n    b.gene_name,\\n    b.rna_ncpm,\\n    b.protein_intensity,\\n    rr.rna_rank,\\n    rp.protein_rank\\nFROM base b\\nJOIN ranked_rna rr ON b.cell_type = rr.cell_type AND b.ensembl_id = rr.ensembl_id\\nJOIN ranked_protein rp ON b.cell_type = rp.cell_type AND b.ensembl_id = rp.ensembl_id\\nWHERE rr.rna_rank \\u003c= 20 OR rp.protein_rank \\u003c= 20\\nORDER BY b.cell_type, CASE WHEN rr.rna_rank \\u003c= 20 THEN rr.rna_rank ELSE 1000 + rp.protein_rank END\"}"
+        }
+      ]
+    },
+    {
+      "turn": 21,
+      "ms": 7939,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 700,
+        "prompt_tokens": 31299,
+        "prompt_tokens_details": {
+          "cached_tokens": 24385
+        },
+        "total_tokens": 33240
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"WITH base AS (\\n    SELECT \\n        r.\\\"Cell type\\\" as cell_type,\\n        r.Gene as ensembl_id,\\n        r.\\\"Gene name\\\" as gene_name,\\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity,\\n        p.\\\"Subcellular main location\\\" as subcell_main\\n    FROM rna_single_cell_type r\\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\\n    WHERE r.\\\"Cell type\\\" = 'cardiomyocytes'\\n      AND TRY_CAST(r.nCPM AS DOUBLE) \\u003e 0 \\n      AND TRY_CAST(d.Intensity AS DOUBLE) \\u003e 0\\n),\\nrna_counts AS (\\n    SELECT cell_type, rna_ncpm, COUNT(*) as cnt\\n    FROM base\\n    GROUP BY cell_type, rna_ncpm\\n),\\nrna_ranks AS (\\n    SELECT cell_type, rna_ncpm,\\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC)) / 2.0 as avg_rank_rna\\n    FROM rna_counts\\n),\\nprotein_counts AS (\\n    SELECT cell_type, protein_intensity, COUNT(*) as cnt\\n    FROM base\\n    GROUP BY cell_type, protein_intensity\\n),\\nprotein_ranks AS (\\n    SELECT cell_type, protein_intensity,\\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC)) / 2.0 as avg_rank_protein\\n    FROM protein_counts\\n),\\njoined AS (\\n    SELECT \\n        b.cell_type,\\n        b.ensembl_id,\\n        b.gene_name,\\n        b.rna_ncpm,\\n        b.protein_intensity,\\n        b.subcell_main,\\n        rr.avg_rank_rna / 4714.0 as rna_pct,\\n        pr.avg_rank_protein / 4714.0 as protein_pct,\\n        ABS(rr.avg_rank_rna / 4714.0 - pr.avg_rank_protein / 4714.0) as diff\\n    FROM base b\\n    JOIN rna_ranks rr ON b.cell_type = rr.cell_type AND b.rna_ncpm = rr.rna_ncpm\\n    JOIN protein_ranks pr ON b.cell_type = pr.cell_type AND b.protein_intensity = pr.protein_intensity\\n)\\nSELECT * FROM joined ORDER BY diff DESC, ensembl_id ASC LIMIT 10\"}"
+        }
+      ]
+    },
+    {
+      "turn": 22,
+      "ms": 3390,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 699,
+        "prompt_tokens": 34277,
+        "prompt_tokens_details": {
+          "cached_tokens": 16263
+        },
+        "total_tokens": 34989
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"WITH base AS (\\n    SELECT \\n        r.\\\"Cell type\\\" as cell_type,\\n        r.Gene as ensembl_id,\\n        r.\\\"Gene name\\\" as gene_name,\\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity,\\n        p.\\\"Subcellular main location\\\" as subcell_main\\n    FROM rna_single_cell_type r\\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\\n    WHERE r.\\\"Cell type\\\" = 'hepatocytes'\\n      AND TRY_CAST(r.nCPM AS DOUBLE) \\u003e 0 \\n      AND TRY_CAST(d.Intensity AS DOUBLE) \\u003e 0\\n),\\nrna_counts AS (\\n    SELECT cell_type, rna_ncpm, COUNT(*) as cnt\\n    FROM base\\n    GROUP BY cell_type, rna_ncpm\\n),\\nrna_ranks AS (\\n    SELECT cell_type, rna_ncpm,\\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC)) / 2.0 as avg_rank_rna\\n    FROM rna_counts\\n),\\nprotein_counts AS (\\n    SELECT cell_type, protein_intensity, COUNT(*) as cnt\\n    FROM base\\n    GROUP BY cell_type, protein_intensity\\n),\\nprotein_ranks AS (\\n    SELECT cell_type, protein_intensity,\\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC)) / 2.0 as avg_rank_protein\\n    FROM protein_counts\\n),\\njoined AS (\\n    SELECT \\n        b.cell_type,\\n        b.ensembl_id,\\n        b.gene_name,\\n        b.rna_ncpm,\\n        b.protein_intensity,\\n        b.subcell_main,\\n        rr.avg_rank_rna / 5985.0 as rna_pct,\\n        pr.avg_rank_protein / 5985.0 as protein_pct,\\n        ABS(rr.avg_rank_rna / 5985.0 - pr.avg_rank_protein / 5985.0) as diff\\n    FROM base b\\n    JOIN rna_ranks rr ON b.cell_type = rr.cell_type AND b.rna_ncpm = rr.rna_ncpm\\n    JOIN protein_ranks pr ON b.cell_type = pr.cell_type AND b.protein_intensity = pr.protein_intensity\\n)\\nSELECT * FROM joined ORDER BY diff DESC, ensembl_id ASC LIMIT 10\"}"
+        }
+      ]
+    },
+    {
+      "turn": 23,
+      "ms": 2233,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 700,
+        "prompt_tokens": 36025,
+        "prompt_tokens_details": {
+          "cached_tokens": 32529
+        },
+        "total_tokens": 36738
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"WITH base AS (\\n    SELECT \\n        r.\\\"Cell type\\\" as cell_type,\\n        r.Gene as ensembl_id,\\n        r.\\\"Gene name\\\" as gene_name,\\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity,\\n        p.\\\"Subcellular main location\\\" as subcell_main\\n    FROM rna_single_cell_type r\\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\\n    WHERE r.\\\"Cell type\\\" = 'neutrophils'\\n      AND TRY_CAST(r.nCPM AS DOUBLE) \\u003e 0 \\n      AND TRY_CAST(d.Intensity AS DOUBLE) \\u003e 0\\n),\\nrna_counts AS (\\n    SELECT cell_type, rna_ncpm, COUNT(*) as cnt\\n    FROM base\\n    GROUP BY cell_type, rna_ncpm\\n),\\nrna_ranks AS (\\n    SELECT cell_type, rna_ncpm,\\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC)) / 2.0 as avg_rank_rna\\n    FROM rna_counts\\n),\\nprotein_counts AS (\\n    SELECT cell_type, protein_intensity, COUNT(*) as cnt\\n    FROM base\\n    GROUP BY cell_type, protein_intensity\\n),\\nprotein_ranks AS (\\n    SELECT cell_type, protein_intensity,\\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC)) / 2.0 as avg_rank_protein\\n    FROM protein_counts\\n),\\njoined AS (\\n    SELECT \\n        b.cell_type,\\n        b.ensembl_id,\\n        b.gene_name,\\n        b.rna_ncpm,\\n        b.protein_intensity,\\n        b.subcell_main,\\n        rr.avg_rank_rna / 5396.0 as rna_pct,\\n        pr.avg_rank_protein / 5396.0 as protein_pct,\\n        ABS(rr.avg_rank_rna / 5396.0 - pr.avg_rank_protein / 5396.0) as diff\\n    FROM base b\\n    JOIN rna_ranks rr ON b.cell_type = rr.cell_type AND b.rna_ncpm = rr.rna_ncpm\\n    JOIN protein_ranks pr ON b.cell_type = pr.cell_type AND b.protein_intensity = pr.protein_intensity\\n)\\nSELECT * FROM joined ORDER BY diff DESC, ensembl_id ASC LIMIT 10\"}"
+        }
+      ]
+    },
+    {
+      "turn": 24,
+      "ms": 1619,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 152,
+        "prompt_tokens": 37781,
+        "prompt_tokens_details": {
+          "cached_tokens": 32532
+        },
+        "total_tokens": 38123
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"SELECT \\n    r.Gene, r.\\\"Gene name\\\", TRY_CAST(r.nCPM AS DOUBLE) as rna, TRY_CAST(d.Intensity AS DOUBLE) as prot\\nFROM rna_single_cell_type r\\nJOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\nWHERE r.\\\"Cell type\\\" = 'neutrophils'\\n  AND TRY_CAST(r.nCPM AS DOUBLE) = 0.1\\n  AND TRY_CAST(d.Intensity AS DOUBLE) = 7043887585.6\"}"
+        }
+      ]
+    },
+    {
+      "turn": 25,
+      "ms": 1985,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 151,
+        "prompt_tokens": 38257,
+        "prompt_tokens_details": {
+          "cached_tokens": 32526
+        },
+        "total_tokens": 38813
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"SELECT \\n    r.Gene, r.\\\"Gene name\\\", TRY_CAST(r.nCPM AS DOUBLE) as rna, TRY_CAST(d.Intensity AS DOUBLE) as prot\\nFROM rna_single_cell_type r\\nJOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\nWHERE r.\\\"Cell type\\\" = 'cardiomyocytes'\\n  AND TRY_CAST(r.nCPM AS DOUBLE) = 0.1\\n  AND TRY_CAST(d.Intensity AS DOUBLE) = 604031635.6\"}"
+        }
+      ]
+    },
+    {
+      "turn": 26,
+      "ms": 1790,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 150,
+        "prompt_tokens": 38908,
+        "prompt_tokens_details": {
+          "cached_tokens": 36587
+        },
+        "total_tokens": 39277
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"SELECT \\n    r.Gene, r.\\\"Gene name\\\", TRY_CAST(r.nCPM AS DOUBLE) as rna, TRY_CAST(d.Intensity AS DOUBLE) as prot\\nFROM rna_single_cell_type r\\nJOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\nWHERE r.\\\"Cell type\\\" = 'hepatocytes'\\n  AND TRY_CAST(r.nCPM AS DOUBLE) = 0.2\\n  AND TRY_CAST(d.Intensity AS DOUBLE) = 970554190.6\"}"
+        }
+      ]
+    },
+    {
+      "turn": 27,
+      "ms": 1796,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 161,
+        "prompt_tokens": 39372,
+        "prompt_tokens_details": {
+          "cached_tokens": 36581
+        },
+        "total_tokens": 39784
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"SELECT Ensembl, Gene, \\\"Subcellular location\\\", \\\"Subcellular main location\\\" \\nFROM proteinatlas \\nWHERE Ensembl IN ('ENSG00000169067', 'ENSG00000270276', 'ENSG00000274618', 'ENSG00000278637', 'ENSG00000158406', 'ENSG00000270882', 'ENSG00000273542', 'ENSG00000276180')\"}"
+        }
+      ]
+    },
+    {
+      "turn": 28,
+      "ms": 3896,
+      "stop_reason": "tool_calls",
+      "usage": {
+        "completion_tokens": 297,
+        "prompt_tokens": 39975,
+        "prompt_tokens_details": {
+          "cached_tokens": 36576
+        },
+        "total_tokens": 41265
+      },
+      "text": "",
+      "tool_uses": [
+        {
+          "name": "sql",
+          "input": "{\"query\":\"WITH base AS (\\n    SELECT \\n        r.\\\"Cell type\\\" as cell_type,\\n        r.Gene as ensembl_id,\\n        r.\\\"Gene name\\\" as gene_name,\\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity\\n    FROM rna_single_cell_type r\\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\\\"Cell type\\\" = d.\\\"Cell type\\\"\\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\\n    WHERE r.\\\"Cell type\\\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\\n      AND TRY_CAST(r.nCPM AS DOUBLE) \\u003e 0 \\n      AND TRY_CAST(d.Intensity AS DOUBLE) \\u003e 0\\n),\\nranked_rna AS (\\n    SELECT *,\\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY rna_ncpm DESC, ensembl_id ASC) as rank\\n    FROM base\\n)\\nSELECT cell_type, rank, ensembl_id, gene_name, rna_ncpm\\nFROM ranked_rna\\nWHERE rank \\u003c= 20\\nORDER BY cell_type, rank\"}"
+        }
+      ]
+    },
+    {
+      "turn": 29,
+      "ms": 41508,
+      "stop_reason": "stop",
+      "usage": {
+        "completion_tokens": 15263,
+        "prompt_tokens": 43209,
+        "prompt_tokens_details": {
+          "cached_tokens": 28458
+        },
+        "total_tokens": 61545
+      },
+      "text": "An assessment of RNA–protein agreement in the Human Protein Atlas was conducted for **cardiomyocytes**, **hepatocytes**, and **neutrophils** by joining single-cell-type RNA expression (`rna_single_cell_type`, normalized CPM) with Deep Visual Proteomics (DVP) cell-type intensity (`dvp_cell_type`, Intensity) on Ensembl gene identifiers (`Gene`) and exact cell-type names, restricted to the HPA master gene universe (`proteinatlas`).\n\n---\n\n### 1. Summary Agreement Metrics\n\nFor each cell type, only genes with positive measurements in both modalities (`nCPM > 0` and `Intensity > 0`) were retained. Spearman correlation was calculated across all retained genes using average fractional ranks for ties. Top 20 lists were ranked independently by RNA (`nCPM DESC, Ensembl ASC`) and protein (`Intensity DESC, Ensembl ASC`).\n\n| Cell Type | Retained Genes | Spearman $\\rho$ | Top-20 Overlap Count | Top-20 Union Count | Jaccard Index |\n| :--- | :---: | :---: | :---: | :---: | :---: |\n| **Cardiomyocytes** | 4,714 | **0.0972** | 3 | 37 | **0.0811** (3/37) |\n| **Hepatocytes** | 5,985 | **0.3540** | 1 | 39 | **0.0256** (1/39) |\n| **Neutrophils** | 5,396 | **0.1526** | 0 | 40 | **0.0000** (0/40) |\n\n*Notes*:\n- **Cardiomyocyte** top-20 overlapping genes: `TTN`, `MYH7`, `MYBPC3`.\n- **Hepatocyte** top-20 overlapping gene: `ALB`.\n- **Neutrophil** top-20 overlapping genes: none.\n\n---\n\n### 2. Independent Top-Twenty Ranked Lists\n\n#### A. Cardiomyocytes\n| Rank | RNA Top 20 Gene | Ensembl ID | RNA (nCPM) | Protein Top 20 Gene | Ensembl ID | Protein (Intensity) |\n| :---: | :--- | :--- | :---: | :--- | :--- | :---: |\n| **1** | RYR2 | ENSG00000198626 | 30,129.5 | MYH7 | ENSG00000092054 | 64,186,889,489.8 |\n| **2** | TTN | ENSG00000155657 | 24,623.7 | MYL3 | ENSG00000160808 | 20,028,858,211.6 |\n| **3** | SLC8A1 | ENSG00000183023 | 14,581.0 | ACTA1 | ENSG00000143632 | 17,792,280,270.7 |\n| **4** | FGF12 | ENSG00000114279 | 9,617.8 | ATP5F1A | ENSG00000152234 | 10,232,616,373.0 |\n| **5** | DMD | ENSG00000198947 | 6,295.2 | MB | ENSG00000198125 | 9,395,140,341.4 |\n| **6** | CBR4 | ENSG00000145439 | 5,958.1 | MYBPC3 | ENSG00000134571 | 8,879,511,131.8 |\n| **7** | PDE3A | ENSG00000172572 | 4,516.2 | ACTN2 | ENSG00000077522 | 7,361,046,130.9 |\n| **8** | LAMA2 | ENSG00000196569 | 4,106.9 | TPM1 | ENSG00000140416 | 7,270,922,934.9 |\n| **9** | CTNNA3 | ENSG00000183230 | 3,863.2 | ATP5F1B | ENSG00000110955 | 7,258,386,192.5 |\n| **10** | SORBS2 | ENSG00000154556 | 3,781.8 | DES | ENSG00000175084 | 6,876,145,296.2 |\n| **11** | NEBL | ENSG00000078114 | 3,558.9 | CKM | ENSG00000104879 | 6,684,852,808.6 |\n| **12** | FHL2 | ENSG00000115641 | 3,363.2 | MYL2 | ENSG00000111245 | 6,008,709,825.6 |\n| **13** | AKAP13 | ENSG00000170776 | 2,979.6 | TTN | ENSG00000155657 | 5,510,998,285.3 |\n| **14** | MYH7 | ENSG00000092054 | 2,902.2 | ALB | ENSG00000163631 | 5,446,982,731.6 |\n| **15** | SGCD | ENSG00000170624 | 2,865.4 | ACO2 | ENSG00000100412 | 4,450,685,550.2 |\n| **16** | PDLIM5 | ENSG00000163110 | 2,747.2 | FABP3 | ENSG00000121769 | 3,604,325,614.5 |\n| **17** | PALLD | ENSG00000129116 | 2,730.0 | IDH2 | ENSG00000182054 | 3,355,598,101.8 |\n| **18** | MIB1 | ENSG00000101752 | 2,576.9 | GOT2 | ENSG00000125166 | 2,919,837,125.3 |\n| **19** | MLIP | ENSG00000146147 | 2,539.9 | MYOM2 | ENSG00000036448 | 2,855,229,206.9 |\n| **20** | MYBPC3 | ENSG00000134571 | 2,429.8 | CRYAB | ENSG00000109846 | 2,843,898,306.2 |\n\n#### B. Hepatocytes\n| Rank | RNA Top 20 Gene | Ensembl ID | RNA (nCPM) | Protein Top 20 Gene | Ensembl ID | Protein (Intensity) |\n| :---: | :--- | :--- | :---: | :--- | :--- | :---: |\n| **1** | APOC3 | ENSG00000110245 | 97,065.8 | CPS1 | ENSG00000021826 | 11,367,000,368.8 |\n| **2** | ALB | ENSG00000163631 | 81,391.2 | HBB | ENSG00000244734 | 7,611,811,581.0 |\n| **3** | HP | ENSG00000257017 | 65,516.9 | HMGCS2 | ENSG00000134240 | 3,921,836,178.2 |\n| **4** | ORM1 | ENSG00000229314 | 63,160.9 | ADH1B | ENSG00000196616 | 3,851,244,173.0 |\n| **5** | MT-CO2 | ENSG00000198712 | 57,294.1 | ALB ",
+      "tool_uses": []
+    }
+  ],
+  "tool_calls": [
+    {
+      "turn": 1,
+      "name": "schema",
+      "input": {},
+      "ms": 3793,
+      "result_chars": 148152,
+      "truncated": true,
+      "error": null,
+      "result_head": "Tables built from the Human Protein Atlas bulk files (all columns are text; cast for arithmetic, e.g. TRY_CAST(col AS DOUBLE)).\n\nblood_immunoassay_concentration (0.1 MB): gene, ENSG ID, conc [pg/L], sample type, number_of_samples, pubmed id\nblood_ms_concentration (0.1 MB): Gene, ENSG ID, Conc [pg/L]\nblood_pea_disease_de (17.9 MB): Gene, ENSG ID, Disease, Class, Control, logFC, p-value adjusted, Seeds, Mean importance, SD importance, Max importance, Min importance\nblood_pea_diseases (0.0 MB): Disease, Class\ncancer_cancers (0.0 MB): Cancer, Organ\ncancer_cptac (5.7 MB): Cancer, Gene, Gene name, p"
+    },
+    {
+      "turn": 2,
+      "name": "sql",
+      "input": {
+        "query": "SELECT DISTINCT \"Cell type\" FROM rna_single_cell_type WHERE lower(\"Cell type\") LIKE '%cardio%' OR lower(\"Cell type\") LIKE '%hepato%' OR lower(\"Cell type\") LIKE '%neutro%'"
+      },
+      "ms": 205,
+      "result_chars": 80,
+      "truncated": false,
+      "error": null,
+      "result_head": "Cell type\nhepatocytes\ncardiomyocytes\nneutrophil progenitors\nneutrophils\n[4 rows]"
+    },
+    {
+      "turn": 3,
+      "name": "sql",
+      "input": {
+        "query": "SELECT DISTINCT \"Cell type\" FROM dvp_cell_type WHERE lower(\"Cell type\") LIKE '%cardio%' OR lower(\"Cell type\") LIKE '%hepato%' OR lower(\"Cell type\") LIKE '%neutro%'"
+      },
+      "ms": 73,
+      "result_chars": 57,
+      "truncated": false,
+      "error": null,
+      "result_head": "Cell type\nneutrophils\nhepatocytes\ncardiomyocytes\n[3 rows]"
+    },
+    {
+      "turn": 4,
+      "name": "sql",
+      "input": {
+        "query": "SELECT Ensembl, Gene FROM proteinatlas LIMIT 5"
+      },
+      "ms": 99,
+      "result_chars": 133,
+      "truncated": false,
+      "error": null,
+      "result_head": "Ensembl\tGene\nENSG00000000003\tTSPAN6\nENSG00000000005\tTNMD\nENSG00000000419\tDPM1\nENSG00000000457\tSCYL3\nENSG00000000460\tC1orf112\n[5 rows]"
+    },
+    {
+      "turn": 5,
+      "name": "sql",
+      "input": {
+        "query": "SELECT Gene, \"Gene name\", \"Cell type\", nCPM FROM rna_single_cell_type LIMIT 5"
+      },
+      "ms": 40,
+      "result_chars": 273,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tGene name\tCell type\tnCPM\nENSG00000000003\tTSPAN6\tadipocytes\t2.8\nENSG00000000003\tTSPAN6\tadrenal cortex cells\t10.3\nENSG00000000003\tTSPAN6\tadrenal medulla cells\t0.0\nENSG00000000003\tTSPAN6\talveolar cells type 1\t8.1\nENSG00000000003\tTSPAN6\talveolar cells type 2\t11.5\n[5 rows]"
+    },
+    {
+      "turn": 6,
+      "name": "sql",
+      "input": {
+        "query": "SELECT Gene, \"Gene name\", \"Cell type\", Intensity FROM dvp_cell_type LIMIT 5"
+      },
+      "ms": 28,
+      "result_chars": 257,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tGene name\tCell type\tIntensity\nENSG00000000003\tTSPAN6\talveolar cells type 1\t\nENSG00000000003\tTSPAN6\talveolar cells type 2\t8827.5\nENSG00000000003\tTSPAN6\tastrocytes and neuropil\t\nENSG00000000003\tTSPAN6\tb-cells\t\nENSG00000000003\tTSPAN6\tcapillaries\t\n[5 rows]"
+    },
+    {
+      "turn": 7,
+      "name": "sql",
+      "input": {
+        "query": "SELECT COUNT(*), COUNT(DISTINCT Ensembl) FROM proteinatlas"
+      },
+      "ms": 114,
+      "result_chars": 57,
+      "truncated": false,
+      "error": null,
+      "result_head": "count_star()\tcount(DISTINCT Ensembl)\n20162\t20162\n[1 rows]"
+    },
+    {
+      "turn": 8,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \n    r.\"Cell type\",\n    COUNT(*) as total_pairs,\n    COUNT(DISTINCT r.Gene) as distinct_genes,\n    COUNT(CASE WHEN TRY_CAST(r.nCPM AS DOUBLE) > 0 AND TRY_CAST(d.Intensity AS DOUBLE) > 0 THEN 1 END) as positive_both\nFROM rna_single_cell_type r\nJOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\nJOIN proteinatlas p ON r.Gene = p.Ensembl\nWHERE r.\"Cell type\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\nGROUP BY r.\"Cell type\""
+      },
+      "ms": 347,
+      "result_chars": 149,
+      "truncated": false,
+      "error": null,
+      "result_head": "Cell type\ttotal_pairs\tdistinct_genes\tpositive_both\nneutrophils\t19297\t19297\t5396\nhepatocytes\t19297\t19297\t5985\ncardiomyocytes\t19297\t19297\t4714\n[3 rows]"
+    },
+    {
+      "turn": 9,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \n    r.\"Cell type\",\n    COUNT(CASE WHEN TRY_CAST(r.nCPM AS DOUBLE) > 0 AND TRY_CAST(d.Intensity AS DOUBLE) > 0 THEN 1 END) as positive_both_no_p,\n    COUNT(CASE WHEN p.Ensembl IS NOT NULL AND TRY_CAST(r.nCPM AS DOUBLE) > 0 AND TRY_CAST(d.Intensity AS DOUBLE) > 0 THEN 1 END) as positive_both_with_p\nFROM rna_single_cell_type r\nJOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\nLEFT JOIN proteinatlas p ON r.Gene = p.Ensembl\nWHERE r.\"Cell type\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\nGROUP BY r.\"Cell type\""
+      },
+      "ms": 313,
+      "result_chars": 127,
+      "truncated": false,
+      "error": null,
+      "result_head": "Cell type\tpositive_both_no_p\tpositive_both_with_p\nneutrophils\t5396\t5396\ncardiomyocytes\t4714\t4714\nhepatocytes\t5985\t5985\n[3 rows]"
+    },
+    {
+      "turn": 10,
+      "name": "sql",
+      "input": {
+        "query": "WITH base AS (\n    SELECT \n        r.\"Cell type\" as cell_type,\n        r.Gene as ensembl_id,\n        TRY_CAST(r.nCPM AS DOUBLE) as rna,\n        TRY_CAST(d.Intensity AS DOUBLE) as protein\n    FROM rna_single_cell_type r\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\n    WHERE r.\"Cell type\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\n      AND TRY_CAST(r.nCPM AS DOUBLE) > 0 \n      AND TRY_CAST(d.Intensity AS DOUBLE) > 0\n)\nSELECT \n    cell_type,\n    COUNT(*) as total,\n    COUNT(DISTINCT rna) as distinct_rna,\n    COUNT(DISTINCT protein) as distinct_protein\nFROM base\nGROUP BY cell_type"
+      },
+      "ms": 353,
+      "result_chars": 138,
+      "truncated": false,
+      "error": null,
+      "result_head": "cell_type\ttotal\tdistinct_rna\tdistinct_protein\nhepatocytes\t5985\t2291\t5975\nneutrophils\t5396\t2418\t5382\ncardiomyocytes\t4714\t1619\t4702\n[3 rows]"
+    },
+    {
+      "turn": 11,
+      "name": "sql",
+      "input": {
+        "query": "WITH base AS (\n    SELECT \n        r.\"Cell type\" as cell_type,\n        r.Gene as ensembl_id,\n        r.\"Gene name\" as gene_name,\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity\n    FROM rna_single_cell_type r\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\n    WHERE r.\"Cell type\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\n      AND TRY_CAST(r.nCPM AS DOUBLE) > 0 \n      AND TRY_CAST(d.Intensity AS DOUBLE) > 0\n),\nranked_rna AS (\n    SELECT *,\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY rna_ncpm DESC, ensembl_id ASC) as rna_rank\n    FROM base\n),\nranked_protein AS (\n    SELECT *,\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY protein_intensity DESC, ensembl_id ASC) as protein_rank\n    FROM base\n)\nSELECT cell_type, rna_rank, ensembl_id, gene_name, rna_ncpm\nFROM ranked_rna\nWHERE rna_rank <= 20\nORDER BY cell_type, rna_rank"
+      },
+      "ms": 325,
+      "result_chars": 2751,
+      "truncated": false,
+      "error": null,
+      "result_head": "cell_type\trna_rank\tensembl_id\tgene_name\trna_ncpm\ncardiomyocytes\t1\tENSG00000198626\tRYR2\t30129.5\ncardiomyocytes\t2\tENSG00000155657\tTTN\t24623.7\ncardiomyocytes\t3\tENSG00000183023\tSLC8A1\t14581\ncardiomyocytes\t4\tENSG00000114279\tFGF12\t9617.8\ncardiomyocytes\t5\tENSG00000198947\tDMD\t6295.2\ncardiomyocytes\t6\tENSG00000145439\tCBR4\t5958.1\ncardiomyocytes\t7\tENSG00000172572\tPDE3A\t4516.2\ncardiomyocytes\t8\tENSG00000196569\tLAMA2\t4106.9\ncardiomyocytes\t9\tENSG00000183230\tCTNNA3\t3863.2\ncardiomyocytes\t10\tENSG00000154556\tSORBS2\t3781.8\ncardiomyocytes\t11\tENSG00000078114\tNEBL\t3558.9\ncardiomyocytes\t12\tENSG00000115641\tFHL2\t3363.2\n"
+    },
+    {
+      "turn": 12,
+      "name": "sql",
+      "input": {
+        "query": "WITH base AS (\n    SELECT \n        r.\"Cell type\" as cell_type,\n        r.Gene as ensembl_id,\n        r.\"Gene name\" as gene_name,\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity\n    FROM rna_single_cell_type r\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\n    WHERE r.\"Cell type\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\n      AND TRY_CAST(r.nCPM AS DOUBLE) > 0 \n      AND TRY_CAST(d.Intensity AS DOUBLE) > 0\n),\nranked_protein AS (\n    SELECT *,\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY protein_intensity DESC, ensembl_id ASC) as protein_rank\n    FROM base\n)\nSELECT cell_type, protein_rank, ensembl_id, gene_name, protein_intensity\nFROM ranked_protein\nWHERE protein_rank <= 20\nORDER BY cell_type, protein_rank"
+      },
+      "ms": 343,
+      "result_chars": 3059,
+      "truncated": false,
+      "error": null,
+      "result_head": "cell_type\tprotein_rank\tensembl_id\tgene_name\tprotein_intensity\ncardiomyocytes\t1\tENSG00000092054\tMYH7\t64186889489.8\ncardiomyocytes\t2\tENSG00000160808\tMYL3\t20028858211.6\ncardiomyocytes\t3\tENSG00000143632\tACTA1\t17792280270.7\ncardiomyocytes\t4\tENSG00000152234\tATP5F1A\t10232616373\ncardiomyocytes\t5\tENSG00000198125\tMB\t9395140341.4\ncardiomyocytes\t6\tENSG00000134571\tMYBPC3\t8879511131.8\ncardiomyocytes\t7\tENSG00000077522\tACTN2\t7361046130.9\ncardiomyocytes\t8\tENSG00000140416\tTPM1\t7270922934.9\ncardiomyocytes\t9\tENSG00000110955\tATP5F1B\t7258386192.5\ncardiomyocytes\t10\tENSG00000175084\tDES\t6876145296.2\ncardiomyocytes\t11\t"
+    },
+    {
+      "turn": 13,
+      "name": "sql",
+      "input": {
+        "query": "WITH base AS (\n    SELECT \n        r.\"Cell type\" as cell_type,\n        r.Gene as ensembl_id,\n        r.\"Gene name\" as gene_name,\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity\n    FROM rna_single_cell_type r\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\n    WHERE r.\"Cell type\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\n      AND TRY_CAST(r.nCPM AS DOUBLE) > 0 \n      AND TRY_CAST(d.Intensity AS DOUBLE) > 0\n),\nranked_rna AS (\n    SELECT *,\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY rna_ncpm DESC, ensembl_id ASC) as rna_rank\n    FROM base\n),\nranked_protein AS (\n    SELECT *,\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY protein_intensity DESC, ensembl_id ASC) as protein_rank\n    FROM base\n),\ntop20_rna AS (\n    SELECT cell_type, ensembl_id, gene_name, rna_ncpm, rna_rank\n    FROM ranked_rna\n    WHERE rna_rank <= 20\n),\ntop20_protein AS (\n    SELECT cell_type, ensembl_id, gene_name, protein_intensity, protein_rank\n    FROM ranked_protein\n    WHERE protein_rank <= 20\n)\nSELECT \n    COALESCE(r.cell_type, p.cell_type) as cell_type,\n    COUNT(CASE WHEN r.ensembl_id IS NOT NULL AND p.ensembl_id IS NOT NULL THEN 1 END) as overlap_count,\n    COUNT(DISTINCT COALESCE(r.ensembl_id, p.ensembl_id)) as union_count\nFROM top20_rna r\nFULL OUTER JOIN top20_protein p \n    ON r.cell_type = p.cell_type AND r.ensembl_id = p.ensembl_id\nGROUP BY COALESCE(r.cell_type, p.cell_type)"
+      },
+      "ms": 366,
+      "result_chars": 98,
+      "truncated": false,
+      "error": null,
+      "result_head": "cell_type\toverlap_count\tunion_count\nneutrophils\t0\t40\nhepatocytes\t1\t39\ncardiomyocytes\t3\t37\n[3 rows]"
+    },
+    {
+      "turn": 14,
+      "name": "sql",
+      "input": {
+        "query": "WITH base AS (\n    SELECT \n        r.\"Cell type\" as cell_type,\n        r.Gene as ensembl_id,\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity\n    FROM rna_single_cell_type r\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\n    WHERE r.\"Cell type\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\n      AND TRY_CAST(r.nCPM AS DOUBLE) > 0 \n      AND TRY_CAST(d.Intensity AS DOUBLE) > 0\n),\n-- Compute average rank for RNA:\nrna_counts AS (\n    SELECT cell_type, rna_ncpm, COUNT(*) as cnt, MIN(rna_ncpm) as val\n    FROM base\n    GROUP BY cell_type, rna_ncpm\n),\nrna_ranks AS (\n    SELECT cell_type, rna_ncpm,\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC)) / 2.0 as avg_rank_rna\n    FROM rna_counts\n),\n-- Compute average rank for Protein:\nprotein_counts AS (\n    SELECT cell_type, protein_intensity, COUNT(*) as cnt\n    FROM base\n    GROUP BY cell_type, protein_intensity\n),\nprotein_ranks AS (\n    SELECT cell_type, protein_intensity,\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC)) / 2.0 as avg_rank_protein\n    FROM protein_counts\n),\njoined_ranks AS (\n    SELECT \n        b.cell_type,\n        b.ensembl_id,\n        b.rna_ncpm,\n        b.protein_intensity,\n        rr.avg_rank_rna,\n        pr.avg_rank_protein\n    FROM base b\n    JOIN rna_ranks rr ON b.cell_type = rr.cell_type AND b.rna_ncpm = rr.rna_ncpm\n    JOIN protein_ranks pr ON b.cell_type = pr.cell_type AND b.protein_intensity = pr.protein_intensity\n)\nSELECT \n    cell_type,\n    COUNT(*) as n,\n    corr(avg_rank_rna, avg_rank_protein) as spearman_corr\nFROM joined_ranks\nGROUP BY cell_type"
+      },
+      "ms": 1749,
+      "result_chars": 147,
+      "truncated": false,
+      "error": null,
+      "result_head": "cell_type\tn\tspearman_corr\nhepatocytes\t5985\t0.3540028669031017\nneutrophils\t5396\t0.15259273448342675\ncardiomyocytes\t4714\t0.09721188414657142\n[3 rows]"
+    },
+    {
+      "turn": 15,
+      "name": "sql",
+      "input": {
+        "query": "WITH base AS (\n    SELECT \n        r.\"Cell type\" as cell_type,\n        r.Gene as ensembl_id,\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity\n    FROM rna_single_cell_type r\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\n    WHERE r.\"Cell type\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\n      AND TRY_CAST(r.nCPM AS DOUBLE) > 0 \n      AND TRY_CAST(d.Intensity AS DOUBLE) > 0\n),\nranked AS (\n    SELECT \n        cell_type,\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC, ensembl_id ASC) as r_rna,\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC, ensembl_id ASC) as r_prot\n    FROM base\n)\nSELECT cell_type, corr(r_rna, r_prot) as corr_strict\nFROM ranked\nGROUP BY cell_type"
+      },
+      "ms": 333,
+      "result_chars": 129,
+      "truncated": false,
+      "error": null,
+      "result_head": "cell_type\tcorr_strict\nneutrophils\t0.15253537258834038\nhepatocytes\t0.35400632448868946\ncardiomyocytes\t0.09718873736947196\n[3 rows]"
+    },
+    {
+      "turn": 16,
+      "name": "sql",
+      "input": {
+        "query": "SELECT Ensembl, Gene, \"Subcellular main location\" FROM proteinatlas WHERE \"Subcellular main location\" IS NOT NULL LIMIT 10"
+      },
+      "ms": 102,
+      "result_chars": 413,
+      "truncated": false,
+      "error": null,
+      "result_head": "Ensembl\tGene\tSubcellular main location\nENSG00000000003\tTSPAN6\tCell Junctions, Cytosol\nENSG00000000457\tSCYL3\tGolgi apparatus, Cytosol\nENSG00000000460\tC1orf112\tNucleoplasm\nENSG00000000938\tFGR\tPlasma membrane\nENSG00000000971\tCFH\tVesicles\nENSG00000001084\tGCLC\tNucleoplasm\nENSG00000001167\tNFYA\tNucleoplasm\nENSG00000001460\tSTPG1\tNucleoplasm\nENSG00000001461\tNIPAL3\tNucleoplasm\nENSG00000001497\tLAS1L\tNucleoplasm\n[10 rows]"
+    },
+    {
+      "turn": 17,
+      "name": "sql",
+      "input": {
+        "query": "WITH base AS (\n    SELECT \n        r.\"Cell type\" as cell_type,\n        r.Gene as ensembl_id,\n        r.\"Gene name\" as gene_name,\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity,\n        p.\"Subcellular main location\" as subcell_main\n    FROM rna_single_cell_type r\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\n    WHERE r.\"Cell type\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\n      AND TRY_CAST(r.nCPM AS DOUBLE) > 0 \n      AND TRY_CAST(d.Intensity AS DOUBLE) > 0\n),\nrna_counts AS (\n    SELECT cell_type, rna_ncpm, COUNT(*) as cnt\n    FROM base\n    GROUP BY cell_type, rna_ncpm\n),\nrna_ranks AS (\n    SELECT cell_type, rna_ncpm,\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC)) / 2.0 as avg_rank_rna\n    FROM rna_counts\n),\nprotein_counts AS (\n    SELECT cell_type, protein_intensity, COUNT(*) as cnt\n    FROM base\n    GROUP BY cell_type, protein_intensity\n),\nprotein_ranks AS (\n    SELECT cell_type, protein_intensity,\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC)) / 2.0 as avg_rank_protein\n    FROM protein_counts\n),\ncounts_per_cell_type AS (\n    SELECT cell_type, COUNT(*) as n_retained\n    FROM base\n    GROUP BY cell_type\n),\njoined AS (\n    SELECT \n        b.cell_type,\n        b.ensembl_id,\n        b.gene_name,\n        b.rna_ncpm,\n        b.protein_intensity,\n        b.subcell_main,\n        c.n_retained,\n        rr.avg_rank_rna,\n        pr.avg_rank_protein,\n        rr.avg_rank_rna / c.n_retained as rna_pct,\n        pr.avg_rank_protein / c.n_retained as protein_pct,\n        ABS(rr.avg_rank_rna / c.n_retained - pr.avg_rank_protein / c.n_retained) as diff\n    FROM base b\n    JOIN rna_ranks rr ON b.cell_type = rr.cell_type AND b.rna_ncpm = rr.rna_ncpm\n    JOIN protein_ranks pr ON b.cell_type = pr.cell_type AND b.protein_intensity = pr.protein_intensity\n    JOIN counts_per_cell_type c ON b.cell_type = c.cell_type\n),\nranked_diff AS (\n    SELECT *,\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY diff DESC, ensembl_id ASC) as diff_rank\n    FROM joined\n)\nSELECT \n    cell_type,\n    diff_rank,\n    ensembl_id,\n    gene_name,\n    rna_ncpm,\n    protein_intensity,\n    rna_pct,\n    protein_pct,\n    diff,\n    subcell_main\nFROM ranked_diff\nWHERE diff_rank <= 5\nORDER BY cell_type, diff_rank"
+      },
+      "ms": 2149,
+      "result_chars": 1900,
+      "truncated": false,
+      "error": null,
+      "result_head": "cell_type\tdiff_rank\tensembl_id\tgene_name\trna_ncpm\tprotein_intensity\trna_pct\tprotein_pct\tdiff\tsubcell_main\ncardiomyocytes\t1\tENSG00000163631\tALB\t0.1\t5446982731.6\t0.008697496817988969\t0.9972422571064913\t0.9885447602885024\tEndoplasmic reticulum, Golgi apparatus\ncardiomyocytes\t2\tENSG00000169067\tACTBL2\t0.1\t941594818.8\t0.008697496817988969\t0.9870598218073823\t0.9783623249893934\t\ncardiomyocytes\t3\tENSG00000121440\tPDZRN3\t1323.3\t21502.8\t0.9904539669070853\t0.01824352991090369\t0.9722104369961816\tCytosol\ncardiomyocytes\t4\tENSG00000270276\tH4C15\t0.1\t604031635.6\t0.008697496817988969\t0.9786805260924905\t0.96998302"
+    },
+    {
+      "turn": 18,
+      "name": "sql",
+      "input": {
+        "query": "WITH base AS (\n    SELECT \n        r.\"Cell type\" as cell_type,\n        r.Gene as ensembl_id,\n        r.\"Gene name\" as gene_name,\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity,\n        p.\"Subcellular main location\" as subcell_main\n    FROM rna_single_cell_type r\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\n    WHERE r.\"Cell type\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\n      AND TRY_CAST(r.nCPM AS DOUBLE) > 0 \n      AND TRY_CAST(d.Intensity AS DOUBLE) > 0\n),\nranked_strict AS (\n    SELECT \n        cell_type,\n        ensembl_id,\n        gene_name,\n        rna_ncpm,\n        protein_intensity,\n        subcell_main,\n        COUNT(*) OVER (PARTITION BY cell_type) as n_retained,\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC, ensembl_id ASC) as r_rna,\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC, ensembl_id ASC) as r_prot\n    FROM base\n),\ndiffs AS (\n    SELECT *,\n        r_rna * 1.0 / n_retained as rna_pct,\n        r_prot * 1.0 / n_retained as protein_pct,\n        ABS(r_rna * 1.0 / n_retained - r_prot * 1.0 / n_retained) as diff\n    FROM ranked_strict\n),\ntop5 AS (\n    SELECT *,\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY diff DESC, ensembl_id ASC) as diff_rank\n    FROM diffs\n)\nSELECT cell_type, diff_rank, ensembl_id, gene_name, rna_ncpm, protein_intensity, rna_pct, protein_pct, diff, subcell_main\nFROM top5\nWHERE diff_rank <= 5\nORDER BY cell_type, diff_rank"
+      },
+      "ms": 343,
+      "result_chars": 1900,
+      "truncated": false,
+      "error": null,
+      "result_head": "cell_type\tdiff_rank\tensembl_id\tgene_name\trna_ncpm\tprotein_intensity\trna_pct\tprotein_pct\tdiff\tsubcell_main\ncardiomyocytes\t1\tENSG00000163631\tALB\t0.1\t5446982731.6\t0.007424692405600339\t0.9972422571064913\t0.989817564700891\tEndoplasmic reticulum, Golgi apparatus\ncardiomyocytes\t2\tENSG00000169067\tACTBL2\t0.1\t941594818.8\t0.008909630886720407\t0.9870598218073823\t0.9781501909206619\t\ncardiomyocytes\t3\tENSG00000121440\tPDZRN3\t1323.3\t21502.8\t0.9904539669070853\t0.01824352991090369\t0.9722104369961816\tCytosol\ncardiomyocytes\t4\tENSG00000270276\tH4C15\t0.1\t604031635.6\t0.01675859142978362\t0.9783623249893934\t0.9616037335"
+    },
+    {
+      "turn": 19,
+      "name": "sql",
+      "input": {
+        "query": "WITH base AS (\n    SELECT \n        r.\"Cell type\" as cell_type,\n        r.Gene as ensembl_id,\n        r.\"Gene name\" as gene_name,\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity\n    FROM rna_single_cell_type r\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\n    WHERE r.\"Cell type\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\n      AND TRY_CAST(r.nCPM AS DOUBLE) > 0 \n      AND TRY_CAST(d.Intensity AS DOUBLE) > 0\n),\nranked_rna AS (\n    SELECT *,\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY rna_ncpm DESC, ensembl_id ASC) as rna_rank\n    FROM base\n),\nranked_protein AS (\n    SELECT *,\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY protein_intensity DESC, ensembl_id ASC) as protein_rank\n    FROM base\n),\ntop20 AS (\n    SELECT cell_type, ensembl_id, gene_name, rna_ncpm, protein_intensity, rna_rank, NULL as protein_rank\n    FROM ranked_rna\n    WHERE rna_rank <= 20\n    UNION\n    SELECT cell_type, ensembl_id, gene_name, rna_ncpm, protein_intensity, NULL as rna_rank, protein_rank\n    FROM ranked_protein\n    WHERE protein_rank <= 20\n)\nSELECT \n    cell_type,\n    ensembl_id,\n    gene_name,\n    rna_ncpm,\n    protein_intensity,\n    MIN(rna_rank) as rna_rank,\n    MIN(protein_rank) as protein_rank\nFROM (\n    SELECT b.cell_type, b.ensembl_id, b.gene_name, b.rna_ncpm, b.protein_intensity, rr.rna_rank, rp.protein_rank\n    FROM base b\n    LEFT JOIN ranked_rna rr ON b.cell_type = rr.cell_type AND b.ensembl_id = rr.ensembl_id AND rr.rna_rank <= 20\n    LEFT JOIN ranked_protein rp ON b.cell_type = rp.cell_type AND b.ensembl_id = rp.ensembl_id AND rp.protein_rank <= 20\n    WHERE rr.rna_rank IS NOT NULL OR rp.protein_rank IS NOT NULL\n)\nGROUP BY cell_type, ensembl_id, gene_name, rna_ncpm, protein_intensity\nORDER BY cell_type, COALESCE(rna_rank, 999), COALESCE(protein_rank, 999), ensembl_id"
+      },
+      "ms": 73,
+      "result_chars": 366,
+      "truncated": false,
+      "error": "tool reported an error",
+      "result_head": "Error: Binder Error: column \"rna_rank\" must appear in the GROUP BY clause or must be part of an aggregate function.\nEither add it to the GROUP BY list, or use \"ANY_VALUE(rna_rank)\" if the exact value of \"rna_rank\" is not important.\n\nLINE 50: ORDER BY cell_type, COALESCE(rna_rank, 999), COALESCE(protein_rank, 999), ensembl_id\n                                      ^"
+    },
+    {
+      "turn": 20,
+      "name": "sql",
+      "input": {
+        "query": "WITH base AS (\n    SELECT \n        r.\"Cell type\" as cell_type,\n        r.Gene as ensembl_id,\n        r.\"Gene name\" as gene_name,\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity\n    FROM rna_single_cell_type r\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\n    WHERE r.\"Cell type\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\n      AND TRY_CAST(r.nCPM AS DOUBLE) > 0 \n      AND TRY_CAST(d.Intensity AS DOUBLE) > 0\n),\nranked_rna AS (\n    SELECT *,\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY rna_ncpm DESC, ensembl_id ASC) as rna_rank\n    FROM base\n),\nranked_protein AS (\n    SELECT *,\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY protein_intensity DESC, ensembl_id ASC) as protein_rank\n    FROM base\n)\nSELECT \n    b.cell_type,\n    b.ensembl_id,\n    b.gene_name,\n    b.rna_ncpm,\n    b.protein_intensity,\n    rr.rna_rank,\n    rp.protein_rank\nFROM base b\nJOIN ranked_rna rr ON b.cell_type = rr.cell_type AND b.ensembl_id = rr.ensembl_id\nJOIN ranked_protein rp ON b.cell_type = rp.cell_type AND b.ensembl_id = rp.ensembl_id\nWHERE rr.rna_rank <= 20 OR rp.protein_rank <= 20\nORDER BY b.cell_type, CASE WHEN rr.rna_rank <= 20 THEN rr.rna_rank ELSE 1000 + rp.protein_rank END"
+      },
+      "ms": 354,
+      "result_chars": 7006,
+      "truncated": false,
+      "error": null,
+      "result_head": "cell_type\tensembl_id\tgene_name\trna_ncpm\tprotein_intensity\trna_rank\tprotein_rank\ncardiomyocytes\tENSG00000198626\tRYR2\t30129.5\t389006225.9\t1\t152\ncardiomyocytes\tENSG00000155657\tTTN\t24623.7\t5510998285.3\t2\t13\ncardiomyocytes\tENSG00000183023\tSLC8A1\t14581\t36351152.8\t3\t628\ncardiomyocytes\tENSG00000114279\tFGF12\t9617.8\t7387232.2\t4\t1493\ncardiomyocytes\tENSG00000198947\tDMD\t6295.2\t626535135.1\t5\t94\ncardiomyocytes\tENSG00000145439\tCBR4\t5958.1\t12074091.6\t6\t1197\ncardiomyocytes\tENSG00000172572\tPDE3A\t4516.2\t28201489.6\t7\t725\ncardiomyocytes\tENSG00000196569\tLAMA2\t4106.9\t425983108.7\t8\t137\ncardiomyocytes\tENSG00000183230\tC"
+    },
+    {
+      "turn": 21,
+      "name": "sql",
+      "input": {
+        "query": "WITH base AS (\n    SELECT \n        r.\"Cell type\" as cell_type,\n        r.Gene as ensembl_id,\n        r.\"Gene name\" as gene_name,\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity,\n        p.\"Subcellular main location\" as subcell_main\n    FROM rna_single_cell_type r\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\n    WHERE r.\"Cell type\" = 'cardiomyocytes'\n      AND TRY_CAST(r.nCPM AS DOUBLE) > 0 \n      AND TRY_CAST(d.Intensity AS DOUBLE) > 0\n),\nrna_counts AS (\n    SELECT cell_type, rna_ncpm, COUNT(*) as cnt\n    FROM base\n    GROUP BY cell_type, rna_ncpm\n),\nrna_ranks AS (\n    SELECT cell_type, rna_ncpm,\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC)) / 2.0 as avg_rank_rna\n    FROM rna_counts\n),\nprotein_counts AS (\n    SELECT cell_type, protein_intensity, COUNT(*) as cnt\n    FROM base\n    GROUP BY cell_type, protein_intensity\n),\nprotein_ranks AS (\n    SELECT cell_type, protein_intensity,\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC)) / 2.0 as avg_rank_protein\n    FROM protein_counts\n),\njoined AS (\n    SELECT \n        b.cell_type,\n        b.ensembl_id,\n        b.gene_name,\n        b.rna_ncpm,\n        b.protein_intensity,\n        b.subcell_main,\n        rr.avg_rank_rna / 4714.0 as rna_pct,\n        pr.avg_rank_protein / 4714.0 as protein_pct,\n        ABS(rr.avg_rank_rna / 4714.0 - pr.avg_rank_protein / 4714.0) as diff\n    FROM base b\n    JOIN rna_ranks rr ON b.cell_type = rr.cell_type AND b.rna_ncpm = rr.rna_ncpm\n    JOIN protein_ranks pr ON b.cell_type = pr.cell_type AND b.protein_intensity = pr.protein_intensity\n)\nSELECT * FROM joined ORDER BY diff DESC, ensembl_id ASC LIMIT 10"
+      },
+      "ms": 1063,
+      "result_chars": 1269,
+      "truncated": false,
+      "error": null,
+      "result_head": "cell_type\tensembl_id\tgene_name\trna_ncpm\tprotein_intensity\tsubcell_main\trna_pct\tprotein_pct\tdiff\ncardiomyocytes\tENSG00000163631\tALB\t0.1\t5446982731.6\tEndoplasmic reticulum, Golgi apparatus\t0.008697496817988969\t0.9972422571064913\t0.9885447602885024\ncardiomyocytes\tENSG00000169067\tACTBL2\t0.1\t941594818.8\t\t0.008697496817988969\t0.9870598218073823\t0.9783623249893934\ncardiomyocytes\tENSG00000121440\tPDZRN3\t1323.3\t21502.8\tCytosol\t0.9904539669070853\t0.01824352991090369\t0.9722104369961816\ncardiomyocytes\tENSG00000270276\tH4C15\t0.1\t604031635.6\t\t0.008697496817988969\t0.9786805260924905\t0.9699830292745015\ncardiomy"
+    },
+    {
+      "turn": 22,
+      "name": "sql",
+      "input": {
+        "query": "WITH base AS (\n    SELECT \n        r.\"Cell type\" as cell_type,\n        r.Gene as ensembl_id,\n        r.\"Gene name\" as gene_name,\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity,\n        p.\"Subcellular main location\" as subcell_main\n    FROM rna_single_cell_type r\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\n    WHERE r.\"Cell type\" = 'hepatocytes'\n      AND TRY_CAST(r.nCPM AS DOUBLE) > 0 \n      AND TRY_CAST(d.Intensity AS DOUBLE) > 0\n),\nrna_counts AS (\n    SELECT cell_type, rna_ncpm, COUNT(*) as cnt\n    FROM base\n    GROUP BY cell_type, rna_ncpm\n),\nrna_ranks AS (\n    SELECT cell_type, rna_ncpm,\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC)) / 2.0 as avg_rank_rna\n    FROM rna_counts\n),\nprotein_counts AS (\n    SELECT cell_type, protein_intensity, COUNT(*) as cnt\n    FROM base\n    GROUP BY cell_type, protein_intensity\n),\nprotein_ranks AS (\n    SELECT cell_type, protein_intensity,\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC)) / 2.0 as avg_rank_protein\n    FROM protein_counts\n),\njoined AS (\n    SELECT \n        b.cell_type,\n        b.ensembl_id,\n        b.gene_name,\n        b.rna_ncpm,\n        b.protein_intensity,\n        b.subcell_main,\n        rr.avg_rank_rna / 5985.0 as rna_pct,\n        pr.avg_rank_protein / 5985.0 as protein_pct,\n        ABS(rr.avg_rank_rna / 5985.0 - pr.avg_rank_protein / 5985.0) as diff\n    FROM base b\n    JOIN rna_ranks rr ON b.cell_type = rr.cell_type AND b.rna_ncpm = rr.rna_ncpm\n    JOIN protein_ranks pr ON b.cell_type = pr.cell_type AND b.protein_intensity = pr.protein_intensity\n)\nSELECT * FROM joined ORDER BY diff DESC, ensembl_id ASC LIMIT 10"
+      },
+      "ms": 1571,
+      "result_chars": 1280,
+      "truncated": false,
+      "error": null,
+      "result_head": "cell_type\tensembl_id\tgene_name\trna_ncpm\tprotein_intensity\tsubcell_main\trna_pct\tprotein_pct\tdiff\nhepatocytes\tENSG00000101210\tEEF1A2\t0.1\t1399549190.2\tCytosol\t0.007685881370091897\t0.9959899749373433\t0.9883040935672515\nhepatocytes\tENSG00000278637\tH4C1\t0.1\t970554190.6\t\t0.007685881370091897\t0.9923976608187135\t0.9847117794486216\nhepatocytes\tENSG00000158406\tH4C8\t0.2\t970554190.6\t\t0.018128654970760234\t0.9923976608187135\t0.9742690058479533\nhepatocytes\tENSG00000270882\tH4C14\t0.2\t970554190.6\t\t0.018128654970760234\t0.9923976608187135\t0.9742690058479533\nhepatocytes\tENSG00000073578\tSDHA\t0.1\t274170335\tMitochondr"
+    },
+    {
+      "turn": 23,
+      "name": "sql",
+      "input": {
+        "query": "WITH base AS (\n    SELECT \n        r.\"Cell type\" as cell_type,\n        r.Gene as ensembl_id,\n        r.\"Gene name\" as gene_name,\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity,\n        p.\"Subcellular main location\" as subcell_main\n    FROM rna_single_cell_type r\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\n    WHERE r.\"Cell type\" = 'neutrophils'\n      AND TRY_CAST(r.nCPM AS DOUBLE) > 0 \n      AND TRY_CAST(d.Intensity AS DOUBLE) > 0\n),\nrna_counts AS (\n    SELECT cell_type, rna_ncpm, COUNT(*) as cnt\n    FROM base\n    GROUP BY cell_type, rna_ncpm\n),\nrna_ranks AS (\n    SELECT cell_type, rna_ncpm,\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY rna_ncpm ASC)) / 2.0 as avg_rank_rna\n    FROM rna_counts\n),\nprotein_counts AS (\n    SELECT cell_type, protein_intensity, COUNT(*) as cnt\n    FROM base\n    GROUP BY cell_type, protein_intensity\n),\nprotein_ranks AS (\n    SELECT cell_type, protein_intensity,\n        (SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC) - cnt + 1 + SUM(cnt) OVER (PARTITION BY cell_type ORDER BY protein_intensity ASC)) / 2.0 as avg_rank_protein\n    FROM protein_counts\n),\njoined AS (\n    SELECT \n        b.cell_type,\n        b.ensembl_id,\n        b.gene_name,\n        b.rna_ncpm,\n        b.protein_intensity,\n        b.subcell_main,\n        rr.avg_rank_rna / 5396.0 as rna_pct,\n        pr.avg_rank_protein / 5396.0 as protein_pct,\n        ABS(rr.avg_rank_rna / 5396.0 - pr.avg_rank_protein / 5396.0) as diff\n    FROM base b\n    JOIN rna_ranks rr ON b.cell_type = rr.cell_type AND b.rna_ncpm = rr.rna_ncpm\n    JOIN protein_ranks pr ON b.cell_type = pr.cell_type AND b.protein_intensity = pr.protein_intensity\n)\nSELECT * FROM joined ORDER BY diff DESC, ensembl_id ASC LIMIT 10"
+      },
+      "ms": 1440,
+      "result_chars": 1248,
+      "truncated": false,
+      "error": null,
+      "result_head": "cell_type\tensembl_id\tgene_name\trna_ncpm\tprotein_intensity\tsubcell_main\trna_pct\tprotein_pct\tdiff\nneutrophils\tENSG00000270276\tH4C15\t0.1\t7043887585.6\t\t0.005559673832468495\t0.998702742772424\t0.9931430689399555\nneutrophils\tENSG00000273542\tH4C12\t0.1\t7043887585.6\t\t0.005559673832468495\t0.998702742772424\t0.9931430689399555\nneutrophils\tENSG00000276180\tH4C9\t0.1\t7043887585.6\t\t0.005559673832468495\t0.998702742772424\t0.9931430689399555\nneutrophils\tENSG00000265972\tTXNIP\t5229.1\t9773.7\tPlasma membrane\t0.9936990363232023\t0.0016679021497405485\t0.9920311341734618\nneutrophils\tENSG00000092054\tMYH7\t0.1\t803638060.4\tFo"
+    },
+    {
+      "turn": 24,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \n    r.Gene, r.\"Gene name\", TRY_CAST(r.nCPM AS DOUBLE) as rna, TRY_CAST(d.Intensity AS DOUBLE) as prot\nFROM rna_single_cell_type r\nJOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\nWHERE r.\"Cell type\" = 'neutrophils'\n  AND TRY_CAST(r.nCPM AS DOUBLE) = 0.1\n  AND TRY_CAST(d.Intensity AS DOUBLE) = 7043887585.6"
+      },
+      "ms": 221,
+      "result_chars": 148,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tGene name\trna\tprot\nENSG00000276180\tH4C9\t0.1\t7043887585.6\nENSG00000270276\tH4C15\t0.1\t7043887585.6\nENSG00000273542\tH4C12\t0.1\t7043887585.6\n[3 rows]"
+    },
+    {
+      "turn": 25,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \n    r.Gene, r.\"Gene name\", TRY_CAST(r.nCPM AS DOUBLE) as rna, TRY_CAST(d.Intensity AS DOUBLE) as prot\nFROM rna_single_cell_type r\nJOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\nWHERE r.\"Cell type\" = 'cardiomyocytes'\n  AND TRY_CAST(r.nCPM AS DOUBLE) = 0.1\n  AND TRY_CAST(d.Intensity AS DOUBLE) = 604031635.6"
+      },
+      "ms": 212,
+      "result_chars": 107,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tGene name\trna\tprot\nENSG00000274618\tH4C6\t0.1\t604031635.6\nENSG00000270276\tH4C15\t0.1\t604031635.6\n[2 rows]"
+    },
+    {
+      "turn": 26,
+      "name": "sql",
+      "input": {
+        "query": "SELECT \n    r.Gene, r.\"Gene name\", TRY_CAST(r.nCPM AS DOUBLE) as rna, TRY_CAST(d.Intensity AS DOUBLE) as prot\nFROM rna_single_cell_type r\nJOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\nWHERE r.\"Cell type\" = 'hepatocytes'\n  AND TRY_CAST(r.nCPM AS DOUBLE) = 0.2\n  AND TRY_CAST(d.Intensity AS DOUBLE) = 970554190.6"
+      },
+      "ms": 203,
+      "result_chars": 107,
+      "truncated": false,
+      "error": null,
+      "result_head": "Gene\tGene name\trna\tprot\nENSG00000158406\tH4C8\t0.2\t970554190.6\nENSG00000270882\tH4C14\t0.2\t970554190.6\n[2 rows]"
+    },
+    {
+      "turn": 27,
+      "name": "sql",
+      "input": {
+        "query": "SELECT Ensembl, Gene, \"Subcellular location\", \"Subcellular main location\" \nFROM proteinatlas \nWHERE Ensembl IN ('ENSG00000169067', 'ENSG00000270276', 'ENSG00000274618', 'ENSG00000278637', 'ENSG00000158406', 'ENSG00000270882', 'ENSG00000273542', 'ENSG00000276180')"
+      },
+      "ms": 120,
+      "result_chars": 257,
+      "truncated": false,
+      "error": null,
+      "result_head": "Ensembl\tGene\tSubcellular location\tSubcellular main location\nENSG00000270276\tH4C15\t\t\nENSG00000270882\tH4C14\t\t\nENSG00000273542\tH4C12\t\t\nENSG00000274618\tH4C6\t\t\nENSG00000276180\tH4C9\t\t\nENSG00000278637\tH4C1\t\t\nENSG00000158406\tH4C8\t\t\nENSG00000169067\tACTBL2\t\t\n[8 rows]"
+    },
+    {
+      "turn": 28,
+      "name": "sql",
+      "input": {
+        "query": "WITH base AS (\n    SELECT \n        r.\"Cell type\" as cell_type,\n        r.Gene as ensembl_id,\n        r.\"Gene name\" as gene_name,\n        TRY_CAST(r.nCPM AS DOUBLE) as rna_ncpm,\n        TRY_CAST(d.Intensity AS DOUBLE) as protein_intensity\n    FROM rna_single_cell_type r\n    JOIN dvp_cell_type d ON r.Gene = d.Gene AND r.\"Cell type\" = d.\"Cell type\"\n    JOIN proteinatlas p ON r.Gene = p.Ensembl\n    WHERE r.\"Cell type\" IN ('cardiomyocytes', 'hepatocytes', 'neutrophils')\n      AND TRY_CAST(r.nCPM AS DOUBLE) > 0 \n      AND TRY_CAST(d.Intensity AS DOUBLE) > 0\n),\nranked_rna AS (\n    SELECT *,\n        ROW_NUMBER() OVER (PARTITION BY cell_type ORDER BY rna_ncpm DESC, ensembl_id ASC) as rank\n    FROM base\n)\nSELECT cell_type, rank, ensembl_id, gene_name, rna_ncpm\nFROM ranked_rna\nWHERE rank <= 20\nORDER BY cell_type, rank"
+      },
+      "ms": 352,
+      "result_chars": 2747,
+      "truncated": false,
+      "error": null,
+      "result_head": "cell_type\trank\tensembl_id\tgene_name\trna_ncpm\ncardiomyocytes\t1\tENSG00000198626\tRYR2\t30129.5\ncardiomyocytes\t2\tENSG00000155657\tTTN\t24623.7\ncardiomyocytes\t3\tENSG00000183023\tSLC8A1\t14581\ncardiomyocytes\t4\tENSG00000114279\tFGF12\t9617.8\ncardiomyocytes\t5\tENSG00000198947\tDMD\t6295.2\ncardiomyocytes\t6\tENSG00000145439\tCBR4\t5958.1\ncardiomyocytes\t7\tENSG00000172572\tPDE3A\t4516.2\ncardiomyocytes\t8\tENSG00000196569\tLAMA2\t4106.9\ncardiomyocytes\t9\tENSG00000183230\tCTNNA3\t3863.2\ncardiomyocytes\t10\tENSG00000154556\tSORBS2\t3781.8\ncardiomyocytes\t11\tENSG00000078114\tNEBL\t3558.9\ncardiomyocytes\t12\tENSG00000115641\tFHL2\t3363.2\ncard"
+    }
+  ],
+  "usage": {
+    "input_tokens": 596743,
+    "output_tokens": 24051,
+    "cache_read_input_tokens": 381891,
+    "cache_creation_input_tokens": 0,
+    "reasoning_tokens": 0
+  },
+  "started_unix_ms": 1788990947886,
+  "final_answer": "An assessment of RNA–protein agreement in the Human Protein Atlas was conducted for **cardiomyocytes**, **hepatocytes**, and **neutrophils** by joining single-cell-type RNA expression (`rna_single_cell_type`, normalized CPM) with Deep Visual Proteomics (DVP) cell-type intensity (`dvp_cell_type`, Intensity) on Ensembl gene identifiers (`Gene`) and exact cell-type names, restricted to the HPA master gene universe (`proteinatlas`).\n\n---\n\n### 1. Summary Agreement Metrics\n\nFor each cell type, only genes with positive measurements in both modalities (`nCPM > 0` and `Intensity > 0`) were retained. Spearman correlation was calculated across all retained genes using average fractional ranks for ties. Top 20 lists were ranked independently by RNA (`nCPM DESC, Ensembl ASC`) and protein (`Intensity DESC, Ensembl ASC`).\n\n| Cell Type | Retained Genes | Spearman $\\rho$ | Top-20 Overlap Count | Top-20 Union Count | Jaccard Index |\n| :--- | :---: | :---: | :---: | :---: | :---: |\n| **Cardiomyocytes** | 4,714 | **0.0972** | 3 | 37 | **0.0811** (3/37) |\n| **Hepatocytes** | 5,985 | **0.3540** | 1 | 39 | **0.0256** (1/39) |\n| **Neutrophils** | 5,396 | **0.1526** | 0 | 40 | **0.0000** (0/40) |\n\n*Notes*:\n- **Cardiomyocyte** top-20 overlapping genes: `TTN`, `MYH7`, `MYBPC3`.\n- **Hepatocyte** top-20 overlapping gene: `ALB`.\n- **Neutrophil** top-20 overlapping genes: none.\n\n---\n\n### 2. Independent Top-Twenty Ranked Lists\n\n#### A. Cardiomyocytes\n| Rank | RNA Top 20 Gene | Ensembl ID | RNA (nCPM) | Protein Top 20 Gene | Ensembl ID | Protein (Intensity) |\n| :---: | :--- | :--- | :---: | :--- | :--- | :---: |\n| **1** | RYR2 | ENSG00000198626 | 30,129.5 | MYH7 | ENSG00000092054 | 64,186,889,489.8 |\n| **2** | TTN | ENSG00000155657 | 24,623.7 | MYL3 | ENSG00000160808 | 20,028,858,211.6 |\n| **3** | SLC8A1 | ENSG00000183023 | 14,581.0 | ACTA1 | ENSG00000143632 | 17,792,280,270.7 |\n| **4** | FGF12 | ENSG00000114279 | 9,617.8 | ATP5F1A | ENSG00000152234 | 10,232,616,373.0 |\n| **5** | DMD | ENSG00000198947 | 6,295.2 | MB | ENSG00000198125 | 9,395,140,341.4 |\n| **6** | CBR4 | ENSG00000145439 | 5,958.1 | MYBPC3 | ENSG00000134571 | 8,879,511,131.8 |\n| **7** | PDE3A | ENSG00000172572 | 4,516.2 | ACTN2 | ENSG00000077522 | 7,361,046,130.9 |\n| **8** | LAMA2 | ENSG00000196569 | 4,106.9 | TPM1 | ENSG00000140416 | 7,270,922,934.9 |\n| **9** | CTNNA3 | ENSG00000183230 | 3,863.2 | ATP5F1B | ENSG00000110955 | 7,258,386,192.5 |\n| **10** | SORBS2 | ENSG00000154556 | 3,781.8 | DES | ENSG00000175084 | 6,876,145,296.2 |\n| **11** | NEBL | ENSG00000078114 | 3,558.9 | CKM | ENSG00000104879 | 6,684,852,808.6 |\n| **12** | FHL2 | ENSG00000115641 | 3,363.2 | MYL2 | ENSG00000111245 | 6,008,709,825.6 |\n| **13** | AKAP13 | ENSG00000170776 | 2,979.6 | TTN | ENSG00000155657 | 5,510,998,285.3 |\n| **14** | MYH7 | ENSG00000092054 | 2,902.2 | ALB | ENSG00000163631 | 5,446,982,731.6 |\n| **15** | SGCD | ENSG00000170624 | 2,865.4 | ACO2 | ENSG00000100412 | 4,450,685,550.2 |\n| **16** | PDLIM5 | ENSG00000163110 | 2,747.2 | FABP3 | ENSG00000121769 | 3,604,325,614.5 |\n| **17** | PALLD | ENSG00000129116 | 2,730.0 | IDH2 | ENSG00000182054 | 3,355,598,101.8 |\n| **18** | MIB1 | ENSG00000101752 | 2,576.9 | GOT2 | ENSG00000125166 | 2,919,837,125.3 |\n| **19** | MLIP | ENSG00000146147 | 2,539.9 | MYOM2 | ENSG00000036448 | 2,855,229,206.9 |\n| **20** | MYBPC3 | ENSG00000134571 | 2,429.8 | CRYAB | ENSG00000109846 | 2,843,898,306.2 |\n\n#### B. Hepatocytes\n| Rank | RNA Top 20 Gene | Ensembl ID | RNA (nCPM) | Protein Top 20 Gene | Ensembl ID | Protein (Intensity) |\n| :---: | :--- | :--- | :---: | :--- | :--- | :---: |\n| **1** | APOC3 | ENSG00000110245 | 97,065.8 | CPS1 | ENSG00000021826 | 11,367,000,368.8 |\n| **2** | ALB | ENSG00000163631 | 81,391.2 | HBB | ENSG00000244734 | 7,611,811,581.0 |\n| **3** | HP | ENSG00000257017 | 65,516.9 | HMGCS2 | ENSG00000134240 | 3,921,836,178.2 |\n| **4** | ORM1 | ENSG00000229314 | 63,160.9 | ADH1B | ENSG00000196616 | 3,851,244,173.0 |\n| **5** | MT-CO2 | ENSG00000198712 | 57,294.1 | ALB | ENSG00000163631 | 3,292,380,412.1 |\n| **6** | APOA2 | ENSG00000158874 | 52,172.4 | KRT18 | ENSG00000111057 | 3,016,887,718.4 |\n| **7** | MT-CO3 | ENSG00000198938 | 48,547.0 | GLUD1 | ENSG00000148672 | 2,707,777,448.9 |\n| **8** | MT-ND4 | ENSG00000198886 | 36,703.5 | ALDH2 | ENSG00000111275 | 2,683,979,937.1 |\n| **9** | APOC1 | ENSG00000130208 | 34,885.9 | FASN | ENSG00000169710 | 2,583,431,982.3 |\n| **10** | APOA1 | ENSG00000118137 | 33,105.7 | EPHX1 | ENSG00000143819 | 2,339,802,389.9 |\n| **11** | TTR | ENSG00000118271 | 31,024.8 | PCK2 | ENSG00000100889 | 2,149,390,984.5 |\n| **12** | FTL | ENSG00000087086 | 26,483.1 | HBA2 | ENSG00000188536 | 2,087,956,757.6 |\n| **13** | MT-ATP6 | ENSG00000198899 | 22,792.9 | HBA1 | ENSG00000206172 | 2,087,956,757.6 |\n| **14** | MT-CYB | ENSG00000198727 | 17,796.1 | CES1 | ENSG00000198848 | 1,947,567,436.2 |\n| **15** | FGB | ENSG00000171564 | 17,547.8 | ACAA2 | ENSG00000167315 | 1,772,071,826.8 |\n| **16** | FGA | ENSG00000171560 | 17,123.8 | ADH4 | ENSG00000198099 | 1,735,566,372.6 |\n| **17** | MT-ND2 | ENSG00000198763 | 16,745.9 | KRT8 | ENSG00000170421 | 1,666,267,938.3 |\n| **18** | RBP4 | ENSG00000138207 | 15,825.7 | DCXR | ENSG00000169738 | 1,629,513,329.7 |\n| **19** | MT-ND1 | ENSG00000198888 | 14,992.5 | ALDH1A1 | ENSG00000165092 | 1,621,512,379.1 |\n| **20** | AMBP | ENSG00000106927 | 12,897.0 | ASS1 | ENSG00000130707 | 1,541,966,505.4 |\n\n#### C. Neutrophils\n| Rank | RNA Top 20 Gene | Ensembl ID | RNA (nCPM) | Protein Top 20 Gene | Ensembl ID | Protein (Intensity) |\n| :---: | :--- | :--- | :---: | :--- | :--- | :---: |\n| **1** | S100A9 | ENSG00000163220 | 52,381.0 | HBB | ENSG00000244734 | 12,146,705,238.8 |\n| **2** | S100A8 | ENSG00000143546 | 52,049.5 | H4C8 | ENSG00000158406 | 7,043,887,585.6 |\n| **3** | NAMPT | ENSG00000105835 | 41,123.4 | H4C3 | ENSG00000197061 | 7,043,887,585.6 |\n| **4** | FTH1 | ENSG00000167996 | 24,197.5 | H4C11 | ENSG00000197238 | 7,043,887,585.6 |\n| **5** | SAMSN1 | ENSG00000155307 | 14,700.2 | H4C16 | ENSG00000197837 | 7,043,887,585.6 |\n| **6** | FTL | ENSG00000087086 | 13,551.4 | H4C15 | ENSG00000270276 | 7,043,887,585.6 |\n| **7** | ACSL1 | ENSG00000151726 | 13,298.7 | H4C14 | ENSG00000270882 | 7,043,887,585.6 |\n| **8** | SOD2 | ENSG00000291237 | 12,523.7 | H4C12 | ENSG00000273542 | 7,043,887,585.6 |\n| **9** | ARHGAP15 | ENSG00000075884 | 10,528.3 | H4C6 | ENSG00000274618 | 7,043,887,585.6 |\n| **10** | IRAK3 | ENSG00000090376 | 9,249.9 | H4C9 | ENSG00000276180 | 7,043,887,585.6 |\n| **11** | MT-CO3 | ENSG00000198938 | 8,892.5 | H4C5 | ENSG00000276966 | 7,043,887,585.6 |\n| **12** | MT-CO2 | ENSG00000198712 | 8,303.7 | H4C4 | ENSG00000277157 | 7,043,887,585.6 |\n| **13** | NFKBIA | ENSG00000100906 | 7,958.7 | H4C1 | ENSG00000278637 | 7,043,887,585.6 |\n| **14** | RIPOR2 | ENSG00000111913 | 7,916.5 | H4C2 | ENSG00000278705 | 7,043,887,585.6 |\n| **15** | ARHGAP26 | ENSG00000145819 | 7,865.7 | LTF | ENSG00000012223 | 6,268,778,890.5 |\n| **16** | S100A11 | ENSG00000163191 | 7,787.5 | MPO | ENSG00000005381 | 3,178,365,350.9 |\n| **17** | CD55 | ENSG00000196352 | 7,705.1 | HBA2 | ENSG00000188536 | 2,646,963,892.0 |\n| **18** | PLAUR | ENSG00000011422 | 7,137.8 | HBA1 | ENSG00000206172 | 2,646,963,892.0 |\n| **19** | LITAF | ENSG00000189067 | 7,072.3 | MYH9 | ENSG00000100345 | 2,287,762,683.6 |\n| **20** | S100A12 | ENSG00000163221 | 6,920.4 | MYH14 | ENSG00000105357 | 2,266,032,455.1 |\n\n*(All requested lists contain the full 20 eligible members).*\n\n---\n\n### 3. Top Discordant Genes (Largest Absolute Percentile Difference)\n\nWithin-cell-type ranks were converted to percentiles using ascending average rank divided by retained count: $\\text{Percentile} = \\frac{\\text{Average Rank}}{N_{\\text{retained}}}$. Five genes per cell type with the largest absolute difference $|\\text{RNA Percentile} - \\text{Protein Percentile}|$ (ties broken by Ensembl ID) are shown:\n\n| Cell Type | Ensembl ID | Gene | RNA (nCPM) | Protein (Intensity) | RNA %ile | Protein %ile | Absolute Diff | Main Subcellular Location |\n| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :--- |\n| **Cardiomyocytes** | ENSG00000163631 | ALB | 0.1 | 5,446,982,731.6 | 0.0087 | 0.9972 | **0.9885** | Endoplasmic reticulum, Golgi apparatus |\n| | ENSG00000169067 | ACTBL2 | 0.1 | 941,594,818.8 | 0.0087 | 0.9871 | **0.9784** | *(None annotated)* |\n| | ENSG00000121440 | PDZRN3 | 1,323.3 | 21,502.8 | 0.9905 | 0.0182 | **0.9722** | Cytosol |\n| | ENSG00000270276 | H4C15 | 0.1 | 604,031,635.6 | 0.0087 | 0.9787 | **0.9700** | *(None annotated)* |\n| | ENSG00000274618 | H4C6 | 0.1 | 604,031,635.6 | 0.0087 | 0.9787 | **0.9700** | *(None annotated)* |\n| **Hepatocytes** | ENSG00000101210 | EEF1A2 | 0.1 | 1,399,549,190.2 | 0.0077 | 0.9960 | **0.9883** | Cytosol |\n| | ENSG00000278637 | H4C1 | 0.1 | 970,554,190.6 | 0.0077 | 0.9924 | **0.9847** | *(None annotated)* |\n| | ENSG00000158406 | H4C8 | 0.2 | 970,554,190.6 | 0.0181 | 0.9924 | **0.9743** | *(None annotated)* |\n| | ENSG00000270882 | H4C14 | 0.2 | 970,554,190.6 | 0.0181 | 0.9924 | **0.9743** | *(None annotated)* |\n| | ENSG00000073578 | SDHA | 0.1 | 274,170,335.0 | 0.0077 | 0.9713 | **0.9636** | Mitochondria |\n| **Neutrophils** | ENSG00000270276 | H4C15 | 0.1 | 7,043,887,585.6 | 0.0056 | 0.9987 | **0.9931** | *(None annotated)* |\n| | ENSG00000273542 | H4C12 | 0.1 | 7,043,887,585.6 | 0.0056 | 0.9987 | **0.9931** | *(None annotated)* |\n| | ENSG00000276180 | H4C9 | 0.1 | 7,043,887,585.6 | 0.0056 | 0.9987 | **0.9931** | *(None annotated)* |\n| | ENSG00000265972 | TXNIP | 5,229.1 | 9,773.7 | 0.9937 | 0.0017 | **0.9920** | Plasma membrane |\n| | ENSG00000092054 | MYH7 | 0.1 | 803,638,060.4 | 0.0056 | 0.9928 | **0.9872** | Focal adhesion sites |\n\n---\n\n### 4. Measurements for the Union of Top-Twenty Lists\n\n#### Cardiomyocytes (37 genes in union)\n| Ensembl ID | Gene Name | RNA (nCPM) | Protein (Intensity) | RNA Rank | Protein Rank | In Both Top 20? |\n| :--- | :--- | :---: | :---: | :---: | :---: | :---: |\n| ENSG00000198626 | RYR2 | 30,129.5 | 389,006,225.9 | 1 | 152 | No (RNA only) |\n| ENSG00000155657 | TTN | 24,623.7 | 5,510,998,285.3 | 2 | 13 | **Yes** |\n| ENSG00000183023 | SLC8A1 | 14,581.0 | 36,351,152.8 | 3 | 628 | No (RNA only) |\n| ENSG00000114279 | FGF12 | 9,617.8 | 7,387,232.2 | 4 | 1493 | No (RNA only) |\n| ENSG00000198947 | DMD | 6,295.2 | 626,535,135.1 | 5 | 94 | No (RNA only) |\n| ENSG00000145439 | CBR4 | 5,958.1 | 12,074,091.6 | 6 | 1197 | No (RNA only) |\n| ENSG00000172572 | PDE3A | 4,516.2 | 28,201,489.6 | 7 | 725 | No (RNA only) |\n| ENSG00000196569 | LAMA2 | 4,106.9 | 425,983,108.7 | 8 | 137 | No (RNA only) |\n| ENSG00000183230 | CTNNA3 | 3,863.2 | 93,586,238.5 | 9 | 348 | No (RNA only) |\n| ENSG00000154556 | SORBS2 | 3,781.8 | 639,564,446.0 | 10 | 89 | No (RNA only) |\n| ENSG00000078114 | NEBL | 3,558.9 | 731,588,950.3 | 11 | 77 | No (RNA only) |\n| ENSG00000115641 | FHL2 | 3,363.2 | 330,981,931.5 | 12 | 168 | No (RNA only) |\n| ENSG00000170776 | AKAP13 | 2,979.6 | 8,341,344.4 | 13 | 1416 | No (RNA only) |\n| ENSG00000092054 | MYH7 | 2,902.2 | 64,186,889,489.8 | 14 | 1 | **Yes** |\n| ENSG00000170624 | SGCD | 2,865.4 | 25,796,520.8 | 15 | 763 | No (RNA only) |\n| ENSG00000163110 | PDLIM5 | 2,747.2 | 363,594,227.4 | 16 | 160 | No (RNA only) |\n| ENSG00000129116 | PALLD | 2,730.0 | 52,440,381.0 | 17 | 495 | No (RNA only) |\n| ENSG00000101752 | MIB1 | 2,576.9 | 205,627.6 | 18 | 3976 | No (RNA only) |\n| ENSG00000146147 | MLIP | 2,539.9 | 59,627,295.0 | 19 | 456 | No (RNA only) |\n| ENSG00000134571 | MYBPC3 | 2,429.8 | 8,879,511,131.8 | 20 | 6 | **Yes** |\n| ENSG00000160808 | MYL3 | 342.0 | 20,028,858,211.6 | 219 | 2 | No (Protein only) |\n| ENSG00000143632 | ACTA1 | 88.8 | 17,792,280,270.7 | 1036 | 3 | No (Protein only) |\n| ENSG00000152234 | ATP5F1A | 82.5 | 10,232,616,373.0 | 1089 | 4 | No (Protein only) |\n| ENSG00000198125 | MB | 105.9 | 9,395,140,341.4 | 887 | 5 | No (Protein only) |\n| ENSG00000077522 | ACTN2 | 1,857.8 | 7,361,046,130.9 | 29 | 7 | No (Protein only) |\n| ENSG00000140416 | TPM1 | 882.6 | 7,270,922,934.9 | 82 | 8 | No (Protein only) |\n| ENSG00000110955 | ATP5F1B | 137.2 | 7,258,386,192.5 | 688 | 9 | No (Protein only) |\n| ENSG00000175084 | DES | 649.1 | 6,876,145,296.2 | 104 | 10 | No (Protein only) |\n| ENSG00000104879 | CKM | 69.7 | 6,684,852,808.6 | 1262 | 11 | No (Protein only) |\n| ENSG00000111245 | MYL2 | 224.4 | 6,008,709,825.6 | 390 | 12 | No (Protein only) |\n| ENSG00000163631 | ALB | 0.1 | 5,446,982,731.6 | 4668 | 14 | No (Protein only) |\n| ENSG00000100412 | ACO2 | 197.3 | 4,450,685,550.2 | 463 | 15 | No (Protein only) |\n| ENSG00000121769 | FABP3 | 183.7 | 3,604,325,614.5 | 499 | 16 | No (Protein only) |\n| ENSG00000182054 | IDH2 | 48.1 | 3,355,598,101.8 | 1664 | 17 | No (Protein only) |\n| ENSG00000125166 | GOT2 | 57.3 | 2,919,837,125.3 | 1467 | 18 | No (Protein only) |\n| ENSG00000036448 | MYOM2 | 417.0 | 2,855,229,206.9 | 178 | 19 | No (Protein only) |\n| ENSG00000109846 | CRYAB | 301.4 | 2,843,898,306.2 | 269 | 20 | No (Protein only) |\n\n#### Hepatocytes (39 genes in union)\n| Ensembl ID | Gene Name | RNA (nCPM) | Protein (Intensity) | RNA Rank | Protein Rank | In Both Top 20? |\n| :--- | :--- | :---: | :---: | :---: | :---: | :---: |\n| ENSG00000110245 | APOC3 | 97,065.8 | 40,164,841.5 | 1 | 715 | No (RNA only) |\n| ENSG00000163631 | ALB | 81,391.2 | 3,292,380,412.1 | 2 | 5 | **Yes** |\n| ENSG00000257017 | HP | 65,516.9 | 427,088,229.1 | 3 | 119 | No (RNA only) |\n| ENSG00000229314 | ORM1 | 63,160.9 | 25,087,070.9 | 4 | 956 | No (RNA only) |\n| ENSG00000198712 | MT-CO2 | 57,294.1 | 86,026,495.9 | 5 | 419 | No (RNA only) |\n| ENSG00000158874 | APOA2 | 52,172.4 | 2,201,062.7 | 6 | 2915 | No (RNA only) |\n| ENSG00000198938 | MT-CO3 | 48,547.0 | 3,811,240.6 | 7 | 2384 | No (RNA only) |\n| ENSG00000198886 | MT-ND4 | 36,703.5 | 5,004,157.5 | 8 | 2110 | No (RNA only) |\n| ENSG00000130208 | APOC1 | 34,885.9 | 15,919,282.0 | 9 | 1237 | No (RNA only) |\n| ENSG00000118137 | APOA1 | 33,105.7 | 665,179,839.9 | 10 | 70 | No (RNA only) |\n| ENSG00000118271 | TTR | 31,024.8 | 51,392,413.3 | 11 | 603 | No (RNA only) |\n| ENSG00000087086 | FTL | 26,483.1 | 38,720,380.0 | 12 | 738 | No (RNA only) |\n| ENSG00000198899 | MT-ATP6 | 22,792.9 | 31,409,311.7 | 13 | 837 | No (RNA only) |\n| ENSG00000198727 | MT-CYB | 17,796.1 | 2,896,637.9 | 14 | 2653 | No (RNA only) |\n| ENSG00000171564 | FGB | 17,547.8 | 167,516,530.4 | 15 | 264 | No (RNA only) |\n| ENSG00000171560 | FGA | 17,123.8 | 216,579,632.4 | 16 | 216 | No (RNA only) |\n| ENSG00000198763 | MT-ND2 | 16,745.9 | 3,630,094.9 | 17 | 2426 | No (RNA only) |\n| ENSG00000138207 | RBP4 | 15,825.7 | 38,438,292.5 | 18 | 744 | No (RNA only) |\n| ENSG00000198888 | MT-ND1 | 14,992.5 | 1,527,890.8 | 19 | 3299 | No (RNA only) |\n| ENSG00000106927 | AMBP | 12,897.0 | 6,326,385.7 | 20 | 1921 | No (RNA only) |\n| ENSG00000021826 | CPS1 | 2,626.5 | 11,367,000,368.8 | 89 | 1 | No (Protein only) |\n| ENSG00000244734 | HBB | 8.3 | 7,611,811,581.0 | 5056 | 2 | No (Protein only) |\n| ENSG00000134240 | HMGCS2 | 1,287.8 | 3,921,836,178.2 | 170 | 3 | No (Protein only) |\n| ENSG00000196616 | ADH1B | 5,446.8 | 3,851,244,173.0 | 38 | 4 | No (Protein only) |\n| ENSG00000111057 | KRT18 | 666.6 | 3,016,887,718.4 | 297 | 6 | No (Protein only) |\n| ENSG00000148672 | GLUD1 | 529.1 | 2,707,777,448.9 | 370 | 7 | No (Protein only) |\n| ENSG00000111275 | ALDH2 | 984.1 | 2,683,979,937.1 | 212 | 8 | No (Protein only) |\n| ENSG00000169710 | FASN | 202.2 | 2,583,431,982.3 | 892 | 9 | No (Protein only) |\n| ENSG00000143819 | EPHX1 | 1,002.0 | 2,339,802,389.9 | 208 | 10 | No (Protein only) |\n| ENSG00000100889 | PCK2 | 13.5 | 2,149,390,984.5 | 4708 | 11 | No (Protein only) |\n| ENSG00000188536 | HBA2 | 3.3 | 2,087,956,757.6 | 5376 | 12 | No (Protein only) |\n| ENSG00000206172 | HBA1 | 3.4 | 2,087,956,757.6 | 5371 | 13 | No (Protein only) |\n| ENSG00000198848 | CES1 | 26.9 | 1,947,567,436.2 | 3890 | 14 | No (Protein only) |\n| ENSG00000167315 | ACAA2 | 854.3 | 1,772,071,826.8 | 238 | 15 | No (Protein only) |\n| ENSG00000198099 | ADH4 | 1,345.1 | 1,735,566,372.6 | 166 | 16 | No (Protein only) |\n| ENSG00000170421 | KRT8 | 291.2 | 1,666,267,938.3 | 626 | 17 | No (Protein only) |\n| ENSG00000169738 | DCXR | 4,221.6 | 1,629,513,329.7 | 52 | 18 | No (Protein only) |\n| ENSG00000165092 | ALDH1A1 | 876.5 | 1,621,512,379.1 | 231 | 19 | No (Protein only) |\n| ENSG00000130707 | ASS1 | 1,156.7 | 1,541,966,505.4 | 183 | 20 | No (Protein only) |\n\n#### Neutrophils (40 genes in union)\n| Ensembl ID | Gene Name | RNA (nCPM) | Protein (Intensity) | RNA Rank | Protein Rank | In Both Top 20? |\n| :--- | :--- | :---: | :---: | :---: | :---: | :---: |\n| ENSG00000163220 | S100A9 | 52,381.0 | 397,984,403.3 | 1 | 60 | No (RNA only) |\n| ENSG00000143546 | S100A8 | 52,049.5 | 1,170,046,987.3 | 2 | 29 | No (RNA only) |\n| ENSG00000105835 | NAMPT | 41,123.4 | 5,104,286.3 | 3 | 1914 | No (RNA only) |\n| ENSG00000167996 | FTH1 | 24,197.5 | 19,468,868.2 | 4 | 822 | No (RNA only) |\n| ENSG00000155307 | SAMSN1 | 14,700.2 | 1,717,619.3 | 5 | 3046 | No (RNA only) |\n| ENSG00000087086 | FTL | 13,551.4 | 91,608,679.4 | 6 | 240 | No (RNA only) |\n| ENSG00000151726 | ACSL1 | 13,298.7 | 50,195,695.3 | 7 | 400 | No (RNA only) |\n| ENSG00000291237 | SOD2 | 12,523.7 | 17,659,505.5 | 8 | 892 | No (RNA only) |\n| ENSG00000075884 | ARHGAP15 | 10,528.3 | 7,706,320.4 | 9 | 1536 | No (RNA only) |\n| ENSG00000090376 | IRAK3 | 9,249.9 | 12,721,117.6 | 10 | 1125 | No (RNA only) |\n| ENSG00000198938 | MT-CO3 | 8,892.5 | 3,664,254.4 | 11 | 2241 | No (RNA only) |\n| ENSG00000198712 | MT-CO2 | 8,303.7 | 48,454,395.6 | 12 | 414 | No (RNA only) |\n| ENSG00000100906 | NFKBIA | 7,958.7 | 1,052,553.0 | 13 | 3541 | No (RNA only) |\n| ENSG00000111913 | RIPOR2 | 7,916.5 | 10,535,513.7 | 14 | 1279 | No (RNA only) |\n| ENSG00000145819 | ARHGAP26 | 7,865.7 | 463,478.2 | 15 | 4267 | No (RNA only) |\n| ENSG00000163191 | S100A11 | 7,787.5 | 63,868,721.7 | 16 | 327 | No (RNA only) |\n| ENSG00000196352 | CD55 | 7,705.1 | 267,220.7 | 17 | 4624 | No (RNA only) |\n| ENSG00000011422 | PLAUR | 7,137.8 | 3,548,862.2 | 18 | 2273 | No (RNA only) |\n| ENSG00000189067 | LITAF | 7,072.3 | 11,265,019.9 | 19 | 1222 | No (RNA only) |\n| ENSG00000163221 | S100A12 | 6,920.4 | 81,196,131.5 | 20 | 264 | No (RNA only) |\n| ENSG00000244734 | HBB | 8.9 | 12,146,705,238.8 | 3942 | 1 | No (Protein only) |\n| ENSG00000158406 | H4C8 | 16.9 | 7,043,887,585.6 | 3386 | 2 | No (Protein only) |\n| ENSG00000197061 | H4C3 | 39.6 | 7,043,887,585.6 | 2656 | 3 | No (Protein only) |\n| ENSG00000197238 | H4C11 | 0.4 | 7,043,887,585.6 | 5236 | 4 | No (Protein only) |\n| ENSG00000197837 | H4C16 | 3.1 | 7,043,887,585.6 | 4675 | 5 | No (Protein only) |\n| ENSG00000270276 | H4C15 | 0.1 | 7,043,887,585.6 | 5394 | 6 | No (Protein only) |\n| ENSG00000270882 | H4C14 | 1.3 | 7,043,887,585.6 | 5002 | 7 | No (Protein only) |\n| ENSG00000273542 | H4C12 | 0.1 | 7,043,887,585.6 | 5395 | 8 | No (Protein only) |\n| ENSG00000274618 | H4C6 | 0.4 | 7,043,887,585.6 | 5242 | 9 | No (Protein only) |\n| ENSG00000276180 | H4C9 | 0.1 | 7,043,887,585.6 | 5396 | 10 | No (Protein only) |\n| ENSG00000276966 | H4C5 | 1.4 | 7,043,887,585.6 | 4986 | 11 | No (Protein only) |\n| ENSG00000277157 | H4C4 | 0.6 | 7,043,887,585.6 | 5168 | 12 | No (Protein only) |\n| ENSG00000278637 | H4C1 | 1.8 | 7,043,887,585.6 | 4891 | 13 | No (Protein only) |\n| ENSG00000278705 | H4C2 | 0.2 | 7,043,887,585.6 | 5337 | 14 | No (Protein only) |\n| ENSG00000012223 | LTF | 1,132.8 | 6,268,778,890.5 | 304 | 15 | No (Protein only) |\n| ENSG00000005381 | MPO | 5.0 | 3,178,365,350.9 | 4371 | 16 | No (Protein only) |\n| ENSG00000188536 | HBA2 | 15.3 | 2,646,963,892.0 | 3473 | 17 | No (Protein only) |\n| ENSG00000206172 | HBA1 | 7.6 | 2,646,963,892.0 | 4061 | 18 | No (Protein only) |\n| ENSG00000100345 | MYH9 | 1,873.8 | 2,287,762,683.6 | 175 | 19 | No (Protein only) |\n| ENSG00000105357 | MYH14 | 6.6 | 2,266,032,455.1 | 4171 | 20 | No (Protein only) |\n\n---\n\n### 5. Visualizations\n\n#### Panel 1: Cardiomyocytes Top-List Union Scatter ($\\log_{10} \\text{Protein Intensity}$ vs $\\log_{10} \\text{RNA nCPM}$)\n```\nLog10 Protein Intensity\n11.0 +-----------------------------------------------------------------------+\n     |                                                              * MYH7   |\n10.5 |                                              * MYBPC3  * TTN          |\n     |                                        * ACTN2                        |\n10.0 |                                * TPM1                                 |\n     |                                                                       |\n 9.5 |                      * MYL3                                           |\n     |              * ACTA1, ATP5F1A, MB                                     |\n 9.0 |                                                       * DMD           |\n     |                                           * NEBL, SORBS2              |\n 8.5 |                                           * LAMA2, RYR2               |\n     |                                           * FHL2, PDLIM5              |\n 8.0 |                                                                       |\n     |                                            * CTNNA3, MLIP             |\n 7.5 |                                            * PALLD, SLC8A1            |\n     |                                            * PDE3A, SGCD              |\n 7.0 |                                                                       |\n     |   * ALB                                    * CBR4                     |\n 6.5 |                                            * FGF12                    |\n     |                                            * AKAP13                   |\n 6.0 |                                                                       |\n     |                                            * MIB1                     |\n 5.0 +-----------------------------------------------------------------------+\n     -1.0         0.0         1.0         2.0         3.0         4.0      5.0\n                                  Log10 RNA nCPM\n```\n*(Key overlapping top-20 genes `MYH7`, `TTN`, and `MYBPC3` cluster in the upper right).*\n\n---\n\n#### Panel 2: Hepatocytes Top-List Union Scatter ($\\log_{10} \\text{Protein Intensity}$ vs $\\log_{10} \\text{RNA nCPM}$)\n```\nLog10 Protein Intensity\n10.5 +-----------------------------------------------------------------------+\n     |                                                       * ALB           |\n10.0 |                      * CPS1             * ADH1B                       |\n     |                                                                       |\n 9.5 |                      * HMGCS2, GLUD1, ALDH2                           |\n     |                      * KRT18, FASN, EPHX1                             |\n 9.0 |                      * ACAA2, ADH4, DCXR, ALDH1A1, ASS1               |\n     |                                                                       |\n 8.5 |                                                        * APOA1, HP    |\n     |                      * KRT8                            * FGA, FGB     |\n 8.0 |                                                        * MT-CO2       |\n     |                                                        * TTR, APOC3   |\n 7.5 |                                                        * FTL, RBP4    |\n     |                                                        * MT-ATP6      |\n 7.0 |                                                        * ORM1, APOC1  |\n     |                                                        * AMBP         |\n 6.5 |                                                        * APOA2        |\n     |   * HBB, HBA1, HBA2                                    * MT-CYB, ND2  |\n 6.0 |   * PCK2, CES1                                         * MT-ND4, ND1  |\n     +-----------------------------------------------------------------------+\n     0.0          1.0         2.0         3.0         4.0         5.0      6.0\n                                  Log10 RNA nCPM\n```\n*(Only `ALB` occupies the dual-high quadrant).*\n\n---\n\n#### Panel 3: Neutrophils Top-List Union Scatter ($\\log_{10} \\text{Protein Intensity}$ vs $\\log_{10} \\text{RNA nCPM}$)\n```\nLog10 Protein Intensity\n10.5 +-----------------------------------------------------------------------+\n     |   * HBB                                                               |\n10.0 |   * [H4C cluster: H4C1-H4C16]                                         |\n     |                                                                       |\n 9.5 |                      * LTF                                            |\n     |   * HBA1, HBA2       * MPO                                            |\n 9.0 |                      * MYH9, MYH14                     * S100A8       |\n     |                                                        * S100A9       |\n 8.5 |                                                                       |\n     |                                                        * FTL, S100A12 |\n 8.0 |                                                        * S100A11      |\n     |                                                        * ACSL1, MT-CO2|\n 7.5 |                                                        * FTH1, SOD2   |\n     |                                                        * IRAK3, LITAF |\n 7.0 |                                                        * RIPOR2       |\n     |                                                        * ARHGAP15     |\n 6.5 |                                                        * NAMPT, PLAUR |\n     |                                                        * MT-CO3       |\n 6.0 |                                                        * SAMSN1       |\n     |                                                        * NFKBIA       |\n 5.5 |                                                        * ARHGAP26,CD55|\n     +-----------------------------------------------------------------------+\n     -1.0         0.0         1.0         2.0         3.0         4.0      5.0\n                                  Log10 RNA nCPM\n```\n*(Zero genes overlap; top protein entries comprise histones and hemoglobins, whereas top RNA entries are S100-alarmins and immune regulators).*\n\n---\n\n#### Top-Twenty Overlap & Jaccard Bar Chart\n```\nCell Type        Overlap Count (out of 20)           Jaccard Index\n-------------------------------------------------------------------------\nCardiomyocytes   [███                 ] 3 / 20       [████                ] 0.0811 (8.1%)\nHepatocytes      [█                   ] 1 / 20       [█                   ] 0.0256 (2.6%)\nNeutrophils      [                    ] 0 / 20       [                    ] 0.0000 (0.0%)\n```\n\n---\n\n#### Discordance Heatmap\nEach cell visualizes the rank percentile or absolute divergence across the 5 most discordant genes per cell type (Scale: `░` = 0.00–0.25, `▒` = 0.26–0.50, `▓` = 0.51–0.75, `█` = 0.76–1.00):\n\n```\nCell Type       Gene      RNA %ile        Protein %ile    |RNA - Protein|\n--------------------------------------------------------------------------\nCardiomyocytes  ALB       ░ [0.0087]      █ [0.9972]      █ [0.9885]\n                ACTBL2    ░ [0.0087]      █ [0.9871]      █ [0.9784]\n                PDZRN3    █ [0.9905]      ░ [0.0182]      █ [0.9722]\n                H4C15     ░ [0.0087]      █ [0.9787]      █ [0.9700]\n                H4C6      ░ [0.0087]      █ [0.9787]      █ [0.9700]\n\nHepatocytes     EEF1A2    ░ [0.0077]      █ [0.9960]      █ [0.9883]\n                H4C1      ░ [0.0077]      █ [0.9924]      █ [0.9847]\n                H4C8      ░ [0.0181]      █ [0.9924]      █ [0.9743]\n                H4C14     ░ [0.0181]      █ [0.9924]      █ [0.9743]\n                SDHA      ░ [0.0077]      █ [0.9713]      █ [0.9636]\n\nNeutrophils     H4C15     ░ [0.0056]      █ [0.9987]      █ [0.9931]\n                H4C12     ░ [0.0056]      █ [0.9987]      █ [0.9931]\n                H4C9      ░ [0.0056]      █ [0.9987]      █ [0.9931]\n                TXNIP     █ [0.9937]      ░ [0.0017]      █ [0.9920]\n                MYH7      ░ [0.0056]      █ [0.9928]      █ [0.9872]\n```",
+  "stop": "stop",
+  "tool_call_count": 28,
+  "seconds": 137.357,
+  "model_calls": 29,
+  "cost_usd": 0.566390325
+}

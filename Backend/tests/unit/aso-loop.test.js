@@ -379,15 +379,15 @@ test('agents summoned together run a few at a time', async t => {
 });
 
 
-test('a plan that repeats the current plan is refused: nothing starts by itself', async t => {
+test('a turn that only plans after a turn that only planned is refused: nothing starts by itself', async t => {
   const { run, requests } = await study(t, [
     response(call('plan', { items: [{ step: 'values', kind: 'table' }] })),
-    response(call('plan', { items: [{ step: 'values', kind: 'table' }] })),
+    response(call('plan', { items: [{ step: 'values', kind: 'table', description: 'the same plan, reworded' }] })),
     response(call('investigator_hpa', named('Values', { points: ['EGFR'], question: 'nTPM' }))),
     response(call('finish', { tables: [{ artifact: 'a1' }] }))
   ]);
   const result = await run({});
   assert.equal(result.outcome, 'completed', result.summary);
-  assert.match(requests[2].messages[1].content, /plan unchanged: nothing starts by itself; the agents and the operations are called to make the deliverables/);
-  assert.match(requests[2].messages[1].content, /PLAN\n1\. \[todo\] values \| table/, 'the current plan stays');
+  assert.match(requests[2].messages[1].content, /plan again: nothing starts by itself; the agents and the operations are called to make the deliverables/);
+  assert.match(requests[2].messages[1].content, /PLAN\n1\. \[todo\] values \| table\n/, 'the first plan stays');
 });

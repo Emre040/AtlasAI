@@ -782,6 +782,8 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       });
       await log('turn', { turn, text: message.content ? String(message.content).slice(0, 600) : null, calls: calls.map(c => ({ tool: c.name, args: c.args })), offered: offered.length });
       if (message.content && !calls.length) remember(`said: ${String(message.content).slice(0, 300)}`);
+      // A turn that only plans, after a turn that only planned, makes nothing: the second plan is refused.
+      const planOnly = calls.length > 0 && calls.every(c => c.name === 'plan');
       let waiting = false, sync = 0, started = 0, repeated = 0, operated = 0;
       async function executeCall(call) {
         if (call.error) throw new Error(`invalid arguments: ${call.error}`);
@@ -797,6 +799,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
           // A plan that repeats the current one changes nothing: the deliverables are made by the calls that follow.
           const sameItem = (a, b) => a.text === b.text && a.kind === b.kind && (a.description || '') === (b.description || '') && (a.not_done || '') === (b.not_done || '');
           if (state.plan.length === items.length && items.every((item, i) => sameItem(item, state.plan[i]))) throw new Error('plan unchanged: nothing starts by itself; the agents and the operations are called to make the deliverables');
+          if (planOnly && state.lastTurnPlanOnly) throw new Error('plan again: nothing starts by itself; the agents and the operations are called to make the deliverables');
           state.plan = items;
           sync++; remember(`plan: ${state.plan.length} deliverables`);
           await log('plan', { items: state.plan });
@@ -912,6 +915,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
         else { batch.push(call); if (batch.length >= parallel) await drain(); }
       }
       await drain();
+      state.lastTurnPlanOnly = planOnly;
       if (report !== null || stopReason) break;
       if (!calls.length) {
         stalls++;

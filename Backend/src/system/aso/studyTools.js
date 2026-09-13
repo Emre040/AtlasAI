@@ -334,12 +334,17 @@ function naming(rows, rightNames, shared, unkeyed = { a: 0, b: 0 }, matched = nu
   return rows;
 }
 
+// Rows a join may produce: beyond this, the two sides pair every row of a key on one side with
+// every row of it on the other, and the result is the product, not a table.
+const MAX_JOIN_ROWS = 2000000;
+const tooMany = (left, right) => new Error(`join: more than ${MAX_JOIN_ROWS.toLocaleString('en-US')} rows: ${left.length.toLocaleString('en-US')} rows of a and ${right.length.toLocaleString('en-US')} of b pair every row of a key on one side with every row of it on the other. Aggregate one side to one row per key first, or join on the columns that tell the rows apart (on_columns)`);
 function join(left, right, how = 'inner', on = null, onColumns) {
   // A cross join pairs every row of a with every row of b: two single-row results side by side.
   if (how === 'cross') {
     const leftCols = columnsOf(left), rightCols = columnsOf(right);
     const rightNames = suffixedNames(rightCols, leftCols);
     const out = [];
+    if (left.length * right.length > MAX_JOIN_ROWS) throw tooMany(left, right);
     for (const l of left) for (const r of right) out.push({ ...Object.fromEntries(leftCols.map(c => [c, l[c] === undefined ? null : l[c]])), ...Object.fromEntries(rightCols.map(c => [rightNames.get(c), r[c] === undefined ? null : r[c]])) });
     return naming(withColumns(out, [...leftCols, ...rightNames.values()]), rightNames, []);
   }
@@ -387,6 +392,7 @@ function join(left, right, how = 'inner', on = null, onColumns) {
     for (const key of keys(l, leftKeys)) { matches = groups.get(key) || []; if (matches.length) break; }
     if (!matches.length) pairs.push([l, null]); else matchedLeft++;
     for (const match of matches) { matchedRight.add(match.index); pairs.push([l, match.row]); }
+    if (pairs.length > MAX_JOIN_ROWS) throw tooMany(left, right);
   }
   const matched = { a: matchedLeft, b: matchedRight.size, rows_a: left.length, rows_b: right.length };
   // A column both sides carry under one name, agreeing on every matched pair, is one column and

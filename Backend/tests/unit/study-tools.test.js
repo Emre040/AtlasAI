@@ -235,3 +235,10 @@ test('conditions combine with and, or and not, and a missing value decides nothi
   assert.deepEqual(flag('if(n = 0 || contains(loc, "cytosol"), 1, 0)'), [1, 1, 0], '|| is or; a missing cell decides nothing, so the else branch');
   assert.throws(() => tools.compute(rows, 'f', 'contains(loc, "x") or n > 1'), /a comparison goes inside if/);
 });
+
+test('a join whose pairs would exceed what a table holds is refused with the reason', () => {
+  const tools = require('../../src/system/aso/studyTools');
+  const rows = n => tools.withColumns(Array.from({ length: n }, (_, i) => ({ gene: 'A', ensembl: 'ENSG1', v: i })), ['gene', 'ensembl', 'v']);
+  assert.throws(() => tools.join(rows(1500), rows(1500)), /join: more than 2,000,000 rows: 1,500 rows of a and 1,500 of b pair every row of a key/, 'one key on both sides, 2.25 million pairs');
+  assert.equal(tools.join(rows(10), rows(10)).length, 100, 'a hundred pairs is a table');
+});

@@ -121,7 +121,9 @@ function scoreRecord(rec, ref) {
   const expected = ref.rows;
   let found = 0; const sources = new Set();
   for (const e of expected) { const hit = findRow(rec.tables || [], e); if (hit) { found++; if (hit.table) sources.add(hit.table); } }
-  const sourceOk = ref.source_file ? [...sources].some(s => norm(s) === norm(ref.source_file)) : null;
+  // A question over two files (two fields at once) expects every one of them read.
+  const wanted = ref.source_files || (ref.source_file ? [ref.source_file] : []);
+  const sourceOk = wanted.length ? wanted.every(w => [...sources].some(s => norm(s) === norm(w))) : null;
   const correct = found === expected.length && expected.length > 0 && (sourceOk !== false);
   return { correct, reason: correct ? 'every expected row present from the reference source' : found < expected.length ? `${found} of ${expected.length} expected rows present` : 'rows present but read from another source', rows_expected: expected.length, rows_found: found, source_ok: sourceOk, sources: [...sources] };
 }

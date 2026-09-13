@@ -44,7 +44,8 @@ SPEC = {
     "I25": dict(file="rna_immune_cell_sample.tsv", key="Gene name", filters={"Immune cell": "classical monocyte"}, value="nTPM", ensembl="ENSG ID", context=["Donor"]),
     "I26": dict(file="blood_immunoassay_concentration.tsv", key="gene", filters={"sample type": "Plasma"}, value="conc [pg/L]", ensembl="ENSG ID", context=["pubmed id"]),
     "I27": dict(kind="negative", why="No file of the release records protein half-life."),
-    "I28": dict(kind="rejection", why="Two fields from two files (rna_tissue_consensus.tsv nTPM, blood_ms_concentration.tsv concentration); the investigator answers one field in one context per run."),
+    "I28": dict(parts=[dict(file="rna_tissue_consensus.tsv", key="Gene name", filters={"Tissue": "liver"}, value="nTPM"),
+                       dict(file="blood_immunoassay_concentration.tsv", key="gene", filters={"sample type": "Plasma"}, value="conc [pg/L]", ensembl="ENSG ID")]),
     "I29": dict(file="rna_tissue_consensus.tsv", key="Gene name", filters={"Tissue": "liver"}, value="nTPM", synonyms={"p53": "TP53", "HER2": "ERBB2", "PD-L1": "CD274", "c-Myc": "MYC"}),
     "I30": dict(file="cancer_cptac.tsv", key="Gene name", filters={"Cancer": "Lung SQCC"}, value="logFC"),
 }
@@ -85,24 +86,34 @@ for qid, spec in SPEC.items():
                     if len(seen) == spec["first_ids"]: break
         points = seen
         q["points"] = points
-    synonyms = spec.get("synonyms", {})
-    lookup = [synonyms.get(p, p) for p in points]
-    header, rows = grep_rows(spec["file"], lookup)
-    key, ensembl = spec["key"], spec.get("ensembl", "Gene")
-    out = []
-    for p, name in zip(points, lookup):
-        for r in rows:
-            if r.get(key) != name: continue
-            if any(r.get(c) != v for c, v in spec.get("filters", {}).items()): continue
-            if any(v not in (r.get(c) or "") for c, v in spec.get("match", {}).items()): continue
-            if spec["value"] == "*nonempty*":
-                cols = [c for c in header if c not in (key, ensembl, "Cancer") and (r.get(c) or "").strip()]
-                for c in cols: out.append({"point": sorted({p, name, r.get(ensembl, "")} - {""}), "context": {"Cancer": r["Cancer"], "column": c}, "value": r[c]})
-                continue
-            value = r.get(spec["value"])
-            if value is None or str(value).strip() == "": continue
-            out.append({"point": sorted({p, name, r.get(ensembl, "")} - {""}), "context": {c: r[c] for c in spec.get("context", [])}, "value": value})
-    references[qid] = {"kind": "rows", "source_file": spec["file"], "value_column": spec["value"], "filters": spec.get("filters", {}), "rows": out}
+
+    def rows_for(spec):
+        synonyms = spec.get("synonyms", {})
+        lookup = [synonyms.get(p, p) for p in points]
+        header, rows = grep_rows(spec["file"], lookup)
+        key, ensembl = spec["key"], spec.get("ensembl", "Gene")
+        out = []
+        for p, name in zip(points, lookup):
+            for r in rows:
+                if r.get(key) != name: continue
+                if any(r.get(c) != v for c, v in spec.get("filters", {}).items()): continue
+                if any(v not in (r.get(c) or "") for c, v in spec.get("match", {}).items()): continue
+                if spec["value"] == "*nonempty*":
+                    cols = [c for c in header if c not in (key, ensembl, "Cancer") and (r.get(c) or "").strip()]
+                    for c in cols: out.append({"point": sorted({p, name, r.get(ensembl, "")} - {""}), "context": {"Cancer": r["Cancer"], "column": c}, "value": r[c]})
+                    continue
+                value = r.get(spec["value"])
+                if value is None or str(value).strip() == "": continue
+                out.append({"point": sorted({p, name, r.get(ensembl, "")} - {""}), "context": {c: r[c] for c in spec.get("context", [])}, "value": value})
+        return out
+
+    if "parts" in spec:
+        # Two fields asked at once: every part's rows are expected, each from its own file.
+        out = [row for part in spec["parts"] for row in rows_for(part)]
+        references[qid] = {"kind": "rows", "source_files": [part["file"] for part in spec["parts"]], "value_column": [part["value"] for part in spec["parts"]], "filters": [part.get("filters", {}) for part in spec["parts"]], "rows": out}
+    else:
+        out = rows_for(spec)
+        references[qid] = {"kind": "rows", "source_file": spec["file"], "value_column": spec["value"], "filters": spec.get("filters", {}), "rows": out}
     if not out: print(f"WARNING {qid}: no rows", file=sys.stderr)
 
 json.dump(references, open(here / "references/answers.json", "w"), indent=1)

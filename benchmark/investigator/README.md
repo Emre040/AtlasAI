@@ -18,10 +18,10 @@ immunoassay, proximity extension assay disease profiles, tissue mass
 spectrometry and deep visual proteomics. Points range from one named gene to
 120 Ensembl ids, and include synonyms the files do not use (p53, HER2,
 PD-L1, c-Myc). One question asks for a value no file holds; one asks for two
-fields at once, which the investigator is meant to refuse.
+fields at once, which come from two files.
 
 By the rubric in [questions/difficulty.md](questions/difficulty.md): 12 Easy,
-9 Medium, 9 Hard. Questions and their points are in
+10 Medium, 8 Hard. Questions and their points are in
 [questions/questions.json](questions/questions.json).
 
 ## The references
@@ -30,16 +30,15 @@ By the rubric in [questions/difficulty.md](questions/difficulty.md): 12 Easy,
 [execution/build_references.py](execution/build_references.py) straight from
 the release files: for each question, the rows of the named file for the
 question's points in the question's context, with the value column. The
-negative and the rejection question carry no rows and say why.
+negative question carries no rows and says why.
 
 ## Scoring
 
 A question is correct when every expected row appears in a returned table
-(the point, its context, its value) and the table's source file is the
+(the point, its context, its value) and the tables' source files are the
 reference's. The negative question is correct when the agent reports that no
-table holds the value; the rejection question when it refuses. Nothing is
-graded by a model or by hand; [execution/README.md](execution/README.md)
-describes the runner.
+table holds the value. Nothing is graded by a model or by hand;
+[execution/README.md](execution/README.md) describes the runner.
 
 ## Results
 
@@ -49,13 +48,12 @@ Gemini 3.8 Flash at low reasoning effort, offline against release 25.1
 | | Questions | Correct |
 | --- | --- | --- |
 | Easy | 12 | 12 |
-| Medium | 9 | 9 |
-| Hard | 9 | 8 |
-| All | 30 | 29 |
+| Medium | 10 | 10 |
+| Hard | 8 | 8 |
+| All | 30 | 30 |
 
-The one miss is the two-field question: the investigator fetched both fields
-instead of refusing. 189,425 tokens in total, a median of 5,832 per question,
-$0.16 at list price; 5 minutes of wall clock at four questions in parallel.
+185,133 tokens in total, a median of 5,832 per question, $0.16 at list
+price; 5 minutes of wall clock at four questions in parallel.
 
 ## Folder
 

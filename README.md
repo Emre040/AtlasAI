@@ -50,7 +50,7 @@ AtlasAI/
 ├── Backend/                         # Node API (Express 5, MySQL `atlasai`, one inference gateway)
 │   ├── server.js                    # process bootstrap and route composition
 │   ├── src/system/agents/           # the agents: deepResearchTrail, investigatorTrail, investigatorBulk,
-│   │                                #   dictionaryExpert, checkInclusion, asoStudy (the study loop)
+│   │                                #   dictionaryExpert, asoStudy (ASO)
 │   ├── src/system/aso/              # the study's desk, table operations, report binder, provenance, chart rendering
 │   ├── src/hpa/                     # atlas schema and search options, the search evaluator, the data-release adapter
 │   ├── src/inference/               # the gateway and the provider adapters (OpenAI-compatible, Gemini, Anthropic)

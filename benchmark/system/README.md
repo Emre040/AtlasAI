@@ -121,6 +121,5 @@ not exercised.
 
 Every answer and its trace is kept under results, and every verdict carries a
 note saying what matched the reference and what did not. We assigned the verdicts
-ourselves, reading every answer in full against the reference. Eight answers are
-second runs of the same question and say so in their notes. Reasoning settings and
-builds are listed in the results README.
+ourselves, reading every answer in full against the reference. Reasoning settings
+are listed in the results README.

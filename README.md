@@ -54,6 +54,15 @@ AtlasAI/
 inference catalog, conversations and runs, authentication, the platform policy, HPA data
 releases and offline agents, the study orchestrator, provenance, and deployment.
 
+## Benchmarks
+
+[benchmark/](benchmark/README.md) holds four benchmarks with their questions,
+references, execution notes and every recorded run: the 45-question system
+benchmark (AtlasAI against the same models over the atlas's MCP server and
+over SQL), and one benchmark each for the search agent (236 questions), the
+investigator (30) and the reader against open web tools (20). The three
+agent benchmarks are scored by code against references.
+
 ## Backend
 
 Requirements: Node 20, MySQL 8, Python 3 with Matplotlib and NumPy for figure rendering,

@@ -230,11 +230,17 @@ async function execute(filters, url, requestedMode) {
     if (open.length === 1) {
       const axis = open[0];
       const rows = [];
+      const keyOf = row => row.Ensembl || row.ensembl || row.Gene || row.gene;
+      const covered = new Set();
       for (const option of field(axis.field).level0) {
         const part = await offlineSearch.evaluate(include.map(x => x === axis ? { ...x, class: option } : x), exclude);
         if (part.unsupported.length) continue;
-        for (const row of part.rows) rows.push({ ...row, [axis.field]: option });
+        for (const row of part.rows) { rows.push({ ...row, [axis.field]: option }); covered.add(keyOf(row)); }
       }
+      // A gene the plain filter selects that no first-level option reproduced (a value spelled
+      // outside the option list, a second-level match with no first-level value) stays in the
+      // set, its matched-value column blank: the set is the filter's, the column is a note on it.
+      for (const row of local.rows) if (!covered.has(keyOf(row))) rows.push({ ...row, [axis.field]: null });
       return { rows, mode: 'offline', version: agentMode.hpaVersion, source_files: local.source_files, context_columns: [axis.field] };
     }
     // The same when the first level is named and the second is left open (a cancer, any

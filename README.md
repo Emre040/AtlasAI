@@ -25,13 +25,13 @@ SQL over the atlas files, and through AtlasAI over the same files.
 | Configuration | Correct of 45 | Tokens per correct answer |
 | --- | --- | --- |
 | AtlasAI, Qwen 3.8 27B (open weights) | 40 | 192,053 |
-| AtlasAI, Gemini 3.8 Flash | 37 | 365,873 |
+| AtlasAI, Gemini 3.8 | 37 | 365,873 |
 | SQL, GPT-5.6 | 9 | 305,419 |
-| SQL, Gemini 3.8 Flash | 7 | 2,330,730 |
+| SQL, Gemini 3.8 | 7 | 2,330,730 |
 | MCP, GPT-5.6 | 1 | 861,502 |
-| MCP, Gemini 3.8 Flash | 2 | 16,978,919 |
+| MCP, Gemini 3.8 | 2 | 16,978,919 |
 
-Qwen 3.8 27B and Gemini 3.8 Flash are correct on 0 and 2 questions over MCP and on 5 and 7 over
+Qwen 3.8 27B and Gemini 3.8 are correct on 0 and 2 questions over MCP and on 5 and 7 over
 SQL. On numerical results alone, AtlasAI is correct on all 22 Hard questions with either model;
 the best tool configuration reaches 15. On the three questions that invite inference beyond the
 data, AtlasAI declined in all six runs; the tool configurations inferred in 36 of 42. The 80

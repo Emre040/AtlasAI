@@ -27,6 +27,12 @@ interactive clarification exchange.
 
 ## Run the current harness
 
+The AtlasAI runs were made with `Backend/scripts/manual/compare_study_context.js`
+(one question through the study loop, every model call recorded, the database
+read only) and, for the five documentation questions,
+`Backend/scripts/manual/reader_question.js` (one question through the reader);
+both bind one catalog model for the process and write a run directory.
+
 `runner/run.mjs` is the single entrypoint; `servers/sql/` and `servers/web/`
 contain the SQL and web servers, and `servers/mcp/README.md` says where the
 ProteinAtlas MCP server comes from. Install locked dependencies with `npm ci`

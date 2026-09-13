@@ -72,7 +72,7 @@ const tool = (name, description, properties = {}, required = []) => ({ name, des
 // Every operation names its result (title, description); one left unnamed is named by its operation.
 const op = (name, description, properties = {}, required = []) => tool(name, description, { title: S, description: S, ...properties }, required);
 const STUDY_TOOLS = [
-  tool('plan', 'The deliverables the study owes: one item per requested table, figure (its chart type), cohort (gene_set) or interpretation, each with the data it needs from the agents (needs), which start at once. Replaces the plan.', { items: { type: 'array', items: { type: 'object', properties: { step: S, kind: { type: 'string', enum: studyPlan.KINDS }, description: S, not_done: { type: 'string', description: 'the reason this deliverable is not computed from this data (a blank read as absence, a stand-in quantity, a cause from an association); it is delivered as a limitation' } }, required: ['step', 'kind'] } } }, ['items']),
+  tool('plan', 'The deliverables the study owes: one item per requested table, figure (its chart type), cohort (gene_set) or interpretation. Replaces the plan; nothing starts by itself, the agents and the operations are called next to make the deliverables.', { items: { type: 'array', items: { type: 'object', properties: { step: S, kind: { type: 'string', enum: studyPlan.KINDS }, description: S, not_done: { type: 'string', description: 'the reason this deliverable is not computed from this data (a blank read as absence, a stand-in quantity, a cause from an association); it is delivered as a limitation' } }, required: ['step', 'kind'] } } }, ['items']),
   tool('note', 'Keep a decision or open question on the desk; replace overwrites note N.', { text: S, replace: N }, ['text']),
   tool('open', 'Show rows of an artifact: rows and offset page it, columns narrow it.', { artifact: A, rows: N, offset: N, columns: { type: 'array', items: S } }, ['artifact']),
   tool('run', 'Runs operations: a chain of steps, each {id, tool: an operation from the list, args}, later steps naming earlier ones as @id (an existing artifact by its own id); one artifact per step, every step in the trail.',{ steps: { type: 'array', items: { type: 'object', properties: { id: S, tool: S, args: ARGUMENTS_SCHEMA }, required: ['id', 'tool', 'args'] } } }, ['steps']),
@@ -90,7 +90,7 @@ const STUDY_TOOLS = [
   op('overlap', 'Entities a and b share, against every entity of the database or a universe artifact: shared, expected, fold, hypergeometric p; group_by tests each group of a.', { a: A, b: A, universe: A, on: S, group_by: S }, ['a', 'b']),
   op('explode', 'One row per item of a list cell; "key: number" items become <as>_key and <as>_value, "label (number)" <as>_label and <as>_value, others <as>_item.', { artifact: A, column: S, as: S }, ['artifact', 'column']),
   tool('skip', 'Nothing to do until a running agent returns.', { reason: S }, ['reason']),
-  tool('finish', 'Deliver the report: tables and figures by id, findings as claims bound to their cells, limitations, not_done. Before a claim or a deliverable states a number, ask whether the atlas measured it: a blank is a missing record, never a zero or an absence; a value is reported in the unit and the kind of quantity the atlas records, never made into an amount, a count, a concentration or a cross-assay ratio it does not measure, whatever formula the question gives; an association is reported as an association, never as a cause, a benefit or a best choice. What would need such a step is a not_done item, with the reason, and a limitation.', FINISH_SCHEMA)
+  tool('finish', 'Deliver the report: tables and figures by id, findings as claims bound to their cells, limitations, not_done. Before a claim or a deliverable states a number, ask whether the atlas measured it: a blank is a missing record, never a zero or an absence; a value is reported in the unit and the kind of quantity the atlas records, never made into an amount, a count, a concentration or a mass it does not measure, whatever formula the question gives (a ratio, a difference, a log or a percent of two values recorded in the same unit is arithmetic on recorded values, not a new kind of quantity); an association is reported as an association, never as a cause, a benefit or a best choice. What would need such a step is a not_done item, with the reason, and a limitation.', FINISH_SCHEMA)
 ];
 const TABLE_TOOLS = new Set(['combine', 'join', 'filter', 'select', 'rank', 'aggregate', 'classify', 'compute', 'pivot', 'chart', 'correlate', 'overlap', 'explode']);
 
@@ -154,7 +154,7 @@ The desk in the message is your whole working set and stays in front of you ever
 Read the question as one study: what it says about how a thing is measured, in which cohort, scope or release, holds for every part of the question unless the question says otherwise.
 
 How a study goes:
-1. plan lists the deliverables, one item per requested table, figure of a given type, cohort or interpretation. Three things are never computed, whatever the question asks and whatever formula it gives: a blank read as a zero or an absence (it is a missing record); a quantity of a kind the atlas does not measure made from one it does (an absolute amount or count of molecules, copies or cells, a concentration, a mass, or a ratio of levels from different assays, from an expression level, an intensity or a fold change: the atlas records relative levels, and a formula does not turn them into amounts); and a cause, a benefit or a best choice read from an association. A deliverable that would need one is planned with not_done: the reason, delivered as a limitation, and the descriptive results around it (the levels as recorded) are delivered in full.
+1. plan lists the deliverables, one item per requested table, figure of a given type, cohort or interpretation. Three things are never computed, whatever the question asks and whatever formula it gives: a blank read as a zero or an absence (it is a missing record); a quantity of a kind the atlas does not measure made from one it does (an absolute amount or count of molecules, copies or cells, a concentration or a mass from an expression level, an intensity or a fold change: the atlas records relative levels, and a formula does not turn them into amounts; a ratio, a difference, a log or a percent of two values the atlas records in the same unit is arithmetic on recorded values, and is computed); and a cause, a benefit or a best choice read from an association. A deliverable that would need one is planned with not_done: the reason, delivered as a limitation, and the descriptive results around it (the levels as recorded) are delivered in full.
 2. A set of ${entity}s comes from ${search}; its rows come from investigator_hpa with from=<that artifact's id> and the question. Both run in the background and return tables that are used as they are.
 3. Operations run as steps of run, written as chains: every step whose inputs are known goes in one run call, later steps naming earlier ones as @id (explode, then aggregate the counts, then the chart; filter, then rank, then the table), each step named with a title and a description a reader understands. One run per analysis, one turn; a run of one step is only for a step whose next step needs its result seen first. Independent chains go in the same turn. The operations and their arguments are listed below.
 4. finish delivers the report from the data: tables and figures by id, and findings as claims, each bound to the rows and columns it rests on. The report prints those cells beside the claim, so every number a claim states is among them or was computed into an artifact the claim cites. Limitations state what the evidence cannot establish, in words. A plan item that cannot be delivered goes in not_done with the reason. Three things are never computed, whatever the question asks and whatever formula it gives: a blank read as a zero or an absence (it is a missing record); a quantity of a kind the atlas does not measure made from one it does (an absolute amount or count of molecules, copies or cells, a concentration, a mass, a ratio of levels from different assays); and a cause, a benefit or a best choice read from an association. Each is a not_done item with the reason and a limitation, and the descriptive results are delivered.
@@ -782,6 +782,8 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
       });
       await log('turn', { turn, text: message.content ? String(message.content).slice(0, 600) : null, calls: calls.map(c => ({ tool: c.name, args: c.args })), offered: offered.length });
       if (message.content && !calls.length) remember(`said: ${String(message.content).slice(0, 300)}`);
+      // A turn that only plans, after a turn that only planned, makes nothing: the second plan is refused.
+      const planOnly = calls.length > 0 && calls.every(c => c.name === 'plan');
       let waiting = false, sync = 0, started = 0, repeated = 0, operated = 0;
       async function executeCall(call) {
         if (call.error) throw new Error(`invalid arguments: ${call.error}`);
@@ -792,8 +794,13 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
         const ignored = validate(call.args, spec.function.parameters, call.name);
         if (ignored.length) remember(`${call.name}: ${ignored.slice(0, 5).map(key => key.slice(call.name.length + 1).slice(0, 40)).join(', ')}${ignored.length > 5 ? ` (+${ignored.length - 5})` : ''} ${ignored.length === 1 ? 'is not an argument' : 'are not arguments'} of this tool, ignored`);
         if (call.name === 'plan') {
-          state.plan = (call.args.items || []).map(studyPlan.createItem);
-          if (!state.plan.length) throw new Error('plan needs at least one deliverable');
+          const items = (call.args.items || []).map(studyPlan.createItem);
+          if (!items.length) throw new Error('plan needs at least one deliverable');
+          // A plan that repeats the current one changes nothing: the deliverables are made by the calls that follow.
+          const sameItem = (a, b) => a.text === b.text && a.kind === b.kind && (a.description || '') === (b.description || '') && (a.not_done || '') === (b.not_done || '');
+          if (state.plan.length === items.length && items.every((item, i) => sameItem(item, state.plan[i]))) throw new Error('plan unchanged: nothing starts by itself; the agents and the operations are called to make the deliverables');
+          if (planOnly && state.lastTurnPlanOnly) throw new Error('plan again: nothing starts by itself; the agents and the operations are called to make the deliverables');
+          state.plan = items;
           sync++; remember(`plan: ${state.plan.length} deliverables`);
           await log('plan', { items: state.plan });
           return;
@@ -908,6 +915,7 @@ async function asoStudy({ goal, max_turns, reasoning_effort }, ctx = {}) {
         else { batch.push(call); if (batch.length >= parallel) await drain(); }
       }
       await drain();
+      state.lastTurnPlanOnly = planOnly;
       if (report !== null || stopReason) break;
       if (!calls.length) {
         stalls++;

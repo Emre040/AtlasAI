@@ -21,6 +21,7 @@ Rules:
 - Use field names exactly as written in the schema.
 - One filter per requirement the question states, and no filter for anything it does not state; a requirement that needs two fields gets two filters.
 - A requirement is "cannot" only when no field expresses it; if a field's definition covers it, it is a filter, not "cannot".
+- A requirement selects genes. What the answer should return (identifiers, symbols, columns, a count, a list, an order) selects nothing: it is neither a filter nor "cannot".
 - Operator NOT only when the question excludes what the field describes; a requirement phrased with "not" is often a value inside a field (a "not detected" category), which stays AND.
 - When the schema has no field for a requirement, put the requirement in "cannot" with the reason; do not approximate it with a different field.
 - Prefer the field whose definition matches what the question means over the field whose name resembles the question's words.

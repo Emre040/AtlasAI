@@ -51,6 +51,10 @@ test('sentences carry the citation markers around their full stop', () => {
     [{ text: 'Version 24.0 came out in October 2024 [1].', cites: [1] }, { text: 'It added a Structure Atlas.[2][3]', cites: [2, 3] }, { text: 'No citation here.', cites: [] }]);
   // a question mark inside a quotation does not end the sentence
   assert.deepEqual(sentences('The founders asked: “What is it that makes a kidney a kidney? And what makes a heart a heart?” [2]. The pilot began in 2000 [1].').map(x => x.cites), [[2], [1]]);
+  // a quotation inside a quotation: the inner question mark ends nothing, the two closing quotes belong to the sentence
+  assert.deepEqual(sentences('The question was: "In the proposal (2002), the founders asked: "What is it that makes a kidney a kidney? And what makes a heart a heart?"" [2] The program started in 2003 [3].').map(x => x.cites), [[2], [3]]);
+  assert.deepEqual(sentences('He asked "What is it?" and left [1]. Then a second one [2].').map(x => x.text), ['He asked "What is it?" and left [1].', 'Then a second one [2].']);
+  assert.deepEqual(sentences('She said "It works." [1] It did [2].').map(x => x.text), ['She said "It works." [1]', 'It did [2].']);
 });
 
 const site = {
@@ -143,4 +147,39 @@ test('a citation that is still wrong after the retries takes its sentence with i
   assert.deepEqual(result.dropped_sentences, ['The atlas has twelve sections [1].']);
   assert.deepEqual(labels, ['reader turn 1', 'reader turn 2', 'reader retry 1', 'reader retry 2', 'reader retry 3']);
   assert.match(result.summary_md, /Left out, no verified citation/);
+});
+
+test('an answer whose sentences carry no citation markers goes back once for the markers; the words stay, and the citations then check as usual', async () => {
+  const pages = {
+    'https://www.proteinatlas.org/': '<html><head><title>Home</title></head><body><a href="/about/releases">Releases</a><p>Welcome to the atlas.</p></body></html>',
+    'https://www.proteinatlas.org/about/releases': '<html><head><title>Releases</title></head><body><h2>Version 24.0</h2><p>Version 24.0 was released on 2024-10-22 and includes a new Structure Atlas.</p></body></html>'
+  };
+  const asked = []; const steps = [];
+  const replies = [
+    { follow: [{ page: 0, link: 0 }] },
+    { open: [{ page: 1, sections: [0] }] },
+    { answer: { text: 'Version 24.0 came out on 22 October 2024. It added a Structure Atlas.', citations: [{ n: 1, page: 1, quote: 'Version 24.0 was released on 2024-10-22' }, { n: 2, page: 1, quote: 'includes a new Structure Atlas' }], not_found: '' } },
+    { text: 'Version 24.0 came out on 22 October 2024 [1]. It added a Structure Atlas [2].' }
+  ];
+  const result = await readerAnswer('when was version 24 released?', { fetchPage: async url => pages[url], ask: async (s, u, o, label) => { asked.push({ system: s, label, user: u }); return replies.shift(); }, onStep: async s => { steps.push(s); } });
+  assert.equal(result.text, 'Version 24.0 came out on 22 October 2024 [1]. It added a Structure Atlas [2].');
+  assert.deepEqual(result.citations.map(c => c.n), [1, 2]);
+  assert.deepEqual(result.dropped_sentences, []);
+  assert.equal(asked[3].label, 'reader markers');
+  assert.match(asked[3].system, /only the markers are added/);
+  assert.match(asked[3].user, /The answer, whose words stay as they are:\nVersion 24.0 came out on 22 October 2024\. It added a Structure Atlas\./);
+  assert.match(asked[3].user, /\[1\] on page 1: "Version 24.0 was released on 2024-10-22"/);
+  assert.match(steps.find(s => s.label === 'Sent back').message, /no citation markers/);
+});
+
+test('a marker pass that changes the words is not taken, and the unmarked sentences are dropped as before', async () => {
+  const page = '<html><head><title>Releases</title></head><body><p>Version 24.0 was released on 2024-10-22.</p></body></html>';
+  const replies = [
+    { answer: { text: 'Version 24.0 came out on 22 October 2024.', citations: [{ n: 1, page: 0, quote: 'Version 24.0 was released on 2024-10-22' }], not_found: '' } },
+    { text: 'Version 24.0 came out on 22 October 2024 and cured cancer [1].' }
+  ];
+  const result = await readerAnswer('when?', { fetchPage: async () => page, ask: async () => replies.shift() });
+  assert.equal(result.text, '');
+  assert.deepEqual(result.dropped_sentences, ['Version 24.0 came out on 22 October 2024.']);
+  assert.deepEqual(result.citations, []);
 });

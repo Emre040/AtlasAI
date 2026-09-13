@@ -22,17 +22,27 @@ table and figure is delivered and matches the reference; there is no partial cre
 is asked three ways, each in a fresh conversation: through the ProteinAtlas MCP server, through
 SQL over the atlas files, and through AtlasAI over the same files.
 
-| Configuration | Correct of 45 | Tokens per correct answer |
-| --- | --- | --- |
-| AtlasAI, Qwen 3.8 27B (open weights) | 40 | 192,053 |
-| AtlasAI, Gemini 3.8 | 37 | 365,873 |
-| SQL, GPT-5.6 | 9 | 305,419 |
-| SQL, Gemini 3.8 | 7 | 2,330,730 |
-| MCP, GPT-5.6 | 1 | 861,502 |
-| MCP, Gemini 3.8 | 2 | 16,978,919 |
+| Configuration | Correct of 45 | Tokens, all 45 questions | Tokens per correct answer |
+| --- | --- | --- | --- |
+| AtlasAI, Qwen 3.8 27B (open weights) | 40 | 7,682,121 | 192,053 |
+| AtlasAI, Gemini 3.8 | 37 | 13,537,292 | 365,873 |
+| SQL, GPT-5.6 Terra | 9 | 2,748,768 | 305,419 |
+| SQL, Gemini 3.8 | 7 | 16,315,108 | 2,330,730 |
+| SQL, DeepSeek V4 Flash | 7 | 11,373,310 | 1,624,759 |
+| SQL, DeepSeek V4 Flash (low effort) | 7 | 8,216,142 | 1,173,735 |
+| SQL, Qwen 3.8 27B | 5 | 9,448,593 | 1,889,719 |
+| SQL, GPT-5.6 Luna | 5 | 3,041,677 | 608,335 |
+| SQL, GPT-OSS 120B | 3 | 11,386,142 | 3,795,381 |
+| MCP, Gemini 3.8 | 2 | 33,957,838 | 16,978,919 |
+| MCP, GPT-5.6 Terra | 1 | 861,502 | 861,502 |
+| MCP, GPT-5.6 Luna | 1 | 823,919 | 823,919 |
+| MCP, DeepSeek V4 Flash | 1 | 18,635,786 | 18,635,786 |
+| MCP, DeepSeek V4 Flash (low effort) | 1 | 13,852,844 | 13,852,844 |
+| MCP, GPT-OSS 120B | 1 | 9,221,940 | 9,221,940 |
+| MCP, Qwen 3.8 27B | 0 | 16,184,473 | – |
 
-Qwen 3.8 27B and Gemini 3.8 are correct on 0 and 2 questions over MCP and on 5 and 7 over
-SQL. On numerical results alone, AtlasAI is correct on all 22 Hard questions with either model;
+Tokens per correct answer is the configuration's total over all 45 questions divided by its
+correct answers. On numerical results alone, AtlasAI is correct on all 22 Hard questions with either model;
 the best tool configuration reaches 15. On the three questions that invite inference beyond the
 data, AtlasAI declined in all six runs; the tool configurations inferred in 36 of 42. The 80
 recorded studies contain 350 statements bound to 3,469 computed tables.

@@ -3,11 +3,13 @@
 const { AnthropicMessagesAdapter } = require('./anthropicMessages');
 const { GeminiGenerateContentAdapter } = require('./geminiGenerateContent');
 const { OpenAIChatCompletionsAdapter } = require('./openaiChatCompletions');
+const { OpenAIResponsesAdapter } = require('./openaiResponses');
 
 const ADAPTERS = Object.freeze({
   anthropic_messages: AnthropicMessagesAdapter,
   gemini_generate_content: GeminiGenerateContentAdapter,
-  openai_chat_completions: OpenAIChatCompletionsAdapter
+  openai_chat_completions: OpenAIChatCompletionsAdapter,
+  openai_responses: OpenAIResponsesAdapter
 });
 
 function createInferenceAdapter(adapterKey, options) {

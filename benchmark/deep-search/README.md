@@ -50,9 +50,21 @@ modes.
 
 ## Results
 
-Recorded runs live under `results/<label>/` with one JSON per question (the
-query, the trail, the plan, rows, tokens, seconds, every step), a
-`results.tsv` and a `summary.json`. No full run is recorded yet.
+Gemini 3.8 Flash at low reasoning effort, offline against release 25.1
+([results/README.md](results/README.md)):
+
+| | Questions | Same genes | Same clauses | Count verified |
+| --- | --- | --- | --- | --- |
+| Easy | 51 | 49 | 49 | 50 |
+| Medium | 147 | 140 | 137 | 143 |
+| Hard | 38 | 31 | 30 | 38 |
+| All | 236 | 220 | 216 | 231 |
+
+232 of 236 questions produced a query. 1,370,500 tokens in total, a median
+of 5,395 per question, $1.48 at list price; 15 minutes of wall clock at ten
+questions in parallel. Each run folder holds one JSON per question (the
+query, the trail, the plan, rows, tokens, seconds, every step, the score), a
+`results.tsv` and a `summary.json`.
 
 ## Folder
 

@@ -397,7 +397,7 @@ Which enzymes are liver-specific?
 
 **Testis-specific transcription factors** (Medium: scope 1, schema depth 1, logic 0, wording 1; 2 filters on 2 fields; a two-level path; inclusions only; a derived form of an option.)
 
-Which transcription factors are restricted to the testis?
+Which transcription factors are testis-specific?
 
 ### D27
 
@@ -523,7 +523,7 @@ List the proteases.
 
 **Pituitary-specific** (Easy: scope 0, schema depth 1, logic 0, wording 1; 1 filter on 1 field; a two-level path; inclusions only; a derived form of an option.)
 
-Which genes are restricted to the pituitary gland?
+Which genes are pituitary-gland-specific?
 
 ### D48
 
@@ -769,7 +769,7 @@ Which proteins have vesicles as their main location?
 
 **Nucleoli, top reliability** (Easy: scope 0, schema depth 1, logic 0, wording 1; 1 filter on 1 field; a two-level path; inclusions only; a derived form of an option.)
 
-Which nucleolar localizations carry the highest antibody reliability?
+Which proteins are located in nucleoli with the highest antibody reliability score?
 
 ### D89
 

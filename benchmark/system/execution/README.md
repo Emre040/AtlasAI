@@ -3,8 +3,7 @@
 Three ways of answering are recorded. The MCP arm gives a model the
 ProteinAtlas MCP server's tools; the SQL arm gives it the HPA files through a
 DuckDB SQL server; both run a plain model and tool loop. The AtlasAI arm runs
-the system itself: the study loop for the forty analysis and data questions
-and the reader for the five documentation questions.
+ASO, the Autonomous Scientific Orchestrator.
 
 ## Settings
 
@@ -24,7 +23,7 @@ are independent conversations, not an interactive clarification exchange.
 ## Run the current harness
 
 The AtlasAI runs were made with `Backend/scripts/manual/compare_study_context.js`
-(one question through the study loop, every model call recorded, the database
+(one question through ASO, every model call recorded, the database
 read only) and, for the five documentation questions,
 `Backend/scripts/manual/reader_question.js` (one question through the reader);
 both bind one catalog model for the process and write a run directory.

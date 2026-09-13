@@ -22,7 +22,7 @@ Each question is asked three ways, each in a fresh conversation:
 | --- | --- |
 | MCP | the search and lookup tools of the [ProteinAtlas MCP server](https://github.com/mcp-servers/proteinatlas-mcp-server) (version 1.0.0) |
 | SQL | the atlas's bulk files as SQL tables (DuckDB) and a query tool |
-| AtlasAI | the AtlasAI system: its study loop over the same files, and its reader for documentation questions |
+| AtlasAI | ASO, the Autonomous Scientific Orchestrator, over the same files |
 
 Models: Gemini 3.8 Flash, GPT-OSS 120B, Qwen 3.8 27B (the open-weight 27B
 model), DeepSeek V4 Flash at two reasoning settings, GPT-5.6 Luna and GPT-5.6
@@ -106,7 +106,7 @@ at the atlas front page and answer none.
 **Ambiguous wording.** Three questions leave a term open that the atlas records in
 more than one way. AtlasAI picks one meaning without saying so: 0 of 3. The same
 three questions written explicitly: 3 of 3 complete, where no other setup
-completes any. In the product a clarifying step runs before the study loop; the
+completes any. In the product a clarifying step runs before ASO; the
 benchmark protocol asks each question once, without follow-up, so that step is
 not exercised.
 

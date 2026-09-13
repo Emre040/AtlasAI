@@ -15,16 +15,16 @@ expression clusters, and immunohistochemical staining by tissue and cell
 type. They range from one filter to seven, with exclusions, several values on
 one level, categories with no entity named, and three-level paths.
 
-No question names an atlas category by its label. The wording is a
-scientist's: "liver-specific", "absent from kidney", "expressed in every
-tissue", "elevated in Kupffer cells relative to other cell types", "validated
-markers of longer survival". The agent sees each category's definition in the
-schema it plans over; the question tests whether it reads them. Every
-question asks for something the atlas search can express, and asks for brain
-regions and cell types by name, never for the search's aggregate tissues.
+No question spells out an atlas category label. The wording is a
+scientist's: "liver-specific", "no detectable mRNA in kidney", "expressed in
+every tissue", "enhanced in Kupffer cells (single-cell)", "validated markers
+of longer survival". The agent sees each category's definition in the schema
+it plans over; the question tests whether it reads them. Every question asks
+for something the atlas search can express, and asks for brain regions and
+cell types by name, never for the search's aggregate tissues.
 
-By the rubric in [questions/difficulty.md](questions/difficulty.md): 53 Easy,
-146 Medium, 37 Hard. Every question's scores and rationale are in
+By the rubric in [questions/difficulty.md](questions/difficulty.md): 51 Easy,
+147 Medium, 38 Hard. Every question's scores and rationale are in
 [questions/questions.json](questions/questions.json); the index is
 [questions/README.md](questions/README.md).
 

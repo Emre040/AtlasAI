@@ -61,7 +61,9 @@ function filtersOf(url) {
   for (const item of parts(url)) {
     const f = adapter.fields().find(f => f.urlKey === item.key);
     if (!f) return { error: `no field with url key ${JSON.stringify(item.key)}` };
-    const c = adapter.canonicalize(f.name, item.levels);
+    // A query drops an unset first level ("tissue_category_rna:Detected in all"); read it back.
+    let c = adapter.canonicalize(f.name, item.levels);
+    if (c.error && item.levels.length < f.levels.length) { const shifted = adapter.canonicalize(f.name, [[], ...item.levels]); if (!shifted.error) c = shifted; }
     if (c.error) return { error: `${item.key}: ${c.error}` };
     filters.push({ ...c, operator: item.operator });
   }
@@ -210,9 +212,16 @@ async function run(values) {
       console.log(`${q.id}\t${same ? 'SAME' : rec.status === 'ok' ? 'DIFF' : 'FAIL'}\t${rec.tokens?.total ?? '-'} tok\t${rec.seconds.toFixed(1)}s\t${same ? '' : (rec.error || `- ${[...want].filter(c => !got.has(c)).join(' | ')} + ${[...got].filter(c => !want.has(c)).join(' | ')}`).slice(0, 220)}`);
     };
     const queue = [...todo];
-    // The first question runs alone so the local indexes (protein classes, per-tissue values)
-    // are built once; parallel runs then share them instead of each building its own.
-    if (Number(values.parallel) > 1 && queue.length) await runOne(queue.shift());
+    // The local indexes (the protein class hierarchy from the atlas XML, the per-entity value
+    // indexes, the subcellular annotations) are built once here; parallel runs then share
+    // them instead of each building its own, which exhausts memory.
+    if (Number(values.parallel) > 1) {
+      for (const [field, path] of [['Protein class', ['G-protein coupled receptors', 'Serotonin receptors']], ['Tissue category (RNA)', ['liver', 'Not detected']], ['Brain region category (RNA)', ['cerebellum', 'Not detected']], ['Cell type category (scRNA)', ['Hepatocytes', 'Not detected']], ['Immune cell category (RNA)', ['neutrophil', 'Not detected']], ['Subcellular location (ICC)', ['Nucleoli', 'Enhanced']], ['Tissue expression (IHC)', ['liver', 'hepatocytes', ['High']]]]) {
+        const { filters, problems } = filtersFrom([{ field, path, operator: 'AND' }]);
+        if (!problems.length) await localGenes(filters).catch(() => {});
+      }
+      console.log(JSON.stringify({ warmed: true, heap_mb: Math.round(process.memoryUsage().heapUsed / 1048576), rss_mb: Math.round(process.memoryUsage().rss / 1048576) }));
+    }
     await Promise.all(Array.from({ length: Number(values.parallel) }, async () => { while (queue.length) await runOne(queue.shift()); }));
     await writeJson(path.join(out, 'run.json'), { ...settings, finished_unix_ms: Date.now() });
   } finally { await session.end(); }
@@ -245,7 +254,10 @@ async function score(values) {
           agent_rows_local: set(agentLocal)?.size ?? null, agent_rows_live: set(agentLive)?.size ?? null,
           same_genes_local: sameSet(set(agentLocal), referenceLocal), same_genes_live: sameSet(set(agentLive), set(referenceLive)),
           overlap_live: set(agentLive) && set(referenceLive) ? [...agentLive].filter(g => referenceLive.has(g)).length : null,
-          count_verified: rec.rows_found !== null && set(agentLive) !== null && rec.rows_found === agentLive.size,
+          // The composed query returns the same genes on the local release as on the atlas.
+          // rows_found may exceed the gene count when a filter leaves a level open: the rows
+          // then carry the matched value, one row per gene and value.
+          count_verified: sameSet(set(agentLocal), set(agentLive)),
           errors: [referenceLive.error, agentLocal.error, agentLive.error].filter(Boolean)
         };
         await writeJson(file, rec);

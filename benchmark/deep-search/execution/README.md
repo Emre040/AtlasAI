@@ -34,7 +34,7 @@ Three measures per question, all mechanical:
 | --- | --- |
 | Same clauses | The composed query has exactly the reference's filters: same fields, same values, same operators, in any order. |
 | Same genes | The composed query returns the same gene set as the reference on the same atlas release, fetched live. A different but equivalent query passes here and fails the clause measure. |
-| Count verified | The row count the agent reports from the local release equals the count proteinatlas.org returns for the same query. This is the check the original 236-query benchmark used. |
+| Count verified | The composed query returns the same genes on the local release as on proteinatlas.org, so the count the agent works from is the atlas's count. This is the check the original 236-query benchmark used, applied to the gene set rather than the row count (a filter that leaves a level open returns one row per gene and matched value). |
 
 The headline number is same genes. Same clauses is stricter and reported
 beside it. Nothing is graded by a model or by hand.

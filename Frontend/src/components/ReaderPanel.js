@@ -1,13 +1,11 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faCheck, faCopy, faExternalLinkAlt, faChevronDown, faChevronRight } from '@fortawesome/free-solid-svg-icons';
-
-// The reader's panel inside an assistant message. While it reads, an abstract scene: drifting
-// shapes and a sweeping beam over the trail of pages it has opened, the current one lit. When it
-// is done, the answer as prose whose every sentence carries a numbered citation chip, and under
-// it the sources: the exact quotes those chips point at, each verified verbatim against the page
-// it came from. What the pages did not say and what was left out (sentences whose citations did
-// not check out) follow, plainly labelled.
+import {
+  faCheck, faChevronDown, faChevronLeft, faChevronRight, faCopy, faExternalLinkAlt, faFileLines,
+  faXmark, faArrowRight, faMagnifyingGlass,
+} from '@fortawesome/free-solid-svg-icons';
+import { ReaderTransition, useReaderMotion } from './ReaderMotion';
+import './ReaderPanel.css';
 
 const SITE = 'https://www.proteinatlas.org';
 
@@ -33,134 +31,209 @@ export function readerLiveNext(prev, tool) {
   return live;
 }
 
-function Scene({ live }) {
+const Icon = ({ icon, ...props }) => <FontAwesomeIcon icon={icon} {...props} />;
+const sourceTitle = page => page.title?.replace(/\s*[-–|]\s*The Human Protein Atlas$/i, '') || pagePath(page.url);
+const quoteSpans = citation => Array.isArray(citation.quotes) && citation.quotes.length ? citation.quotes : [citation.quote];
+
+// Navigation follows actual Reader page events; the reading motion advances continuously.
+function ReadingScene({ live, navigating }) {
   const pages = live?.pages || [];
-  const current = live?.current;
+  const stopped = live?.done || live?.failed;
+  const current = stopped ? pages[pages.length - 1] : live?.current;
+  const readingSurface = useRef(null);
+  useReaderMotion(readingSurface, current, stopped);
+  const previous = pages[pages.indexOf(current) - 1];
+  const trail = useRef(null);
+  const currentPage = useRef(null);
+  useEffect(() => {
+    const list = trail.current;
+    const link = currentPage.current;
+    if (!list || !link) return;
+    const bounds = list.getBoundingClientRect();
+    const item = link.getBoundingClientRect();
+    if (item.right > bounds.right || item.left < bounds.left) {
+      list.scrollTo({
+        left: list.scrollLeft + item.left - bounds.left,
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+      });
+    }
+  }, [current]);
   return (
-    <div className={`HPAG-reader-scene${live?.done ? ' HPAG-reader-scene-done' : ''}`}>
-      <div className="HPAG-reader-shapes" aria-hidden="true">
-        <span className="HPAG-reader-blob HPAG-reader-blob-a" />
-        <span className="HPAG-reader-blob HPAG-reader-blob-b" />
-        <span className="HPAG-reader-blob HPAG-reader-blob-c" />
-        <span className="HPAG-reader-ring" />
-        {!live?.done && <span className="HPAG-reader-beam" />}
-      </div>
-      <div className="HPAG-reader-trail">
-        <div className="HPAG-reader-trail-label">{live?.done ? `Read ${pages.length} page${pages.length === 1 ? '' : 's'}` : 'Reading the atlas'}</div>
-        <div className="HPAG-reader-chips">
-          {pages.map((url, i) => (
-            <a key={url} href={url} target="_blank" rel="noopener noreferrer" className={`HPAG-reader-chip${url === current ? ' HPAG-reader-chip-now' : ''}`} style={{ animationDelay: `${Math.min(i, 8) * 60}ms` }}>
-              <span className="HPAG-reader-chip-dot" />
-              <span className="HPAG-reader-chip-text">{pagePath(url)}</span>
-            </a>
-          ))}
-          {!live?.done && !pages.length && <span className="HPAG-reader-chip HPAG-reader-chip-now"><span className="HPAG-reader-chip-dot" /><span className="HPAG-reader-chip-text">opening the atlas</span></span>}
-        </div>
-        {live?.sentBack > 0 && (
-          <div className="HPAG-reader-sentback" title={live.sentBackLast || ''}>
-            {live.sentBack} round{live.sentBack === 1 ? '' : 's'} of citations sent back for an exact copy
-            {live.sentBackLast && <div className="HPAG-reader-sentback-why">{live.sentBackLast}</div>}
+    <div className={`HPAG-reader-scene${stopped ? ' is-stopped' : ''}${navigating ? ' is-navigating' : ''}`}>
+      <div className="HPAG-reader-atmosphere" aria-hidden="true"><span /><span /></div>
+      <div className="HPAG-reader-activity" role="status">
+        <span className="HPAG-reader-activity-icon"><Icon icon={live?.failed ? faXmark : navigating ? faArrowRight : stopped ? faCheck : faMagnifyingGlass} /></span>
+        <div>
+          <h3>{live?.failed ? 'Reading interrupted' : stopped ? 'Preparing answer' : navigating ? 'Navigating to a new page' : current ? 'Reading page' : 'Opening the atlas'}</h3>
+          <div className="HPAG-reader-navigation" key={current || 'opening'}>
+            {navigating && previous && <><span>{pagePath(previous)}</span><Icon icon={faArrowRight} /></>}
+            <span className="HPAG-reader-destination">{current ? pagePath(current) : 'proteinatlas.org'}</span>
           </div>
-        )}
+        </div>
+        {!stopped && <span className="HPAG-reader-live-dot" aria-hidden="true" />}
       </div>
+      <div className="HPAG-reader-reading-art" aria-hidden="true">
+        <div className="HPAG-reader-peripheral-page is-left" />
+        <div className="HPAG-reader-peripheral-page is-right" />
+        <div className="HPAG-reader-page-stack" key={current || 'opening'}>
+          {navigating && previous && <div className="HPAG-reader-departing-page"><span>{pagePath(previous)}</span></div>}
+          <div className="HPAG-reader-paper">
+            <div className="HPAG-reader-paper-heading"><Icon icon={faFileLines} /><span>{current ? pagePath(current) : 'Human Protein Atlas'}</span></div>
+            <div className="HPAG-reader-page-window" ref={readingSurface}>
+              <div className="HPAG-reader-page-lines">
+                {[0, 1].map(bank => <div key={bank} className="HPAG-reader-line-bank">
+                  {Array.from({ length: 48 }, (_, i) => <span key={i} style={{ width: `${i % 7 === 0 ? 32 + i % 17 : 62 + (i * 19 + (current?.length || 0)) % 36}%` }} />)}
+                </div>)}
+              </div>
+              <div className="HPAG-reader-reading-light" /><div className="HPAG-reader-focus-lens" />
+            </div>
+          </div>
+        </div>
+      </div>
+      {live?.failed && <p className="HPAG-reader-interruption">Reader could not finish. Try your question again.</p>}
+      {pages.length > 0 && <div className="HPAG-reader-trail-wrap">
+        <div className="HPAG-reader-trail-caption"><span>Pages explored</span><span>{pages.length}</span></div>
+        <div className="HPAG-reader-page-trail" aria-label="Pages opened" ref={trail}>
+          {pages.map((url, i) => <a key={url} ref={url === current ? currentPage : null} href={url} target="_blank" rel="noopener noreferrer" className={url === current && !stopped ? 'is-current' : ''}>
+            <span className="HPAG-reader-trail-index">{String(i + 1).padStart(2, '0')}</span>
+            <span className="HPAG-reader-trail-path">{pagePath(url)}</span><Icon icon={faExternalLinkAlt} />
+          </a>)}
+        </div>
+      </div>}
+      {live?.sentBack > 0 && <details className="HPAG-reader-checks"><summary>Checking quotations against the source text</summary><p>{live.sentBackLast}</p></details>}
     </div>
   );
 }
 
-// The answer as prose; each [n] marker is a chip that points at source n below. Paragraphs are
-// blank-line separated, lines inside a paragraph (a list the reader wrote) keep their breaks.
-function Prose({ text, active, onCite, onHover }) {
+// Source selection belongs to this answer, even when a chat contains several Reader runs.
+function Prose({ text, citations }) {
+  const [selected, setSelected] = useState(citations.length ? citations[0].n : null);
+  const trigger = useRef(null);
+  const id = useId();
+  const known = new Map(citations.map(c => [c.n, c]));
   const paragraphs = String(text || '').split(/\n\s*\n/).filter(p => p.trim());
+  const index = citations.findIndex(c => c.n === selected);
+  const citation = known.get(selected);
+  const close = () => {
+    setSelected(null);
+    const button = trigger.current || document.getElementById(`${id}-answer`)?.querySelector('.HPAG-reader-cite');
+    button?.focus({ preventScroll: true });
+  };
   const withChips = line => line.split(/(\[\d+\])/g).map((part, i) => {
-    const m = /^\[(\d+)\]$/.exec(part);
-    if (!m) return <React.Fragment key={i}>{part}</React.Fragment>;
-    const n = Number(m[1]);
-    return (
-      <button key={i} type="button" className={`HPAG-reader-cite${active === n ? ' HPAG-reader-cite-active' : ''}`}
-        onClick={() => onCite(n)} onMouseEnter={() => onHover(n)} onMouseLeave={() => onHover(null)} title={`Source ${n}`}>
-        {n}
-      </button>
-    );
+    const match = /^\[(\d+)\]$/.exec(part);
+    if (!match || !known.has(Number(match[1]))) return <React.Fragment key={i}>{part}</React.Fragment>;
+    const n = Number(match[1]);
+    const expanded = selected === n;
+    return <button key={i} type="button" className={`HPAG-reader-cite${expanded ? ' is-selected' : ''}`}
+      aria-label={`Inspect source ${n}`} aria-expanded={expanded} aria-controls={`${id}-source`}
+      onClick={event => {
+        trigger.current = event.currentTarget;
+        setSelected(expanded ? null : n);
+      }}>{n}</button>;
   });
-  return (
-    <div className="HPAG-reader-text">
-      {paragraphs.map((p, pi) => (
-        <p key={pi}>
-          {p.split('\n').filter(l => l.trim()).map((line, li) => <span key={li} className="HPAG-reader-line">{withChips(line)}</span>)}
-        </p>
-      ))}
-    </div>
-  );
+  return <div className="HPAG-reader-text" id={`${id}-answer`}>
+    {paragraphs.map((p, pi) => <p className="HPAG-reader-paragraph" key={pi}>
+      {p.split('\n').filter(l => l.trim()).map((line, li) => <span key={li} className="HPAG-reader-line">{withChips(line)}</span>)}
+    </p>)}
+    <ReaderTransition viewKey={citation ? 'open' : 'closed'} id={`${id}-source`} duration={360}>
+      {citation && <div className="HPAG-reader-inline-source" onKeyDown={event => {
+        if (event.key === 'Escape') { event.stopPropagation(); close(); }
+      }}><QuoteCard citation={citation} index={index} total={citations.length}
+        onPrevious={() => setSelected(citations[index - 1].n)} onNext={() => setSelected(citations[index + 1].n)} />
+      </div>}
+    </ReaderTransition>
+  </div>;
 }
 
-function QuoteCard({ citation, index, active, cardRef }) {
-  const [copied, setCopied] = useState(false);
-  // one exact span, or several short ones when the sentence sums up a list or a table
-  const spans = Array.isArray(citation.quotes) && citation.quotes.length > 1 ? citation.quotes : [citation.quote];
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(`${spans.map(s => `"${s}"`).join(' ')} — ${citation.title} (${citation.url})`); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {}
-  };
-  const when = citation.fetched_unix_ms ? new Date(citation.fetched_unix_ms).toLocaleString() : null;
-  return (
-    <div ref={cardRef} className={`HPAG-reader-quote${active ? ' HPAG-reader-quote-active' : ''}`} style={{ animationDelay: `${Math.min(index, 6) * 90}ms` }}>
-      <div className="HPAG-reader-quote-text">
-        <span className="HPAG-reader-quote-n">{citation.n}</span>
-        <span className="HPAG-reader-quote-spans">{spans.map((s, i) => <span key={i} className="HPAG-reader-quote-span">“{s}”</span>)}</span>
-      </div>
-      <div className="HPAG-reader-quote-foot">
-        <a href={citation.url} target="_blank" rel="noopener noreferrer" className="HPAG-reader-quote-source">
-          {citation.title || pagePath(citation.url)} <FontAwesomeIcon icon={faExternalLinkAlt} className="HPAG-reader-quote-ext" />
-        </a>
-        <span className="HPAG-reader-verified" title={`Verbatim on the page as fetched${when ? ` ${when}` : ''}. Page SHA-256 ${citation.sha256 || ''}`}>
-          <FontAwesomeIcon icon={faCheck} /> verified
-        </span>
-        <button type="button" className="HPAG-reader-copy" onClick={copy} title="Copy quote and source">
-          <FontAwesomeIcon icon={faCopy} /> {copied ? 'copied' : 'copy'}
-        </button>
-      </div>
+function QuoteCard({ citation, index, total, onPrevious, onNext }) {
+  const fetched = citation.fetched_unix_ms ? new Date(citation.fetched_unix_ms).toLocaleString() : null;
+  const verification = `Matched to the page text${fetched ? ` fetched ${fetched}` : ''}.${citation.sha256 ? ` Page SHA-256: ${citation.sha256}` : ''}`;
+  return <article className="HPAG-reader-quote">
+    <div className="HPAG-reader-quote-heading"><span className="HPAG-reader-source-number">{citation.n}</span><span className="HPAG-reader-eyebrow">Direct quotation</span>
+      <span className="HPAG-reader-source-position" aria-live="polite">{index + 1} / {total}</span>
+      <span className="HPAG-reader-verified" title={verification}><Icon icon={faCheck} /> Exact quote</span>
     </div>
-  );
+    <div className="HPAG-reader-quote-stage">
+      <button type="button" className="HPAG-reader-source-arrow is-previous" aria-label="Previous source" disabled={index === 0} onClick={onPrevious}><Icon icon={faChevronLeft} /></button>
+      <ReaderTransition viewKey={citation.n} duration={360}><QuoteContent citation={citation} /></ReaderTransition>
+      <button type="button" className="HPAG-reader-source-arrow is-next" aria-label="Next source" disabled={index === total - 1} onClick={onNext}><Icon icon={faChevronRight} /></button>
+    </div>
+  </article>;
+}
+
+function QuoteContent({ citation }) {
+  const [copyState, setCopyState] = useState('');
+  const timer = useRef(null);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const spans = quoteSpans(citation);
+  const copy = async () => {
+    clearTimeout(timer.current);
+    try {
+      await navigator.clipboard.writeText(`${spans.map(s => `“${s}”`).join(' ')} — ${citation.title || pagePath(citation.url)} (${citation.url})`);
+      setCopyState('copied');
+      timer.current = setTimeout(() => setCopyState(''), 1800);
+    } catch { setCopyState('failed'); }
+  };
+  return <>
+    <figure className="HPAG-reader-quotation">
+      <blockquote cite={citation.url}>{spans.map((span, i) => <p key={i}>
+        <span className="HPAG-reader-quote-mark is-opening" aria-hidden="true">“</span>{span}<span className="HPAG-reader-quote-mark is-closing" aria-hidden="true">”</span>
+      </p>)}</blockquote>
+      <figcaption><span className="HPAG-reader-attribution" aria-hidden="true">—</span><a className="HPAG-reader-source-title" href={citation.url} target="_blank" rel="noopener noreferrer">{sourceTitle(citation)} <Icon icon={faExternalLinkAlt} /></a></figcaption>
+    </figure>
+    <div className="HPAG-reader-quote-foot">
+      <a href={citation.url} target="_blank" rel="noopener noreferrer" className="HPAG-reader-text-button">Open page <Icon icon={faExternalLinkAlt} /></a>
+      <button type="button" className="HPAG-reader-copy" onClick={copy} aria-label={`Copy source ${citation.n}`}><Icon icon={copyState === 'copied' ? faCheck : faCopy} /> {copyState === 'copied' ? 'Copied' : 'Copy'}</button>
+    </div>
+    <span className="HPAG-reader-copy-feedback" role="status">{copyState === 'failed' ? 'Could not copy. Select the passage to copy it manually.' : copyState === 'copied' ? 'Quote and source copied.' : ''}</span>
+  </>;
+}
+
+function Pages({ pages, citations }) {
+  return <div className="HPAG-reader-pages">
+    {!pages.length && <p className="HPAG-reader-empty">Pages will appear here as Reader opens them.</p>}
+    {pages.map(page => {
+      const count = citations.filter(c => c.url === page.url).length;
+      return <a key={page.url} href={page.url} target="_blank" rel="noopener noreferrer" className="HPAG-reader-page">
+        <span className="HPAG-reader-page-icon"><Icon icon={faFileLines} /></span>
+        <span className="HPAG-reader-page-name"><strong>{sourceTitle(page)}</strong><span>{pagePath(page.url)}</span></span>
+        {count > 0 && <span className="HPAG-reader-page-count">{count} {count === 1 ? 'citation' : 'citations'}</span>}
+        <Icon icon={faExternalLinkAlt} />
+      </a>;
+    })}
+  </div>;
 }
 
 export default function ReaderPanel({ live, result }) {
-  const [showLeftOut, setShowLeftOut] = useState(false);
-  const [active, setActive] = useState(null);
-  const cards = useRef({});
-  const pageTimes = new Map((result?.pages || []).map(p => [p.url, p.fetched_unix_ms]));
-  const citations = (result?.citations || []).map(c => ({ ...c, fetched_unix_ms: pageTimes.get(c.url) }));
-  const leftOut = result?.dropped_sentences || [];
-  const liveState = live || (result ? { pages: (result.pages || []).map(p => p.url), current: null, sentBack: 0, done: true, failed: false } : null);
-  const cite = n => {
-    setActive(n);
-    cards.current[n]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    setTimeout(() => setActive(a => (a === n ? null : a)), 2200);
-  };
-  return (
-    <div className="HPAG-reader">
-      <Scene live={liveState} />
-      {result && (
-        <div className="HPAG-reader-answer">
-          {result.text
-            ? <Prose text={result.text} active={active} onCite={cite} onHover={setActive} />
-            : <div className="HPAG-reader-empty">The pages read gave nothing that could be said with a quote behind it.</div>}
-          {result.not_found && <div className="HPAG-reader-notfound">Not found on the pages read: {result.not_found}</div>}
-          {citations.length > 0 && (
-            <div className="HPAG-reader-sources">
-              <div className="HPAG-reader-sources-label">Sources, verbatim from the atlas</div>
-              {citations.map((c, i) => <QuoteCard key={c.n} citation={c} index={i} active={active === c.n} cardRef={el => { cards.current[c.n] = el; }} />)}
-            </div>
-          )}
-          {leftOut.length > 0 && (
-            <div className="HPAG-reader-leftout">
-              <button type="button" className="HPAG-reader-leftout-toggle" onClick={() => setShowLeftOut(v => !v)}>
-                <FontAwesomeIcon icon={showLeftOut ? faChevronDown : faChevronRight} /> {leftOut.length} sentence{leftOut.length === 1 ? '' : 's'} left out, no citation that checked out
-              </button>
-              {showLeftOut && <ul className="HPAG-reader-leftout-list">{leftOut.map((d, i) => <li key={i}>{d}</li>)}</ul>}
-            </div>
-          )}
-        </div>
-      )}
-      {liveState?.failed && !result && <div className="HPAG-reader-empty">The reading failed.</div>}
-    </div>
-  );
+  const id = useId();
+  const [pagesOpen, setPagesOpen] = useState(true);
+  const pageTimes = new Map((result?.pages || []).map(page => [page.url, page.fetched_unix_ms]));
+  const citations = (result?.citations || []).map(citation => ({ ...citation, fetched_unix_ms: pageTimes.get(citation.url) }));
+  const pages = result?.pages || [];
+  const running = !result && !live?.done && !live?.failed;
+  const currentPageUrl = live?.current;
+  const [settledPage, setSettledPage] = useState(null);
+  const navigating = running && Boolean(currentPageUrl) && settledPage !== currentPageUrl;
+  useEffect(() => {
+    if (!running) return;
+    const timer = setTimeout(() => setSettledPage(currentPageUrl), 1500);
+    return () => clearTimeout(timer);
+  }, [currentPageUrl, running]);
+  return <section className="HPAG-reader" aria-label="Reader">
+    <ReaderTransition viewKey={result ? 'answer' : 'reading'}>
+      {!result ? <ReadingScene live={live} navigating={navigating} /> : <div className="HPAG-reader-answer">
+        {result.text ? <Prose text={result.text} citations={citations} /> : <p className="HPAG-reader-empty">No answer supported by a source passage was found on these pages.</p>}
+        {result.not_found && <div className="HPAG-reader-notfound"><strong>Not found in the pages read</strong><p>{result.not_found}</p></div>}
+        {result.dropped_sentences?.length > 0 && <details className="HPAG-reader-leftout"><summary>{result.dropped_sentences.length} {result.dropped_sentences.length === 1 ? 'sentence' : 'sentences'} excluded without a verified citation</summary><ul>{result.dropped_sentences.map((sentence, i) => <li key={i}>{sentence}</li>)}</ul></details>}
+        {pages.length > 0 && <footer className="HPAG-reader-footnote">
+          <button type="button" className="HPAG-reader-pages-toggle" aria-expanded={pagesOpen} aria-controls={`${id}-pages`} onClick={() => setPagesOpen(open => !open)}>
+            <Icon icon={faFileLines} /><span>{pages.length} {pages.length === 1 ? 'page' : 'pages'} read</span><Icon icon={faChevronDown} />
+          </button>
+          <ReaderTransition viewKey={pagesOpen ? 'pages' : 'closed'} id={`${id}-pages`} duration={360}>
+            {pagesOpen && <Pages pages={pages} citations={citations} />}
+          </ReaderTransition>
+        </footer>}
+      </div>}
+    </ReaderTransition>
+  </section>;
 }

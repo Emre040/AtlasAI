@@ -1350,7 +1350,8 @@ function HPA() {
                   // unless it is the placeholder that shows the loading dot while the answer streams.
                   const hasAttachment = Boolean(message.questionnaire || message.reader || message.readerLive || message.searchUrl || message.resources?.length || message.dictionaryImages?.images?.length || message.asoCharts?.length);
                   if (message.type === 'ai' && message.text === '' && !hasAttachment && !showLoadingDot) return null;
-                  const hpaUrls = message.type === 'ai' ? extractHPAUrls(message.text) : [];
+                  const isReader = Boolean(message.readerLive || message.reader);
+                  const hpaUrls = message.type === 'ai' && !isReader ? extractHPAUrls(message.text) : [];
 
                   // Parse reply context from message - always extract from text to get clean display
                   const extractedReply = extractReplyContext(message.text);
@@ -1367,7 +1368,7 @@ function HPA() {
                         </div>
                       )}
                       <div
-                        className={`HPAG-message HPAG-message-${message.type} ${isLastMessage && !message.searchUrl ? 'HPAG-message-last' : ''}`}
+                        className={`HPAG-message HPAG-message-${message.type} ${isReader ? 'HPAG-message-reader' : ''} ${isLastMessage && !message.searchUrl ? 'HPAG-message-last' : ''}`}
                       >
                         <div className="HPAG-message-avatar">
                           {message.type === 'user' ? (
@@ -1379,7 +1380,7 @@ function HPA() {
                         <div className="HPAG-message-content">
                           {showLoadingDot && (<div className="HPAG-loading-dot"></div>)}
                           {/* Render investigator resources ABOVE the synthesis message */}
-                          {message.type === 'ai' && message.resources && message.resources.length > 0 && (
+                          {message.type === 'ai' && !isReader && message.resources && message.resources.length > 0 && (
                             <div className="HPAG-resources-used HPAG-resources-above">
                               <div className="HPAG-resources-used-label">Resources Used</div>
                               <div className="HPAG-resources-used-links">

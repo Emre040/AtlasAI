@@ -1,8 +1,9 @@
 'use strict';
 
 // Runs before /query and /batch: picks the model (visitor choice or the active one), picks the
-// credential (the visitor's own key for that provider, else the platform's), asks the policy
+// credential (explicit model choices require the visitor's own provider key), asks the policy
 // engine whether the request may proceed, and binds model + credential for the request scope.
+// Only Auto may use platform credentials; public requests never switch to a budget fallback.
 
 const { PolicyRefusal } = require('./limits');
 
@@ -67,9 +68,14 @@ function createPolicyMiddleware({
       if (config.visitorProviderKeysEnabled) {
         credential = await providerKeys.credential(visitorId, model.providerId);
       }
+      if (modelSelection === 'visitor' && !credential) {
+        const refusal = new PolicyRefusal('provider_key_required', { measured: 0, limit: 1, scope: 'visitor' });
+        await policyEngine.record('blocked', refusal, decisionContext);
+        return res.status(403).json({ ...refusalPayload(refusal), provider: model.providerKey });
+      }
       const credentialSource = credential ? 'visitor' : 'platform';
 
-      const admitted = await policyEngine.admit({
+      await policyEngine.admit({
         visitorId,
         requestEventId,
         model,
@@ -77,15 +83,8 @@ function createPolicyMiddleware({
         credentialSource,
         routeKind,
         batchQueryCount: batchQueryCount(req),
-        loadFallbackModel: id => gateway.loadModelById(id)
+        allowModelFallback: false
       });
-
-      if (admitted.model.id !== model.id) {
-        // Budget fallback: the platform pays for the fallback model with its own key.
-        model = admitted.model;
-        modelSelection = admitted.modelSelection;
-        credential = null;
-      }
 
       let apiKey;
       if (credential) {

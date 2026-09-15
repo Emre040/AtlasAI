@@ -165,17 +165,22 @@ carries `visitor_id`, `credential_source` (`platform` or `visitor`) and `model_s
 
 Admission runs in `src/policy/` before `POST /query/stream` and `POST /batch`. The middleware
 resolves the model (`model` in the body names a `visitor_selectable` config key, otherwise the
-active model), picks the credential (the visitor's stored key for that provider when present and
-enabled, otherwise the platform key from the environment), then checks volume limits and spend
-budgets against `request_events`, `runs`, `batch_jobs` and `inference_calls`. A refusal answers
+active model). An explicit model choice requires the visitor's stored key for that provider
+and returns HTTP 403 with reason `provider_key_required` when the key is missing or visitor
+keys are disabled. Only Auto may use the platform key; Auto uses the visitor's key when one is
+available for its provider. Admission then checks volume limits and spend budgets against
+`request_events`, `runs`, `batch_jobs` and `inference_calls`. A refusal answers
 HTTP 429 with `{ "error": "policy_refused", "reason", "scope", "measured", "limit",
-"retry_after_seconds" }` and writes a `policy_decisions` row; a budget fallback swaps the model
-and records a `fallback` decision. Requests paid with a visitor key bypass spend budgets when
+"retry_after_seconds" }` and writes a `policy_decisions` row. Public query and batch requests
+block over budget rather than switching to a different platform-paid model, even when
+`over_budget_behaviour` is configured for fallback. Requests paid with a visitor key bypass
+spend budgets when
 `visitor_keys_bypass_spend_limits` is set, and volume limits only when
 `visitor_keys_bypass_volume_limits` is set.
 
-Routes: `GET /models` returns the active model, the selectable catalog with prices, and the
-providers the visitor has keys for. `GET /keys` lists the visitor's keys (suffix and usage only),
+Routes: `GET /models` returns the active model, the selectable catalog with prices, and only
+providers used by those selectable models, with the visitor's key status. Internal providers
+without visitor-selectable models are omitted. `GET /keys` lists the visitor's keys (suffix and usage only),
 `PUT /keys/:provider` with `{ "api_key" }` checks the key against the provider's model-list
 endpoint and stores it AES-256-GCM encrypted with the secret in `ATLAS_PROVIDER_KEY_SECRET_FILE`,
 and `DELETE /keys/:provider` removes it. Keys are decrypted only for the request that uses them.

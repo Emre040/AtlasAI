@@ -79,7 +79,8 @@ const REFUSAL_MESSAGES = {
   global_requests_minute: 'The platform is busy right now. Please retry in a minute.',
   global_concurrent_runs: 'The platform is running at capacity. Please retry shortly.',
   unpriced_model: 'This model has no published price and budgets are enforced, so it cannot be used with the platform key.',
-  model_selection_disabled: 'Choosing a model is currently disabled. Auto is used instead.',
+  model_selection_disabled: 'Choosing a model is currently disabled. Select Auto to continue.',
+  provider_key_required: 'Add and verify your own API key for this provider to use that model, or select Auto.',
   model_not_selectable: 'That model is not available. Pick another one or use Auto.'
 };
 

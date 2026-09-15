@@ -37,13 +37,14 @@ function createRouter({ gateway, platformConfig, providerKeys }) {
         providerKeys.list(req.auth.visitorId)
       ]);
       const visitorProviders = new Set(keys.map(key => key.provider));
+      const selectableProviders = new Set(selectable.map(model => model.providerKey));
       return res.json({
         selection_enabled: config.visitorModelSelectionEnabled,
         provider_keys_enabled: config.visitorProviderKeysEnabled,
         visitor_keys_bypass_spend_limits: config.visitorKeysBypassSpendLimits,
         active: publicModel(active, visitorProviders),
         models: selectable.map(model => publicModel(model, visitorProviders)),
-        providers: providers.map(provider => ({
+        providers: providers.filter(provider => selectableProviders.has(provider.providerKey)).map(provider => ({
           provider_key: provider.providerKey,
           display_name: provider.displayName,
           visitor_key: keys.find(key => key.provider === provider.providerKey) || null

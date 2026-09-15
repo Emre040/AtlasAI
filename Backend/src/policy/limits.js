@@ -170,7 +170,8 @@ class PolicyEngine {
     credentialSource,
     routeKind,
     batchQueryCount = 0,
-    loadFallbackModel
+    loadFallbackModel,
+    allowModelFallback = true
   }) {
     const config = this.platformConfig.current();
     const now = Date.now();
@@ -272,7 +273,7 @@ class PolicyEngine {
       if (measured < limit) continue;
       const refusal = new PolicyRefusal(reason, { measured, limit, retryAfterSeconds: retryAfter(period, mode, now), scope: 'platform' });
       const fallbackId = config.fallbackInferenceModelId;
-      if (config.overBudgetBehaviour === 'fallback_model' && fallbackId !== null && fallbackId !== model.id) {
+      if (allowModelFallback && config.overBudgetBehaviour === 'fallback_model' && fallbackId !== null && fallbackId !== model.id) {
         const fallback = await loadFallbackModel(fallbackId);
         if (fallback) {
           await this.record('fallback', refusal, context);

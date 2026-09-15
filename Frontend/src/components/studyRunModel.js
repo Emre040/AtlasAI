@@ -1,5 +1,7 @@
+import { isCallLabel, operationDetails } from "./studyOperations";
+
 const AGENTS = {
-  deep_research_hpa: "Deep research",
+  deep_research_hpa: "Deep Search",
   investigator_hpa: "Investigator",
   dictionary_expert_hpa: "Dictionary",
   clarify_hpa: "Clarification",
@@ -10,7 +12,11 @@ export function agentName(tool) {
 export function nodeTitle(node) {
   if (node.type === "query") return "Research question";
   if (node.type === "finish") return node.label;
-  return node.title || node.label;
+  const operation = operationDetails(node);
+  if (operation) return operation.title;
+  const title = node.title || node.label;
+  if (title && !isCallLabel(title)) return title;
+  return node.type === "figure" ? "Figure" : "Data table";
 }
 function payload(message) {
   if (typeof message !== "string") return {};
@@ -60,6 +66,7 @@ export function studyStateFromEvents(events) {
     inputs: [],
     status: "done",
   });
+  let turn = null;
   for (const event of events || []) {
     if (event?.status === "completed") {
       state.complete = true;
@@ -73,7 +80,13 @@ export function studyStateFromEvents(events) {
     const stage = String(event?.stage || "").toLowerCase();
     const d = payload(event.message);
     if (stage !== "context" && stage !== "start")
-      state.activity.push({ stage, data: d, key: state.activity.length });
+      state.activity.push({
+        stage,
+        data: d,
+        key: state.activity.length,
+        createdAt: event.createdAt,
+        turn,
+      });
     if (stage === "start") {
       state.workspaceUuid = d.workspace_uuid;
       state.mode = d.mode;
@@ -81,13 +94,14 @@ export function studyStateFromEvents(events) {
       state.model = d.model;
       state.goal = d.goal || "";
       state.phase = "running";
-    } else if (stage === "turn")
+    } else if (stage === "turn") {
+      turn = d.turn;
       state.turns.push({
         turn: d.turn,
         text: d.text || "",
         calls: d.calls || [],
       });
-    else if (stage === "plan") {
+    } else if (stage === "plan") {
       if (Array.isArray(d.items)) state.plan = d.items;
       put({
         key: "plan",
@@ -130,6 +144,7 @@ export function studyStateFromEvents(events) {
         outputs: [],
         status: "running",
         startedAt: event.createdAt,
+        turn,
       });
     } else if (stage === "tool.done") {
       const call = state.byKey.get(d.id);
@@ -149,6 +164,7 @@ export function studyStateFromEvents(events) {
           description: a.description || "",
           size: a.size,
           inputs: [d.id],
+          sourceInputs: a.inputs || [],
           status: "done",
           rows: a.rows,
           columns: a.columns || [],
@@ -223,7 +239,7 @@ export function studyStatusLine(events) {
 }
 
 export const NODE_WIDTH = 218;
-const OUTPUT_WIDTH = 164;
+const OUTPUT_WIDTH = 190;
 const GAP = 24,
   PAD = 30;
 // Outputs are independent islands: step -> output -> consuming step.

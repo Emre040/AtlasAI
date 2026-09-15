@@ -27,6 +27,7 @@ const MAX_LINKS = 120;        // links shown per page (the section menus alone a
 const QUOTE_MIN = 15;
 const QUOTE_MAX = 600;
 const PASSAGE_RADIUS = 350;   // page text shown around the spot a failed quote came from
+const PAGE_PARSER_VERSION = 2; // bump when extraction changes so cached omissions are not reused
 const CACHE_TTL_MS = 7 * 24 * 3600 * 1000;
 const CACHE_DIR = path.join(__dirname, '../../../data_local/reader-cache');
 
@@ -92,18 +93,30 @@ function parsePage(html, url) {
     seen.add(target);
     links.push({ label, url: target });
   });
-  $('script, style, noscript, nav, footer, header, .search-container, #search, .cookie-bar, .cookie_statement, .menu, .menufix, #sidemenu, .menu_dropdown, iframe').remove();
+  $('script, style, noscript, nav, footer, header, .search-container, #search, .cookie-bar, .cookie_statement, .menu, .menufix, #sidemenu, .menu_dropdown, iframe, svg, template, select, input, textarea, button, [hidden], [aria-hidden="true"]').remove();
   const title = normalize($('title').first().text()) || url;
   const sections = [];
   let current = { heading: 'Top', text: [] };
-  const flush = () => { const text = normalize(current.text.join(' ')); if (text) sections.push({ heading: current.heading, text }); };
-  $('body').find('h1, h2, h3, h4, p, li, td, th, dd, dt').each((_, el) => {
-    const tag = el.tagName.toLowerCase();
-    const text = normalize($(el).text());
-    if (!text) return;
-    if (/^h[1-4]$/.test(tag)) { flush(); current = { heading: text, text: [] }; }
-    else if ($(el).find('p, li, h1, h2, h3, h4').length === 0) current.text.push(text);
-  });
+  const flush = () => { const text = normalize(current.text.join('')); if (text) sections.push({ heading: current.heading, text }); };
+  const blocks = new Set(['address', 'article', 'aside', 'blockquote', 'br', 'caption', 'dd', 'div', 'dl', 'dt', 'figcaption', 'figure', 'hr', 'li', 'main', 'ol', 'p', 'pre', 'section', 'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr', 'ul']);
+  // Walk text nodes once, in document order. Reading only paragraph/list elements loses
+  // bare text in containers, including the HPA release date between a heading and a list.
+  // Inline markup must not split words; block boundaries and line breaks separate text.
+  const visit = node => {
+    if (node.type === 'text') { current.text.push(node.data); return; }
+    if (node.type !== 'tag') return;
+    const tag = node.tagName.toLowerCase();
+    if (/^h[1-6]$/.test(tag)) {
+      const heading = normalize($(node).text());
+      if (heading) { flush(); current = { heading, text: [] }; }
+      return;
+    }
+    const block = blocks.has(tag);
+    if (block) current.text.push(' ');
+    for (const child of node.children) visit(child);
+    if (block) current.text.push(' ');
+  };
+  $('body').each((_, node) => visit(node));
   flush();
   return { url, title, sections, links: links.slice(0, MAX_LINKS), text: sections.map(s => `${s.heading} ${s.text}`).join(' ') };
 }
@@ -124,11 +137,11 @@ async function readPage(url, fetchPage, cache) {
   if (cache) {
     try {
       const cached = JSON.parse(await fs.readFile(file, 'utf8'));
-      if (cached.url === url && Date.now() - cached.fetched_unix_ms < CACHE_TTL_MS) return cached;
+      if (cached.url === url && cached.parser_version === PAGE_PARSER_VERSION && Date.now() - cached.fetched_unix_ms < CACHE_TTL_MS) return cached;
     } catch {}
   }
   const html = await fetchPage(url);
-  const page = { ...parsePage(String(html), url), sha256: crypto.createHash('sha256').update(String(html)).digest('hex'), fetched_unix_ms: Date.now() };
+  const page = { ...parsePage(String(html), url), parser_version: PAGE_PARSER_VERSION, sha256: crypto.createHash('sha256').update(String(html)).digest('hex'), fetched_unix_ms: Date.now() };
   if (cache) { try { await fs.mkdir(CACHE_DIR, { recursive: true }); await fs.writeFile(file, JSON.stringify(page)); } catch {} }
   return page;
 }

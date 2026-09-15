@@ -38,19 +38,18 @@ scorer.
 
 ## Results
 
-Gemini 3.8 Flash at low reasoning effort, 13 September 2026
+Gemini 3.8 Flash, 13–14 September 2026
 ([results/README.md](results/README.md)):
 
 | Arm | Correct | Facts | Tokens in | Cost | Median seconds |
 | --- | --- | --- | --- | --- | --- |
-| reader (AtlasAI) | 19 / 20 | 49 / 50 | 337,420 | $0.27 | 6 |
+| reader (AtlasAI) | 20 / 20 | 50 / 50 | 312,488 | $0.25 | 6 |
 | open web tools | 20 / 20 | 50 / 50 | 1,819,594 | $1.44 | 14 |
 
 Both arms cite proteinatlas.org in every answer. The reader reads 2.8 pages
 per question and returns each fact with a quote verified against the page;
 the open-web arm reads whatever the search engine returns and verifies
-nothing. The reader's one miss is the release date of version 25.1: it read
-the release history page and did not extract the date from it.
+nothing.
 
 ## Folder
 

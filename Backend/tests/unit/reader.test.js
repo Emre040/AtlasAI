@@ -1,6 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
 process.env.HPA_LOG_LLM_IO = process.env.HPA_LOG_LLM_IO || 'false';   // the reader's model calls read the flag at load
 const { readerAnswer, quoteOnPage, nearestPassage, allowedUrl, parsePage, sentences, MAX_RETRIES } = require('../../src/system/agents/reader');
 
@@ -41,10 +42,76 @@ test('a page is read as sections and same-site links', () => {
   const page = parsePage(html, 'https://www.proteinatlas.org/about');
   assert.equal(page.title, 'About - The Human Protein Atlas');
   assert.deepEqual(page.sections.map(s => s.heading), ['The Human Protein Atlas', 'Releases']);
-  assert.equal(page.sections[1].text, 'Version 24.0 was released on 2024-10-22.');
+  assert.equal(page.sections[1].text, 'Version 24.0 was released on 2024-10-22. Release historyALBDownloadable data');
   assert.doesNotMatch(page.text, /Menu text/);
   // the section menu's links are kept (they are how the about pages reach each other), its text is not
   assert.deepEqual(page.links.map(l => l.url), ['https://www.proteinatlas.org/about/history', 'https://www.proteinatlas.org/about/releases', 'https://www.proteinatlas.org/about/download']);
+});
+
+test('release metadata outside paragraphs reaches the section and can support a quotation', () => {
+  const html = `<html><body><table><tr><td><div class="learnbody about legend_left">
+    <h2><div id="25.1" class="anchor_offset"></div>Protein Atlas version 25.1</h2>
+    Release date: <b>2026.05.25</b><br>Ensembl version: <b>109</b>
+    <ul><li><b>Single Cell</b><br>New data.</li></ul>
+    <h2>Protein Atlas version 25.0</h2>Release date: <b>2025.11.11</b><br>
+    </div></td></tr></table></body></html>`;
+  const page = parsePage(html, 'https://www.proteinatlas.org/about/releases');
+  assert.deepEqual(page.sections, [
+    { heading: 'Protein Atlas version 25.1', text: 'Release date: 2026.05.25 Ensembl version: 109 Single Cell New data.' },
+    { heading: 'Protein Atlas version 25.0', text: 'Release date: 2025.11.11' }
+  ]);
+  assert.equal(quoteOnPage('Release date: 2026.05.25', page.text), true);
+});
+
+test('nested lists, tables and container text retain order without duplicating text or splitting inline words', () => {
+  const html = `<html><body><h2>Measurements</h2><div>Lead <span>inter<b>action</b></span>.
+    <p>First<br>second</p><ul><li>Parent <b>label</b><ul><li>Child value</li></ul>after child</li></ul>
+    <table><caption>Amounts</caption><tr><th>Gene</th><th>nTPM</th></tr><tr><td><div>ALB</div></td><td>12<span>.5</span></td></tr></table>
+    Tail <em>text</em>.</div></body></html>`;
+  const page = parsePage(html, 'https://www.proteinatlas.org/about');
+  assert.equal(page.sections[0].text, 'Lead interaction. First second Parent label Child value after child Amounts Gene nTPM ALB 12.5 Tail text.');
+});
+
+test('walking container text still excludes navigation, controls and hidden content', () => {
+  const html = `<html><body><nav>Navigation</nav><h2>Overview</h2><div>Visible <span>evidence</span>.</div>
+    <select><option>Control option</option></select><textarea>Input value</textarea><button>Submit</button>
+    <div hidden>Hidden text</div><span aria-hidden="true">Hidden icon</span><template>Template</template>
+    <svg><text>Graphic label</text></svg><script>Secret script</script><footer>Footer</footer></body></html>`;
+  const page = parsePage(html, 'https://www.proteinatlas.org/about');
+  assert.equal(page.sections[0].text, 'Visible evidence.');
+});
+
+test('cached extractions from an earlier parser are refreshed, then the corrected page is reused', async t => {
+  const url = 'https://www.proteinatlas.org/about/reader-cache-test';
+  const html = '<html><body><h2>Version 25.1</h2><div>Release date: <b>2026.05.25</b><br><p>New data.</p></div></body></html>';
+  let cached = { url, title: 'Releases', sections: [{ heading: 'Version 25.1', text: 'New data.' }], links: [], text: 'Version 25.1 New data.', fetched_unix_ms: Date.now() };
+  let fetches = 0;
+  let writes = 0;
+  t.mock.method(fs, 'readFile', async () => JSON.stringify(cached));
+  t.mock.method(fs, 'mkdir', async () => {});
+  t.mock.method(fs, 'writeFile', async (file, content) => { cached = JSON.parse(content); writes++; });
+  const run = () => readerAnswer('When was version 25.1 released?', {
+    entry: url, cache: true,
+    fetchPage: async target => { assert.equal(target, url); fetches++; return html; },
+    ask: async (system, user) => {
+      if (!user.includes('What you have read:')) return { open: [{ page: 0, sections: [0] }] };
+      assert.match(user, /Release date: 2026\.05\.25/);
+      return { answer: { text: 'Version 25.1 was released on 25 May 2026 [1].', citations: [{ n: 1, page: 0, quote: 'Release date: 2026.05.25' }], not_found: '' } };
+    }
+  });
+  const first = await run();
+  assert.equal(fetches, 1);
+  assert.equal(writes, 1);
+  assert.ok(Number.isSafeInteger(cached.parser_version));
+  assert.equal(first.citations[0].quote, 'Release date: 2026.05.25');
+  const second = await run();
+  assert.equal(fetches, 1);
+  assert.equal(writes, 1);
+  assert.equal(second.text, first.text);
+  cached.parser_version--;
+  await run();
+  assert.equal(fetches, 2);
+  assert.equal(writes, 2);
 });
 
 test('sentences carry the citation markers around their full stop', () => {

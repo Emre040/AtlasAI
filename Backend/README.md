@@ -227,18 +227,18 @@ semantics for category, class, location, evidence, cluster, prognostic, IHC and 
 fields, and a field the release files cannot express stops the search with the unexpressible
 requirement named. The dictionary expert reads proteinatlas.org.
 
-## ASO provenance
+## ASO study history and outputs
 
-`GET /workspaces/:uuid/provenance` returns the run's provenance graph built from
-`aso_artifacts`, `aso_artifact_links` and the artifact files (never from the model): nodes are
-artifacts (kind, operation that produced them, purpose, size, and whitelisted facts such as rows
-found, tissue, join keys or chart type), edges are `derived_from` links from inputs to outputs,
-`layers` is the longest-path depth used for drawing, and `outputs` lists the final figures,
-analyses and report. The frontend renders it as an SVG next to the workspace download. While a
-study runs, the frontend draws the map of steps from the run events themselves (`start`, `turn`,
-`plan`, `note`, `tool.start`, `tool.done`, `tool.failed`, `call.failed`, `skip`,
-`finish.refused`, `finish`) and fills steps in as they complete; the provenance graph is the
-stored, audited view of the same study.
+The frontend builds the study map and per-node View trace from ordered run events (`start`,
+`turn`, `plan`, `note`, `tool.start`, `tool.done`, `tool.failed`, `call.failed`, `skip`,
+`finish.refused`, `finish`). The trace follows recorded artifact IDs through their producing
+steps and exposes the associated agent activity and ASO decisions. `aso_artifacts` and
+`aso_artifact_links` retain the stored artifacts and their derivation links.
+
+Completed studies show saved figures below the workspace download. The authenticated
+`GET /workspaces/:uuid/artifacts/:filename` route serves registered artifacts, including figure
+images; `GET /workspaces/:uuid/download` returns the workspace archive. Both routes check
+workspace ownership.
 
 ## Cloudflare metadata
 

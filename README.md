@@ -50,8 +50,8 @@ recorded studies contain 350 statements bound to 3,469 computed tables.
 Three further [benchmarks](benchmark/README.md) evaluate single agents against references, scored
 by code: the search agent composes the reference query for 216 of 236 questions and an equivalent
 gene set for 220; the investigator returns the reference rows from the reference file for 30 of
-30; the reader answers 19 of 20 documentation questions from the atlas's pages with every quotation
-verified, using a fifth of the tokens of the same model with open web search.
+30; the reader answers 20 of 20 documentation questions from the atlas's pages with every quotation
+verified, using 17% of the total tokens of the same model with web search.
 
 ## Agents
 

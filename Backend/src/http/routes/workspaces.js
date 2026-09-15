@@ -7,7 +7,6 @@ const path = require('node:path');
 const tarfs = require('tar-fs');
 const zlib = require('zlib');
 const { resolveWorkspaceRoot } = require('../../system/aso/workspaceStore');
-const { buildProvenanceGraph } = require('../../system/aso/provenance');
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const FILENAME_PATTERN = /^[\w.-]+$/;
@@ -67,22 +66,6 @@ function createRouter({ workspaces }) {
     } catch (error) {
       if (error instanceof TypeError) return res.status(400).json({ error: 'Invalid workspace ID' });
       if (error?.code === 'ENOENT') return res.status(404).json({ error: 'Artifact not found' });
-      return next(error);
-    }
-  });
-
-  // How the run got to its outputs: artifacts as nodes, derivation links as edges.
-  router.get('/:uuid/provenance', async (req, res, next) => {
-    const { uuid } = req.params;
-    if (!UUID_PATTERN.test(uuid)) {
-      return res.status(400).json({ error: 'Invalid workspace ID' });
-    }
-    try {
-      const rows = await workspaces.provenance(uuid, req.auth.visitorId);
-      if (!rows) return res.status(404).json({ error: 'Workspace not found' });
-      return res.json(await buildProvenanceGraph(rows));
-    } catch (error) {
-      if (error instanceof TypeError) return res.status(400).json({ error: 'Invalid workspace ID' });
       return next(error);
     }
   });

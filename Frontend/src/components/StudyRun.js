@@ -50,6 +50,8 @@ import {
   StatusIcon,
 } from "./StudyRunDetails";
 import "./StudyRun.css";
+import { readableDescription } from "./studyOperations";
+import { OperationSummary } from "./StudyOperation";
 
 export { studyStateFromEvents, studyStatusLine } from "./studyRunModel";
 const TABS = [
@@ -60,7 +62,7 @@ const TABS = [
 const reducedMotion = () =>
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-export default function StudyRun({ events, isComplete, apiBaseUrl }) {
+export default function StudyRun({ events, isComplete, apiBaseUrl, selectionRequest }) {
   const [replay, setReplay] = useState(null),
     [playing, setPlaying] = useState(false);
   const replayFrames = useMemo(
@@ -84,6 +86,7 @@ export default function StudyRun({ events, isComplete, apiBaseUrl }) {
     [events, replay, replayFrames],
   );
   const [tab, setTab] = useState("flow");
+  const [citationTarget, setCitationTarget] = useState(null);
   const [hovered, setHovered] = useState(null),
     [pinned, setPinned] = useState(null);
   const [expanded, setExpanded] = useState(false),
@@ -239,6 +242,38 @@ export default function StudyRun({ events, isComplete, apiBaseUrl }) {
   useEffect(() => {
     inspectorRef.current?.scrollTo({ top: 0 });
   }, [focus]);
+
+  useEffect(() => {
+    if (!selectionRequest) return;
+    clearTimeout(hoverTimer.current);
+    clearTimeout(leaveTimer.current);
+    setPlaying(false);
+    setReplay(null);
+    setTab("flow");
+    setZoom(1);
+    setHovered(null);
+    setPinned(selectionRequest.artifactId);
+    setFollowing(false);
+    setCitationTarget(selectionRequest);
+  }, [selectionRequest]);
+  useEffect(() => {
+    if (!citationTarget || replay !== null || tab !== "flow" || !layout.measured)
+      return;
+    const key = citationTarget.artifactId;
+    if (state.artifactsById.has(key)) {
+      scrollToNode(key, false);
+      const root = rootRef.current;
+      const target = root.clientWidth <= 560
+        ? root.querySelector(".HPAG-aso-inspector")
+        : root;
+      target.scrollIntoView({
+        block: "center",
+        behavior: reducedMotion() ? "instant" : "smooth",
+      });
+      nodeRefs.current.get(key)?.querySelector("button").focus({ preventScroll: true });
+    }
+    setCitationTarget(null);
+  }, [citationTarget, replay, tab, layout.measured, state, scrollToNode]);
 
   const clearHoverTimers = () => {
     clearTimeout(hoverTimer.current);
@@ -690,13 +725,11 @@ export default function StudyRun({ events, isComplete, apiBaseUrl }) {
                                             ? "The question"
                                             : "The outcome"}
                                     </span>
-                                    {(node.type === "agent" ||
-                                      node.type === "tool") && (
-                                      <b>
-                                        {node.type === "agent"
-                                          ? agentName(node.tool)
-                                          : node.tool}
-                                      </b>
+                                    {node.type === "agent" && (
+                                      <b>{agentName(node.tool)}</b>
+                                    )}
+                                    {node.type === "tool" && (
+                                      <code>{node.key}</code>
                                     )}
                                   </span>
                                   <span className="HPAG-aso-node-state">
@@ -716,6 +749,7 @@ export default function StudyRun({ events, isComplete, apiBaseUrl }) {
                                   ? state.goal || "Preparing your study…"
                                   : nodeTitle(node)}
                               </strong>
+                              <OperationSummary node={node} />
                               {isArtifact ? (
                                 <span className="HPAG-aso-output-meta">
                                   {node.type === "figure" ? "Figure" : "Data"}
@@ -930,7 +964,10 @@ export default function StudyRun({ events, isComplete, apiBaseUrl }) {
                         {artifactSize(n)}
                       </span>
                       <strong>{nodeTitle(n)}</strong>
-                      <small>{n.description}</small>
+                      <OperationSummary node={n} />
+                      {readableDescription(n) && (
+                        <small>{readableDescription(n)}</small>
+                      )}
                     </span>
                     <Icon icon={faArrowRight} />
                   </button>

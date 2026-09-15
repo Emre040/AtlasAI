@@ -23,8 +23,7 @@ import {
   faTimes,
   faExternalLinkAlt,
   faSearch,
-  faDownload,
-  faProjectDiagram
+  faDownload
 } from '@fortawesome/free-solid-svg-icons';
 import {
   authenticatedDownload,
@@ -35,7 +34,9 @@ import {
 import { getApiBaseUrl, getApiEndpoint, getRuntimeConfig, getUiConfig } from '../api/config';
 import { AUTO_MODEL, describeRefusal, loadSelectedModel, storeSelectedModel } from '../api/models';
 import ModelMenu from './ModelMenu';
-import ProvenanceGraph from './ProvenanceGraph';
+import StudyOutputs from './StudyOutputs';
+import StudyAnswer from './StudyAnswer';
+import { studyRunsById } from './studyCitations';
 import StudyRun, { studyStatusLine } from './StudyRun';
 import { liveToolEventFromSse, timelineToUiMessages } from '../api/timeline';
 import DictionaryCarousel from './DictionaryCarousel';
@@ -62,7 +63,7 @@ function HPA() {
     storeSelectedModel(configKey);
   }, []);
   const [collapsedRuns, setCollapsedRuns] = useState({}); // Track collapsed state per runId
-  const [provenanceRuns, setProvenanceRuns] = useState({}); // ASO runs whose provenance graph is open
+  const [studySelection, setStudySelection] = useState(null);
   const [searchResults, setSearchResults] = useState({}); // Map of searchUrl -> { rows, loading, error, totalCount, thumbnails }
   const [replyTo, setReplyTo] = useState(null); // { ensg, geneName } for reply context
   const messagesEndRef = useRef(null);
@@ -306,17 +307,6 @@ function HPA() {
 
   const toggleArtifactRawView = () => {
     setArtifactPreview(prev => prev ? { ...prev, showRaw: !prev.showRaw } : null);
-  };
-
-  const downloadWorkspace = async (workspaceUuid) => {
-    try {
-      await authenticatedDownload(
-        `${apiBaseUrl}/workspaces/${workspaceUuid}/download`,
-        `workspace-${workspaceUuid}.tar.gz`
-      );
-    } catch (error) {
-      console.error('[FE] Workspace download failed:', error.message);
-    }
   };
 
   const downloadArtifact = async (preview) => {
@@ -709,9 +699,12 @@ function HPA() {
           })}
         </div>
         {moreCount > 0 && (
-          <a href={searchUrl} target="_blank" rel="noopener noreferrer" className="HPAG-search-results-more">
-            View {moreCount} more
-          </a>
+          <div className="HPAG-search-results-footer">
+            <a href={searchUrl} target="_blank" rel="noopener noreferrer" className="HPAG-search-results-more">
+              <span>View <strong>{moreCount}</strong> more</span>
+              <FontAwesomeIcon icon={faExternalLinkAlt} />
+            </a>
+          </div>
         )}
       </div>
     );
@@ -776,8 +769,17 @@ function HPA() {
     [conversations, selectedConversation]
   );
   const messageGroups = groupMessagesIntoRuns(currentMessages);
+  const studyRuns = useMemo(() => studyRunsById(currentMessages), [currentMessages]);
 
-  useEffect(() => { stickToBottomRef.current = true; }, [selectedConversation]);
+  useEffect(() => {
+    stickToBottomRef.current = true;
+    setStudySelection(null);
+  }, [selectedConversation]);
+
+  const selectStudyArtifact = (runId, artifactId) => {
+    stickToBottomRef.current = false;
+    setStudySelection({ runId, artifactId });
+  };
   useEffect(() => {
     const dialog = historyDialogRef.current;
     if (historyOpen) dialog.showModal();
@@ -916,6 +918,7 @@ function HPA() {
       let currentAiMessageId = initialAiId;
       let finalAnswerBubbleCreated = false;
       let toolHasRun = false;
+      let responseRunId = null;
       let pendingResources = null; // Store resources until final answer bubble is created
       let pendingQuestionnaire = null; // Clarification questions, shown under the final answer bubble
 
@@ -966,6 +969,9 @@ function HPA() {
 
           if (payload.tool) {
             toolHasRun = true;
+            // This request's completed tool names the run that produces its answer.
+            // Retain that exact ID, just as hydrated messages retain run_id.
+            if (payload.tool.status === 'completed') responseRunId = payload.tool.run_id;
             // The backend names the run; live lines and reloaded lines share that id.
             // A clarification shows as its card, a reader run as its own panel, not as tool lines.
             if (payload.tool.mode === 'reader') {
@@ -995,7 +1001,7 @@ function HPA() {
               debugLog('[FE] First token after tool run. Creating new AI bubble.');
               const finalAnswerId = Date.now() + Math.random();
 
-              const newMessage = { id: finalAnswerId, type: 'ai', text: '', timestamp: now() };
+              const newMessage = { id: finalAnswerId, type: 'ai', text: '', timestamp: now(), runId: responseRunId };
               if (pendingResources) {
                 newMessage.resources = pendingResources;
                 debugLog('[FE] Attaching pending resources to final answer bubble');
@@ -1210,20 +1216,11 @@ function HPA() {
                   const isAsoRun = firstToolEvent?.toolName === 'aso_hpa';
                   const runTitle = isAsoRun ? 'Study' : isInvestigatorRun ? 'Investigator' : 'Deep Research';
 
-                  // The study names its workspace in its first event.
-                  let runWorkspaceUuid = null;
-                  if (isAsoRun) {
-                    for (const m of group.messages) {
-                      const evt = m.toolEvent;
-                      if ((evt?.stage || '').toLowerCase() === 'start' && evt?.message) {
-                        try { const pd = JSON.parse(evt.message); if (pd.workspace_uuid) { runWorkspaceUuid = pd.workspace_uuid; break; } } catch (_) {}
-                      }
-                    }
-                  }
+                  const runEvents = group.messages.map(m => m.toolEvent).filter(Boolean);
 
                   // Get latest step label for shimmer text (identical to HPAG-tool-line-label)
                   const lastStepMsg = (() => {
-                    if (isAsoRun) return studyStatusLine(group.messages.map(m => m.toolEvent).filter(Boolean));
+                    if (isAsoRun) return studyStatusLine(runEvents);
                     for (let mi = group.messages.length - 1; mi >= 0; mi--) {
                       const evt = group.messages[mi].toolEvent;
                       if (evt && evt.status !== 'started' && evt.status !== 'completed') {
@@ -1252,13 +1249,14 @@ function HPA() {
                       <div
                         className={`HPAG-tool-run-content ${isAsoRun ? 'HPAG-tool-run-content-study' : ''}`}
                         ref={el => { toolRunRefs.current[group.runId] = el; }}
+                        data-study-run-id={isAsoRun ? group.runId : undefined}
                       >
                         {isAsoRun && (
                           <StudyRun
-                            events={group.messages.map(m => m.toolEvent).filter(Boolean)}
+                            events={runEvents}
                             apiBaseUrl={apiBaseUrl}
-                            workspaceUuid={runWorkspaceUuid}
                             isComplete={group.isComplete}
+                            selectionRequest={studySelection?.runId === group.runId ? studySelection : null}
                             onArtifactEnter={handleArtifactChipEnter}
                             onArtifactLeave={handleArtifactChipLeave}
                           />
@@ -1336,34 +1334,8 @@ function HPA() {
                       </div>
                     </div>
                     )}
-                    {isAsoRun && group.isComplete && runWorkspaceUuid && (
-                      <>
-                        <div className="HPAG-tool-run-actions">
-                          <button
-                            type="button"
-                            onClick={() => downloadWorkspace(runWorkspaceUuid)}
-                            className="HPAG-tool-run-download"
-                          >
-                            <FontAwesomeIcon icon={faDownload} /> Download Workspace
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setProvenanceRuns(prev => ({ ...prev, [group.runId]: !prev[group.runId] }))}
-                            className={`HPAG-tool-run-download ${provenanceRuns[group.runId] ? 'HPAG-tool-run-download-active' : ''}`}
-                            aria-expanded={Boolean(provenanceRuns[group.runId])}
-                          >
-                            <FontAwesomeIcon icon={faProjectDiagram} /> {provenanceRuns[group.runId] ? 'Hide provenance' : 'Show provenance'}
-                          </button>
-                        </div>
-                        {provenanceRuns[group.runId] && (
-                          <ProvenanceGraph
-                            apiBaseUrl={apiBaseUrl}
-                            workspaceUuid={runWorkspaceUuid}
-                            onOpenArtifact={(node, event) => handleArtifactChipEnter(event, { artifactId: node.id, format: node.format }, runWorkspaceUuid)}
-                            onLeaveArtifact={handleArtifactChipLeave}
-                          />
-                        )}
-                      </>
+                    {isAsoRun && group.isComplete && (
+                      <StudyOutputs events={runEvents} apiBaseUrl={apiBaseUrl} />
                     )}
                     </React.Fragment>
                   );
@@ -1434,7 +1406,11 @@ function HPA() {
                           {!(message.reader || message.readerLive) && (
                           <div className="HPAG-message-text">
                             {message.type === 'ai' ? (
-                              <ReactMarkdown>{message.text}</ReactMarkdown>
+                              <StudyAnswer
+                                text={message.text}
+                                study={studyRuns.get(message.runId)}
+                                onSelectArtifact={artifactId => selectStudyArtifact(message.runId, artifactId)}
+                              />
                             ) : (
                               displayText
                             )}

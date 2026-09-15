@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useRef, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faArrowRight,
@@ -25,9 +25,38 @@ import {
   faRobot,
   faXmark,
   faChevronDown,
+  faArrowDownWideShort,
+  faFilter,
+  faTableColumns,
+  faCalculator,
+  faCodeBranch,
+  faChartLine,
+  faLayerGroup,
+  faTags,
+  faTableCells,
 } from "@fortawesome/free-solid-svg-icons";
-import { authenticatedDownload, authenticatedFetch } from "../api/auth";
+import { authenticatedDownload } from "../api/auth";
 import { agentName, nodeTitle } from "./studyRunModel";
+import { operationOf, readableDescription } from "./studyOperations";
+import { OperationDetails, RecordedValue } from "./StudyOperation";
+import StudyTrace from "./StudyTrace";
+import useArtifactImage from "./useArtifactImage";
+
+const OPERATION_ICONS = {
+  correlate: faChartLine,
+  rank: faArrowDownWideShort,
+  chart: faChartBar,
+  filter: faFilter,
+  select: faTableColumns,
+  compute: faCalculator,
+  join: faCodeBranch,
+  combine: faLayerGroup,
+  aggregate: faCalculator,
+  classify: faTags,
+  pivot: faTableCells,
+  overlap: faCodeBranch,
+  explode: faLayerGroup,
+};
 
 const ICONS = {
   query: faCommentDots,
@@ -48,11 +77,14 @@ const STATUS_ICONS = {
 };
 export const number = (value) => Number(value).toLocaleString();
 export const duration = (ms) => `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
-export const iconFor = (node) => ICONS[node.type];
+export const iconFor = (node) =>
+  OPERATION_ICONS[operationOf(node)?.tool] || ICONS[node.type];
 export const artifactSize = (node) =>
   Number.isFinite(node.rows)
     ? `${number(node.rows)} ${node.rows === 1 ? "row" : "rows"}`
-    : node.size;
+    : node.type === "figure"
+      ? ""
+      : node.size;
 export function Icon({ icon, ...props }) {
   return <FontAwesomeIcon icon={icon} {...props} />;
 }
@@ -123,43 +155,8 @@ export function ArtifactLink({ node, onSelect }) {
 }
 
 function FigurePreview({ node, apiBaseUrl, workspaceUuid }) {
-  const [preview, setPreview] = useState({ url: null, error: null });
   const filename = node.images[0];
-  useEffect(() => {
-    if (!filename || !apiBaseUrl || !workspaceUuid) return;
-    const controller = new AbortController();
-    let active = true,
-      objectUrl;
-    setPreview({ url: null, error: null });
-    (async () => {
-      try {
-        const response = await authenticatedFetch(
-          `${apiBaseUrl}/workspaces/${workspaceUuid}/artifacts/${encodeURIComponent(filename)}`,
-          { signal: controller.signal },
-        );
-        if (!response.ok)
-          throw new Error(`Figure unavailable (HTTP ${response.status}).`);
-        const blob = await response.blob();
-        if (!active) return;
-        objectUrl = URL.createObjectURL(blob);
-        setPreview({ url: objectUrl, error: null });
-      } catch (error) {
-        if (active && error.name !== "AbortError")
-          setPreview({ url: null, error: error.message });
-      }
-    })();
-    return () => {
-      active = false;
-      controller.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [filename, apiBaseUrl, workspaceUuid]);
-  if (!filename || !apiBaseUrl || !workspaceUuid)
-    return (
-      <p className="HPAG-aso-muted">
-        Figure preview is unavailable for this run.
-      </p>
-    );
+  const preview = useArtifactImage(apiBaseUrl, workspaceUuid, filename);
   if (preview.error)
     return (
       <p className="HPAG-aso-error" role="status">
@@ -189,9 +186,15 @@ function FigurePreview({ node, apiBaseUrl, workspaceUuid }) {
 
 export function Inspector({ node, state, onSelect, live, apiBaseUrl, pinned }) {
   const [download, setDownload] = useState({ busy: false, error: null });
+  const [tracing, setTracing] = useState(false);
+  const traceButton = useRef(null);
   const isArtifact = node.type === "data" || node.type === "figure";
+  const operation = operationOf(node);
+  const description = readableDescription(node);
   const trail = state.trails.get(node.key) || [];
-  const args = Object.entries(node.args || {}).filter(
+  const args = Object.entries(
+    operation ? operation.args : node.args || {},
+  ).filter(
     ([key, value]) =>
       !["title", "description"].includes(key) &&
       value !== undefined &&
@@ -213,6 +216,21 @@ export function Inspector({ node, state, onSelect, live, apiBaseUrl, pinned }) {
       setDownload({ busy: false, error: error.message });
     }
   };
+  if (tracing)
+    return (
+      <StudyTrace
+        node={node}
+        state={state}
+        live={live}
+        onSelect={onSelect}
+        onBack={() => {
+          setTracing(false);
+          requestAnimationFrame(() =>
+            traceButton.current?.focus({ preventScroll: true }),
+          );
+        }}
+      />
+    );
   return (
     <div className="HPAG-aso-detail">
       <div className={`HPAG-aso-detail-icon type-${node.type}`}>
@@ -222,7 +240,7 @@ export function Inspector({ node, state, onSelect, live, apiBaseUrl, pinned }) {
         {node.type === "agent"
           ? `Agent step · ${agentName(node.tool)}`
           : node.type === "tool"
-            ? `Operation · ${node.tool}`
+            ? "Operation"
             : node.type === "data"
               ? "Data artifact"
               : node.type === "figure"
@@ -246,9 +264,7 @@ export function Inspector({ node, state, onSelect, live, apiBaseUrl, pinned }) {
       {node.type === "query" && (
         <p>{state.goal || "ASO is receiving the research question."}</p>
       )}
-      {(node.description || node.args?.description) && (
-        <p>{node.description || node.args.description}</p>
-      )}
+      {description && <p>{description}</p>}
       {node.type === "note" && <p>{node.text}</p>}
       {node.type === "finish" && (
         <p>
@@ -260,20 +276,38 @@ export function Inspector({ node, state, onSelect, live, apiBaseUrl, pinned }) {
       {node.error && <div className="HPAG-aso-error">{node.error}</div>}
       {node.inputs.length > 0 && (
         <section>
-          <h4>{isArtifact ? "Created by" : "Inputs"}</h4>
-          <div className="HPAG-aso-links">
-            {node.inputs.map((key) => {
-              const input = state.byKey.get(key);
-              return input ? (
-                <ArtifactLink key={key} node={input} onSelect={onSelect} />
-              ) : (
-                <span key={key} className="HPAG-aso-muted">
-                  {key} · details unavailable
-                </span>
-              );
-            })}
+          <div className="HPAG-aso-section-title">
+            <h4>{isArtifact ? "Created by" : "History"}</h4>
+            <button
+              type="button"
+              ref={traceButton}
+              className="HPAG-aso-view-trace"
+              onClick={() => {
+                if (!pinned) onSelect(node.key);
+                setTracing(true);
+              }}
+            >
+              <Icon icon={faCodeBranch} /> View trace
+            </button>
           </div>
+          {(isArtifact || !operation) && (
+            <div className="HPAG-aso-links">
+              {node.inputs.map((key) => {
+                const input = state.byKey.get(key);
+                return input ? (
+                  <ArtifactLink key={key} node={input} onSelect={onSelect} />
+                ) : (
+                  <span key={key} className="HPAG-aso-muted">
+                    {key} · details unavailable
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </section>
+      )}
+      {operation && (
+        <OperationDetails node={node} state={state} onSelect={onSelect} />
       )}
       {node.outputs?.length > 0 && (
         <section>
@@ -304,7 +338,10 @@ export function Inspector({ node, state, onSelect, live, apiBaseUrl, pinned }) {
       {isArtifact && node.sample.length > 0 && (
         <section>
           <h4>
-            Data preview <span>{node.sample.length} rows</span>
+            Data preview{" "}
+            <span>
+              {node.sample.length} {node.sample.length === 1 ? "row" : "rows"}
+            </span>
           </h4>
           <div
             className="HPAG-aso-sample"
@@ -381,16 +418,14 @@ export function Inspector({ node, state, onSelect, live, apiBaseUrl, pinned }) {
       {args.length > 0 && (
         <details className="HPAG-aso-disclosure">
           <summary>
-            Operation details <Icon icon={faChevronDown} />
+            Recorded parameters <Icon icon={faChevronDown} />
           </summary>
           <dl className="HPAG-aso-args">
             {args.map(([key, value]) => (
               <React.Fragment key={key}>
                 <dt>{key.replace(/_/g, " ")}</dt>
                 <dd>
-                  {typeof value === "string"
-                    ? value
-                    : JSON.stringify(value, null, 2)}
+                  <RecordedValue value={value} />
                 </dd>
               </React.Fragment>
             ))}

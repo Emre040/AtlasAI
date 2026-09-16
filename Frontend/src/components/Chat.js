@@ -43,6 +43,7 @@ import DictionaryCarousel from './DictionaryCarousel';
 import Questionnaire from './Questionnaire';
 import ReaderPanel, { readerLiveNext } from './ReaderPanel';
 import {hpaIcon} from "../assets/icons/hpaIcon";
+import {InputArea} from "./InputArea";
 
 const RUNTIME_CONFIG = getRuntimeConfig();
 const UI_CONFIG = getUiConfig();
@@ -1502,23 +1503,13 @@ function HPA() {
             </button>
           </div>
         )}
-        <div className="HPAG-input-area">
-          <input
-            ref={inputRef}
-            type="text"
-            className="HPAG-input"
-            placeholder="Ask your Human Protein Atlas Agent..."
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-            disabled={isLoading}
-          />
-          <button className="HPAG-send-btn" onClick={handleSend} disabled={isLoading}>
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-              <path d="M15.854 7.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708-.708L14.293 8.5H.5a.5.5 0 0 1 0-1h13.793L8.146 1.354a.5.5 0 1 1 .708-.708l7 7z"/>
-            </svg>
-          </button>
-        </div>
+        <InputArea
+            inputRef={inputRef}
+            inputValue={inputValue}
+            setInputValue={setInputValue}
+            handleSend={handleSend}
+            isLoading={isLoading}
+        />
       </div>
       {artifactPreview && (
         <div

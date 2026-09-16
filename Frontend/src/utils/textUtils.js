@@ -159,75 +159,79 @@ export const extractHPAUrls = (text) => {
     });
 
     return filteredUrls.map(url => {
-        if (url.includes('/search/')) {
-            const geneName = url.split('/search/')[1]?.split(/[?&#]/)[0] || 'Search';
-            return {
-                url,
-                type: 'search',
-                label: geneName,
-                icon: faMagnifyingGlass
-            };
-        }
-        url = url.replace(/[\]).]+$/, '');
-        // Parse the URL to determine the type
-        let type = 'summary';
-        let u = new URL(url);
-        let label = u.pathname.split('/').at(-1)?.replace('+', ' ');
-        label = label.charAt(0).toUpperCase() + label.slice(1);
-        let icon = hpaIcon;
-
-        // Check if it's an ENSG protein page (e.g., ENSG00000121410-A1BG)
-        const ensgMatch = url.match(/ENSG\d+-([A-Z0-9]+)/);
-        if (ensgMatch && !url.includes('/tissue') && !url.includes('/brain') && !url.includes('/single+cell') &&
-            !url.includes('/subcellular') && !url.includes('/cancer') && !url.includes('/blood') &&
-            !url.includes('/cell+line') && !url.includes('/structure') &&
-            !url.includes('/interaction')) {
-            // It's a base protein page, use the gene name
-            label = ensgMatch[1];
-        }
-
-        if (url.includes('/tissue')) {
-            type = 'tissue';
-            label = 'Tissue';
-            icon = faMicroscope;
-        } else if (url.includes('/brain')) {
-            type = 'brain';
-            label = 'Brain';
-            icon = faBrain;
-        } else if (url.includes('/single+cell')) {
-            type = 'single_cell';
-            label = 'Single Cell';
-            icon = faVirus;
-        } else if (url.includes('/subcellular')) {
-            type = 'subcellular';
-            label = 'Subcellular';
-            icon = faCubes;
-        } else if (url.includes('/cancer')) {
-            type = 'cancer';
-            label = 'Cancer';
-            icon = faVirus;
-        } else if (url.includes('/blood')) {
-            type = 'blood';
-            label = 'Blood';
-            icon = faDroplet;
-        } else if (url.includes('/cell+line')) {
-            type = 'cell_line';
-            label = 'Cell Line';
-            icon = faFlask;
-        } else if (url.includes('/structure')) {
-            type = 'structure';
-            label = 'Structure';
-            icon = faNetworkWired;
-        } else if (url.includes('/interaction')) {
-            type = 'interaction';
-            label = 'Interaction';
-            icon = faNetworkWired;
-        } else if (url.endsWith('.xml')) {
-            type = 'xml';
-            label = 'XML';
-            icon = faFileCode;
-        }
-
-        return { url, type, label, icon };
+        return makeLinkButtonFromUrl(url);
     });
-};
+}
+
+export function makeLinkButtonFromUrl(url) {
+    if (url.includes('/search/')) {
+        const geneName = url.split('/search/')[1]?.split(/[?&#]/)[0] || 'Search';
+        return {
+            url,
+            type: 'search',
+            label: geneName,
+            icon: faMagnifyingGlass
+        };
+    }
+    url = url.replace(/[\]).]+$/, '');
+    // Parse the URL to determine the type
+    let type = 'summary';
+    let u = new URL(url);
+    let label = u.pathname.split('/').at(-1)?.replace('+', ' ');
+    label = label.charAt(0).toUpperCase() + label.slice(1);
+    let icon = hpaIcon;
+
+    // Check if it's an ENSG protein page (e.g., ENSG00000121410-A1BG)
+    const ensgMatch = url.match(/ENSG\d+-([A-Z0-9]+)/);
+    if (ensgMatch && !url.includes('/tissue') && !url.includes('/brain') && !url.includes('/single+cell') &&
+        !url.includes('/subcellular') && !url.includes('/cancer') && !url.includes('/blood') &&
+        !url.includes('/cell+line') && !url.includes('/structure') &&
+        !url.includes('/interaction')) {
+        // It's a base protein page, use the gene name
+        label = ensgMatch[1];
+    }
+
+    if (url.includes('/tissue')) {
+        type = 'tissue';
+        label = 'Tissue';
+        icon = faMicroscope;
+    } else if (url.includes('/brain')) {
+        type = 'brain';
+        label = 'Brain';
+        icon = faBrain;
+    } else if (url.includes('/single+cell')) {
+        type = 'single_cell';
+        label = 'Single Cell';
+        icon = faVirus;
+    } else if (url.includes('/subcellular')) {
+        type = 'subcellular';
+        label = 'Subcellular';
+        icon = faCubes;
+    } else if (url.includes('/cancer')) {
+        type = 'cancer';
+        label = 'Cancer';
+        icon = faVirus;
+    } else if (url.includes('/blood')) {
+        type = 'blood';
+        label = 'Blood';
+        icon = faDroplet;
+    } else if (url.includes('/cell+line')) {
+        type = 'cell_line';
+        label = 'Cell Line';
+        icon = faFlask;
+    } else if (url.includes('/structure')) {
+        type = 'structure';
+        label = 'Structure';
+        icon = faNetworkWired;
+    } else if (url.includes('/interaction')) {
+        type = 'interaction';
+        label = 'Interaction';
+        icon = faNetworkWired;
+    } else if (url.endsWith('.xml')) {
+        type = 'xml';
+        label = 'XML';
+        icon = faFileCode;
+    }
+
+    return { url, type, label, icon };
+}

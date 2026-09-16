@@ -149,7 +149,7 @@ export const extractHPAUrls = (text) => {
     const uniqueUrls = [...new Set(matches)];
 
     return uniqueUrls.map(url => {
-        return makeLinkButtonFromUrl(url);
+        return makeLinkButtonFromUrl(fixupUrls(url));
     });
 }
 
@@ -233,3 +233,13 @@ export function makeLinkButtonFromUrl(url) {
 }
 
 export const ucFirst = (str) => str.charAt(0).toUpperCase() + str.slice(1);
+
+export function fixupUrls(url, thisHost) {
+    if (thisHost === undefined) {
+        thisHost = window.location.host;
+    }
+    if (!thisHost.includes('.proteinatlas.org') ) {
+        return url;
+    }
+    return url.replace('//www.proteinatlas.org', '//'+ thisHost);
+}

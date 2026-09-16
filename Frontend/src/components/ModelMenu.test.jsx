@@ -3,10 +3,11 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import '@testing-library/jest-dom';
 import ModelMenu from './ModelMenu';
 import { fetchModelCatalog, saveProviderKey, removeProviderKey } from '../api/models';
-jest.mock('../api/models', () => ({ AUTO_MODEL: 'auto', fetchModelCatalog: jest.fn(), saveProviderKey: jest.fn(), removeProviderKey: jest.fn() }));
+import {vi} from 'vitest';
+vi.mock('../api/models', () => ({ AUTO_MODEL: 'auto', fetchModelCatalog: vi.fn(), saveProviderKey: vi.fn(), removeProviderKey: vi.fn() }));
 let catalog;
 beforeEach(() => {
-  jest.clearAllMocks();
+  vi.clearAllMocks();
   catalog = {
     selection_enabled: true, provider_keys_enabled: true,
     active: { display_name: 'Default' },
@@ -37,7 +38,7 @@ test('the initial menu contains Auto and More models, with alternatives in the s
   expect(screen.queryByRole('menuitemradio', { name: /First model/ })).not.toBeInTheDocument();
 });
 test('no-key alternatives are locked and cannot select a model', async () => {
-  const onChoose = jest.fn();
+  const onChoose = vi.fn();
   render(<App onChoose={onChoose} />);
   const menu = await openMore();
   const first = within(menu).getByRole('menuitemradio', { name: /First model/ });
@@ -47,7 +48,7 @@ test('no-key alternatives are locked and cannot select a model', async () => {
   expect(within(menu).getByRole('menuitem', { name: 'Add OpenAI API key' })).toBeEnabled();
 });
 test('a verified key unlocks only that provider, and saving does not automatically select a model', async () => {
-  const onChoose = jest.fn();
+  const onChoose = vi.fn();
   saveProviderKey.mockImplementation(async () => {
     catalog.models[0].visitor_key = true;
     catalog.providers[0].visitor_key = { suffix: 'test', verified_at: 1, use_count: 0 };
@@ -86,7 +87,7 @@ test('removing a provider key returns the selected model to Auto and locks its a
     catalog.models[0].visitor_key = false;
     catalog.providers[0].visitor_key = null;
   });
-  const onChoose = jest.fn();
+  const onChoose = vi.fn();
   render(<App initial="first" onChoose={onChoose} />);
   const menu = await openMore();
   fireEvent.click(within(menu).getByRole('menuitem', { name: /Manage your API keys/ }));

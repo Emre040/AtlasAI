@@ -62,7 +62,7 @@ npm test
 npm start
 ```
 
-The frontend has its own required `REACT_APP_HPA_API_BASE` build variable. A
+The frontend has its own required `VITE_HPA_API_BASE` build variable. A
 backend configuration or deployment does not implicitly configure or deploy
 the frontend.
 

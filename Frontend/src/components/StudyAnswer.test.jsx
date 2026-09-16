@@ -7,17 +7,18 @@ import StudyAnswer from "./StudyAnswer";
 import { studyRunsById } from "./studyCitations";
 import { timelineToUiMessages } from "../api/timeline";
 import { authenticatedFetch, initializeHPAAuth } from "../api/auth";
+import {vi} from 'vitest';
 
 // Match the backend run identity even when separate studies share node labels.
 configure({ testIdAttribute: "data-study-run-id" });
 
-jest.mock("../api/auth", () => ({
-  authenticatedFetch: jest.fn(),
-  authenticatedDownload: jest.fn(),
-  initializeHPAAuth: jest.fn(),
+vi.mock("../api/auth", () => ({
+  authenticatedFetch: vi.fn(),
+  authenticatedDownload: vi.fn(),
+  initializeHPAAuth: vi.fn(),
   getVisitorId: () => "test-visitor",
 }));
-jest.mock("../api/config", () => ({
+vi.mock("../api/config", () => ({
   getApiBaseUrl: () => "https://atlasai.test",
   getRuntimeConfig: () => ({ isLocal: false }),
   getUiConfig: () => ({ maxConversationTitleLength: 50 }),
@@ -68,18 +69,18 @@ const originals = {
   scrollIntoView: HTMLElement.prototype.scrollIntoView,
 };
 beforeEach(() => {
-  jest.clearAllMocks();
+  vi.clearAllMocks();
   global.ResizeObserver = class {
     observe() {}
     disconnect() {}
   };
   global.TextDecoder = TextDecoder;
-  window.matchMedia = jest.fn((query) => ({
+  window.matchMedia = vi.fn((query) => ({
     matches: query.includes("reduce") || query.includes("min-width: 800px"),
-    addEventListener: jest.fn(), removeEventListener: jest.fn(),
+    addEventListener: vi.fn(), removeEventListener: vi.fn(),
   }));
-  HTMLElement.prototype.scrollTo = jest.fn();
-  HTMLElement.prototype.scrollIntoView = jest.fn();
+  HTMLElement.prototype.scrollTo = vi.fn();
+  HTMLElement.prototype.scrollIntoView = vi.fn();
   initializeHPAAuth.mockResolvedValue();
   authenticatedFetch.mockImplementation(async (url) => {
     const route = new URL(url).pathname;
@@ -101,7 +102,7 @@ afterEach(() => {
 });
 
 test("citations work in Markdown prose and groups while code and links keep their meaning", () => {
-  const select = jest.fn();
+  const select = vi.fn();
   const study = studyRunsById(timelineToUiMessages([alpha])).get(alpha.id);
   render(
     <StudyAnswer
@@ -124,7 +125,7 @@ test("unbound answers remain plain and missing IDs cannot resolve into another s
   const { rerender } = render(<StudyAnswer text="Unbound [a15]." />);
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
   expect(screen.getByText("Unbound [a15].")).toBeInTheDocument();
-  rerender(<StudyAnswer text="Unknown [a99]." study={study} onSelectArtifact={jest.fn()} />);
+  rerender(<StudyAnswer text="Unknown [a99]." study={study} onSelectArtifact={vi.fn()} />);
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
   expect(screen.getByTitle("Artifact a99 is not available in this study")).toHaveTextContent("[a99]");
 });
@@ -179,6 +180,7 @@ test("successive live requests retain their backend run IDs without changing ear
       },
     }));
     frames.push({ token: `Live ${request} result [` }, { token: "a15]." }, { done: true });
+    console.log(frames);
     let delivered = false;
     return {
       ok: true,

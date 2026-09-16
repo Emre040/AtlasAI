@@ -13,10 +13,11 @@ import {
 } from "./studyOperations";
 import { nodeTitle, studyStateFromEvents } from "./studyRunModel";
 import { traceForNode } from "./studyTraceModel";
+import {vi} from 'vitest';
 
-jest.mock("../api/auth", () => ({
-  authenticatedDownload: jest.fn(),
-  authenticatedFetch: jest.fn(),
+vi.mock("../api/auth", () => ({
+  authenticatedDownload: vi.fn(),
+  authenticatedFetch: vi.fn(),
 }));
 
 const event = (stage, data) => ({ stage, message: JSON.stringify(data) });
@@ -292,7 +293,7 @@ test("classification renders its ordered rules and zero default as structured va
         },
       }}
       state={recordedStudy()}
-      onSelect={jest.fn()}
+      onSelect={vi.fn()}
     />,
   );
   expect(
@@ -337,9 +338,9 @@ test("restoring and extending a run preserves node lineage and does not invent f
 
 test("the inspector exposes readable results and a navigable trace, with expandable source history", () => {
   const state = recordedStudy(),
-    onSelect = jest.fn();
+    onSelect = vi.fn();
   const original = HTMLElement.prototype.scrollTo;
-  HTMLElement.prototype.scrollTo = jest.fn();
+  HTMLElement.prototype.scrollTo = vi.fn();
   try {
     render(
       <Inspector

@@ -9,10 +9,11 @@ import {
 import "@testing-library/jest-dom";
 import { authenticatedDownload, authenticatedFetch } from "../api/auth";
 import StudyOutputs from "./StudyOutputs";
+import {vi} from 'vitest';
 
-jest.mock("../api/auth", () => ({
-  authenticatedDownload: jest.fn(),
-  authenticatedFetch: jest.fn(),
+vi.mock("../api/auth", () => ({
+  authenticatedDownload: vi.fn(),
+  authenticatedFetch: vi.fn(),
 }));
 const api = "http://localhost:8012";
 const workspace = "01a05ee1-978d-7038-92c0-a5caffb27a7a";
@@ -52,10 +53,10 @@ const originalObserver = global.ResizeObserver;
 const originalCreateUrl = URL.createObjectURL;
 const originalRevokeUrl = URL.revokeObjectURL;
 beforeEach(() => {
-  jest.clearAllMocks();
+  vi.clearAllMocks();
   imageNumber = 0;
-  URL.createObjectURL = jest.fn(() => `blob:figure-${imageNumber++}`);
-  URL.revokeObjectURL = jest.fn();
+  URL.createObjectURL = vi.fn(() => `blob:figure-${imageNumber++}`);
+  URL.revokeObjectURL = vi.fn();
   authenticatedFetch.mockImplementation(async () => imageResponse());
   authenticatedDownload.mockResolvedValue();
   global.ResizeObserver = class {

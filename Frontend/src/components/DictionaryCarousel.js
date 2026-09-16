@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, {useState, useRef, useCallback, useEffect, useMemo} from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faChevronLeft, faChevronRight, faExternalLinkAlt, faEye, faEyeSlash, faDownload, faChevronDown } from '@fortawesome/free-solid-svg-icons';
 import './DictionaryCarousel.css';
@@ -708,6 +708,9 @@ export default function DictionaryCarousel({ dictionaryImages }) {
   }, []);
 
   const buildTree = useCallback((annotations) => {
+    if (annotations === null) {
+      return [];
+    }
     const { tree, list } = normalizeAnnotations(annotations);
 
     // If we have a tree, use it
@@ -735,7 +738,10 @@ export default function DictionaryCarousel({ dictionaryImages }) {
     return [];
   }, [normalizeAnnotations]);
 
-  const annotationTree = buildTree(currentImage?.annotations);
+  const annotationTree = useMemo(
+    () => buildTree(currentImage?.annotations ?? null),
+    [currentImage?.annotations, buildTree]
+  );
 
   useEffect(() => {
     if (currentImage?.annotations) {
@@ -846,7 +852,7 @@ export default function DictionaryCarousel({ dictionaryImages }) {
               />
             ) : (
               <div className="HPAG-dict-not-renderable">
-         
+
                 <div className="HPAG-dict-not-renderable-title">
                   {currentImage.isMultiplex ? 'Multiplex Image' : 'Image Unavailable'}
                 </div>

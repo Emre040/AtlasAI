@@ -42,6 +42,7 @@ import { liveToolEventFromSse, timelineToUiMessages } from '../api/timeline';
 import DictionaryCarousel from './DictionaryCarousel';
 import Questionnaire from './Questionnaire';
 import ReaderPanel, { readerLiveNext } from './ReaderPanel';
+import {hpaIcon} from "../assets/icons/hpaIcon";
 
 const RUNTIME_CONFIG = getRuntimeConfig();
 const UI_CONFIG = getUiConfig();
@@ -392,7 +393,7 @@ function HPA() {
       // Parse the URL to determine the type
       let type = 'summary';
       let label = 'Summary';
-      let icon = faDna;
+      let icon = hpaIcon;
 
       // Check if it's an ENSG protein page (e.g., ENSG00000121410-A1BG)
       const ensgMatch = url.match(/ENSG\d+-([A-Z0-9]+)/);

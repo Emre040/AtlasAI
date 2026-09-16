@@ -168,10 +168,12 @@ export const extractHPAUrls = (text) => {
                 icon: faMagnifyingGlass
             };
         }
-
+        url = url.replace(/[\]).]+$/, '');
         // Parse the URL to determine the type
         let type = 'summary';
-        let label = 'Summary';
+        let u = new URL(url);
+        let label = u.pathname.split('/').at(-1)?.replace('+', ' ');
+        label = label.charAt(0).toUpperCase() + label.slice(1);
         let icon = hpaIcon;
 
         // Check if it's an ENSG protein page (e.g., ENSG00000121410-A1BG)

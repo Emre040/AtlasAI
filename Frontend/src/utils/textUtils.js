@@ -148,17 +148,7 @@ export const extractHPAUrls = (text) => {
     const matches = text.match(urlRegex) || [];
     const uniqueUrls = [...new Set(matches)];
 
-    // Filter out URLs with + EXCEPT for our known sub-pages
-    const knownSubPages = ['/single+cell', '/cell+line'];
-    const filteredUrls = uniqueUrls.filter(url => {
-        // If it has a +, only keep it if it's one of our known sub-pages
-        if (url.includes('+')) {
-            return knownSubPages.some(subPage => url.includes(subPage));
-        }
-        return true;
-    });
-
-    return filteredUrls.map(url => {
+    return uniqueUrls.map(url => {
         return makeLinkButtonFromUrl(url);
     });
 }
@@ -178,11 +168,11 @@ export function makeLinkButtonFromUrl(url) {
     let type = 'summary';
     let u = new URL(url);
     let label = u.pathname.split('/').at(-1)?.replace('+', ' ');
-    label = label.charAt(0).toUpperCase() + label.slice(1);
+    label = ucFirst(label);
     let icon = hpaIcon;
 
     // Check if it's an ENSG protein page (e.g., ENSG00000121410-A1BG)
-    let ensgMatch2;
+    let match;
     const ensgMatch = url.match(/ENSG\d+-([A-Z0-9]+)/);
     if (ensgMatch) {
         if (url.match(/ENSG\d+-([A-Z0-9]+)\/?$/)) {
@@ -225,11 +215,21 @@ export function makeLinkButtonFromUrl(url) {
             label = ensgMatch[1]+' Interaction';
             icon = faNetworkWired;
         }
-    } else if (ensgMatch2 = url.match(/(ENSG\d+)\.xml$/)) {
+    } else if (match = url.match(/(ENSG\d+)\.xml$/)) {
         type = 'xml';
-        label = ensgMatch2[1]+' XML';
+        label = match[1]+' XML';
         icon = faFileCode;
+    } else if (match = url.match(/\/learn\/dictionary\/([^/]+)\/(.+)/)) {
+        type = 'dictionary';
+        let dict = match[1];
+        if (dict === 'normal') {
+            dict = 'tissue';
+        }
+        label = ucFirst(dict) +' dictionary for '+ match[2].replace('+', ' ');
+        icon = faMicroscope;
     }
 
     return { url, type, label, icon };
 }
+
+export const ucFirst = (str) => str.charAt(0).toUpperCase() + str.slice(1);

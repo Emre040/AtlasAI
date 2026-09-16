@@ -2,6 +2,7 @@ import React, {useState, useRef, useCallback, useEffect, useMemo} from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faChevronLeft, faChevronRight, faExternalLinkAlt, faEye, faEyeSlash, faDownload, faChevronDown } from '@fortawesome/free-solid-svg-icons';
 import './DictionaryCarousel.css';
+import {fixupUrls} from "../utils/textUtils";
 
 const HPA_IMAGES_BASE = 'https://images.proteinatlas.org/dictionary_images';
 
@@ -577,6 +578,7 @@ export default function DictionaryCarousel({ dictionaryImages }) {
 
   const images = dictionaryImages?.images || [];
   const currentImage = images[currentIndex];
+  dictionaryImages.dictionary_url = fixupUrls(dictionaryImages.dictionary_url);
 
   const goToPrevious = () => setCurrentIndex(prev => (prev > 0 ? prev - 1 : images.length - 1));
   const goToNext = () => setCurrentIndex(prev => (prev < images.length - 1 ? prev + 1 : 0));

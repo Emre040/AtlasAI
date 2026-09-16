@@ -7,7 +7,7 @@ import {
   faBars,
   faThumbsUp,
   faThumbsDown,
-  faDna,
+  faMagnifyingGlass,
   faMicroscope,
   faVirus,
   faNetworkWired,
@@ -386,7 +386,7 @@ function HPA() {
           url,
           type: 'search',
           label: geneName,
-          icon: faDna
+          icon: faMagnifyingGlass
         };
       }
 

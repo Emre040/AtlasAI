@@ -7,15 +7,6 @@ import {
   faBars,
   faThumbsUp,
   faThumbsDown,
-  faMagnifyingGlass,
-  faMicroscope,
-  faVirus,
-  faNetworkWired,
-  faDroplet,
-  faFlask,
-  faCubes,
-  faBrain,
-  faFileCode,
   faChevronDown,
   faChevronRight,
   faSpinner,
@@ -26,7 +17,6 @@ import {
   faDownload
 } from '@fortawesome/free-solid-svg-icons';
 import {
-  authenticatedDownload,
   authenticatedFetch,
   getVisitorId,
   initializeHPAAuth
@@ -42,7 +32,24 @@ import { liveToolEventFromSse, timelineToUiMessages } from '../api/timeline';
 import DictionaryCarousel from './DictionaryCarousel';
 import Questionnaire from './Questionnaire';
 import ReaderPanel, { readerLiveNext } from './ReaderPanel';
-import {hpaIcon} from "../assets/icons/hpaIcon";
+import {
+  buildTitleFromText,
+  extractHPAUrls,
+  extractReplyContext,
+  formatRelativeTime,
+  getStepDisplayLabel,
+  linkifyInline,
+  stageMetaFor,
+  titleCase
+} from "../utils/textUtils";
+import {
+  buildConversationTitle,
+  downloadArtifact,
+  extractOptionsForEvent,
+  extractSelectionsForEvent,
+  groupMessagesIntoRuns
+} from "../utils/conversationUtils";
+import {THUMB_SECTIONS} from "../utils/constants";
 
 const RUNTIME_CONFIG = getRuntimeConfig();
 const UI_CONFIG = getUiConfig();
@@ -77,192 +84,6 @@ function HPA() {
   const apiBaseUrl = getApiBaseUrl();
   const isLocalEnv = RUNTIME_CONFIG.isLocal;
   const maxConversationTitleLength = UI_CONFIG.maxConversationTitleLength;
-
-  const REPLY_MARKER_NEW = /^⟪HPA▸GENE:(ENSG\d+):([^⟫]+)⟫\s*/;
-  const REPLY_MARKER_COMPAT = /^\[\[REPLY:(ENSG\d+):([^\]]+)\]\]\s*/;
-  const extractReplyContext = (t = '') => {
-    let match = t.match(REPLY_MARKER_NEW);
-    let regex = REPLY_MARKER_NEW;
-    if (!match) {
-      match = t.match(REPLY_MARKER_COMPAT);
-      regex = REPLY_MARKER_COMPAT;
-    }
-    if (match) {
-      return { ensg: match[1], geneName: match[2], textWithoutReply: t.replace(regex, '') };
-    }
-    return null;
-  };
-
-  // Title case: lowercase everything, then capitalize first letter of each word
-  const titleCase = (str = '') => str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
-
-  const cleanPreviewText = (text = '') => String(text || '').replace(/\s+/g, ' ').trim();
-
-  const stripReplyMarker = (text = '') => {
-    const cleaned = cleanPreviewText(text);
-    if (!cleaned) return '';
-    const extracted = extractReplyContext(cleaned);
-    return cleanPreviewText(extracted ? extracted.textWithoutReply : cleaned);
-  };
-
-  const truncateText = (text = '', maxLen = 50) => {
-    if (!text) return '';
-    if (text.length <= maxLen) return text;
-    if (maxLen <= 3) return text.slice(0, maxLen);
-    return `${text.slice(0, maxLen - 3)}...`;
-  };
-
-  const buildTitleFromText = (text = '') => {
-    const cleaned = cleanPreviewText(text);
-    if (!cleaned) return '';
-    return truncateText(cleaned, maxConversationTitleLength);
-  };
-
-  const getFirstUserMessageText = (conv) => {
-    const messages = Array.isArray(conv?.messages) ? conv.messages : [];
-    const firstUserMessage = messages.find(msg => msg?.type === 'user' && cleanPreviewText(msg.text));
-    if (!firstUserMessage) return '';
-    return stripReplyMarker(firstUserMessage.text);
-  };
-
-  const buildConversationTitle = (conv) => {
-    const explicitTitle = cleanPreviewText(conv?.title);
-    const hasCustomTitle = explicitTitle && explicitTitle.toLowerCase() !== 'new conversation';
-    if (hasCustomTitle) return truncateText(explicitTitle, maxConversationTitleLength);
-
-    const firstUserText = getFirstUserMessageText(conv);
-    if (firstUserText) return buildTitleFromText(firstUserText);
-
-    const previewText = stripReplyMarker(conv?.preview);
-    if (previewText) return buildTitleFromText(previewText);
-
-    return explicitTitle || 'New Conversation';
-  };
-
-  const TOOL_STAGE_META = {
-    start: { label: 'Start', css: 'start', description: 'Agent activated.' },
-    planning_step: { label: 'Plan', css: 'planning', description: 'Reading the schema.' },
-    reasoning_step: { label: 'Think', css: 'reasoning', description: 'Weighing the options.' },
-    selection_step: { label: 'Select', css: 'selection', description: 'Choice made.' },
-    execution_step: { label: 'Run', css: 'execution', description: 'Executing.' },
-    fallback: { label: 'Fallback', css: 'fallback', description: 'Trying backup.' },
-    error: { label: 'Error', css: 'error', description: 'Issue detected.' },
-    complete: { label: 'Done', css: 'complete', description: 'Complete.' },
-    not_found: { label: 'Not found', css: 'fallback', description: 'No answer in the data.' },
-    info: { label: 'Info', css: 'info', description: 'Status update.' }
-  };
-
-  const stageMetaFor = (event = {}) => {
-    if (!event) return TOOL_STAGE_META.info;
-    if (event.status === 'started') return TOOL_STAGE_META.start;
-    if (event.status === 'completed') return TOOL_STAGE_META.complete;
-    const key = (event.stage || '').toLowerCase();
-    return TOOL_STAGE_META[key] || TOOL_STAGE_META.info;
-  };
-
-  // Compute the display label for a tool event (shared by shimmer + timeline)
-  const getStepDisplayLabel = (evt) => {
-    if (!evt) return 'Update';
-    const meta = stageMetaFor(evt);
-    return titleCase(evt.label || meta?.label || 'Update');
-  };
-
-  const linkifyInline = (text = '') => {
-    if (!text) return '';
-    const regex = /(https?:\/\/[^\s)]+)/gi;
-    const segments = [];
-    let lastIndex = 0;
-    let match;
-    let key = 0;
-
-    while ((match = regex.exec(text)) !== null) {
-      if (match.index > lastIndex) {
-        segments.push(<span key={`text-${key++}`}>{text.slice(lastIndex, match.index)}</span>);
-      }
-      const rawUrl = match[1];
-      const url = rawUrl.replace(/[),.;]+$/, '');
-      segments.push(
-        <a key={`url-${key++}`} href={url} target="_blank" rel="noopener noreferrer" className="HPAG-tool-inline-link">
-          {url}
-        </a>
-      );
-      lastIndex = match.index + rawUrl.length;
-    }
-
-    if (lastIndex < text.length) {
-      segments.push(<span key={`text-${key++}`}>{text.slice(lastIndex)}</span>);
-    }
-
-    return segments.length ? segments : text;
-  };
-
-  const extractOptionsForEvent = (event) => {
-    if (!event || !event.message) return [];
-    const label = (event.label || '').toLowerCase();
-    const shouldParse = /\boptions\b/i.test(label);
-    if (!shouldParse) return [];
-    const parts = event.message
-      .split(/[,;]/)
-      .map(s => s.trim())
-      .filter(Boolean);
-    if (parts.length < 2) return [];
-    return parts;
-  };
-
-  const extractSelectionsForEvent = (event) => {
-    if (!event || !event.message) return [];
-    const stage = (event.stage || '').toLowerCase();
-    if (stage !== 'selection_step') return [];
-    // Don't split URLs or long paths
-    if (event.message.includes('http') || event.message.includes('→')) return [];
-    const parts = event.message
-      .split(/,/)
-      .map(s => s.trim())
-      .filter(Boolean);
-    return parts;
-  };
-
-  const groupMessagesIntoRuns = (messages) => {
-    const groups = [];
-    let currentRun = null;
-
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
-      const toolEvent = msg.type === 'tool' ? (msg.toolEvent) : null;
-
-      if (msg.type === 'tool' && toolEvent?.runId) {
-        // This is part of a tool run
-        if (!currentRun || currentRun.runId !== toolEvent.runId) {
-          // Start a new run
-          if (currentRun) groups.push(currentRun);
-          currentRun = {
-            type: 'run',
-            runId: toolEvent.runId,
-            messages: [msg],
-            startTime: Date.now(),
-            isComplete: toolEvent.status === 'completed'
-          };
-        } else {
-          // Add to existing run
-          currentRun.messages.push(msg);
-          if (toolEvent.status === 'completed') {
-            currentRun.isComplete = true;
-          }
-        }
-      } else {
-        // Not part of a tool run
-        if (currentRun) {
-          groups.push(currentRun);
-          currentRun = null;
-        }
-        groups.push({ type: 'message', message: msg, index: i });
-      }
-    }
-
-    if (currentRun) groups.push(currentRun);
-
-    return groups;
-  };
 
   // Artifact preview popover handlers
   const handleArtifactChipEnter = async (e, chip, workspaceUuid) => {
@@ -310,18 +131,6 @@ function HPA() {
     setArtifactPreview(prev => prev ? { ...prev, showRaw: !prev.showRaw } : null);
   };
 
-  const downloadArtifact = async (preview) => {
-    const filename = `${preview.artifactId}.${preview.format}`;
-    try {
-      await authenticatedDownload(
-        `${apiBaseUrl}/workspaces/${preview.workspaceUuid}/artifacts/${filename}`,
-        filename
-      );
-    } catch (error) {
-      console.error('[FE] Artifact download failed:', error.message);
-    }
-  };
-
   const renderArtifactTable = (json) => {
     let rows = [];
     if (Array.isArray(json)) { rows = json; }
@@ -361,129 +170,6 @@ function HPA() {
       ...prev,
       [runId]: prev[runId] === false ? true : false
     }));
-  };
-
-  // Extract HPA URLs from message text
-  const extractHPAUrls = (text) => {
-    const urlRegex = /https?:\/\/www\.proteinatlas\.org\/[^\s)]+/g;
-    const matches = text.match(urlRegex) || [];
-    const uniqueUrls = [...new Set(matches)];
-
-    // Filter out URLs with + EXCEPT for our known sub-pages
-    const knownSubPages = ['/single+cell', '/cell+line'];
-    const filteredUrls = uniqueUrls.filter(url => {
-      // If it has a +, only keep it if it's one of our known sub-pages
-      if (url.includes('+')) {
-        return knownSubPages.some(subPage => url.includes(subPage));
-      }
-      return true;
-    });
-
-    return filteredUrls.map(url => {
-      if (url.includes('/search/')) {
-        const geneName = url.split('/search/')[1]?.split(/[?&#]/)[0] || 'Search';
-        return {
-          url,
-          type: 'search',
-          label: geneName,
-          icon: faMagnifyingGlass
-        };
-      }
-
-      // Parse the URL to determine the type
-      let type = 'summary';
-      let label = 'Summary';
-      let icon = hpaIcon;
-
-      // Check if it's an ENSG protein page (e.g., ENSG00000121410-A1BG)
-      const ensgMatch = url.match(/ENSG\d+-([A-Z0-9]+)/);
-      if (ensgMatch && !url.includes('/tissue') && !url.includes('/brain') && !url.includes('/single+cell') &&
-          !url.includes('/subcellular') && !url.includes('/cancer') && !url.includes('/blood') &&
-          !url.includes('/cell+line') && !url.includes('/structure') && !url.includes('/interaction')) {
-        // It's a base protein page, use the gene name
-        label = ensgMatch[1];
-      }
-
-      if (url.includes('/tissue')) {
-        type = 'tissue';
-        label = 'Tissue';
-        icon = faMicroscope;
-      } else if (url.includes('/brain')) {
-        type = 'brain';
-        label = 'Brain';
-        icon = faBrain;
-      } else if (url.includes('/single+cell')) {
-        type = 'single_cell';
-        label = 'Single Cell';
-        icon = faVirus;
-      } else if (url.includes('/subcellular')) {
-        type = 'subcellular';
-        label = 'Subcellular';
-        icon = faCubes;
-      } else if (url.includes('/cancer')) {
-        type = 'cancer';
-        label = 'Cancer';
-        icon = faVirus;
-      } else if (url.includes('/blood')) {
-        type = 'blood';
-        label = 'Blood';
-        icon = faDroplet;
-      } else if (url.includes('/cell+line')) {
-        type = 'cell_line';
-        label = 'Cell Line';
-        icon = faFlask;
-      } else if (url.includes('/structure')) {
-        type = 'structure';
-        label = 'Structure';
-        icon = faNetworkWired;
-      } else if (url.includes('/interaction')) {
-        type = 'interaction';
-        label = 'Interaction';
-        icon = faNetworkWired;
-      } else if (url.endsWith('.xml')) {
-        type = 'xml';
-        label = 'XML';
-        icon = faFileCode;
-      }
-
-      return { url, type, label, icon };
-    });
-  };
-
-  // Format date to human-readable relative time
-  const formatRelativeTime = (dateString) => {
-    if (!dateString) return 'Just now';
-
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffSecs = Math.floor(diffMs / 1000);
-    const diffMins = Math.floor(diffSecs / 60);
-    const diffHours = Math.floor(diffMins / 60);
-    const diffDays = Math.floor(diffHours / 24);
-
-    if (diffSecs < 60) return 'Just now';
-    if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
-    if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
-
-    // Check if yesterday
-    const yesterday = new Date(now);
-    yesterday.setDate(yesterday.getDate() - 1);
-    if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
-
-    // Check if this week (within last 7 days)
-    if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
-
-    // Check if last week (7-14 days ago)
-    if (diffDays < 14) return 'Last week';
-
-    // Check if this month
-    if (date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear()) {
-      return 'This month';
-    }
-
-    // Otherwise show date
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
   // Fetch HPA search results for a given URL
@@ -581,18 +267,6 @@ function HPA() {
       }));
     }
   };
-
-  const THUMB_SECTIONS = [
-    { key: 'tissue', label: 'Tissue', color: '#0083C4' },
-    { key: 'brain', label: 'Brain', color: '#ffdd00' },
-    { key: 'single_cell', label: 'Single cell', color: '#6aa692' },
-    { key: 'subcellular', label: 'Subcell', color: '#97cf16' },
-    { key: 'cancer', label: 'Cancer', color: '#ffaabf' },
-    { key: 'blood', label: 'Blood', color: '#cf161a' },
-    { key: 'cell_line', label: 'Cell line', color: '#ffa500' },
-    { key: 'structure', label: 'Structure', color: '#69008c' },
-    { key: 'interaction', label: 'Interaction', color: '#c89c79' }
-  ];
 
   // Render search results: the first rows with their thumbnails, and a link to the rest on HPA.
   const SearchResultsView = ({ searchUrl }) => {
@@ -1153,7 +827,7 @@ function HPA() {
               aria-current={selectedConversation === conv.id ? 'page' : undefined}
               onClick={() => { setSelectedConversation(conv.id); setHistoryOpen(false); }}
             >
-              <div className="HPAG-conversation-title">{buildConversationTitle(conv)}</div>
+              <div className="HPAG-conversation-title">{buildConversationTitle(conv, maxConversationTitleLength)}</div>
               <div className="HPAG-conversation-date">{formatRelativeTime(conv.created_at || conv.date)}</div>
             </button>
           ))}
@@ -1545,7 +1219,7 @@ function HPA() {
               )}
               <button
                 type="button"
-                onClick={() => downloadArtifact(artifactPreview)}
+                onClick={() => downloadArtifact(artifactPreview, apiBaseUrl)}
                 className="HPAG-artifact-popover-download"
                 title="Download artifact"
               >

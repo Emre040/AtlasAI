@@ -44,6 +44,7 @@ import Questionnaire from './Questionnaire';
 import ReaderPanel, { readerLiveNext } from './ReaderPanel';
 import {hpaIcon} from "../assets/icons/hpaIcon";
 import {InputArea} from "./InputArea";
+import {ReplyBar} from "./ReplyBar";
 
 const RUNTIME_CONFIG = getRuntimeConfig();
 const UI_CONFIG = getUiConfig();
@@ -1493,15 +1494,7 @@ function HPA() {
         </div>
 
         {replyTo && (
-          <div className="HPAG-reply-bar">
-            <FontAwesomeIcon icon={faReply} className="HPAG-reply-bar-icon" />
-            <span className="HPAG-reply-bar-text">
-              Asking about <strong>{replyTo.geneName}</strong> <span className="HPAG-reply-bar-ensg">{replyTo.ensg}</span>
-            </span>
-            <button className="HPAG-reply-bar-close" onClick={() => setReplyTo(null)} title="Remove">
-              <FontAwesomeIcon icon={faTimes} />
-            </button>
-          </div>
+            <ReplyBar replyTo={replyTo} setReplyTo={setReplyTo} />
         )}
         <InputArea
             inputRef={inputRef}

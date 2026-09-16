@@ -1,22 +1,22 @@
-const apiBaseValue = process.env.REACT_APP_HPA_API_BASE?.trim();
+const apiBaseValue = import.meta.env.VITE_HPA_API_BASE?.trim();
 if (!apiBaseValue) {
-  throw new Error('REACT_APP_HPA_API_BASE is required.');
+  throw new Error('VITE_HPA_API_BASE is required.');
 }
 
 let apiUrl;
 try {
   apiUrl = new URL(apiBaseValue);
 } catch {
-  throw new Error('REACT_APP_HPA_API_BASE must be a valid URL origin.');
+  throw new Error('VITE_HPA_API_BASE must be a valid URL origin.');
 }
 if (apiUrl.origin !== apiBaseValue || apiUrl.username || apiUrl.password) {
-  throw new Error('REACT_APP_HPA_API_BASE must be an origin without credentials, path, query, or fragment.');
+  throw new Error('VITE_HPA_API_BASE must be an origin without credentials, path, query, or fragment.');
 }
 
 const localHostnames = new Set(['localhost', '127.0.0.1', '[::1]']);
 const isLocal = localHostnames.has(apiUrl.hostname);
 if (!isLocal && apiUrl.protocol !== 'https:') {
-  throw new Error('REACT_APP_HPA_API_BASE must use HTTPS outside localhost.');
+  throw new Error('VITE_HPA_API_BASE must use HTTPS outside localhost.');
 }
 
 const hpaConfig = Object.freeze({
@@ -28,10 +28,10 @@ const hpaConfig = Object.freeze({
       authSession: '/auth/session',
       authRefresh: '/auth/refresh',
       authLogout: '/auth/logout',
-      query: '/query',                            
-      createConversation: '/conversations',      
-      listConversations: '/conversations',        
-      getMessages: '/conversations/messages',      
+      query: '/query',
+      createConversation: '/conversations',
+      listConversations: '/conversations',
+      getMessages: '/conversations/messages',
       queryStream: '/query/stream',
       models: '/models',
       providerKeys: '/keys',

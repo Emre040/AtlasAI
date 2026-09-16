@@ -158,12 +158,12 @@ recorded with its cost in `inference_calls`.
 ```bash
 cd Frontend
 npm install
-REACT_APP_HPA_API_BASE=http://localhost:9000 npm start   # any origin; HTTPS required off localhost
+VITE_HPA_API_BASE=http://localhost:9000 npm start   # any origin; HTTPS required off localhost
 ```
 
 ## Production
 
-- Frontend: Vercel builds `Frontend/` on every push to `main` (`REACT_APP_HPA_API_BASE` is a Vercel build variable).
+- Frontend: Vercel builds `Frontend/` on every push to `main` (`VITE_HPA_API_BASE` is a Vercel build variable).
 - Backend: PM2 app `atlas-api` behind `https://p9000.greenaurem.org`.
 - Releases: a push touching `Backend/**` runs the tests in GitHub Actions and posts the commit to
   `POST /deploy/github` on the API; `Backend/deploy/production/deploy.sh` checks the exact commit

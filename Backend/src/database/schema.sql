@@ -1099,17 +1099,18 @@ INSERT INTO `atlasai`.`inference_models` (
   `default_output_tokens`,
   `input_price_microusd_per_million_tokens`,
   `output_price_microusd_per_million_tokens`,
+  `price_verified_unix_ms`,
   `catalog_verified_unix_ms`,
   `created_unix_ms`,
   `updated_unix_ms`
 ) VALUES
-  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'groq'),      'groq-gpt-oss-120b',       'openai/gpt-oss-120b',              'Groq GPT-OSS 120B',    'inactive', 1, 1, 1, 1, 0, 1, 131072,  65536, 8192,  150000,   600000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
-  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'groq'),      'groq-gpt-oss-20b',        'openai/gpt-oss-20b',               'Groq GPT-OSS 20B',     'inactive', 1, 1, 1, 1, 0, 1, 131072,  65536, 8192,   75000,   300000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
-  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'groq'),      'groq-qwen-3.6-27b',       'qwen/qwen3.6-27b',                 'Qwen 3.6 27B (Preview)','inactive', 1, 1, 1, 1, 1, 1, 131072,  16384, 8192,  600000,  3000000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
-  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'groq'),      'groq-qwen-3.8-27b',       'qwen/qwen3.8-27b',                 'Qwen 3.8 27B (Preview)','inactive', 1, 1, 1, 1, 1, 1, 131042,  16384, 8192,  800000,  4000000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
-  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic'), 'anthropic-claude-opus-5',  'claude-opus-5',                      'Claude Opus 5',         'inactive', 1, 1, 1, 1, 1, 1, 1000000, 128000, 8192, 5000000, 25000000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
-  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic'), 'anthropic-claude-sonnet-5','claude-sonnet-5',                    'Claude Sonnet 5',       'inactive', 1, 1, 1, 1, 1, 1, 1000000, 128000, 8192, 2000000, 10000000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
-  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic'), 'anthropic-claude-haiku-4-5','claude-haiku-4-5-20251001',          'Claude Haiku 4.5',      'inactive', 1, 1, 1, 1, 1, 1,  200000,  64000, 8192, 1000000,  5000000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms);
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'groq'),      'groq-gpt-oss-120b',       'openai/gpt-oss-120b',              'Groq GPT-OSS 120B',    'inactive', 1, 1, 1, 1, 0, 1, 131072,  65536, 8192,  150000,   600000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'groq'),      'groq-gpt-oss-20b',        'openai/gpt-oss-20b',               'Groq GPT-OSS 20B',     'inactive', 1, 1, 1, 1, 0, 1, 131072,  65536, 8192,   75000,   300000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'groq'),      'groq-qwen-3.6-27b',       'qwen/qwen3.6-27b',                 'Qwen 3.6 27B (Preview)','inactive', 1, 1, 1, 1, 1, 1, 131072,  16384, 8192,  600000,  3000000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'groq'),      'groq-qwen-3.8-27b',       'qwen/qwen3.8-27b',                 'Qwen 3.8 27B (Preview)','inactive', 1, 1, 1, 1, 1, 1, 131042,  16384, 8192,  800000,  4000000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic'), 'anthropic-claude-opus-5',  'claude-opus-5',                      'Claude Opus 5',         'inactive', 1, 1, 1, 1, 1, 1, 1000000, 128000, 8192, 5000000, 25000000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic'), 'anthropic-claude-sonnet-5','claude-sonnet-5',                    'Claude Sonnet 5',       'inactive', 1, 1, 1, 1, 1, 1, 1000000, 128000, 8192, 2000000, 10000000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic'), 'anthropic-claude-haiku-4-5','claude-haiku-4-5-20251001',          'Claude Haiku 4.5',      'inactive', 1, 1, 1, 1, 1, 1,  200000,  64000, 8192, 1000000,  5000000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms);
 
 -- Open-weight models served through Alibaba Model Studio (international endpoint) and
 -- DeepSeek's own API. Model IDs were taken from each provider's live /models listing on

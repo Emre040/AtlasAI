@@ -48,8 +48,9 @@ function requireOrigins(name, nodeEnv) {
     if (url.origin !== value || url.username || url.password) {
       throw new Error(`${name} entries must be origins without paths, credentials, query strings, or fragments.`);
     }
-    if (nodeEnv === 'production' && url.protocol !== 'https:') {
-      throw new Error(`${name} must use HTTPS in production.`);
+    const loopback = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(url.hostname);
+    if (nodeEnv === 'production' && url.protocol !== 'https:' && !loopback) {
+      throw new Error(`${name} must use HTTPS in production outside loopback.`);
     }
     return url.origin;
   });

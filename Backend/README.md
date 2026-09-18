@@ -29,7 +29,6 @@ Backend/
 │       ├── aso/                 # study workspaces, artifacts, operations, provenance, chart rendering
 │       ├── deployment/          # authenticated release queue
 │       └── orchestrator.js      # application tool dispatch
-├── data/                        # bundled reference data (hpm_summaries.json)
 ├── deploy/
 │   ├── cloudflare/              # optional enriched-metadata Worker
 │   ├── pm2/                     # removable single-process PM2 definition

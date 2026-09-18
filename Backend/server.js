@@ -35,7 +35,6 @@ const { createRouter: createBatchRouter } = require('./src/http/routes/batch');
 const { createRouter: createConversationsRouter } = require('./src/http/routes/conversations');
 const { createRouter: createDeployRouter } = require('./src/http/routes/deploy');
 const { createRouter: createHpaProxyRouter } = require('./src/http/routes/hpaProxy');
-const { createRouter: createHpmRouter } = require('./src/http/routes/hpmSummaries');
 const { createRouter: createModelsRouter } = require('./src/http/routes/models');
 const { createRouter: createProviderKeysRouter } = require('./src/http/routes/providerKeys');
 const { createRouter: createQueryRouter } = require('./src/http/routes/query');
@@ -131,7 +130,6 @@ async function bootstrap() {
   }));
   app.use('/workspaces', requireAuthentication, requireCsrf, createWorkspaceRouter({ workspaces }));
   app.use('/hpa-proxy', requireAuthentication, requireCsrf, createHpaProxyRouter());
-  app.use('/hpm', requireAuthentication, requireCsrf, createHpmRouter({ filePath: runtime.hpmSummariesPath }));
 
   app.use((req, res) => res.status(404).json({ error: 'not_found' }));
   app.use(errorHandler);

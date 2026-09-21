@@ -1035,6 +1035,34 @@ INSERT INTO `atlasai`.`inference_providers` (
     @atlasai_seed_unix_ms,
     @atlasai_seed_unix_ms
   ),
+  -- Claude and Gemini reached through a Google Cloud project instead of a vendor API key. Requests
+  -- are signed with Google Application Default Credentials, so credential_env_key names the service
+  -- account file rather than a key and the gateway does not require it to be set; on a Google VM
+  -- the metadata server supplies the credentials instead. The location lives in the API base URL:
+  -- 'aiplatform.googleapis.com' is the global endpoint, 'aiplatform.eu.rep.googleapis.com' is the
+  -- EU multi-region, and a single region looks like 'europe-west1-aiplatform.googleapis.com'.
+  -- Both providers are enabled but hold no active model, so nothing reaches Google until one of
+  -- their models is made active. Set GOOGLE_CLOUD_PROJECT first.
+  (
+    'anthropic-vertex',
+    'Anthropic on Google Vertex AI',
+    'anthropic_vertex',
+    'https://aiplatform.googleapis.com',
+    'GOOGLE_APPLICATION_CREDENTIALS',
+    'enabled',
+    @atlasai_seed_unix_ms,
+    @atlasai_seed_unix_ms
+  ),
+  (
+    'gemini-vertex',
+    'Google Gemini on Vertex AI',
+    'gemini_vertex',
+    'https://aiplatform.googleapis.com',
+    'GOOGLE_APPLICATION_CREDENTIALS',
+    'enabled',
+    @atlasai_seed_unix_ms,
+    @atlasai_seed_unix_ms
+  ),
   (
     'alibaba',
     'Alibaba Model Studio (DashScope intl)',
@@ -1111,6 +1139,51 @@ INSERT INTO `atlasai`.`inference_models` (
   ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic'), 'anthropic-claude-opus-5',  'claude-opus-5',                      'Claude Opus 5',         'inactive', 1, 1, 1, 1, 1, 1, 1000000, 128000, 8192, 5000000, 25000000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
   ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic'), 'anthropic-claude-sonnet-5','claude-sonnet-5',                    'Claude Sonnet 5',       'inactive', 1, 1, 1, 1, 1, 1, 1000000, 128000, 8192, 2000000, 10000000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
   ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic'), 'anthropic-claude-haiku-4-5','claude-haiku-4-5-20251001',          'Claude Haiku 4.5',      'inactive', 1, 1, 1, 1, 1, 1,  200000,  64000, 8192, 1000000,  5000000, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms);
+
+-- The same models reached through a Google Cloud project instead. Vertex model ids are not always
+-- the first-party ids: a dated snapshot separates the date with '@'. Prices are left unset because
+-- Vertex is billed by Google at its own rates
+-- (https://cloud.google.com/vertex-ai/generative-ai/pricing); fill them in per installation.
+INSERT INTO `atlasai`.`inference_models` (
+  `provider_id`,
+  `config_key`,
+  `model_id`,
+  `display_name`,
+  `status`,
+  `supports_streaming`,
+  `supports_tools`,
+  `supports_json_mode`,
+  `supports_tool_role_messages`,
+  `supports_vision`,
+  `supports_reasoning`,
+  `reasoning_effort`,
+  `max_context_tokens`,
+  `max_output_tokens`,
+  `default_output_tokens`,
+  `catalog_verified_unix_ms`,
+  `created_unix_ms`,
+  `updated_unix_ms`
+) VALUES
+  -- Model ids and context windows are the ones published for Agent Platform at
+  -- https://platform.claude.com/docs/en/build-with-claude/claude-on-vertex-ai (read 2026-09-22).
+  -- A dated snapshot separates its date with '@'; the newer models are plain aliases. Deprecated
+  -- models (Opus 4.1, Opus 4, Sonnet 4, Haiku 3.5) are deliberately left out.
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic-vertex'), 'vertex-claude-fable-5-1', 'claude-fable-5-1',          'Claude Fable 5.1 (Vertex)', 'inactive', 1, 1, 1, 1, 1, 1, NULL,  1000000, 128000, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic-vertex'), 'vertex-claude-opus-5',    'claude-opus-5',             'Claude Opus 5 (Vertex)',    'inactive', 1, 1, 1, 1, 1, 1, NULL,  1000000, 128000, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic-vertex'), 'vertex-claude-opus-4-8',  'claude-opus-4-8',           'Claude Opus 4.8 (Vertex)',  'inactive', 1, 1, 1, 1, 1, 1, NULL,  1000000, 128000, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic-vertex'), 'vertex-claude-opus-4-7',  'claude-opus-4-7',           'Claude Opus 4.7 (Vertex)',  'inactive', 1, 1, 1, 1, 1, 1, NULL,  1000000, 128000, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic-vertex'), 'vertex-claude-opus-4-6',  'claude-opus-4-6',           'Claude Opus 4.6 (Vertex)',  'inactive', 1, 1, 1, 1, 1, 1, NULL,  1000000, 128000, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic-vertex'), 'vertex-claude-sonnet-5',  'claude-sonnet-5',           'Claude Sonnet 5 (Vertex)',  'inactive', 1, 1, 1, 1, 1, 1, NULL,  1000000, 128000, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic-vertex'), 'vertex-claude-sonnet-4-6','claude-sonnet-4-6',         'Claude Sonnet 4.6 (Vertex)','inactive', 1, 1, 1, 1, 1, 1, NULL,  1000000, 128000, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic-vertex'), 'vertex-claude-opus-4-5',  'claude-opus-4-5@20251101',  'Claude Opus 4.5 (Vertex)',  'inactive', 1, 1, 1, 1, 1, 1, NULL,   200000,  64000, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic-vertex'), 'vertex-claude-sonnet-4-5','claude-sonnet-4-5@20250929','Claude Sonnet 4.5 (Vertex)','inactive', 1, 1, 1, 1, 1, 1, NULL,   200000,  64000, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'anthropic-vertex'), 'vertex-claude-haiku-4-5', 'claude-haiku-4-5@20251001', 'Claude Haiku 4.5 (Vertex)', 'inactive', 1, 1, 1, 1, 1, 1, NULL,   200000,  64000, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  -- Gemini through the same Google Cloud project. Low thinking throughout, matching the Gemini
+  -- rows on the AI Studio provider.
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'gemini-vertex'),    'vertex-gemini-3.8-flash',     'gemini-3.8-flash',      'Gemini 3.8 Flash (Vertex)',     'inactive', 1, 1, 1, 0, 1, 1, 'low', 1000000, 65536, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'gemini-vertex'),    'vertex-gemini-3.7-flash',     'gemini-3.7-flash',      'Gemini 3.7 Flash (Vertex)',     'inactive', 1, 1, 1, 0, 1, 1, 'low', 1000000, 65536, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'gemini-vertex'),    'vertex-gemini-3.6-flash',     'gemini-3.6-flash',      'Gemini 3.6 Flash (Vertex)',     'inactive', 1, 1, 1, 0, 1, 1, 'low', 1000000, 65536, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms),
+  ((SELECT `id` FROM `atlasai`.`inference_providers` WHERE `provider_key` = 'gemini-vertex'),    'vertex-gemini-3.5-flash-lite','gemini-3.5-flash-lite', 'Gemini 3.5 Flash-Lite (Vertex)','inactive', 1, 1, 1, 0, 1, 1, 'low', 1000000, 65536, 8192, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms, @atlasai_seed_unix_ms);
 
 -- Open-weight models served through Alibaba Model Studio (international endpoint) and
 -- DeepSeek's own API. Model IDs were taken from each provider's live /models listing on

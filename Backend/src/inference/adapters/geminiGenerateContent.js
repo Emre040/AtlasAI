@@ -276,8 +276,7 @@ function buildRequest(request, model) {
 
 class GeminiGenerateContentAdapter {
   constructor({ apiKey, baseURL, timeout, maxRetries, fetchImpl } = {}) {
-    if (!apiKey) throw new Error('Gemini adapter requires an API key.');
-    this.apiKey = apiKey;
+    this.apiKey = apiKey || null;
     this.baseURL = String(baseURL || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
     this.timeout = Number(timeout) > 0 ? Number(timeout) : 120_000;
     this.maxRetries = Number.isInteger(maxRetries) && maxRetries >= 0 ? maxRetries : 2;
@@ -286,8 +285,24 @@ class GeminiGenerateContentAdapter {
     this.uncacheable = new Set();
   }
 
+  // The three seams the Vertex adapter replaces: same request bodies and the same conversions,
+  // but a Google OAuth token, a project-scoped URL, and a fully qualified model reference.
+  async authHeaders() {
+    if (!this.apiKey) throw new Error('Gemini adapter requires an API key.');
+    return { 'x-goog-api-key': this.apiKey };
+  }
+
+  async endpoint(pathname, stream) {
+    return `${this.baseURL}/v1beta/${pathname}${stream ? '?alt=sse' : ''}`;
+  }
+
+  async cacheModelRef(modelId) {
+    return `models/${modelId}`;
+  }
+
   async request(method, pathname, body, { stream = false } = {}) {
-    const url = `${this.baseURL}/v1beta/${pathname}${stream ? '?alt=sse' : ''}`;
+    const url = await this.endpoint(pathname, stream);
+    const auth = await this.authHeaders();
     let attempt = 0;
     for (;;) {
       const controller = new AbortController();
@@ -296,7 +311,7 @@ class GeminiGenerateContentAdapter {
       try {
         response = await this.fetch(url, {
           method,
-          headers: { 'x-goog-api-key': this.apiKey, 'content-type': 'application/json' },
+          headers: { ...auth, 'content-type': 'application/json' },
           body: body === undefined ? undefined : JSON.stringify(body),
           signal: controller.signal
         });
@@ -333,7 +348,7 @@ class GeminiGenerateContentAdapter {
     const ttl = Number(options?.ttl_seconds) > 0 ? Number(options.ttl_seconds) : DEFAULT_CACHE_TTL_SECONDS;
     try {
       const created = await this.request('POST', 'cachedContents', {
-        model: `models/${model.modelId}`,
+        model: await this.cacheModelRef(model.modelId),
         displayName: `atlasai ${String(options?.key || 'prefix').slice(0, 60)}`,
         ...(built.system ? { systemInstruction: { parts: [{ text: built.system }] } } : {}),
         ...(built.tools ? { tools: built.tools } : {}),

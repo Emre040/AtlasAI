@@ -2,7 +2,7 @@
 
 const crypto = require('node:crypto');
 const { AsyncLocalStorage } = require('node:async_hooks');
-const { createInferenceAdapter, isSupportedAdapter } = require('./adapters');
+const { createInferenceAdapter, isSupportedAdapter, adapterNeedsPlatformCredential } = require('./adapters');
 const { InferenceCallRepository } = require('../database/repositories/inferenceCalls');
 
 const MODEL_SELECT = `
@@ -98,8 +98,10 @@ function isPrivateHost(hostname) {
   return a === 10 || a === 127 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 100 && b >= 64 && b <= 127);
 }
 
-// The platform's own key for a model's provider, from the environment.
+// The platform's own key for a model's provider, from the environment. Vertex AI providers sign
+// their own requests with Google Application Default Credentials and have no key to read.
 function platformCredential(model) {
+  if (!adapterNeedsPlatformCredential(model.adapterKey)) return '';
   const apiKey = process.env[model.credentialEnvKey];
   if (!apiKey) {
     throw new Error(`Missing credential required by provider '${model.providerKey}': ${model.credentialEnvKey}.`);

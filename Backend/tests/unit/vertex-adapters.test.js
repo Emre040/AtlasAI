@@ -6,6 +6,7 @@ const { regionFromBaseUrl, VertexCredentials } = require('../../src/inference/ad
 const { GeminiVertexAdapter } = require('../../src/inference/adapters/geminiVertex');
 const { AnthropicVertexAdapter } = require('../../src/inference/adapters/anthropicVertex');
 const { createInferenceAdapter, isSupportedAdapter, adapterNeedsPlatformCredential } = require('../../src/inference/adapters');
+const { InferenceGateway } = require('../../src/inference/gateway');
 
 const model = Object.freeze({ configKey: 'vertex-gemini-3.8-flash', modelId: 'gemini-3.8-flash', defaultOutputTokens: 4096, reasoningEffort: 'low' });
 
@@ -137,4 +138,20 @@ test('a project must be configured or discoverable, and the error says which var
   const credentials = new VertexCredentials({ auth: { getProjectId: async () => null, getClient: async () => ({}) } });
   credentials.configuredProject = null;
   await assert.rejects(() => credentials.project(), /GOOGLE_CLOUD_PROJECT/);
+});
+
+test('a Vertex model binds with no API key, and a key-based model still requires one', () => {
+  const gateway = new InferenceGateway(null);
+  const vertex = { ...model, adapterKey: 'gemini_vertex' };
+  const studio = { ...model, configKey: 'gemini-3.8-flash', adapterKey: 'gemini_generate_content' };
+  const bind = (m, apiKey) => gateway.runWithBinding(
+    { model: m, apiKey, credentialSource: 'platform', modelSelection: 'auto' },
+    () => gateway.getBinding().model.adapterKey
+  );
+
+  // This is the shape platformCredential() hands back for a self-authenticating adapter.
+  assert.equal(bind(vertex, ''), 'gemini_vertex');
+  assert.equal(bind(studio, 'AIza-test'), 'gemini_generate_content');
+  assert.throws(() => bind(studio, ''), /requires an API key/);
+  assert.throws(() => bind(vertex, undefined), /requires an API key/);
 });

@@ -257,7 +257,12 @@ function providerRequestId(value) {
 // a batch query, a manual script).
 function validateBinding(binding) {
   if (!binding || typeof binding !== 'object' || !binding.model) throw new TypeError('A model binding requires a model.');
-  if (typeof binding.apiKey !== 'string' || binding.apiKey.length === 0) throw new TypeError('A model binding requires an API key.');
+  if (typeof binding.apiKey !== 'string') throw new TypeError('A model binding requires an API key.');
+  // A Vertex adapter signs its own requests with a Google access token, so it binds with an empty
+  // key. Every adapter that authenticates with a key still has to carry one.
+  if (binding.apiKey.length === 0 && adapterNeedsPlatformCredential(binding.model.adapterKey)) {
+    throw new TypeError('A model binding requires an API key.');
+  }
   if (!CREDENTIAL_SOURCES.has(binding.credentialSource)) throw new TypeError(`Unknown credential source '${binding.credentialSource}'.`);
   if (!MODEL_SELECTIONS.has(binding.modelSelection)) throw new TypeError(`Unknown model selection '${binding.modelSelection}'.`);
   return Object.freeze({ ...binding });

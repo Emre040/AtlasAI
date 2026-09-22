@@ -121,9 +121,10 @@ npm test
 Expected output ends with `# tests 245`, `# pass 245`, `# fail 0`. Expected run time is about
 ten seconds on an ordinary desktop.
 
-Running a full study additionally needs the database, one model API key and the Human Protein
-Atlas release files. That release is large, 103 files at 15.5 GB compressed and about 97 GB
-extracted, so `scripts/sync-hpa-data.js` is a server-scale step rather than a desktop demo.
+A full study runs against the published Human Protein Atlas release. `scripts/sync-hpa-data.js`
+fetches it from the catalogue in the database, checks every file against the size the server
+reports, records a SHA-256 digest and extracts it; since this is the atlas's own bulk
+distribution, allow about 100 GB of disk. A database and one model API key complete the setup.
 
 ## Backend
 
@@ -131,10 +132,8 @@ Requirements: Node 20, MySQL 8, Python 3 with Matplotlib and NumPy for figure re
 Chrome for Puppeteer (installed on first `npx puppeteer browsers install chrome`).
 
 Tested on Ubuntu 24.04 LTS with Node 20.19, npm 10.8, MySQL 8.0.46, DuckDB 1.4.4 and
-Python 3.12. macOS and other Linux distributions with the same runtime versions are expected
-to work; Windows is untested. No non-standard hardware is required. `npm install` takes a
-few minutes on an ordinary desktop, most of it the Chrome download, and writes about 260 MB
-into `node_modules`.
+Python 3.12. No non-standard hardware is required. `npm install` takes a few minutes on an
+ordinary desktop, most of it the Chrome download, and writes about 260 MB into `node_modules`.
 
 ```bash
 cd Backend

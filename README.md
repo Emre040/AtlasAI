@@ -106,10 +106,35 @@ over SQL), and one benchmark each for the search agent (236 questions), the
 investigator (30) and the reader against open web tools (20). The three
 agent benchmarks are scored by code against references.
 
+## Demo
+
+The test suite exercises the agents, the inference gateway, the registered operations and the
+provenance checks against fixtures. It needs no API key, no database and no Human Protein
+Atlas data, so it is the quickest way to confirm a working install.
+
+```bash
+cd Backend
+npm install
+npm test
+```
+
+Expected output ends with `# tests 245`, `# pass 245`, `# fail 0`. Expected run time is about
+ten seconds on an ordinary desktop.
+
+Running a full study additionally needs the database, one model API key and the Human Protein
+Atlas release files. That release is large, 103 files at 15.5 GB compressed and about 97 GB
+extracted, so `scripts/sync-hpa-data.js` is a server-scale step rather than a desktop demo.
+
 ## Backend
 
 Requirements: Node 20, MySQL 8, Python 3 with Matplotlib and NumPy for figure rendering,
 Chrome for Puppeteer (installed on first `npx puppeteer browsers install chrome`).
+
+Tested on Ubuntu 24.04 LTS with Node 20.19, npm 10.8, MySQL 8.0.46, DuckDB 1.4.4 and
+Python 3.12. macOS and other Linux distributions with the same runtime versions are expected
+to work; Windows is untested. No non-standard hardware is required. `npm install` takes a
+few minutes on an ordinary desktop, most of it the Chrome download, and writes about 260 MB
+into `node_modules`.
 
 ```bash
 cd Backend

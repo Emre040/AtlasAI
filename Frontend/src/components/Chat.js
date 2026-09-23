@@ -369,7 +369,7 @@ function HPA() {
     const uniqueUrls = [...new Set(matches)];
 
     // Filter out URLs with + EXCEPT for our known sub-pages
-    const knownSubPages = ['/single+cell', '/cell+line', '/structure+interaction'];
+    const knownSubPages = ['/single+cell', '/cell+line'];
     const filteredUrls = uniqueUrls.filter(url => {
       // If it has a +, only keep it if it's one of our known sub-pages
       if (url.includes('+')) {
@@ -398,7 +398,7 @@ function HPA() {
       const ensgMatch = url.match(/ENSG\d+-([A-Z0-9]+)/);
       if (ensgMatch && !url.includes('/tissue') && !url.includes('/brain') && !url.includes('/single+cell') &&
           !url.includes('/subcellular') && !url.includes('/cancer') && !url.includes('/blood') &&
-          !url.includes('/cell+line') && !url.includes('/structure+interaction')) {
+          !url.includes('/cell+line') && !url.includes('/structure') && !url.includes('/interaction')) {
         // It's a base protein page, use the gene name
         label = ensgMatch[1];
       }
@@ -431,9 +431,13 @@ function HPA() {
         type = 'cell_line';
         label = 'Cell Line';
         icon = faFlask;
-      } else if (url.includes('/structure+interaction')) {
-        type = 'structure_interaction';
+      } else if (url.includes('/structure')) {
+        type = 'structure';
         label = 'Structure';
+        icon = faNetworkWired;
+      } else if (url.includes('/interaction')) {
+        type = 'interaction';
+        label = 'Interaction';
         icon = faNetworkWired;
       } else if (url.endsWith('.xml')) {
         type = 'xml';
@@ -585,7 +589,8 @@ function HPA() {
     { key: 'cancer', label: 'Cancer', color: '#ffaabf' },
     { key: 'blood', label: 'Blood', color: '#cf161a' },
     { key: 'cell_line', label: 'Cell line', color: '#ffa500' },
-    { key: 'structure', label: 'Structure', color: '#69008c' }
+    { key: 'structure', label: 'Structure', color: '#69008c' },
+    { key: 'interaction', label: 'Interaction', color: '#c89c79' }
   ];
 
   // Render search results: the first rows with their thumbnails, and a link to the rest on HPA.
@@ -1105,7 +1110,7 @@ function HPA() {
             }
           }
         }
-        
+
         if (isStreamFinished) { break; }
       }
     } catch (err) {

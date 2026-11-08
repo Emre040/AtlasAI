@@ -25,10 +25,13 @@ def _save_figure(figure, out_path):
 
 
 def _column_values(chart, axis):
-    """The plotted values of the x or y column: points for the numeric charts, values for the bar family."""
+    """The plotted values of the x or y column: points for the numeric charts, values for the bar family,
+    every value of every group for a box plot."""
     data = chart.get('data', [])
     if chart.get('type') in ('scatter', 'bubble', 'volcano', 'line'):
         return [d.get(axis) for d in data]
+    if chart.get('type') == 'box':
+        return [v for s in chart.get('series', []) for v in s.get('values', [])] if axis == 'y' else []
     return [d.get('value') for d in data] if axis == 'y' else []
 
 
@@ -41,6 +44,9 @@ def _log_axis(ax, drawn, values):
         setter('log')
     else:
         setter('symlog', linthresh=min(positives) if positives else 1.0)
+        # Values that are never negative start the axis at zero instead of a margin of negative decades.
+        if numbers and min(numbers) >= 0:
+            (ax.set_xlim(left=0) if drawn == 'x' else ax.set_ylim(bottom=0))
 
 
 def _apply_labels(chart, swap=False):
@@ -248,8 +254,10 @@ def render_box(chart, out_path):
     labels = [s.get('label', '') for s in series]
     if not data:
         return
-    plt.figure(figsize=(6, 4))
-    plt.boxplot(data, labels=labels)
+    fig_w, fig_h, rotation, ha = _category_layout(labels, base_width=6.0)
+    plt.figure(figsize=(fig_w, fig_h))
+    plt.boxplot(data, tick_labels=labels)
+    plt.xticks(rotation=rotation, ha=ha)
     _apply_title(chart)
     _apply_labels(chart)
     plt.tight_layout()
@@ -258,12 +266,14 @@ def render_box(chart, out_path):
 
 def render_stacked_bar(chart, out_path):
     data = chart.get('data', [])
-    categories = sorted(set(d.get('label') for d in data))
-    stacks = sorted(set(d.get('stack') for d in data))
+    # The study names each segment's series as group; categories and segments keep the table's order.
+    stack_of = lambda d: d.get('stack', d.get('group'))
+    categories = list(dict.fromkeys(d.get('label') for d in data))
+    stacks = list(dict.fromkeys(stack_of(d) for d in data))
     stack_map = {s: [] for s in stacks}
     for c in categories:
         for s in stacks:
-            v = next((d.get('value', 0) for d in data if d.get('label') == c and d.get('stack') == s), 0)
+            v = next((d.get('value', 0) for d in data if d.get('label') == c and stack_of(d) == s), 0)
             stack_map[s].append(v)
     fig_w, fig_h, rotation, ha = _category_layout(categories)
     plt.figure(figsize=(fig_w, fig_h))
@@ -461,28 +471,31 @@ def render_waterfall(chart, out_path):
     bottoms[0] = 0
     for i in range(1, n):
         bottoms[i] = cumulative[i-1] if values[i] >= 0 else cumulative[i]
-    colors = []
-    for i, v in enumerate(values):
-        if i == 0 or i == n - 1:
-            colors.append('#4C78A8')
-        elif v >= 0:
-            colors.append('#72B7B2')
-        else:
-            colors.append('#E45756')
-    fig_w = max(8, n * 0.5)
+    # The first bar starts the run; every later bar is a change, up or down; a last bar shows the total from zero.
+    colors = ['#4C78A8' if i == 0 else '#72B7B2' if v >= 0 else '#E45756' for i, v in enumerate(values)]
+    fig_w = max(8, (n + 1) * 0.5)
     plt.figure(figsize=(fig_w, 5))
     bars = plt.bar(range(n), [abs(v) for v in values], bottom=bottoms, color=colors,
                    edgecolor='white', linewidth=0.5, width=0.6)
+    plt.bar(n, cumulative[-1], bottom=0, color='#4C78A8', edgecolor='white', linewidth=0.5, width=0.6)
     # Connector lines between bars
-    for i in range(n - 1):
+    for i in range(n):
         plt.plot([i + 0.3, i + 0.7], [cumulative[i], cumulative[i]],
                  color='gray', linewidth=0.8, linestyle='--')
-    plt.xticks(range(n), labels, rotation=30, ha='right', fontsize=8)
+    plt.xticks(range(n + 1), labels + ['Total'], rotation=30, ha='right', fontsize=8)
     for i, v in enumerate(values):
         y = cumulative[i]
         plt.annotate(f'{v:+,.1f}' if i > 0 else f'{v:,.1f}', (i, y),
                      fontsize=6.5, ha='center', va='bottom' if v >= 0 else 'top',
                      textcoords='offset points', xytext=(0, 4 if v >= 0 else -4))
+    plt.annotate(f'{cumulative[-1]:,.1f}', (n, cumulative[-1]), fontsize=6.5, ha='center', va='bottom' if cumulative[-1] >= 0 else 'top',
+                 textcoords='offset points', xytext=(0, 4 if cumulative[-1] >= 0 else -4))
+    plt.axhline(0, color='black', linewidth=0.6)
+    # Room above and below for the value labels (bars pin autoscaling to their edges, so the limits are set).
+    ends = [0.0] + list(cumulative) + list(bottoms)
+    low, high = min(ends), max(ends)
+    pad = 0.12 * (high - low) if high > low else 1.0
+    plt.ylim(low - pad, high + pad)
     _apply_title(chart)
     _apply_labels(chart)
     plt.grid(axis='y', alpha=0.3, linestyle='--')
@@ -592,11 +605,175 @@ def render_ridge(chart, out_path):
         if i < n - 1:
             ax.spines['bottom'].set_visible(False)
             ax.tick_params(bottom=False)
-    _apply_title(chart)
-    _apply_labels(chart)
+    # The title heads the whole figure; the values run along the x axis, so the y column's label names
+    # them, and each panel is named by its group.
+    if chart.get('title'):
+        fig.suptitle(chart['title'], fontsize=12)
+    if chart.get('y_label'):
+        axes[-1].set_xlabel(chart['y_label'])
     plt.tight_layout()
-    _save_figure(plt.gcf(), out_path)
-    plt.close()
+    _save_figure(fig, out_path)
+    plt.close(fig)
+
+
+# Embeddings: each row of a pivot is a point, placed by its values across the columns.
+
+def _embedding_matrix(chart):
+    """The pivot's rows as points; scale=log takes log(1 + value) first, the way expression is read.
+    The spec leaves out rows with a missing value, so every cell is a number."""
+    values = np.asarray(chart.get('matrix', []), dtype=float)
+    if chart.get('scale') == 'log':
+        values = np.sign(values) * np.log1p(np.abs(values))
+    return values
+
+
+def _pca(values, k=2):
+    """Principal components of the centred values: each row's coordinates and the share of the variance
+    each component carries. A component's largest loading is made positive, so a table always draws the
+    same picture."""
+    centred = values - values.mean(axis=0)
+    u, s, vt = np.linalg.svd(centred, full_matrices=False)
+    coords = np.zeros((values.shape[0], k))
+    m = min(k, len(s))
+    coords[:, :m] = u[:, :m] * s[:m]
+    total = float((s ** 2).sum())
+    shares = np.zeros(k)
+    if total > 0:
+        shares[:m] = (s[:m] ** 2) / total
+    for c in range(m):
+        if vt[c, np.argmax(np.abs(vt[c]))] < 0:
+            coords[:, c] *= -1
+    return coords, shares
+
+
+def _umap(values, n_neighbors=15, min_dist=0.1, negative_rate=5, seed=42):
+    """UMAP (McInnes, Healy and Melville, 2018) with the reference implementation's defaults. Each point's
+    nearest neighbours (Euclidean; the point itself counts as the first of n_neighbors) get weights
+    exp(-(d - rho) / sigma), with rho the distance to the nearest neighbour and sigma set so the weights sum
+    to log2(n_neighbors); the graph is the fuzzy union of these, and a 2-D layout is optimised by
+    stochastic gradient descent, each edge sampled in proportion to its weight with five negative samples,
+    under the reference's curve for min_dist 0.1. The layout starts from the principal components (the
+    reference's 'pca' start) and the random seed is fixed, so a table always draws the same picture."""
+    from scipy.optimize import curve_fit
+    from scipy.sparse import coo_matrix
+    n = values.shape[0]
+    k = max(1, min(n_neighbors - 1, n - 1))
+    # Nearest neighbours, a block of rows at a time so memory stays bounded.
+    knn = np.empty((n, k), dtype=np.int64)
+    knn_d = np.empty((n, k))
+    squares = (values ** 2).sum(axis=1)
+    for start in range(0, n, 1024):
+        stop = min(n, start + 1024)
+        d2 = np.maximum(squares[start:stop, None] + squares[None, :] - 2.0 * values[start:stop] @ values.T, 0.0)
+        d2[np.arange(stop - start), np.arange(start, stop)] = np.inf
+        idx = np.argpartition(d2, k - 1, axis=1)[:, :k]
+        near = np.take_along_axis(d2, idx, axis=1)
+        order = np.argsort(near, axis=1)
+        knn[start:stop] = np.take_along_axis(idx, order, axis=1)
+        knn_d[start:stop] = np.sqrt(np.take_along_axis(near, order, axis=1))
+    # rho: the nearest non-zero distance; sigma by bisection, as the reference does it.
+    rho = np.array([row[row > 0][0] if (row > 0).any() else 0.0 for row in knn_d])
+    gaps = np.maximum(knn_d - rho[:, None], 0.0)
+    target = np.log2(n_neighbors)
+    lo, hi, mid = np.zeros(n), np.full(n, np.inf), np.ones(n)
+    for _ in range(64):
+        total = np.exp(-gaps / mid[:, None]).sum(axis=1)
+        above = total > target
+        hi = np.where(above, mid, hi)
+        lo = np.where(above, lo, mid)
+        mid = np.where(np.isinf(hi), mid * 2.0, (lo + hi) / 2.0)
+    floor = 1e-3 * np.where(rho > 0, knn_d.mean(axis=1), knn_d.mean())
+    sigma = np.maximum(mid, floor)
+    weights = np.exp(-gaps / sigma[:, None])
+    graph = coo_matrix((weights.ravel(), (np.repeat(np.arange(n), k), knn.ravel())), shape=(n, n)).tocsr()
+    graph = (graph + graph.T - graph.multiply(graph.T)).tocoo()
+    n_epochs = 500 if n <= 10000 else 200
+    keep = graph.data >= graph.data.max() / n_epochs
+    head, tail, w = graph.row[keep], graph.col[keep], graph.data[keep]
+    # The reference's curve 1 / (1 + a d^(2b)) for min_dist and a spread of 1.
+    xs = np.linspace(0, 3, 300)
+    (a, b), _ = curve_fit(lambda x, a, b: 1.0 / (1.0 + a * x ** (2 * b)), xs, np.where(xs < min_dist, 1.0, np.exp(-(xs - min_dist))))
+    rng = np.random.default_rng(seed)
+    start, _ = _pca(values)
+    span = np.abs(start).max()
+    start = start * (10.0 / span) if span > 0 else rng.normal(size=(n, 2))
+    start = start + rng.normal(scale=1e-4, size=start.shape)
+    lows, highs = start.min(axis=0), start.max(axis=0)
+    layout = 10.0 * (start - lows) / np.where(highs > lows, highs - lows, 1.0)
+    every = w.max() / w
+    due_at = every.copy()
+
+    def move(points, steps):
+        # Every step a point takes this epoch, summed per point (bincount is the fast form of np.add.at).
+        for dim in range(2):
+            layout[:, dim] += np.bincount(points, weights=steps[:, dim], minlength=n)
+
+    for epoch in range(n_epochs):
+        alpha = 1.0 - epoch / n_epochs
+        due = due_at <= epoch
+        if not due.any():
+            continue
+        h, t = head[due], tail[due]
+        diff = layout[h] - layout[t]
+        d2 = (diff ** 2).sum(axis=1)
+        coef = np.zeros_like(d2)
+        positive = d2 > 0
+        coef[positive] = -2.0 * a * b * d2[positive] ** (b - 1.0) / (1.0 + a * d2[positive] ** b)
+        step = np.clip(coef[:, None] * diff, -4.0, 4.0) * alpha
+        move(h, step)
+        move(t, -step)
+        hn = np.repeat(h, negative_rate)
+        tn = rng.integers(0, n, size=hn.size)
+        diff = layout[hn] - layout[tn]
+        d2 = (diff ** 2).sum(axis=1)
+        coef = np.zeros_like(d2)
+        positive = d2 > 0
+        coef[positive] = 2.0 * b / ((0.001 + d2[positive]) * (1.0 + a * d2[positive] ** b))
+        step = np.where(coef[:, None] > 0, np.clip(coef[:, None] * diff, -4.0, 4.0), 4.0) * alpha
+        step[hn == tn] = 0.0
+        move(hn, step)
+        due_at[due] += every[due]
+    return layout
+
+
+def _embedding_scatter(chart, out_path, coords, x_label, y_label, hide_ticks):
+    """A point per row of the pivot, coloured by the column holding its largest value while there are few
+    enough such columns to tell apart, and named where a label fits (up to 60 points)."""
+    values = np.asarray(chart.get('matrix', []), dtype=float)
+    rows = [str(r) for r in chart.get('row_labels', [])]
+    cols = [str(c) for c in chart.get('col_labels', [])]
+    fig, ax = plt.subplots(figsize=(8, 6))
+    top = [cols[j] for j in np.argmax(values, axis=1)] if cols else []
+    groups = list(dict.fromkeys(top))
+    if 1 < len(groups) <= 12:
+        colors = _group_colors(groups)
+        for g in groups:
+            idx = [i for i, name in enumerate(top) if name == g]
+            ax.scatter(coords[idx, 0], coords[idx, 1], s=30, alpha=0.8, color=colors[g], label=g)
+        ax.legend(title='Highest in', loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0, fontsize=8, title_fontsize=8)
+    else:
+        ax.scatter(coords[:, 0], coords[:, 1], s=30, alpha=0.8, color='#4C78A8')
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    if hide_ticks:
+        ax.set_xticks([])
+        ax.set_yticks([])
+    _apply_title(chart)
+    fig.tight_layout()
+    data = [{'x': float(x), 'y': float(y), 'label': rows[i] if len(rows) <= 60 and i < len(rows) else ''} for i, (x, y) in enumerate(coords)]
+    _, placed, total = _place_scatter_labels(ax, data)
+    _save_figure(fig, out_path)
+    plt.close(fig)
+    return {'labels': total, 'placed': placed} if total else None
+
+
+def render_pca(chart, out_path):
+    coords, shares = _pca(_embedding_matrix(chart))
+    return _embedding_scatter(chart, out_path, coords, f'PC1 ({shares[0]:.1%} of variance)', f'PC2 ({shares[1]:.1%} of variance)', False)
+
+
+def render_umap(chart, out_path):
+    return _embedding_scatter(chart, out_path, _umap(_embedding_matrix(chart)), 'UMAP 1', 'UMAP 2', True)
 
 
 def render_chart(chart, out_path):
@@ -617,6 +794,8 @@ def render_chart(chart, out_path):
         'volcano': render_volcano,
         'bubble': render_bubble,
         'ridge': render_ridge,
+        'pca': render_pca,
+        'umap': render_umap,
     }
     renderer = renderers.get(chart_type)
     if renderer:

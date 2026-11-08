@@ -9,6 +9,16 @@ test('plan items need a description and a known kind', () => {
   assert.deepEqual(plan.createItem({ step: 'A heatmap', kind: 'heatmap' }, 0), { text: 'A heatmap', kind: 'heatmap', status: 'todo', artifacts: [] });
 });
 
+test('the chart operation draws 17 types, and a figure of any other type is declined rather than drawn as another', () => {
+  assert.equal(plan.CHART_KINDS.length, 17);
+  for (const kind of ['stacked_bar', 'waterfall', 'box', 'ridge', 'pca', 'umap']) assert.ok(plan.CHART_KINDS.includes(kind), kind);
+  assert.throws(() => plan.createItem({ step: 'A Sankey diagram', kind: 'other_figure' }, 0), /plan item 1 is a figure of a type the chart operation does not draw .*: give not_done naming the type asked for/);
+  const declined = plan.createItem({ step: 'A Sankey diagram', kind: 'other_figure', not_done: 'Sankey diagrams are not among the chart types' }, 0);
+  assert.equal(declined.status, 'not_done');
+  assert.deepEqual(plan.uncovered([declined], { tables: [], figures: [], claims: [], notDone: [] }, new Map()), [], 'a declined figure is reported, not owed');
+  assert.deepEqual(plan.uncovered([plan.createItem({ step: 'UMAP of the genes', kind: 'umap' }, 0)], { tables: [], figures: [{ figure: { type: 'pca' } }], claims: [], notDone: [] }, new Map()), ['1. UMAP of the genes (umap)'], 'a PCA does not deliver a UMAP');
+});
+
 test('a finish covers a chart item only with a rendered figure of that type, and not_done skips an item', () => {
   const items = [plan.createItem({ step: 'measurements', kind: 'table' }, 0), plan.createItem({ step: 'heatmap', kind: 'heatmap' }, 1), plan.createItem({ step: 'scatter', kind: 'scatter' }, 2), plan.createItem({ step: 'cohort', kind: 'gene_set' }, 3)];
   const byId = new Map([['a1', { tool: 'investigator_hpa' }], ['a5', { tool: 'deep_research_hpa' }]]);

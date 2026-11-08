@@ -2,11 +2,12 @@
 
 // The plan is the list of deliverables the study owes: what each one is (a gene set, a table, a
 // figure of a given type, an interpretation) so the finish can be checked against it.
-const CHART_KINDS = ['bar', 'lollipop', 'dot_plot', 'diverging_bar', 'grouped_bar', 'scatter', 'bubble', 'heatmap', 'radar', 'line', 'volcano'];
-const KINDS = ['gene_set', 'table', 'interpretation', ...CHART_KINDS];
+const CHART_KINDS = ['bar', 'lollipop', 'dot_plot', 'diverging_bar', 'grouped_bar', 'stacked_bar', 'waterfall', 'scatter', 'bubble', 'heatmap', 'radar', 'line', 'volcano', 'box', 'ridge', 'pca', 'umap'];
+// other_figure is a figure of a type the chart operation does not draw: it is declined, never drawn as another type.
+const KINDS = ['gene_set', 'table', 'interpretation', 'other_figure', ...CHART_KINDS];
 // A chart item is delivered by a figure of its family: a bar chart of counts per cancer drawn as
 // a grouped bar, a scatter drawn as a bubble, are the figure asked for.
-const CHART_FAMILIES = [['bar', 'grouped_bar', 'lollipop', 'diverging_bar', 'dot_plot'], ['scatter', 'bubble', 'volcano'], ['heatmap'], ['radar'], ['line']];
+const CHART_FAMILIES = [['bar', 'grouped_bar', 'stacked_bar', 'lollipop', 'diverging_bar', 'dot_plot'], ['scatter', 'bubble', 'volcano'], ['heatmap'], ['radar'], ['line'], ['waterfall'], ['box', 'ridge'], ['pca'], ['umap']];
 const sameFamily = (kind, type) => kind === type || CHART_FAMILIES.some(family => family.includes(kind) && family.includes(type));
 
 function createItem(input, index) {
@@ -16,6 +17,7 @@ function createItem(input, index) {
   const description = String(input.description || '').trim();
   // An item declined when the plan is written carries the reason; it is delivered as a limitation.
   const notDone = String(input.not_done || '').trim();
+  if (input.kind === 'other_figure' && !notDone) throw new Error(`plan item ${index + 1} is a figure of a type the chart operation does not draw (${CHART_KINDS.join(', ')}): give not_done naming the type asked for; it is reported as not drawn, never drawn as another type`);
   return { text, kind: input.kind, status: notDone ? 'not_done' : 'todo', artifacts: [], ...(description ? { description } : {}), ...(notDone ? { not_done: notDone } : {}) };
 }
 

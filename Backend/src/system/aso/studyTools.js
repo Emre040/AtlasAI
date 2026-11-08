@@ -1201,12 +1201,14 @@ function chartDomains(args, axes) {
 // and is not recorded. x_scale and y_scale follow the x and y columns; scale colours heatmap cells.
 function chartScales(args) {
   const scales = {};
-  const heatmap = args.type === 'heatmap', numericX = ['scatter', 'bubble', 'volcano', 'line'].includes(args.type);
+  // A heatmap colours the cells of a pivot; pca and umap place its rows by their values: scale sets both.
+  const heatmap = ['heatmap', 'pca', 'umap'].includes(args.type), numericX = ['scatter', 'bubble', 'volcano', 'line'].includes(args.type);
   for (const name of ['x_scale', 'y_scale', 'scale']) {
     const value = args[name];
     if (value === undefined || value === 'linear') continue;
     if (value !== 'log') throw new Error(`chart: ${name} must be linear or log`);
-    if (heatmap && name !== 'scale') throw new Error(`chart: a heatmap colours its cells; scale sets that, not ${name}`);
+    if (args.type === 'ridge') throw new Error('chart: a ridge plot draws the values as they are; compute a log column first');
+    if (heatmap && name !== 'scale') throw new Error(`chart: ${args.type === 'heatmap' ? 'a heatmap colours its cells' : `${args.type} places the rows of a pivot by their values`}; scale sets that, not ${name}`);
     if (!heatmap && name === 'scale') throw new Error(`chart: scale colours heatmap cells; ${args.type} takes ${numericX ? 'x_scale or ' : ''}y_scale`);
     if (name === 'x_scale' && !numericX) throw new Error(`chart: x of ${args.type} holds labels; y_scale scales the values`);
     scales[name] = value;
@@ -1220,7 +1222,20 @@ function chartSpec(args, input) {
     if (!input || !Array.isArray(input.matrix)) throw new Error('chart: heatmap needs a pivot output');
     return { ...base, ...chartDomains(args, {}), matrix: input.matrix, row_labels: input.row_labels, col_labels: input.col_labels };
   }
-  if (input && Array.isArray(input.matrix)) throw new Error(`chart: ${args.type} needs a row table with columns, not a matrix (a pivot only serves a heatmap); make the columns with filter/select/join, aggregate group_by or top_per_group`);
+  // pca and umap place each row of a pivot as a point by its values across the columns; a row with
+  // a missing value cannot be placed, so it is left out only when the call says so.
+  if (['pca', 'umap'].includes(args.type)) {
+    if (!input || !Array.isArray(input.matrix)) throw new Error(`chart: ${args.type} needs a pivot output: each row a point, placed by its values across the columns`);
+    const complete = input.matrix.map((row, i) => row.every(value => num(value) !== null) ? i : -1).filter(i => i >= 0);
+    const omitted = input.matrix.length - complete.length;
+    if (omitted && args.missing !== 'omit') throw new Error(`chart: ${omitted} rows of the pivot have a missing value; inspect them, then use missing=omit to leave them out`);
+    const least = args.type === 'umap' ? 10 : 3, most = args.type === 'umap' ? 5000 : 20000;
+    if (complete.length < least) throw new Error(`chart: ${args.type} needs at least ${least} rows with a value in every column${args.type === 'umap' ? '; pca places fewer' : ''}`);
+    if (complete.length > most) throw new Error(`chart: ${args.type} places at most ${most} rows; rank or filter the rows first`);
+    if ((input.col_labels || []).length < 2) throw new Error(`chart: ${args.type} needs at least 2 columns to place the rows by`);
+    return { ...base, ...(omitted ? { omitted_rows: omitted } : {}), matrix: complete.map(i => input.matrix[i].map(num)), row_labels: complete.map(i => input.row_labels[i]), col_labels: input.col_labels };
+  }
+  if (input && Array.isArray(input.matrix)) throw new Error(`chart: ${args.type} needs a row table with columns, not a matrix (a pivot serves a heatmap, pca or umap); make the columns with filter/select/join, aggregate group_by or top_per_group`);
   let rows = Array.isArray(input) ? input : input?.rows || [];
   if (!rows.length) throw new Error('chart: no rows');
   const x = findColumn(rows, args.x);
@@ -1244,6 +1259,13 @@ function chartSpec(args, input) {
   if (base.omitted_rows && args.missing !== 'omit') throw new Error(`chart: ${base.omitted_rows} rows have missing numeric values; inspect them, then use missing=omit to exclude them explicitly`);
   rows = valid;
   if (!rows.length) throw new Error('chart: no rows with measured numeric values');
+  // box and ridge draw one distribution per group: x names each row's group, y holds its value.
+  if (['box', 'ridge'].includes(args.type)) {
+    if (series || group) throw new Error(`chart: ${args.type} draws one distribution per value of x from the y column; it takes no series or group`);
+    const byGroup = new Map();
+    for (const r of rows) { const g = String(r[x] ?? ''); if (!byGroup.has(g)) byGroup.set(g, []); byGroup.get(g).push(num(r[y])); }
+    return { ...base, ...chartDomains(args, args.type === 'box' ? { y: rows.map(r => num(r[y])) } : {}), series: [...byGroup].map(([name, values]) => ({ label: name, values })) };
+  }
   if (['scatter', 'bubble', 'volcano'].includes(args.type)) {
     return { ...base, ...chartDomains(args, { x: rows.map(r => num(r[x])), y: rows.map(r => num(r[y])) }), data: rows.map(r => ({ x: num(r[x]), y: num(r[y]), label: label ? String(r[label] ?? '') : '', size: size ? num(r[size]) : 10, ...(group ? { group: String(r[group] ?? '') } : {}) })) };
   }

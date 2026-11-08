@@ -59,3 +59,24 @@ test('a log scale follows the x and y columns of a chart, and colours the cells 
   assert.equal(chartSpec({ type: 'heatmap', scale: 'log' }, matrix).scale, 'log');
   assert.throws(() => chartSpec({ type: 'heatmap', y_scale: 'log' }, matrix), /a heatmap colours its cells; scale sets that, not y_scale/);
 });
+
+test('pca and umap place the rows of a pivot, and leave out a row with a missing value only when told to', () => {
+  const rows = [];
+  for (let i = 0; i < 12; i++) for (const tissue of ['liver', 'kidney', 'brain']) rows.push({ gene: `G${i}`, tissue, ntpm: i === 3 && tissue === 'brain' ? null : (i + 1) * (tissue === 'liver' ? 3 : 1) });
+  const matrix = pivot(rows, { row: 'gene', column: 'tissue', value: 'ntpm' });
+  assert.throws(() => chartSpec({ type: 'pca' }, matrix), /1 rows of the pivot have a missing value; inspect them, then use missing=omit/);
+  const pca = chartSpec({ type: 'pca', missing: 'omit', scale: 'log' }, matrix);
+  assert.equal(pca.omitted_rows, 1); assert.equal(pca.row_labels.length, 11); assert.equal(pca.row_labels.includes('G3'), false); assert.equal(pca.scale, 'log');
+  assert.deepEqual(pca.col_labels, ['liver', 'kidney', 'brain']);
+  assert.throws(() => chartSpec({ type: 'umap', missing: 'omit', y_scale: 'log' }, matrix), /umap places the rows of a pivot by their values; scale sets that, not y_scale/);
+  assert.throws(() => chartSpec({ type: 'umap', missing: 'omit' }, pivot(rows.slice(0, 15), { row: 'gene', column: 'tissue', value: 'ntpm' })), /umap needs at least 10 rows with a value in every column; pca places fewer/);
+  assert.throws(() => chartSpec({ type: 'pca', x: 'gene', y: 'ntpm' }, rows), /pca needs a pivot output/);
+});
+
+test('box and ridge draw one distribution per group of x from the y column', () => {
+  const rows = [{ tissue: 'liver', ntpm: 1 }, { tissue: 'kidney', ntpm: 5 }, { tissue: 'liver', ntpm: 3 }, { tissue: 'kidney', ntpm: null }];
+  assert.deepEqual(chartSpec({ type: 'box', x: 'tissue', y: 'ntpm', missing: 'omit' }, rows).series, [{ label: 'liver', values: [1, 3] }, { label: 'kidney', values: [5] }]);
+  assert.deepEqual(chartSpec({ type: 'ridge', x: 'tissue', y: 'ntpm', missing: 'omit' }, rows).series.map(s => s.label), ['liver', 'kidney']);
+  assert.throws(() => chartSpec({ type: 'box', x: 'tissue', y: 'ntpm', group: 'tissue', missing: 'omit' }, rows), /box draws one distribution per value of x from the y column; it takes no series or group/);
+  assert.throws(() => chartSpec({ type: 'ridge', x: 'tissue', y: 'ntpm', y_scale: 'log', missing: 'omit' }, rows), /a ridge plot draws the values as they are/);
+});

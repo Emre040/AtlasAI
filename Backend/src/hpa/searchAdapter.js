@@ -20,8 +20,9 @@ const { FILES } = require('./localData');
 const SEARCH_BASE = 'https://www.proteinatlas.org/search/';
 const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0 Safari/537.36';
 
-// Free-text, identifier and presentation fields are not filters a question maps to.
-const NOT_FILTERS = new Set(['Gene name', 'External id', 'Uniprot keyword', 'Patient ID (IHC)', 'Multiplex tissue (IHC)', 'Sort by', 'Has data',
+// Free-text, identifier and presentation fields are not filters a question maps to. Has data is
+// one: it selects the genes a resource or dataset holds data for ("data in the blood resource").
+const NOT_FILTERS = new Set(['Gene name', 'External id', 'Uniprot keyword', 'Patient ID (IHC)', 'Multiplex tissue (IHC)', 'Sort by',
   'Subcellular location - cell line (ICC)', 'Protein sequence variants', 'Protein interaction', 'Metabolic pathway', 'Structure ipTM']);
 
 function lower(s) { return String(s || '').toLowerCase().trim(); }

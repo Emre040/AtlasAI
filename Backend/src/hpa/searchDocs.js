@@ -102,7 +102,8 @@ const FIELDS = {
   'Protein class': 'Gene classes: enzymes, transporters, transcription factors, disease genes, drug targets, predicted location classes. A subclass narrows a class (kinases within enzymes; a disease group within human disease related genes).',
   Chromosome: 'Chromosome carrying the gene.',
   'Evidence summary': 'Best available evidence that the gene product exists.',
-  'Protein interaction count': 'Number of known protein interactions, binned.'
+  'Protein interaction count': 'Number of known protein interactions, binned.',
+  'Has data': 'Where the atlas holds data for the gene, by resource and dataset (Tissue, Brain, Single cell, Immune cell, Subcellular, Cancer, Blood, Cell line, Structure, Interaction, Metabolic). It selects genes by data availability, not by expression or detection level; a resource with several datasets holds data for a gene when any of its datasets does.'
 };
 
 module.exports = { SOURCES, OPTIONS, FIELDS };

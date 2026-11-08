@@ -115,8 +115,21 @@ async function planFilters(adapter, goal, context, requirements, study = null, a
     const words = [...have].filter(w => w.length >= 3);
     // ("validation status 'Validated'" rides with the field whose option says "validated"): one
     // word of the requirement inside an option of a planned field is enough; the walk decides.
-    const inside = words.length && typeof adapter.optionIndex === 'function' ? adapter.optionIndex().find(entry => { const w = wordsOf(entry.option); return words.some(x => x.length >= 4 && w.has(x)) && requirements.some(r => r.field === entry.field && r.status === 'planned'); }) : null;
-    if (inside) { const host = requirements.find(r => r.field === inside.field && r.status === 'planned'); host.requirement = `${host.requirement} (${item.requirement})`; continue; }
+    const candidates = words.length && typeof adapter.optionIndex === 'function' ? adapter.optionIndex().filter(entry => { const w = wordsOf(entry.option); return words.some(x => x.length >= 4 && w.has(x)) && requirements.some(r => r.field === entry.field && r.status === 'planned'); }) : [];
+    // Of several such fields, the host is the one whose options and own requirement cover the most
+    // words of the requirement ("potential (not yet validated)" rides with the prognostic field, whose
+    // options say both "potential" and "validated", not with a class named "Potential drug targets");
+    // a tie keeps the first, as before.
+    const vocabulary = new Map();
+    for (const c of candidates) {
+      if (!vocabulary.has(c.field)) vocabulary.set(c.field, wordsOf(requirements.find(r => r.field === c.field && r.status === 'planned').requirement));
+      for (const w of wordsOf(c.option)) vocabulary.get(c.field).add(w);
+    }
+    const covered = entry => words.filter(x => vocabulary.get(entry.field).has(x)).length;
+    const inside = candidates.reduce((best, entry) => (!best || covered(entry) > covered(best) ? entry : best), null);
+    // The walk must then say whether its choices express the part; a part they do not express
+    // stops the search instead of disappearing from the query.
+    if (inside) { const host = requirements.find(r => r.field === inside.field && r.status === 'planned'); host.requirement = `${host.requirement} (${item.requirement})`; (host.folded ||= []).push(item.requirement); continue; }
     requirements.push({ id: `r${requirements.length + 1}`, requirement: item.requirement, status: 'unexpressible', error: item.why });
   }
 
@@ -178,17 +191,26 @@ function fieldChoice(adapter, field, answer) {
 
 async function walkField(adapter, goal, requirement, context) {
   const field = adapter.field(requirement.field);
-  const base = `Question: "${goal}"\nRequirement ${requirement.id}: "${requirement.requirement}"${requirement.operator === 'NOT' ? ' (exclude this selection)' : ''}\n\n${adapter.fieldTree(field)}`;
+  // Parts the plan placed on this field because a word of theirs appears in its options: the walk
+  // says, part by part, whether the options it chose select what the part asks.
+  const folded = requirement.folded || [];
+  const foldedText = folded.length ? `\n\nThe plan placed these parts of the question on this field because a word of theirs appears in its options: ${folded.map(part => JSON.stringify(part)).join(', ')}. Add to your JSON "folded": [ { "part": "<the part>", "expressed": true | false } ], one entry per part in the order given; expressed is true only when the options you chose select what the part asks.` : '';
+  const base = `Question: "${goal}"\nRequirement ${requirement.id}: "${requirement.requirement}"${requirement.operator === 'NOT' ? ' (exclude this selection)' : ''}\n\n${adapter.fieldTree(field)}${foldedText}`;
   const progress = new RepairProgress();
   let feedback = '';
   for (;;) {
     const answer = await ask(TRAIL_SYSTEM, `${base}${feedback}`, context, feedback ? 'Trail again' : 'Trail');
     const checked = fieldChoice(adapter, field, answer);
-    if (checked.canonical) return { ...checked.canonical, operator: requirement.operator, requirement: requirement.requirement, requirement_id: requirement.id, why: answer.why || '' };
-    requirement.status = 'unresolved'; requirement.error = checked.error;
-    progress.record({ requirement_id: requirement.id, ...checked.state }, `${requirement.requirement}: the option repair repeated without new validated choices`);
-    await context.onStep?.({ stage: 'reasoning_step', label: 'Correct required filter', message: `${field.name}: ${checked.error}` });
-    feedback = `\n\nThe previous choices were invalid: ${checked.error}. Correct this requirement using the exact schema. Unknown or duplicate levels cannot be ignored and this required filter cannot be dropped.`;
+    const verdicts = folded.length && checked.canonical && Array.isArray(answer.folded) && answer.folded.length === folded.length && answer.folded.every(v => object(v) && typeof v.expressed === 'boolean') ? answer.folded : null;
+    if (checked.canonical && (!folded.length || verdicts)) {
+      const unexpressed = folded.filter((part, i) => verdicts[i].expressed !== true);
+      return { ...checked.canonical, operator: requirement.operator, requirement: requirement.requirement, requirement_id: requirement.id, why: answer.why || '', unexpressed };
+    }
+    const error = checked.canonical ? `Return "folded" with one entry per part, in the order given, each with expressed true or false: ${folded.map(part => JSON.stringify(part)).join(', ')}` : checked.error;
+    requirement.status = 'unresolved'; requirement.error = error;
+    progress.record({ requirement_id: requirement.id, ...(checked.canonical ? { issue: 'folded_parts_unanswered' } : checked.state) }, `${requirement.requirement}: the option repair repeated without new validated choices`);
+    await context.onStep?.({ stage: 'reasoning_step', label: 'Correct required filter', message: `${field.name}: ${error}` });
+    feedback = `\n\nThe previous choices were invalid: ${error}. Correct this requirement using the exact schema. Unknown or duplicate levels cannot be ignored and this required filter cannot be dropped.`;
   }
 }
 
@@ -207,12 +229,17 @@ async function deepResearchTrail({ goal, mode: requestedMode = 'online', study =
     if (plan.understanding) await onStep?.({ stage: 'reasoning_step', label: 'Understood', message: plan.understanding });
     if (requirements.some(item => item.status !== 'planned')) throw new ResearchStop('unexpressible_requirements', 'The requested cohort includes criteria that the source schema cannot express');
 
+    const unplaced = [];
     for (const item of requirements) {
       await onStep?.({ stage: 'planning_step', label: 'Trail', message: `${item.field} for "${item.requirement}"` });
-      const filled = await walkField(adapter, goal, item, context);
+      const { unexpressed = [], ...filled } = await walkField(adapter, goal, item, context);
       await onStep?.({ stage: 'selection_step', label: 'Chosen', message: `${adapter.describe([filled])}${filled.why ? ' — ' + filled.why : ''}` });
       filters.push(filled); item.status = 'validated'; item.error = null;
+      for (const part of unexpressed) unplaced.push({ requirement: part, field: item.field, host: item.requirement });
     }
+    // A part placed on a field whose chosen options do not express it is a requirement this search
+    // cannot express; it is reported as one rather than left out of the query.
+    for (const part of unplaced) requirements.push({ id: `r${requirements.length + 1}`, requirement: part.requirement, status: 'unexpressible', error: `the options of "${part.field}" chosen for "${part.host}" do not express it` });
     // A filter that selects at least everything another filter on the same field already selects
     // narrows the query by nothing, so it does not express the requirement it was chosen for:
     // that requirement is unexpressible by this search, and the caller is told why.

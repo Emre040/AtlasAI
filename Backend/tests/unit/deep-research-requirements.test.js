@@ -212,3 +212,35 @@ test('an attempted source query failure is distinguished from refusing an unvali
   assert.equal(result.result.query_attempted, true); assert.equal(result.result.query_executed, false);
   assert.equal(result.outcome, 'incomplete'); assert.equal(result.result.validation_passed, false);
 });
+
+// A "cannot" requirement sharing a word with an option of a planned field rides with that field's walk.
+const sharedWord = { optionIndex: () => [{ field: 'Selection A', level: 1, option: 'Validated set' }] };
+const foldPlan = () => ({ ...plan(filter('Selection A', 'first criterion')), cannot: [{ requirement: 'validated somewhere else', why: 'no field' }] });
+
+test('a part placed on a field by a shared word stops the search when the walk says its options do not express it', async () => {
+  const { result, executions, calls } = await runStudy({
+    extras: sharedWord,
+    decide: ({ label }) => label === 'Plan' ? foldPlan() : { ...choose('A1'), folded: [{ part: 'validated somewhere else', expressed: false }] }
+  });
+  assert.match(calls[1].user, /The plan placed these parts of the question on this field because a word of theirs appears in its options: "validated somewhere else"/);
+  assert.equal(executions.length, 0, 'the query does not run without the part');
+  assert.equal(result.stop_reason, 'unexpressible_requirements');
+  assert.deepEqual(result.result.not_expressible.map(c => c.requirement), ['validated somewhere else']);
+  assert.match(result.result.not_expressible[0].why, /the options of "Selection A" chosen for "first criterion \(validated somewhere else\)" do not express it/);
+});
+
+test('a part the walk expresses keeps the search running, and a walk that leaves the part unanswered is asked again', async () => {
+  const { result, executions, calls } = await runStudy({
+    extras: sharedWord,
+    decide: ({ label, call }) => label === 'Plan' ? foldPlan() : call === 2 ? choose('A1') : { ...choose('A1'), folded: [{ part: 'validated somewhere else', expressed: true }] }
+  });
+  assert.match(calls[2].user, /Return "folded" with one entry per part, in the order given, each with expressed true or false: "validated somewhere else"/);
+  assert.equal(executions.length, 1);
+  assert.equal(result.result.validation_passed, true);
+  assert.deepEqual(result.result.trail.map(t => t.requirement), ['first criterion (validated somewhere else)']);
+});
+
+test('a walk with no folded parts is asked exactly as before', async () => {
+  const { calls } = await runStudy({ decide: ({ call }) => call === 1 ? plan(filter('Selection A', 'criterion')) : choose('A1') });
+  assert.doesNotMatch(calls[1].user, /The plan placed these parts/);
+});

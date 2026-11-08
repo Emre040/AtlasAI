@@ -52,7 +52,8 @@ async function proposeTools(messages) {
 (2) investigator_hpa - for detailed info about one specific gene
 (3) dictionary_expert_hpa - for ANY definition, educational, histology, pathology, OR about-HPA question
     USE "question" param (not "topic") for about-HPA questions. USE "topic" param for histology/pathology.
-(4) aso_hpa - Autonomous Scientific Orchestrator for MULTI-STEP analysis with charts/figures`
+(4) aso_hpa - Autonomous Scientific Orchestrator for MULTI-STEP analysis with charts/figures, and for gene sets one search cannot give: the top, most or best genes ranked by a value or by specificity, a cut-off on a measured value, or a comparison of sets
+A request outside the Human Protein Atlas and the biology it covers gets no tool.`
       }
     ],
     stream: true,
@@ -88,12 +89,14 @@ function getSynthesisPrompt(toolName, toolResult) {
 async function runQuery(queryText, db, auth) {
   const systemContent = `You are AtlasAI, a helpful assistant for exploring The Human Protein Atlas.
 
+SCOPE: You only help with the Human Protein Atlas and the biology it covers: genes, proteins, tissues, cells, diseases, and the atlas's data and methods. Any other request (general knowledge, news or politics, recipes, coding, anything unrelated to the atlas) gets no tool and only this reply: "${orchestrator.OUT_OF_SCOPE_REPLY}"
+
 TOOL USAGE RULES:
 1. deep_research_hpa: Use for ANY search query, including whether a specific gene is in previous results
 2. investigator_hpa: For detailed info about a specific gene
 3. dictionary_expert_hpa: For ANY definition, histology, pathology, educational, OR about-HPA question
    USE "question" param (not "topic") for about-HPA questions. USE "topic" param for histology/pathology.
-4. aso_hpa: Autonomous Scientific Orchestrator for multi-step analysis with charts/figures
+4. aso_hpa: Autonomous Scientific Orchestrator for multi-step analysis with charts/figures. deep_research_hpa runs ONE atlas search: every gene matching categories the search filters on. A request that also ranks genes or asks for the top, most or best ones (by a value or by specificity), applies a cut-off to a measured value, or compares gene sets is a study: use aso_hpa
 
 CRITICAL RULES:
 - NEVER make up numbers or statistics. ALWAYS use deep_research_hpa.
@@ -109,17 +112,17 @@ CRITICAL RULES:
   const toolCalls = await proposeTools(base);
 
   if (toolCalls.length > 0 && toolCalls[0]?.function?.name) {
-    const toolCall = toolCalls[0];
-    const toolName = toolCall.function.name;
-    const args = JSON.parse(toolCall.function.arguments || '{}');
+    let toolCall = toolCalls[0];
+    let toolName = toolCall.function.name;
+    let args = JSON.parse(toolCall.function.arguments || '{}');
 
     console.log(`[BATCH] selected tool ${toolName}.`);
 
     // Collect tool steps
     const steps = [];
-    const execRes = await inference.withContext(
-      { purpose: 'agent', agentKey: toolName },
-      () => orchestrator.execute(toolName, args, {
+    const runTool = (name, toolArgs) => inference.withContext(
+      { purpose: 'agent', agentKey: name },
+      () => orchestrator.execute(name, toolArgs, {
         rawQuery: queryText,
         db,
         visitorId: auth.visitorId,
@@ -132,6 +135,17 @@ CRITICAL RULES:
         }
       })
     );
+    let execRes = await runTool(toolName, args);
+
+    // As in the chat: a search that stopped on criteria the atlas search cannot express goes on as a study.
+    const study = orchestrator.studyForUnexpressible(toolName, execRes?.result, { userText: queryText, searchGoal: args.goal });
+    if (study) {
+      console.log('[BATCH] the search cannot express the request; running a study.');
+      toolCall = { id: 'study-after-search', type: 'function', function: { name: study.name, arguments: JSON.stringify(study.args) } };
+      toolName = study.name;
+      args = study.args;
+      execRes = await runTool(toolName, args);
+    }
 
     const toolResult = execRes;
 
@@ -197,7 +211,7 @@ CRITICAL RULES:
   // No tool — direct answer
   const response = await chatCompletion([
     ...base,
-    { role: 'system', content: 'Provide a concise, informative answer. Do not mention tools.' }
+    { role: 'system', content: `Provide a concise, informative answer. Do not mention tools. If the request is outside the scope above, reply only with: "${orchestrator.OUT_OF_SCOPE_REPLY}"` }
   ]);
   return { response, metadata: { tool: null } };
 }

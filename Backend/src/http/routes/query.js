@@ -179,13 +179,15 @@ content: `Choose the right tool:
     - Generating charts: heatmaps, scatter plots, bar charts, lollipop charts
     - Multi-gene multi-tissue analysis ("expression of TP53, BRCA1, EGFR across 5 tissues")
     - Any request that needs measurements, ranking, and visualization
+    - Gene sets one search cannot give: the top, most or best genes ranked by a value or by specificity, a cut-off on a measured value, or a comparison of sets
     - Keywords: "chart", "plot", "heatmap", "scatter", "compare expression", "visualize", "figure"
 
 CRITICAL RULES:
 - If user asks to FILTER, COUNT, or REFINE previous results with ANY new constraint, use deep_research_hpa.
 - NEVER make up numbers or guess counts - ALWAYS search.
 - NEVER answer "what is X" or definition questions yourself - ALWAYS use dictionary_expert_hpa.
-- If user asks for charts, plots, comparisons, or multi-step expression analysis, use aso_hpa.` }
+- If user asks for charts, plots, comparisons, or multi-step expression analysis, use aso_hpa.
+- A request outside the Human Protein Atlas and the biology it covers gets no tool (see SCOPE).` }
     ],
     stream: true,
     tools: orchestrator.getToolSpecs(),
@@ -389,6 +391,8 @@ exports.createRouter = function({ db, conversations, runs }) {
       // Build system message with optional gene context
 let systemContent = `You are AtlasAI, a helpful assistant for exploring The Human Protein Atlas.
 
+SCOPE: You only help with the Human Protein Atlas and the biology it covers: genes, proteins, tissues, cells, diseases, and the atlas's data and methods. A greeting, thanks or a question about what you can do gets a short reply. Any other request (general knowledge, news or politics, recipes, coding, anything unrelated to the atlas) gets no tool and only this reply: "${orchestrator.OUT_OF_SCOPE_REPLY}"
+
 TOOL USAGE RULES:
 1. deep_research_hpa: Use for ANY search query including:
    - New searches ("find liver-enriched genes")
@@ -408,6 +412,7 @@ TOOL USAGE RULES:
    - Generating charts: heatmaps, scatter plots, bar charts, lollipop charts
    - Multi-gene multi-tissue analysis ("expression of TP53, BRCA1, EGFR across 5 tissues")
    - Any request needing measurements, ranking, and visualization
+   - deep_research_hpa runs ONE atlas search: every gene matching categories the search filters on. A request that also ranks genes or asks for the top, most or best ones (by a value or by specificity), applies a cut-off to a measured value, or compares gene sets is a study: use aso_hpa
 5. clarify_hpa: ONLY when the request can be read in ways that change what would be done AND no reasonable default exists:
    - which tissue or cell type ("genes expressed in the gut": which tissue?)
    - RNA or protein level; tissue enriched, enhanced or merely detected
@@ -445,30 +450,41 @@ CRITICAL RULES:
       let run = null;
 
       if (toolCalls.length > 0 && toolCalls[0]?.function?.name) {
-        const toolCall = toolCalls[0];
-        const toolName = toolCall.function.name;
+        let toolCall = toolCalls[0];
+        let toolName = toolCall.function.name;
+        const toolArgs = (() => { try { return JSON.parse(toolCall.function.arguments || '{}'); } catch { return {}; } })();
 
         // Pre-message (single sentence); a clarification takes seconds and speaks for itself.
-        const readerRun = toolName === 'dictionary_expert_hpa' && Boolean((() => { try { return JSON.parse(toolCall.function.arguments || '{}').question; } catch { return false; } })());
+        const readerRun = toolName === 'dictionary_expert_hpa' && Boolean(toolArgs.question);
         const preambleText = (toolName === 'clarify_hpa' || readerRun) ? '' : await inference.withContext(
           { ...callContext, purpose: 'preface' },
           () => streamPrefaceStrict({ baseMessages: base, res, toolName })
         );
 
         // Execute the tool and stream progress (pass the raw user query!)
-        const toolRun = await runSingleToolAndStream({
-          toolCall,
+        const toolInput = {
           res,
           db,
           runs,
           conversation,
           userMessage,
-          preambleText,
           callContext,
           rawUserQuery: query,
           historyText: historyRows.slice(-6).map(row => `${row.role}: ${String(row.text || '').slice(0, 400)}`).join('\n'),
           visitorId: req.auth.visitorId
-        });
+        };
+        let toolRun = await runSingleToolAndStream({ ...toolInput, toolCall, preambleText });
+
+        // A search that stopped on criteria the atlas search cannot express goes on as a study in
+        // the same reply, as its own run, instead of ending the reply on the search's error.
+        const study = orchestrator.studyForUnexpressible(toolName, toolRun.execRes?.result, { userText: userQueryForAI, searchGoal: toolArgs.goal });
+        if (study) {
+          const handoverText = 'The search alone cannot express all of this request, so I am running a study instead.';
+          sse(res, { phase: 'pre', delta: ` ${handoverText}` });
+          toolCall = { id: 'study-after-search', type: 'function', function: { name: study.name, arguments: JSON.stringify(study.args) } };
+          toolName = study.name;
+          toolRun = await runSingleToolAndStream({ ...toolInput, toolCall, preambleText: handoverText });
+        }
         run = toolRun.run;
         const toolResult = toolRun.execRes;
 
@@ -636,7 +652,7 @@ if (toolName === 'clarify_hpa') {
             {
               messages: [
                 ...base,
-                { role: 'system', content: 'Provide a concise, polite final answer. Do not mention tools or making a plan.' }
+                { role: 'system', content: `Provide a concise, polite final answer. Do not mention tools or making a plan. If the request is outside the scope above, reply only with: "${orchestrator.OUT_OF_SCOPE_REPLY}"` }
               ]
             },
             { onToken: (delta) => sse(res, { token: delta }) }

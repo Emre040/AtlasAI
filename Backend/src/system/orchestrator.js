@@ -150,6 +150,10 @@ const defs = [
 
 const nameToHandler = new Map(defs.map(d => [d.name, d.handler]));
 
+// The one reply to a request outside the atlas and the biology it covers; the chat and the batch
+// routers both give it, with no tool.
+const OUT_OF_SCOPE_REPLY = 'I can only help with questions about the Human Protein Atlas and the biology it covers.';
+
 function getToolSpecs() {
   return defs.map(d => ({
     type: 'function',
@@ -194,4 +198,22 @@ async function execute(name, args, ctx = {}) {
   return { result, steps };
 }
 
-module.exports = { getToolSpecs, execute };
+// A search that stops on criteria the atlas search cannot express (a ranking, a cut-off on a
+// measured value, genes from either of two fields) is a study: the study searches for what the
+// search can express and computes the rest. The study sees no conversation, so its goal carries
+// the user's words, the request as the search read it and what the search could not express.
+// Returns the study call, or null when the result is not such a stop.
+function studyForUnexpressible(name, result, { userText = '', searchGoal = '' } = {}) {
+  if (name !== 'deep_research_hpa' || result?.status !== 'error' || result?.stop_reason !== 'unexpressible_requirements') return null;
+  const words = String(userText || '').trim();
+  const read = String(searchGoal || '').trim();
+  const missing = (result.result?.not_expressible || []).map(c => `${c.requirement}${c.why ? ` (${c.why})` : ''}`);
+  const goal = [
+    words || read,
+    words && read && read !== words ? `The request as the search read it: ${read}` : '',
+    missing.length ? `The atlas search alone cannot express: ${missing.join('; ')}.` : ''
+  ].filter(Boolean).join('\n\n');
+  return goal ? { name: 'aso_hpa', args: { goal } } : null;
+}
+
+module.exports = { getToolSpecs, execute, studyForUnexpressible, OUT_OF_SCOPE_REPLY };

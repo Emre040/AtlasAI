@@ -30,3 +30,21 @@ test('concurrent specialist dispatch retains caller context and records each exa
     assert.equal(context.getStore().agentKey, undefined);
   });
 });
+
+test('a search that stops on criteria it cannot express becomes a study carrying the user\'s words and what the search could not express', async () => {
+  const filename = require.resolve('../../src/system/orchestrator');
+  const loaded = new Module(filename, module);
+  loaded.filename = filename;
+  loaded.paths = Module._nodeModulePaths(path.dirname(filename));
+  loaded.require = name => (name === '../inference/gateway' ? { inference: {} } : async () => ({}));
+  loaded._compile(await fs.readFile(filename, 'utf8'), filename);
+  const { studyForUnexpressible } = loaded.exports;
+  const stop = { status: 'error', stop_reason: 'unexpressible_requirements', result: { not_expressible: [{ requirement: 'the top ones', why: 'no field ranks genes' }] } };
+  const study = studyForUnexpressible('deep_research_hpa', stop, { userText: 'find the top ECM proteins', searchGoal: 'proteins secreted to the extracellular matrix' });
+  assert.equal(study.name, 'aso_hpa');
+  assert.equal(study.args.goal, 'find the top ECM proteins\n\nThe request as the search read it: proteins secreted to the extracellular matrix\n\nThe atlas search alone cannot express: the top ones (no field ranks genes).');
+  assert.equal(studyForUnexpressible('deep_research_hpa', { ...stop, stop_reason: 'unresolved_requirements' }, { userText: 'x' }), null, 'only a stop on unexpressible criteria hands over');
+  assert.equal(studyForUnexpressible('deep_research_hpa', { status: 'ok' }, { userText: 'x' }), null);
+  assert.equal(studyForUnexpressible('investigator_hpa', stop, { userText: 'x' }), null);
+  assert.match(loaded.exports.OUT_OF_SCOPE_REPLY, /^I can only help with questions about the Human Protein Atlas/);
+});

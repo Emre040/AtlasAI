@@ -10,7 +10,6 @@ import {
   faThumbsDown,
   faSpinner,
   faReply,
-  faTimes,
   faExternalLinkAlt,
   faDownload
 } from '@fortawesome/free-solid-svg-icons';
@@ -19,7 +18,7 @@ import {
   getVisitorId,
   initializeHPAAuth
 } from '../api/auth';
-import { getApiBaseUrl, getApiEndpoint, getRuntimeConfig, getUiConfig } from '../api/config';
+import { getApiBaseUrl, getApiEndpoint, getRuntimeConfig } from '../api/config';
 import { AUTO_MODEL, describeRefusal, loadSelectedModel, storeSelectedModel } from '../api/models';
 import ModelMenu from './ModelMenu';
 import StudyAnswer from './StudyAnswer';
@@ -31,21 +30,20 @@ import ReaderPanel, { readerLiveNext } from './ReaderPanel';
 import {
   buildTitleFromText,
   extractHPAUrls,
-  extractReplyContext,
-  formatRelativeTime
+  extractReplyContext
 } from "../utils/textUtils";
 import {
-  buildConversationTitle,
   downloadArtifact,
   groupMessagesIntoRuns
 } from "../utils/conversationUtils";
 import {THUMB_SECTIONS} from "../utils/constants";
 import {InputArea} from "./InputArea";
 import {ReplyBar} from "./ReplyBar";
+import {ConversationHistory} from "./ConversationHistory";
+import {MobileHistoryDialog} from "./MobileHistoryDialog";
 import {ToolRunView} from "./ToolRunView";
 
 const RUNTIME_CONFIG = getRuntimeConfig();
-const UI_CONFIG = getUiConfig();
 const debugLog = (...args) => {
   if (RUNTIME_CONFIG.isLocal) console.log(...args);
 };
@@ -68,7 +66,6 @@ function HPA() {
   const [searchResults, setSearchResults] = useState({}); // Map of searchUrl -> { rows, loading, error, totalCount, thumbnails }
   const [replyTo, setReplyTo] = useState(null); // { ensg, geneName } for reply context
   const messagesEndRef = useRef(null);
-  const historyDialogRef = useRef(null);
   const stickToBottomRef = useRef(true);
   const inputRef = useRef(null);
   const toolRunRefs = useRef({}); // Refs for auto-scroll within each run container
@@ -76,7 +73,6 @@ function HPA() {
   const artifactLeaveTimer = useRef(null);
   const apiBaseUrl = getApiBaseUrl();
   const isLocalEnv = RUNTIME_CONFIG.isLocal;
-  const maxConversationTitleLength = UI_CONFIG.maxConversationTitleLength;
 
   // Artifact preview popover handlers
   const handleArtifactChipEnter = async (e, chip, workspaceUuid) => {
@@ -454,11 +450,6 @@ function HPA() {
     setStudySelection({ runId, artifactId });
   };
   useEffect(() => {
-    const dialog = historyDialogRef.current;
-    if (historyOpen) dialog.showModal();
-    else if (dialog.open) dialog.close();
-  }, [historyOpen]);
-  useEffect(() => {
     const desktop = window.matchMedia('(min-width: 800px)');
     const closeOnDesktop = event => { if (event.matches) setHistoryOpen(false); };
     desktop.addEventListener('change', closeOnDesktop);
@@ -797,44 +788,19 @@ function HPA() {
     }
   };
 
-  const historyContent = (
-    <>
-        <div className="HPAG-sidebar-logo">
-          <img src="https://www.proteinatlas.org/images_static/logo.svg" alt="Human Protein Atlas" />
-        </div>
-        <div className="HPAG-sidebar-header">
-          <h2>Conversations</h2>
-          <button className="HPAG-new-chat-btn" onClick={() => { setHistoryOpen(false); handleNewChat(); }}>
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M7 1V13M1 7H13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-            </svg>
-            New
-          </button>
-        </div>
-
-        <div className="HPAG-conversations-list">
-          {conversations.map(conv => (
-            <button type="button"
-              key={conv.id}
-              className={`HPAG-conversation-item ${selectedConversation === conv.id ? 'HPAG-active' : ''}`}
-              aria-current={selectedConversation === conv.id ? 'page' : undefined}
-              onClick={() => { setSelectedConversation(conv.id); setHistoryOpen(false); }}
-            >
-              <div className="HPAG-conversation-title">{buildConversationTitle(conv, maxConversationTitleLength)}</div>
-              <div className="HPAG-conversation-date">{formatRelativeTime(conv.created_at || conv.date)}</div>
-            </button>
-          ))}
-        </div>
-    </>
-  );
+  const historyProps = {
+    conversations,
+    selectedConversation,
+    onSelectConversation: id => { setSelectedConversation(id); setHistoryOpen(false); },
+    onNewChat: () => { setHistoryOpen(false); handleNewChat(); }
+  };
 
   return (
     <div className="HPAG-container">
-      <div className="HPAG-sidebar">{historyContent}</div>
-      <dialog ref={historyDialogRef} className="HPAG-mobile-history" id="HPAG-mobile-history" aria-label="Conversations" onCancel={event => { event.preventDefault(); setHistoryOpen(false); }} onClick={event => { if (event.target === event.currentTarget) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX > rect.right) setHistoryOpen(false); } }}>
-        <button type="button" className="HPAG-history-close" onClick={() => setHistoryOpen(false)} aria-label="Close conversations"><FontAwesomeIcon icon={faTimes} /></button>
-        {historyContent}
-      </dialog>
+      <div className="HPAG-sidebar">
+        <ConversationHistory {...historyProps} />
+      </div>
+      <MobileHistoryDialog open={historyOpen} onClose={() => setHistoryOpen(false)} {...historyProps} />
       <div className="HPAG-chat-area">
         <div className="HPAG-chat-header">
           <div className="HPAG-header-model">

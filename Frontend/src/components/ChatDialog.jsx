@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import {FontAwesomeIcon} from '@fortawesome/react-fontawesome';
 import {
   faCopy,
+  faBars,
   faThumbsUp,
   faThumbsDown,
   faSpinner,
@@ -37,9 +38,10 @@ import {
   downloadArtifact,
   groupMessagesIntoRuns
 } from "../utils/conversationUtils";
-import {HistoryMenu} from "./HistoryMenu";
 import {InputArea} from "./InputArea";
 import {ReplyBar} from "./ReplyBar";
+import {ConversationHistory} from "./ConversationHistory";
+import {MobileHistoryDialog} from "./MobileHistoryDialog";
 import {ToolRunView} from "./ToolRunView";
 import {getCookie, setCookie} from "../utils/cookieFunctions";
 
@@ -51,6 +53,7 @@ const debugLog = (...args) => {
 function ChatDialog() {
   const [conversations, setConversations] = useState([]);
   const [selectedConversation, setSelectedConversation] = useState(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showAccountModal, setShowAccountModal] = useState(false);
@@ -291,6 +294,12 @@ function ChatDialog() {
     stickToBottomRef.current = false;
     setStudySelection({runId, artifactId});
   };
+  useEffect(() => {
+    const desktop = window.matchMedia('(min-width: 400px)');
+    const closeOnDesktop = event => { if (event.matches) setHistoryOpen(false); };
+    desktop.addEventListener('change', closeOnDesktop);
+    return () => desktop.removeEventListener('change', closeOnDesktop);
+  }, []);
 
   useEffect(() => {
     if (stickToBottomRef.current) messagesEndRef.current?.scrollIntoView({behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'});
@@ -672,11 +681,20 @@ function ChatDialog() {
     }
   };
 
+  const historyProps = {
+    conversations,
+    selectedConversation,
+    onSelectConversation: id => { setSelectedConversation(id); setHistoryOpen(false); },
+    onNewChat: () => { setHistoryOpen(false); handleNewChat(); }
+  };
+
   return (
     <div className={`HPAG-container HPADialog ${showFullHeight ? 'full-height' : ''}`}>
+      <MobileHistoryDialog open={historyOpen} onClose={() => setHistoryOpen(false)} {...historyProps} />
       <div className="HPAG-chat-area">
         <div className="HPAG-chat-header">
           <div className="HPAG-header-model">
+            <button type="button" className="HPAG-history-toggle" aria-label="Open conversations" aria-expanded={historyOpen} aria-controls="HPAG-mobile-history" onClick={() => setHistoryOpen(true)}><FontAwesomeIcon icon={faBars} /></button>
             <ModelMenu selectedModel={selectedModel} onSelectModel={chooseModel}/>
           </div>
           <div className="HPAG-header-actions">
@@ -707,17 +725,6 @@ function ChatDialog() {
               )}
             </div>
           </div>
-          {conversations.length > 0 && (
-            <div className="HPAG-chat-conversations">
-              <button className="HPAG-new-chat-btn" onClick={handleNewChat}>
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M7 1V13M1 7H13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                </svg>
-                New
-              </button>
-              <HistoryMenu selectedConversation={selectedConversation} conversations={conversations} setSelectedConversation={setSelectedConversation}/>
-            </div>
-          )}
         </div>
         <div className="HPAG-messages-container" onScroll={event => {
           const el = event.currentTarget;

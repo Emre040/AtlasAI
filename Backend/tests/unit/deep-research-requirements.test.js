@@ -6,7 +6,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const Module = require('node:module');
 
-async function runStudy({ decide, ctx = {}, rows = [{ gene: 'RESULT', ensembl: 'ID_RESULT' }], executeError = null, goal = 'Apply both exact requested criteria.', extras = {} }) {
+async function runStudy({ decide, ctx = {}, rows = [{ gene: 'RESULT', ensembl: 'ID_RESULT' }], executeError = null, goal = 'Apply both exact requested criteria.', extras = {}, study = null }) {
   const filename = require.resolve('../../src/system/agents/deepResearchTrail');
   const loaded = new Module(filename, module); loaded.filename = filename; loaded.paths = Module._nodeModulePaths(path.dirname(filename));
   const realRequire = loaded.require.bind(loaded);
@@ -42,7 +42,7 @@ async function runStudy({ decide, ctx = {}, rows = [{ gene: 'RESULT', ensembl: '
     summarize(values) { return { count: values.length, top: values }; },
     ...extras
   };
-  const result = await loaded.exports({ goal, mode: 'offline' }, { includeRows: true, ...ctx }, adapter);
+  const result = await loaded.exports({ goal, mode: 'offline', ...(study ? { study } : {}) }, { includeRows: true, ...ctx }, adapter);
   return { result, calls, executions };
 }
 
@@ -227,6 +227,19 @@ test('a part placed on a field by a shared word stops the search when the walk s
   assert.equal(result.stop_reason, 'unexpressible_requirements');
   assert.deepEqual(result.result.not_expressible.map(c => c.requirement), ['validated somewhere else']);
   assert.match(result.result.not_expressible[0].why, /the options of "Selection A" chosen for "first criterion \(validated somewhere else\)" do not express it/);
+});
+
+test('inside a study the same part does not stop the search: the query runs and the part is named as not applied', async () => {
+  const { result, executions } = await runStudy({
+    extras: sharedWord, study: 'The whole study this search is one part of.',
+    decide: ({ label }) => label === 'Plan' ? foldPlan() : { ...choose('A1'), folded: [{ part: 'validated somewhere else', expressed: false }] }
+  });
+  assert.equal(executions.length, 1, 'the query runs with what the search can express');
+  assert.equal(result.status, 'ok');
+  assert.equal(result.result.validation_passed, true);
+  assert.deepEqual(result.result.not_expressible.map(c => c.requirement), ['validated somewhere else']);
+  assert.match(result.result.not_expressible[0].why, /the options of "Selection A" chosen for "first criterion \(validated somewhere else\)" do not express it/);
+  assert.match(result.summary_md, /Not applied by this search:\*\* validated somewhere else/);
 });
 
 test('a part the walk expresses keeps the search running, and a walk that leaves the part unanswered is asked again', async () => {

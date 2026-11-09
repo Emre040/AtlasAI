@@ -225,7 +225,8 @@ async function deepResearchTrail({ goal, mode: requestedMode = 'online', study =
     const context = { onStep, stats, control: createAgentControl({ ctx, stats, agentKey: 'deep_research_hpa' }) };
     await onStep?.({ stage: 'planning_step', label: 'Plan', message: `Reading the ${adapter.name} schema` });
     const allowed = requestedMode === 'offline' && typeof adapter.evaluableFields === 'function' ? new Set(await adapter.evaluableFields()) : null;
-    const plan = await planFilters(adapter, goal, context, requirements, typeof study === 'string' && study.trim() ? study.trim() : null, allowed);
+    const studyGoal = typeof study === 'string' && study.trim() ? study.trim() : null;
+    const plan = await planFilters(adapter, goal, context, requirements, studyGoal, allowed);
     if (plan.understanding) await onStep?.({ stage: 'reasoning_step', label: 'Understood', message: plan.understanding });
     if (requirements.some(item => item.status !== 'planned')) throw new ResearchStop('unexpressible_requirements', 'The requested cohort includes criteria that the source schema cannot express');
 
@@ -238,8 +239,15 @@ async function deepResearchTrail({ goal, mode: requestedMode = 'online', study =
       for (const part of unexpressed) unplaced.push({ requirement: part, field: item.field, host: item.requirement });
     }
     // A part placed on a field whose chosen options do not express it is a requirement this search
-    // cannot express; it is reported as one rather than left out of the query.
-    for (const part of unplaced) requirements.push({ id: `r${requirements.length + 1}`, requirement: part.requirement, status: 'unexpressible', error: `the options of "${part.field}" chosen for "${part.host}" do not express it` });
+    // cannot express; it is reported as one rather than left out of the query. In chat that stops the
+    // search and the reply goes on as a study. Inside a study, the study applies such a part to the
+    // rows itself, so the search runs what it can express and names each part it did not apply.
+    const notApplied = [];
+    for (const part of unplaced) {
+      const why = `the options of "${part.field}" chosen for "${part.host}" do not express it`;
+      if (studyGoal) notApplied.push({ requirement: part.requirement, why });
+      else requirements.push({ id: `r${requirements.length + 1}`, requirement: part.requirement, status: 'unexpressible', error: why });
+    }
     // A filter that selects at least everything another filter on the same field already selects
     // narrows the query by nothing, so it does not express the requirement it was chosen for:
     // that requirement is unexpressible by this search, and the caller is told why.
@@ -284,12 +292,12 @@ async function deepResearchTrail({ goal, mode: requestedMode = 'online', study =
     return {
       status: 'ok',
       outcome: 'completed',
-      summary_md: `**Research Complete for "${goal}"**\n\nFound **${summary.count}** genes matching the criteria.\n\n**Query:** ${adapter.describe(filters)}\n\n**Search URLs:**\n- ${url}`,
+      summary_md: `**Research Complete for "${goal}"**\n\nFound **${summary.count}** genes matching the criteria.\n\n**Query:** ${adapter.describe(filters)}${notApplied.length ? `\n\n**Not applied by this search:** ${notApplied.map(c => `${c.requirement} (${c.why})`).join('; ')}` : ''}\n\n**Search URLs:**\n- ${url}`,
       result: {
         rows_found: summary.count, preview: summary.top, search_urls: [url], validation_passed: true, validation_details: null, attempts: 1, query_attempted: queryAttempted, query_executed: queryExecuted,
         mode: run.mode, hpa_version: run.version, source_files: run.source_files, plan: adapter.describe(filters), understanding: plan.understanding,
         trail: filters.map(f => ({ requirement_id: f.requirement_id, requirement: f.requirement, field: f.field, path: f.path, operator: f.operator, why: f.why })),
-        requirements, unresolved_requirements: [], not_expressible: [],
+        requirements, unresolved_requirements: [], not_expressible: notApplied,
         ...(run.context_columns?.length ? { context_columns: run.context_columns } : {}),
         ...(includeRows ? { rows: run.rows } : {})
       },

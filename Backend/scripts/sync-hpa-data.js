@@ -11,6 +11,7 @@
 //   node scripts/sync-hpa-data.js --check         report only, download nothing (exit 1 if not ready)
 //   node scripts/sync-hpa-data.js --version 25    sync release 25 instead of the active one
 //                                                 (also --version=25; combines with --check)
+//   node scripts/sync-hpa-data.js --host mirror.example.org download from another host; path and query are kept.
 
 const path = require('node:path');
 const fs = require('node:fs');
@@ -28,21 +29,43 @@ const { PlatformConfig } = require('../src/policy/config');
 const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36 AtlasAI-sync';
 const CHECK_ONLY = process.argv.includes('--check');
 
-// The value of --version <v> or --version=<v>, or null when it is not given.
-function parseVersionArg(args) {
+// The value of --<name> <v> or --<name>=<v>, or null when the flag is not given.
+function flagValue(args, name, example) {
+  const flag = `--${name}`;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     let value;
-    if (arg === '--version') value = args[i + 1];
-    else if (arg.startsWith('--version=')) value = arg.slice('--version='.length);
+    if (arg === flag) value = args[i + 1];
+    else if (arg.startsWith(`${flag}=`)) value = arg.slice(flag.length + 1);
     else continue;
     if (!value || value.startsWith('--')) {
-      throw new Error('--version needs a value, e.g. --version 25');
+      throw new Error(`${flag} needs a value, e.g. ${flag} ${example}`);
     }
     return value.trim();
   }
   return null;
 }
+
+// Turns --host into a function that rewrites a catalog URL. A bare host (with an optional port)
+// replaces only the host; a value with a scheme also replaces the scheme. Path and query stay.
+function hostRewriter(hostArg) {
+  if (hostArg === null) return url => url;
+  let replacement;
+  try {
+    replacement = new URL(hostArg.includes('://') ? hostArg : `https://${hostArg}`);
+  } catch {
+    throw new Error(`--host is not a valid host: ${hostArg}`);
+  }
+  const keepScheme = !hostArg.includes('://');
+  return url => {
+    const rewritten = new URL(url);
+    if (!keepScheme) rewritten.protocol = replacement.protocol;
+    rewritten.host = replacement.host;
+    return rewritten.toString();
+  };
+}
+
+let rewriteUrl = url => url;
 
 function log(message) {
   console.log(`[HPA-SYNC ${new Date().toISOString()}] ${message}`);
@@ -147,10 +170,11 @@ async function syncOne(dataset, root, scratch, datasets) {
   await datasets.markDownloading(dataset.id);
   log(`downloading ${dataset.fileName} (${dataset.resource}: ${dataset.datasetName})`);
   await fsp.rm(archivePath, { force: true });
+  const url = rewriteUrl(dataset.downloadUrl);
   await run('curl', ['--fail', '--silent', '--show-error', '--location', '--retry', '3', '--retry-delay', '5',
-    '--user-agent', USER_AGENT, '--output', archivePath, dataset.downloadUrl]);
+    '--user-agent', USER_AGENT, '--output', archivePath, url]);
   const downloadBytes = (await fsp.stat(archivePath)).size;
-  const expected = await remoteSize(dataset.downloadUrl);
+  const expected = await remoteSize(url);
   if (expected !== null && expected !== downloadBytes) {
     throw new Error(`size mismatch: server reports ${expected} bytes, downloaded ${downloadBytes}`);
   }
@@ -165,7 +189,11 @@ async function syncOne(dataset, root, scratch, datasets) {
 }
 
 async function main() {
-  const REQUESTED_VERSION = parseVersionArg(process.argv.slice(2));
+  const args = process.argv.slice(2);
+  const REQUESTED_VERSION = flagValue(args, 'version', '25');
+  const hostArg = flagValue(args, 'host', 'mirror.example.org');
+  rewriteUrl = hostRewriter(hostArg);
+  if (hostArg !== null) log(`downloading from host ${hostArg} instead of the catalog's`);
   const runtime = loadRuntimeConfig(path.join(__dirname, '..'));
   const root = runtime.dataLocalRoot;
   const scratch = path.join(root, '.sync');
@@ -206,7 +234,7 @@ async function main() {
     for (const dataset of pending) {
       let bytes = null;
       try {
-        bytes = await remoteSize(dataset.downloadUrl);
+        bytes = await remoteSize(rewriteUrl(dataset.downloadUrl));
       } catch (error) {
         await datasets.markFailed(dataset.id, error.message);
         log(`failed ${dataset.fileName}: ${error.message}`);

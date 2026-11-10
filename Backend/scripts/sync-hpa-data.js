@@ -5,9 +5,12 @@
 // version equals platform_config.active_hpa_version is downloaded with curl from its direct URL,
 // checked against the server's size, hashed, and extracted, one file at a time. Rows of other
 // versions are left alone. Run by the deployment before a release switches, and by hand.
+// --version picks another release instead, e.g. to fetch a new one before making it active.
 //
-//   node scripts/sync-hpa-data.js            sync what is missing or changed
-//   node scripts/sync-hpa-data.js --check    report only, download nothing (exit 1 if not ready)
+//   node scripts/sync-hpa-data.js                 sync what is missing or changed
+//   node scripts/sync-hpa-data.js --check         report only, download nothing (exit 1 if not ready)
+//   node scripts/sync-hpa-data.js --version 25    sync release 25 instead of the active one
+//                                                 (also --version=25; combines with --check)
 
 const path = require('node:path');
 const fs = require('node:fs');
@@ -24,6 +27,22 @@ const { PlatformConfig } = require('../src/policy/config');
 
 const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36 AtlasAI-sync';
 const CHECK_ONLY = process.argv.includes('--check');
+
+// The value of --version <v> or --version=<v>, or null when it is not given.
+function parseVersionArg(args) {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    let value;
+    if (arg === '--version') value = args[i + 1];
+    else if (arg.startsWith('--version=')) value = arg.slice('--version='.length);
+    else continue;
+    if (!value || value.startsWith('--')) {
+      throw new Error('--version needs a value, e.g. --version 25');
+    }
+    return value.trim();
+  }
+  return null;
+}
 
 function log(message) {
   console.log(`[HPA-SYNC ${new Date().toISOString()}] ${message}`);
@@ -146,6 +165,7 @@ async function syncOne(dataset, root, scratch, datasets) {
 }
 
 async function main() {
+  const REQUESTED_VERSION = parseVersionArg(process.argv.slice(2));
   const runtime = loadRuntimeConfig(path.join(__dirname, '..'));
   const root = runtime.dataLocalRoot;
   const scratch = path.join(root, '.sync');
@@ -155,8 +175,15 @@ async function main() {
   try {
     const config = await new PlatformConfig(db).reload();
     const datasets = new HpaDatasetRepository(db);
-    const rows = await datasets.listForVersion(config.activeHpaVersion);
-    log(`active HPA version ${config.activeHpaVersion}: ${rows.length} catalog rows, root ${root}`);
+    const version = REQUESTED_VERSION ?? config.activeHpaVersion;
+    const rows = await datasets.listForVersion(version);
+    const label = REQUESTED_VERSION === null || String(REQUESTED_VERSION) === String(config.activeHpaVersion)
+      ? `active HPA version ${version}`
+      : `HPA version ${version} (active is ${config.activeHpaVersion})`;
+    log(`${label}: ${rows.length} catalog rows, root ${root}`);
+    if (REQUESTED_VERSION !== null && rows.length === 0) {
+      throw new Error(`no hpa_datasets rows for version ${version}`);
+    }
 
     const pending = [];
     for (const dataset of rows) {
@@ -199,7 +226,7 @@ async function main() {
         log(`failed ${dataset.fileName}: ${error.message}`);
       }
     }
-    const ready = await datasets.listReady(config.activeHpaVersion);
+    const ready = await datasets.listReady(version);
     log(`done: ${ready.length}/${rows.length} ready, ${failures} failed`);
     process.exitCode = failures === 0 ? 0 : 1;
   } finally {

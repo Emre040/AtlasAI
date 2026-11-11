@@ -43,9 +43,8 @@ import {ToolRunView} from "./ToolRunView";
 import {ChatHistory} from "./ChatHistory";
 import {MobileHistoryDialog} from "./MobileHistoryDialog";
 
-const RUNTIME_CONFIG = getRuntimeConfig();
 const debugLog = (...args) => {
-  if (RUNTIME_CONFIG.isLocal) console.log(...args);
+  if (getRuntimeConfig().isLocal) console.log(...args);
 };
 
 function HPA() {
@@ -72,7 +71,7 @@ function HPA() {
   const [artifactPreview, setArtifactPreview] = useState(null);
   const artifactLeaveTimer = useRef(null);
   const apiBaseUrl = getApiBaseUrl();
-  const isLocalEnv = RUNTIME_CONFIG.isLocal;
+  const isLocalEnv = getRuntimeConfig().isLocal;
 
   // Artifact preview popover handlers
   const handleArtifactChipEnter = async (e, chip, workspaceUuid) => {

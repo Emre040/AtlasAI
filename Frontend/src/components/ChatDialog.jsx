@@ -44,9 +44,8 @@ import {MobileHistoryDialog} from "./MobileHistoryDialog";
 import {ToolRunView} from "./ToolRunView";
 import {getCookie, setCookie} from "../utils/cookieFunctions";
 
-const RUNTIME_CONFIG = getRuntimeConfig();
 const debugLog = (...args) => {
-  if (RUNTIME_CONFIG.isLocal) console.log(...args);
+  if (getRuntimeConfig().isLocal) console.log(...args);
 };
 
 function ChatDialog() {
@@ -73,7 +72,7 @@ function ChatDialog() {
   const [artifactPreview, setArtifactPreview] = useState(null);
   const artifactLeaveTimer = useRef(null);
   const apiBaseUrl = getApiBaseUrl();
-  const isLocalEnv = RUNTIME_CONFIG.isLocal;
+  const isLocalEnv = getRuntimeConfig().isLocal;
   const prev_conversation_cookie_id = 'prev_conversation';
 
   // Artifact preview popover handlers

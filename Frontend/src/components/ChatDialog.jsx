@@ -63,6 +63,7 @@ function ChatDialog() {
   }, []);
   const [collapsedRuns, setCollapsedRuns] = useState({}); // Track collapsed state per runId
   const [studySelection, setStudySelection] = useState(null);
+  const [searchResults, setSearchResults] = useState({}); // Map of searchUrl -> { rows, loading, error, totalCount, thumbnails }
   const [replyTo, setReplyTo] = useState(null); // { ensg, geneName } for reply context
   const messagesEndRef = useRef(null);
   const stickToBottomRef = useRef(true);
@@ -190,6 +191,157 @@ function ChatDialog() {
       ...prev,
       [runId]: prev[runId] === false ? true : false
     }));
+  };
+
+  // Fetch HPA search results for a given URL
+  const fetchSearchResults = async (searchUrl) => {
+    if (!searchUrl || searchResults[searchUrl]?.rows) return; // Already fetched
+
+    setSearchResults(prev => ({
+      ...prev,
+      [searchUrl]: { loading: true, rows: null, error: null, thumbnails: {} }
+    }));
+
+    try {
+      const response = await authenticatedFetch(
+        `${getApiEndpoint('hpaSearchResults')}?url=${encodeURIComponent(searchUrl)}`
+      );
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+
+      setSearchResults(prev => ({
+        ...prev,
+        [searchUrl]: { loading: false, rows: data.rows || [], totalCount: data.totalCount, error: null, thumbnails: {} }
+      }));
+    } catch (err) {
+      console.error('[FE] Failed to fetch search results:', err);
+      setSearchResults(prev => ({
+        ...prev,
+        [searchUrl]: { loading: false, rows: null, error: err.message, thumbnails: {} }
+      }));
+    }
+  };
+
+  // Render search results: the first rows with their thumbnails, and a link to the rest on HPA.
+  const SearchResultsView = ({ searchUrl }) => {
+    const data = searchResults[searchUrl];
+    const SHOWN_ROWS = 5;
+
+    // Trigger fetch on mount if not already loaded
+    useEffect(() => {
+      if (searchUrl && !data) {
+        fetchSearchResults(searchUrl);
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [searchUrl]);
+
+    // Fetch thumbnails for the shown rows only
+    // useEffect(() => {
+    //   if (data?.rows && !data.loading) {
+    //     const geneIds = data.rows.slice(0, SHOWN_ROWS).map(r => r.Ensembl || r.Gene).filter(Boolean);
+    //     fetchThumbnails(searchUrl, geneIds);
+    //   }
+    // }, [searchUrl, data?.loading, data?.rows]);
+
+    if (!data || data.loading) {
+      return (
+        <div className="HPAG-search-results HPAG-search-results-loading">
+          <div className="HPAG-search-results-table">
+            {[...Array(SHOWN_ROWS)].map((_, i) => (
+              <div key={i} className="HPAG-search-tr HPAG-shimmer-row">
+                <div className="HPAG-search-td HPAG-search-td-gene">
+                  <div className="HPAG-shimmer-text" style={{ width: '140px' }} />
+                  <div className="HPAG-shimmer-text" style={{ width: '200px', marginTop: '4px' }} />
+                </div>
+                {/*{THUMB_SECTIONS.map(s => (*/}
+                {/*  <div key={s.key} className="HPAG-search-td HPAG-search-td-thumb">*/}
+                {/*    <div className="HPAG-thumb-shimmer" />*/}
+                {/*  </div>*/}
+                {/*))}*/}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    if (data.error) {
+      return <div className="HPAG-search-results-error">Failed to load results</div>;
+    }
+
+    if (!data.rows || data.rows.length === 0) {
+      return <div className="HPAG-search-results-empty">No results found</div>;
+    }
+
+    const visibleRows = data.rows.slice(0, SHOWN_ROWS);
+    const moreCount = data.rows.length - visibleRows.length;
+
+    return (
+      <div className="HPAG-search-results">
+        <div className="HPAG-search-results-table">
+          {visibleRows.map((row, idx) => {
+            const ensg = row.Ensembl || row.Gene || '';
+            const geneName = row['Gene name'] || row.Gene || '—';
+            const desc = row['Gene description'] || '';
+            const thumbs = data.thumbnails?.[ensg] || {};
+
+            return (
+              <div key={idx} className="HPAG-search-tr">
+                <div className="HPAG-search-td HPAG-search-td-gene">
+                  <button
+                    className="HPAG-reply-btn"
+                    onClick={() => {
+                      setReplyTo({ ensg, geneName });
+                      setTimeout(() => {
+                        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+                        inputRef.current?.focus();
+                      }, 100);
+                    }}
+                    title={`Ask about ${geneName}`}
+                  >
+                    <FontAwesomeIcon icon={faReply} />
+                  </button>
+                  <a href={`https://www.proteinatlas.org/${ensg}`} target="_blank" rel="noopener noreferrer" className="HPAG-gene-link">
+                    <span className="HPAG-gene-title"><span className="HPAG-search-result-symbol">{geneName}</span><span className="HPAG-gene-dot">·</span><span className="HPAG-search-result-ensg">{ensg}</span></span>
+                    {desc && <span className="HPAG-search-result-desc">{desc}</span>}
+                  </a>
+                </div>
+                {/*{THUMB_SECTIONS.map(s => {*/}
+                {/*  const thumb = thumbs[s.key];*/}
+                {/*  const hasLoaded = thumbs?.[THUMB_LOAD_KEY] === true || thumb !== undefined;*/}
+                {/*  const hasImage = thumb?.img;*/}
+                {/*  const tooltipText = thumb?.title || s.label;*/}
+                {/*  return (*/}
+                {/*    <div key={s.key} className="HPAG-search-td HPAG-search-td-thumb">*/}
+                {/*      {hasImage ? (*/}
+                {/*        <a href={thumb.link} target="_blank" rel="noopener noreferrer" className="HPAG-thumb-link">*/}
+                {/*          <img src={thumb.img} alt={s.label} className="HPAG-thumb-img" style={{ borderColor: s.color }} />*/}
+                {/*          <div className="HPAG-thumb-hover">*/}
+                {/*            <span className="HPAG-thumb-hover-text">{tooltipText}</span>*/}
+                {/*          </div>*/}
+                {/*        </a>*/}
+                {/*      ) : hasLoaded ? (*/}
+                {/*        <div className="HPAG-thumb-na">N/A</div>*/}
+                {/*      ) : (*/}
+                {/*        <div className="HPAG-thumb-shimmer" />*/}
+                {/*      )}*/}
+                {/*    </div>*/}
+                {/*  );*/}
+                {/*})}*/}
+              </div>
+            );
+          })}
+        </div>
+        {moreCount > 0 && (
+          <div className="HPAG-search-results-footer">
+            <a href={searchUrl} target="_blank" rel="noopener noreferrer" className="HPAG-search-results-more">
+              <span>View <strong>{moreCount}</strong> more</span>
+              <FontAwesomeIcon icon={faExternalLinkAlt} />
+            </a>
+          </div>
+        )}
+      </div>
+    );
   };
 
   useEffect(() => {
@@ -898,9 +1050,9 @@ function ChatDialog() {
                         </div>
                       </div>
                       {/* Render search results full-width, outside the message bubble */}
-                      {/*{message.searchUrl && (*/}
-                      {/*  <SearchResultsView searchUrl={message.searchUrl}/>*/}
-                      {/*)}*/}
+                      {message.searchUrl && (
+                        <SearchResultsView searchUrl={message.searchUrl}/>
+                      )}
                       {/* Render dictionary tissue images carousel */}
                       {message.dictionaryImages && message.dictionaryImages.images?.length > 0 && (
                         <DictionaryCarousel dictionaryImages={message.dictionaryImages}/>

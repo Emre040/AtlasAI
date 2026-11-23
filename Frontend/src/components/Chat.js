@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import './Chat.css';
+import './shimmer.css';
 import ReactMarkdown from 'react-markdown';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -7,45 +8,42 @@ import {
   faBars,
   faThumbsUp,
   faThumbsDown,
-  faMagnifyingGlass,
-  faMicroscope,
-  faVirus,
-  faNetworkWired,
-  faDroplet,
-  faFlask,
-  faCubes,
-  faBrain,
-  faFileCode,
-  faChevronDown,
-  faChevronRight,
   faSpinner,
   faReply,
-  faTimes,
   faExternalLinkAlt,
-  faSearch,
   faDownload
 } from '@fortawesome/free-solid-svg-icons';
 import {
-  authenticatedDownload,
   authenticatedFetch,
   getVisitorId,
   initializeHPAAuth
 } from '../api/auth';
-import { getApiBaseUrl, getApiEndpoint, getRuntimeConfig, getUiConfig } from '../api/config';
+import { getApiBaseUrl, getApiEndpoint, getRuntimeConfig } from '../api/config';
 import { AUTO_MODEL, describeRefusal, loadSelectedModel, storeSelectedModel } from '../api/models';
 import ModelMenu from './ModelMenu';
-import StudyOutputs from './StudyOutputs';
 import StudyAnswer from './StudyAnswer';
 import { studyRunsById } from './studyCitations';
-import StudyRun, { studyStatusLine } from './StudyRun';
 import { liveToolEventFromSse, timelineToUiMessages } from '../api/timeline';
 import DictionaryCarousel from './DictionaryCarousel';
 import Questionnaire from './Questionnaire';
 import ReaderPanel, { readerLiveNext } from './ReaderPanel';
-import {hpaIcon} from "../assets/icons/hpaIcon";
+import {
+  buildTitleFromText,
+  extractHPAUrls
+} from "../utils/textUtils";
+import {
+  downloadArtifact,
+  extractReplyContext,
+  groupMessagesIntoRuns
+} from "../utils/conversationUtils";
+import {THUMB_SECTIONS} from "../utils/constants";
+import {InputArea} from "./InputArea";
+import {ReplyBar} from "./ReplyBar";
+import {ToolRunView} from "./ToolRunView";
+import {ChatHistory} from "./ChatHistory";
+import {MobileHistoryDialog} from "./MobileHistoryDialog";
 
 const RUNTIME_CONFIG = getRuntimeConfig();
-const UI_CONFIG = getUiConfig();
 const debugLog = (...args) => {
   if (RUNTIME_CONFIG.isLocal) console.log(...args);
 };
@@ -68,7 +66,6 @@ function HPA() {
   const [searchResults, setSearchResults] = useState({}); // Map of searchUrl -> { rows, loading, error, totalCount, thumbnails }
   const [replyTo, setReplyTo] = useState(null); // { ensg, geneName } for reply context
   const messagesEndRef = useRef(null);
-  const historyDialogRef = useRef(null);
   const stickToBottomRef = useRef(true);
   const inputRef = useRef(null);
   const toolRunRefs = useRef({}); // Refs for auto-scroll within each run container
@@ -76,193 +73,6 @@ function HPA() {
   const artifactLeaveTimer = useRef(null);
   const apiBaseUrl = getApiBaseUrl();
   const isLocalEnv = RUNTIME_CONFIG.isLocal;
-  const maxConversationTitleLength = UI_CONFIG.maxConversationTitleLength;
-
-  const REPLY_MARKER_NEW = /^⟪HPA▸GENE:(ENSG\d+):([^⟫]+)⟫\s*/;
-  const REPLY_MARKER_COMPAT = /^\[\[REPLY:(ENSG\d+):([^\]]+)\]\]\s*/;
-  const extractReplyContext = (t = '') => {
-    let match = t.match(REPLY_MARKER_NEW);
-    let regex = REPLY_MARKER_NEW;
-    if (!match) {
-      match = t.match(REPLY_MARKER_COMPAT);
-      regex = REPLY_MARKER_COMPAT;
-    }
-    if (match) {
-      return { ensg: match[1], geneName: match[2], textWithoutReply: t.replace(regex, '') };
-    }
-    return null;
-  };
-
-  // Title case: lowercase everything, then capitalize first letter of each word
-  const titleCase = (str = '') => str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
-
-  const cleanPreviewText = (text = '') => String(text || '').replace(/\s+/g, ' ').trim();
-
-  const stripReplyMarker = (text = '') => {
-    const cleaned = cleanPreviewText(text);
-    if (!cleaned) return '';
-    const extracted = extractReplyContext(cleaned);
-    return cleanPreviewText(extracted ? extracted.textWithoutReply : cleaned);
-  };
-
-  const truncateText = (text = '', maxLen = 50) => {
-    if (!text) return '';
-    if (text.length <= maxLen) return text;
-    if (maxLen <= 3) return text.slice(0, maxLen);
-    return `${text.slice(0, maxLen - 3)}...`;
-  };
-
-  const buildTitleFromText = (text = '') => {
-    const cleaned = cleanPreviewText(text);
-    if (!cleaned) return '';
-    return truncateText(cleaned, maxConversationTitleLength);
-  };
-
-  const getFirstUserMessageText = (conv) => {
-    const messages = Array.isArray(conv?.messages) ? conv.messages : [];
-    const firstUserMessage = messages.find(msg => msg?.type === 'user' && cleanPreviewText(msg.text));
-    if (!firstUserMessage) return '';
-    return stripReplyMarker(firstUserMessage.text);
-  };
-
-  const buildConversationTitle = (conv) => {
-    const explicitTitle = cleanPreviewText(conv?.title);
-    const hasCustomTitle = explicitTitle && explicitTitle.toLowerCase() !== 'new conversation';
-    if (hasCustomTitle) return truncateText(explicitTitle, maxConversationTitleLength);
-
-    const firstUserText = getFirstUserMessageText(conv);
-    if (firstUserText) return buildTitleFromText(firstUserText);
-
-    const previewText = stripReplyMarker(conv?.preview);
-    if (previewText) return buildTitleFromText(previewText);
-
-    return explicitTitle || 'New Conversation';
-  };
-
-  const TOOL_STAGE_META = {
-    start: { label: 'Start', css: 'start', description: 'Agent activated.' },
-    planning_step: { label: 'Plan', css: 'planning', description: 'Reading the schema.' },
-    reasoning_step: { label: 'Think', css: 'reasoning', description: 'Weighing the options.' },
-    selection_step: { label: 'Select', css: 'selection', description: 'Choice made.' },
-    execution_step: { label: 'Run', css: 'execution', description: 'Executing.' },
-    fallback: { label: 'Fallback', css: 'fallback', description: 'Trying backup.' },
-    error: { label: 'Error', css: 'error', description: 'Issue detected.' },
-    complete: { label: 'Done', css: 'complete', description: 'Complete.' },
-    not_found: { label: 'Not found', css: 'fallback', description: 'No answer in the data.' },
-    info: { label: 'Info', css: 'info', description: 'Status update.' }
-  };
-
-  const stageMetaFor = (event = {}) => {
-    if (!event) return TOOL_STAGE_META.info;
-    if (event.status === 'started') return TOOL_STAGE_META.start;
-    if (event.status === 'completed') return TOOL_STAGE_META.complete;
-    const key = (event.stage || '').toLowerCase();
-    return TOOL_STAGE_META[key] || TOOL_STAGE_META.info;
-  };
-
-  // Compute the display label for a tool event (shared by shimmer + timeline)
-  const getStepDisplayLabel = (evt) => {
-    if (!evt) return 'Update';
-    const meta = stageMetaFor(evt);
-    return titleCase(evt.label || meta?.label || 'Update');
-  };
-
-  const linkifyInline = (text = '') => {
-    if (!text) return '';
-    const regex = /(https?:\/\/[^\s)]+)/gi;
-    const segments = [];
-    let lastIndex = 0;
-    let match;
-    let key = 0;
-
-    while ((match = regex.exec(text)) !== null) {
-      if (match.index > lastIndex) {
-        segments.push(<span key={`text-${key++}`}>{text.slice(lastIndex, match.index)}</span>);
-      }
-      const rawUrl = match[1];
-      const url = rawUrl.replace(/[),.;]+$/, '');
-      segments.push(
-        <a key={`url-${key++}`} href={url} target="_blank" rel="noopener noreferrer" className="HPAG-tool-inline-link">
-          {url}
-        </a>
-      );
-      lastIndex = match.index + rawUrl.length;
-    }
-
-    if (lastIndex < text.length) {
-      segments.push(<span key={`text-${key++}`}>{text.slice(lastIndex)}</span>);
-    }
-
-    return segments.length ? segments : text;
-  };
-
-  const extractOptionsForEvent = (event) => {
-    if (!event || !event.message) return [];
-    const label = (event.label || '').toLowerCase();
-    const shouldParse = /\boptions\b/i.test(label);
-    if (!shouldParse) return [];
-    const parts = event.message
-      .split(/[,;]/)
-      .map(s => s.trim())
-      .filter(Boolean);
-    if (parts.length < 2) return [];
-    return parts;
-  };
-
-  const extractSelectionsForEvent = (event) => {
-    if (!event || !event.message) return [];
-    const stage = (event.stage || '').toLowerCase();
-    if (stage !== 'selection_step') return [];
-    // Don't split URLs or long paths
-    if (event.message.includes('http') || event.message.includes('→')) return [];
-    const parts = event.message
-      .split(/,/)
-      .map(s => s.trim())
-      .filter(Boolean);
-    return parts;
-  };
-
-  const groupMessagesIntoRuns = (messages) => {
-    const groups = [];
-    let currentRun = null;
-
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
-      const toolEvent = msg.type === 'tool' ? (msg.toolEvent) : null;
-
-      if (msg.type === 'tool' && toolEvent?.runId) {
-        // This is part of a tool run
-        if (!currentRun || currentRun.runId !== toolEvent.runId) {
-          // Start a new run
-          if (currentRun) groups.push(currentRun);
-          currentRun = {
-            type: 'run',
-            runId: toolEvent.runId,
-            messages: [msg],
-            startTime: Date.now(),
-            isComplete: toolEvent.status === 'completed'
-          };
-        } else {
-          // Add to existing run
-          currentRun.messages.push(msg);
-          if (toolEvent.status === 'completed') {
-            currentRun.isComplete = true;
-          }
-        }
-      } else {
-        // Not part of a tool run
-        if (currentRun) {
-          groups.push(currentRun);
-          currentRun = null;
-        }
-        groups.push({ type: 'message', message: msg, index: i });
-      }
-    }
-
-    if (currentRun) groups.push(currentRun);
-
-    return groups;
-  };
 
   // Artifact preview popover handlers
   const handleArtifactChipEnter = async (e, chip, workspaceUuid) => {
@@ -310,18 +120,6 @@ function HPA() {
     setArtifactPreview(prev => prev ? { ...prev, showRaw: !prev.showRaw } : null);
   };
 
-  const downloadArtifact = async (preview) => {
-    const filename = `${preview.artifactId}.${preview.format}`;
-    try {
-      await authenticatedDownload(
-        `${apiBaseUrl}/workspaces/${preview.workspaceUuid}/artifacts/${filename}`,
-        filename
-      );
-    } catch (error) {
-      console.error('[FE] Artifact download failed:', error.message);
-    }
-  };
-
   const renderArtifactTable = (json) => {
     let rows = [];
     if (Array.isArray(json)) { rows = json; }
@@ -361,129 +159,6 @@ function HPA() {
       ...prev,
       [runId]: prev[runId] === false ? true : false
     }));
-  };
-
-  // Extract HPA URLs from message text
-  const extractHPAUrls = (text) => {
-    const urlRegex = /https?:\/\/www\.proteinatlas\.org\/[^\s)]+/g;
-    const matches = text.match(urlRegex) || [];
-    const uniqueUrls = [...new Set(matches)];
-
-    // Filter out URLs with + EXCEPT for our known sub-pages
-    const knownSubPages = ['/single+cell', '/cell+line'];
-    const filteredUrls = uniqueUrls.filter(url => {
-      // If it has a +, only keep it if it's one of our known sub-pages
-      if (url.includes('+')) {
-        return knownSubPages.some(subPage => url.includes(subPage));
-      }
-      return true;
-    });
-
-    return filteredUrls.map(url => {
-      if (url.includes('/search/')) {
-        const geneName = url.split('/search/')[1]?.split(/[?&#]/)[0] || 'Search';
-        return {
-          url,
-          type: 'search',
-          label: geneName,
-          icon: faMagnifyingGlass
-        };
-      }
-
-      // Parse the URL to determine the type
-      let type = 'summary';
-      let label = 'Summary';
-      let icon = hpaIcon;
-
-      // Check if it's an ENSG protein page (e.g., ENSG00000121410-A1BG)
-      const ensgMatch = url.match(/ENSG\d+-([A-Z0-9]+)/);
-      if (ensgMatch && !url.includes('/tissue') && !url.includes('/brain') && !url.includes('/single+cell') &&
-          !url.includes('/subcellular') && !url.includes('/cancer') && !url.includes('/blood') &&
-          !url.includes('/cell+line') && !url.includes('/structure') && !url.includes('/interaction')) {
-        // It's a base protein page, use the gene name
-        label = ensgMatch[1];
-      }
-
-      if (url.includes('/tissue')) {
-        type = 'tissue';
-        label = 'Tissue';
-        icon = faMicroscope;
-      } else if (url.includes('/brain')) {
-        type = 'brain';
-        label = 'Brain';
-        icon = faBrain;
-      } else if (url.includes('/single+cell')) {
-        type = 'single_cell';
-        label = 'Single Cell';
-        icon = faVirus;
-      } else if (url.includes('/subcellular')) {
-        type = 'subcellular';
-        label = 'Subcellular';
-        icon = faCubes;
-      } else if (url.includes('/cancer')) {
-        type = 'cancer';
-        label = 'Cancer';
-        icon = faVirus;
-      } else if (url.includes('/blood')) {
-        type = 'blood';
-        label = 'Blood';
-        icon = faDroplet;
-      } else if (url.includes('/cell+line')) {
-        type = 'cell_line';
-        label = 'Cell Line';
-        icon = faFlask;
-      } else if (url.includes('/structure')) {
-        type = 'structure';
-        label = 'Structure';
-        icon = faNetworkWired;
-      } else if (url.includes('/interaction')) {
-        type = 'interaction';
-        label = 'Interaction';
-        icon = faNetworkWired;
-      } else if (url.endsWith('.xml')) {
-        type = 'xml';
-        label = 'XML';
-        icon = faFileCode;
-      }
-
-      return { url, type, label, icon };
-    });
-  };
-
-  // Format date to human-readable relative time
-  const formatRelativeTime = (dateString) => {
-    if (!dateString) return 'Just now';
-
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffSecs = Math.floor(diffMs / 1000);
-    const diffMins = Math.floor(diffSecs / 60);
-    const diffHours = Math.floor(diffMins / 60);
-    const diffDays = Math.floor(diffHours / 24);
-
-    if (diffSecs < 60) return 'Just now';
-    if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
-    if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
-
-    // Check if yesterday
-    const yesterday = new Date(now);
-    yesterday.setDate(yesterday.getDate() - 1);
-    if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
-
-    // Check if this week (within last 7 days)
-    if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
-
-    // Check if last week (7-14 days ago)
-    if (diffDays < 14) return 'Last week';
-
-    // Check if this month
-    if (date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear()) {
-      return 'This month';
-    }
-
-    // Otherwise show date
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
   // Fetch HPA search results for a given URL
@@ -581,18 +256,6 @@ function HPA() {
       }));
     }
   };
-
-  const THUMB_SECTIONS = [
-    { key: 'tissue', label: 'Tissue', color: '#0083C4' },
-    { key: 'brain', label: 'Brain', color: '#ffdd00' },
-    { key: 'single_cell', label: 'Single cell', color: '#6aa692' },
-    { key: 'subcellular', label: 'Subcell', color: '#97cf16' },
-    { key: 'cancer', label: 'Cancer', color: '#ffaabf' },
-    { key: 'blood', label: 'Blood', color: '#cf161a' },
-    { key: 'cell_line', label: 'Cell line', color: '#ffa500' },
-    { key: 'structure', label: 'Structure', color: '#69008c' },
-    { key: 'interaction', label: 'Interaction', color: '#c89c79' }
-  ];
 
   // Render search results: the first rows with their thumbnails, and a link to the rest on HPA.
   const SearchResultsView = ({ searchUrl }) => {
@@ -786,11 +449,6 @@ function HPA() {
     stickToBottomRef.current = false;
     setStudySelection({ runId, artifactId });
   };
-  useEffect(() => {
-    const dialog = historyDialogRef.current;
-    if (historyOpen) dialog.showModal();
-    else if (dialog.open) dialog.close();
-  }, [historyOpen]);
   useEffect(() => {
     const desktop = window.matchMedia('(min-width: 800px)');
     const closeOnDesktop = event => { if (event.matches) setHistoryOpen(false); };
@@ -1130,44 +788,27 @@ function HPA() {
     }
   };
 
-  const historyContent = (
-    <>
-        <div className="HPAG-sidebar-logo">
-          <img src="https://www.proteinatlas.org/images_static/logo.svg" alt="Human Protein Atlas" />
-        </div>
-        <div className="HPAG-sidebar-header">
-          <h2>Conversations</h2>
-          <button className="HPAG-new-chat-btn" onClick={() => { setHistoryOpen(false); handleNewChat(); }}>
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M7 1V13M1 7H13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-            </svg>
-            New
-          </button>
-        </div>
-
-        <div className="HPAG-conversations-list">
-          {conversations.map(conv => (
-            <button type="button"
-              key={conv.id}
-              className={`HPAG-conversation-item ${selectedConversation === conv.id ? 'HPAG-active' : ''}`}
-              aria-current={selectedConversation === conv.id ? 'page' : undefined}
-              onClick={() => { setSelectedConversation(conv.id); setHistoryOpen(false); }}
-            >
-              <div className="HPAG-conversation-title">{buildConversationTitle(conv)}</div>
-              <div className="HPAG-conversation-date">{formatRelativeTime(conv.created_at || conv.date)}</div>
-            </button>
-          ))}
-        </div>
-    </>
-  );
+  const onSelectConversation = id => { setSelectedConversation(id); setHistoryOpen(false); };
+  const onNewChat = () => { setHistoryOpen(false); handleNewChat(); };
 
   return (
     <div className="HPAG-container">
-      <div className="HPAG-sidebar">{historyContent}</div>
-      <dialog ref={historyDialogRef} className="HPAG-mobile-history" id="HPAG-mobile-history" aria-label="Conversations" onCancel={event => { event.preventDefault(); setHistoryOpen(false); }} onClick={event => { if (event.target === event.currentTarget) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX > rect.right) setHistoryOpen(false); } }}>
-        <button type="button" className="HPAG-history-close" onClick={() => setHistoryOpen(false)} aria-label="Close conversations"><FontAwesomeIcon icon={faTimes} /></button>
-        {historyContent}
-      </dialog>
+      <div className="HPAG-sidebar">
+        <ChatHistory
+          conversations={conversations}
+          selectedConversation={selectedConversation}
+          onNewChat={onNewChat}
+          onSelectConversation={onSelectConversation}
+        />
+      </div>
+      <MobileHistoryDialog
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        conversations={conversations}
+        selectedConversation={selectedConversation}
+        onNewChat={onNewChat}
+        onSelectConversation={onSelectConversation}
+      />
       <div className="HPAG-chat-area">
         <div className="HPAG-chat-header">
           <div className="HPAG-header-model">
@@ -1215,135 +856,18 @@ function HPA() {
             ) : (
               messageGroups.map((group, groupIndex) => {
                 if (group.type === 'run') {
-                  // Render a collapsible tool run container - starts collapsed by default
-                  // Detect run type from first message tool name
-                  const firstToolEvent = group.messages[0]?.toolEvent;
-                  const isInvestigatorRun = firstToolEvent?.toolName === 'investigator_hpa';
-                  const isAsoRun = firstToolEvent?.toolName === 'aso_hpa';
-                  const runTitle = isAsoRun ? 'Study' : isInvestigatorRun ? 'Investigator' : 'Deep Research';
-
-                  const runEvents = group.messages.map(m => m.toolEvent).filter(Boolean);
-
-                  // Get latest step label for shimmer text (identical to HPAG-tool-line-label)
-                  const lastStepMsg = (() => {
-                    if (isAsoRun) return studyStatusLine(runEvents);
-                    for (let mi = group.messages.length - 1; mi >= 0; mi--) {
-                      const evt = group.messages[mi].toolEvent;
-                      if (evt && evt.status !== 'started' && evt.status !== 'completed') {
-                        return getStepDisplayLabel(evt);
-                      }
-                    }
-                    return runTitle;
-                  })();
-
-                  // A study is its map: always open, never folded.
-                  const isExpanded = isAsoRun || collapsedRuns[group.runId] === false;
-
                   return (
-                    <React.Fragment key={group.runId}>
-                    {!isAsoRun && <div
-                      className={`HPAG-shimmer-bar ${group.isComplete ? 'HPAG-shimmer-done' : ''}`}
-                      onClick={isAsoRun ? undefined : () => toggleRunCollapsed(group.runId)}
-                    >
-                      <span className="HPAG-shimmer-text">
-                        {group.isComplete ? `${runTitle} complete` : <>Working<span className="HPAG-shimmer-dot">{'\u00B7'}</span>{lastStepMsg}</>}
-                      </span>
-                      {!isAsoRun && <FontAwesomeIcon icon={isExpanded ? faChevronDown : faChevronRight} className="HPAG-shimmer-chevron" />}
-                    </div>}
-                    {isExpanded && (
-                    <div className={`HPAG-tool-run-container ${isAsoRun ? 'HPAG-tool-run-container-study' : ''}`}>
-                      <div
-                        className={`HPAG-tool-run-content ${isAsoRun ? 'HPAG-tool-run-content-study' : ''}`}
-                        ref={el => { toolRunRefs.current[group.runId] = el; }}
-                        data-study-run-id={isAsoRun ? group.runId : undefined}
-                      >
-                        {isAsoRun && (
-                          <StudyRun
-                            events={runEvents}
-                            apiBaseUrl={apiBaseUrl}
-                            isComplete={group.isComplete}
-                            selectionRequest={studySelection?.runId === group.runId ? studySelection : null}
-                            onArtifactEnter={handleArtifactChipEnter}
-                            onArtifactLeave={handleArtifactChipLeave}
-                          />
-                        )}
-                        {/* Non-ASO runs: original per-message timeline */}
-                        {!isAsoRun && group.messages.map((message, msgIndex) => {
-                          const nextMsg = group.messages[msgIndex + 1];
-                          const nextEvent = nextMsg?.type === 'tool' ? (nextMsg.toolEvent) : null;
-                          const nextSelections = nextEvent ? extractSelectionsForEvent(nextEvent) : [];
-                          const selectionsForThisRow = new Set(nextSelections.map(s => s.toLowerCase().trim()));
-
-                          const toolEvent = message.toolEvent;
-                          const toolStageMeta = toolEvent ? stageMetaFor(toolEvent) : null;
-                          const stageBadgeClass = toolStageMeta?.css ? `HPAG-tool-stage-${toolStageMeta.css}` : '';
-                          const toolMetaLine = toolEvent
-                            ? [toolStageMeta?.description || null, toolEvent.toolName || null].filter(Boolean).join(' • ')
-                            : '';
-                          const toolOptions = toolEvent ? extractOptionsForEvent(toolEvent) : [];
-                          const toolSelections = toolEvent ? extractSelectionsForEvent(toolEvent) : [];
-                          const hasScanVisual = toolEvent?.meta?.visual === 'scan';
-                          const hasUrl = toolEvent?.meta?.url;
-                          const shouldShowToolMessage = toolEvent?.message && toolOptions.length === 0 && toolSelections.length === 0 && !hasScanVisual && !hasUrl;
-
-                          return (
-                            <div key={message.id} className="HPAG-tool-line">
-                              <div className={`HPAG-tool-timeline ${msgIndex > 0 ? 'HPAG-has-line-above' : ''} ${msgIndex < group.messages.length - 1 ? 'HPAG-has-line-below' : ''}`}>
-                                <div className="HPAG-tool-timeline-dot" />
-                              </div>
-                              <div className={`HPAG-tool-stage-badge ${stageBadgeClass}`}>
-                                {toolStageMeta?.label || 'Info'}
-                              </div>
-                              <div className="HPAG-tool-line-body">
-                                <div className="HPAG-tool-line-label">
-                                  {titleCase(toolEvent?.label || toolStageMeta?.label || 'Update')}
-                                </div>
-                                {hasUrl && (
-                                  <a href={toolEvent.meta.url} target="_blank" rel="noopener noreferrer" className="HPAG-navigate-box">
-                                    <FontAwesomeIcon icon={faExternalLinkAlt} className="HPAG-navigate-box-icon" />
-                                    <span className="HPAG-navigate-box-page">{toolEvent.message || 'Page'}</span>
-                                  </a>
-                                )}
-                                {hasScanVisual && (
-                                  <div className="HPAG-scan-box">
-                                    <div className="HPAG-scan-box-icon"><FontAwesomeIcon icon={faSearch} /></div>
-                                    <span className="HPAG-scan-box-text">{toolEvent.message || 'Searching...'}</span>
-                                  </div>
-                                )}
-                                {shouldShowToolMessage && (
-                                  <div className="HPAG-tool-line-message">{linkifyInline(toolEvent.message)}</div>
-                                )}
-                                {toolOptions.length > 0 && (
-                                  <div className="HPAG-tool-options-row">
-                                    {toolOptions.map((opt, idx) => {
-                                      const isSelected = selectionsForThisRow.has(opt.toLowerCase().trim());
-                                      return (
-                                        <span key={idx} className={`HPAG-tool-option-chip ${isSelected ? 'HPAG-selected' : ''}`}>{titleCase(opt)}</span>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                                {toolSelections.length > 0 && (
-                                  <div className="HPAG-tool-selections-row">
-                                    {toolSelections.map((sel, idx) => (
-                                      <span key={idx} className="HPAG-tool-selection-chip" style={{ animationDelay: `${idx * 0.1}s` }}>{titleCase(sel)}</span>
-                                    ))}
-                                  </div>
-                                )}
-                                {toolMetaLine && (
-                                  <div className="HPAG-tool-line-meta">{toolMetaLine}</div>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    )}
-                    {isAsoRun && group.isComplete && (
-                      <StudyOutputs events={runEvents} apiBaseUrl={apiBaseUrl} />
-                    )}
-                    </React.Fragment>
+                      <ToolRunView
+                          key={group.runId}
+                          group={group}
+                          collapsedRuns={collapsedRuns}
+                          toggleRunCollapsed={toggleRunCollapsed}
+                          toolRunRefs={toolRunRefs}
+                          handleArtifactChipEnter={handleArtifactChipEnter}
+                          handleArtifactChipLeave={handleArtifactChipLeave}
+                          apiBaseUrl={apiBaseUrl}
+                          studySelection={studySelection}
+                      />
                   );
                 } else {
                   // Render a normal message
@@ -1492,33 +1016,15 @@ function HPA() {
         </div>
 
         {replyTo && (
-          <div className="HPAG-reply-bar">
-            <FontAwesomeIcon icon={faReply} className="HPAG-reply-bar-icon" />
-            <span className="HPAG-reply-bar-text">
-              Asking about <strong>{replyTo.geneName}</strong> <span className="HPAG-reply-bar-ensg">{replyTo.ensg}</span>
-            </span>
-            <button className="HPAG-reply-bar-close" onClick={() => setReplyTo(null)} title="Remove">
-              <FontAwesomeIcon icon={faTimes} />
-            </button>
-          </div>
+            <ReplyBar replyTo={replyTo} setReplyTo={setReplyTo} />
         )}
-        <div className="HPAG-input-area">
-          <input
-            ref={inputRef}
-            type="text"
-            className="HPAG-input"
-            placeholder="Ask your Human Protein Atlas Agent..."
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-            disabled={isLoading}
-          />
-          <button className="HPAG-send-btn" onClick={handleSend} disabled={isLoading}>
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-              <path d="M15.854 7.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708-.708L14.293 8.5H.5a.5.5 0 0 1 0-1h13.793L8.146 1.354a.5.5 0 1 1 .708-.708l7 7z"/>
-            </svg>
-          </button>
-        </div>
+        <InputArea
+            inputRef={inputRef}
+            inputValue={inputValue}
+            setInputValue={setInputValue}
+            handleSend={handleSend}
+            isLoading={isLoading}
+        />
       </div>
       {artifactPreview && (
         <div
@@ -1545,7 +1051,7 @@ function HPA() {
               )}
               <button
                 type="button"
-                onClick={() => downloadArtifact(artifactPreview)}
+                onClick={() => downloadArtifact(artifactPreview, apiBaseUrl)}
                 className="HPAG-artifact-popover-download"
                 title="Download artifact"
               >

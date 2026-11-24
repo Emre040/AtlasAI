@@ -134,10 +134,21 @@ export const extractHPAUrls = (text) => {
 
         // Check if it's an ENSG protein page (e.g., ENSG00000121410-A1BG)
         const ensgMatch = url.match(/ENSG\d+-([A-Z0-9]+)/);
-        if (ensgMatch && !url.includes('/tissue') && !url.includes('/brain') && !url.includes('/single+cell') &&
-            !url.includes('/subcellular') && !url.includes('/cancer') && !url.includes('/blood') &&
-            !url.includes('/cell+line') && !url.includes('/structure') &&
-            !url.includes('/interaction')) {
+        if (ensgMatch &&
+          !url.includes('/tissue') &&
+          !url.includes('/brain') &&
+          !url.includes('/single+cell') &&
+          !url.includes('/immune+cell') &&
+          !url.includes('/subcellular') &&
+          !url.includes('/cancer') &&
+          !url.includes('/blood') &&
+          !url.includes('/cell+line') &&
+          !url.includes('/structure') &&
+          !url.includes('/interaction') &&
+          !url.includes('/metabolic') &&
+          !url.includes('/isoform') &&
+          !url.includes('/evolutionary')
+        ) {
             // It's a base protein page, use the gene name
             label = ensgMatch[1];
         }
@@ -177,6 +188,18 @@ export const extractHPAUrls = (text) => {
         } else if (url.includes('/interaction')) {
             type = 'interaction';
             label = 'Interaction';
+            icon = faNetworkWired;
+        } else if (url.includes('/metabolic')) {
+            type = 'metabolic';
+            label = 'Metabolic';
+            icon = faNetworkWired;
+        } else if (url.includes('/isoform')) {
+            type = 'isoform';
+            label = 'Interaction';
+            icon = faNetworkWired;
+        } else if (url.includes('/evolutionary')) {
+            type = 'evolution';
+            label = 'Evolutionary';
             icon = faNetworkWired;
         } else if (url.endsWith('.xml')) {
             type = 'xml';

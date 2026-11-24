@@ -100,7 +100,7 @@ function httpGetHtml(url, maxRedirects = 3) {
  */
 function parseGeneThumbnails(html, ensgId) {
   const thumbnails = {};
-  const sections = ['tissue', 'brain', 'single+cell', 'subcellular', 'cancer', 'blood', 'cell+line', 'structure', 'interaction'];
+  const sections = ['tissue', 'brain', 'single+cell', 'immune+cell', 'subcellular', 'cancer', 'blood', 'cell+line', 'structure', 'interaction', 'metabolic', 'isoform', 'evolutionary'];
 
   // Extract the full gene ID (e.g., ENSG00000121410-A1BG) from the HTML
   const fullIdMatch = html.match(new RegExp(`(${ensgId}-[A-Z0-9]+)`, 'i'));

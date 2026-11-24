@@ -3,12 +3,16 @@ export const THUMB_SECTIONS = [
     { key: 'tissue', label: 'Tissue', color: '#0083C4' },
     { key: 'brain', label: 'Brain', color: '#ffdd00' },
     { key: 'single_cell', label: 'Single cell', color: '#6aa692' },
+    { key: 'immune_cell', label: 'Immune cell', color: '#6aa692' },
     { key: 'subcellular', label: 'Subcell', color: '#97cf16' },
     { key: 'cancer', label: 'Cancer', color: '#ffaabf' },
     { key: 'blood', label: 'Blood', color: '#cf161a' },
     { key: 'cell_line', label: 'Cell line', color: '#ffa500' },
     { key: 'structure', label: 'Structure', color: '#69008c' },
     { key: 'interaction', label: 'Interaction', color: '#c89c79' },
+    { key: 'metabolic', label: 'Metabolic', color: '#25543c' },
+    { key: 'isoform', label: 'Isoform', color: '#0E8A8A' },
+    { key: 'evolutionary', label: 'Evolutionary', color: '#b30086' },
 ];
 
 export const TOOL_STAGE_META = {
